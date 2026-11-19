@@ -17,7 +17,6 @@
 #include <unistd.h>
 #include <xf86drm.h>
 #include "util/os_time.h"
-#include "util/u_wait_watchdog.h"
 #include <sys/stat.h>
 #include "hk_device.h"
 #include "hk_gpu_busy_intervals.h"
@@ -315,15 +314,12 @@ collect(struct busy_device *d, uint64_t now)
    for (struct hk_gpu_busy_queue *q = d->queues; q; q = q->next) {
       uint32_t handle = q->queue->drm.syncobj;
       uint64_t completed = 0;
-      int ret = U_WATCHDOG_IOCTL(
-         "GPU busy completed-point query", d->dev->dev.fd,
-         drmSyncobjQuery(d->dev->dev.fd, &handle, &completed, 1));
+      int ret = drmSyncobjQuery(d->dev->dev.fd, &handle, &completed, 1);
       d->queries++;
       if (ret) {
          d->query_errors++;
          continue;
       }
-      u_watchdog_complete(d->dev->dev.fd, handle, completed);
       __atomic_thread_fence(__ATOMIC_ACQUIRE);
       for (unsigned i = 0; i < BUSY_SLOTS; ++i) {
          struct busy_slot *slot = &q->slots[i];
