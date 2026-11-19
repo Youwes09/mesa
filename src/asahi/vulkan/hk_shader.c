@@ -6,11 +6,9 @@
  * Copyright 2018 Intel Corporation
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/debug.h"
 #include <unistd.h>
 
 #include "hk_shader.h"
-#include "hk_gpu_busy.h"
 #include "util/u_queue.h"
 
 #include "poly/nir/poly_nir.h"
@@ -35,7 +33,6 @@
 #include "hk_cmd_buffer.h"
 #include "hk_descriptor_set_layout.h"
 #include "hk_device.h"
-#include "agx_timeline.h"
 #include "hk_image.h"
 #include "hk_physical_device.h"
 #include "hk_sampler.h"
@@ -205,8 +202,7 @@ hk_env_key_kind(const char *var)
 {
    if (strncmp(var, "AGX_", 4) && strncmp(var, "HK_APPLE9_", 10))
       return 0;
-   if (agx_apple9_is_debug_env(var) ||
-       hk_env_named(var, hk_ignored_env, ARRAY_SIZE(hk_ignored_env)))
+   if (hk_env_named(var, hk_ignored_env, ARRAY_SIZE(hk_ignored_env)))
       return 0;
    return hk_env_named(var, hk_codegen_env, ARRAY_SIZE(hk_codegen_env)) ? 2 : 1;
 }
@@ -4050,9 +4046,6 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       /* Explicit I/O builds each access's base and offset afresh. The
        * vectorizer only merges accesses sharing those definitions. */
       NIR_PASS(_, nir, nir_opt_cse);
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_VECTORIZE) &&
-          nir->info.stage == MESA_SHADER_FRAGMENT)
-         nir_print_shader(nir, stderr);
       /* Below the pressure budget, merge without windows, unless that
        * raises the shader's peak of live words over windowed merging.
        */
@@ -4065,11 +4058,6 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
          peak_free = hk_apple9_vectorized_peak(nir, false);
          policy.windowed = peak_free > peak_windowed;
       }
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_PRESSURE))
-         fprintf(stderr,
-                 "HK_PRESSURE stage=%u peak=%u windowed=%u merged_peaks=%u/%u\n",
-                 nir->info.stage, peak,
-                 policy.windowed, peak_windowed, peak_free);
       NIR_PASS(_, nir, nir_opt_load_store_vectorize,
                &(const nir_load_store_vectorize_options){
                   .modes = nir_var_mem_global,
@@ -4585,8 +4573,6 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
       if (shader->data_size)
          shader->data_addr = shader->apple9_body->addr +
                              ALIGN_POT((uint64_t)shader->code_size, HK_MIN_UBO_ALIGNMENT);
-      hk_gpu_busy_shader(shader->apple9_body->addr, shader->code_ptr, shader->code_size,
-                         shader->info.stage);
       if (shader->info.stage == MESA_SHADER_COMPUTE) {
          const struct agx_apple9_compute_profile *p = &shader->info.apple9;
          struct agx_apple9_launch_template *t = malloc(sizeof(*t));
@@ -5538,8 +5524,6 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
 
    shader->code_ptr = shader->b.binary;
    shader->code_size = shader->b.info.binary_size;
-   hk_gpu_busy_shader_source(shader->code_ptr, shader->code_size, nir->info.name,
-                             nir->info.source_blake3, sw_stage);
 
    shader->info.stage = sw_stage;
    shader->info.clip_distance_array_size = nir->info.clip_distance_array_size;
@@ -6408,8 +6392,6 @@ hk_apple9_compile_tes(struct hk_device *dev, nir_shader *nir,
    layout.ignore_point_size = !layout.rasterize_points;
    NIR_PASS(_, nir, poly_nir_lower_tes, true);
    hk_apple9_lower_prerast_sysvals(nir, MESA_SHADER_TESS_EVAL);
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
-      nir_print_shader(nir, stderr);
    bool cull_mask;
    hk_assert_final_push_mask(nir, hw);
    if (!hk_apple9_compile_vertex_culls(nir, &layout, &hw->b, &cull_mask,
@@ -6711,8 +6693,6 @@ hk_apple9_compile_gs(struct hk_device *dev, nir_shader *nir,
       layout.rasterize_points = info.mode == MESA_PRIM_POINTS;
       layout.ignore_point_size = !layout.rasterize_points;
       hk_apple9_lower_prerast_sysvals(rast, MESA_SHADER_GEOMETRY);
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
-         nir_print_shader(rast, stderr);
       hk_assert_final_push_mask(rast, rast_shader);
       if (agx_compile_apple9_vertex_inputs(rast, &layout, &rast_shader->b,
                                            reason))
@@ -6782,8 +6762,6 @@ hk_apple9_compile_mesh(struct hk_device *dev, nir_shader *nir,
                   hk_apple9_lower_clip_z_coeff, nir_metadata_control_flow,
                   NULL);
       }
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
-         nir_print_shader(rast_nir, stderr);
       hk_assert_final_push_mask(rast_nir, rast);
       if (agx_compile_apple9_vertex_inputs(rast_nir, &layout, &rast->b, reason))
          result = hk_apple9_finish_shader(dev, rast, rast_nir);
@@ -7469,8 +7447,6 @@ hk_apple9_compile_graphics_path(struct hk_device *dev, uint32_t count,
              !hk_per_vertex_copies_used(&per_vertex))
             hk_apple9_strip_unread_outputs(nir);
 
-         if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
-            nir_print_shader(nir, stderr);
 
          if (stage == MESA_SHADER_VERTEX) {
             /* Native vertex pulling indexes attributes by API location. */
@@ -7763,8 +7739,6 @@ hk_apple9_compile_graphics_path(struct hk_device *dev, uint32_t count,
          }
          shader->code_ptr = shader->b.binary;
          shader->code_size = shader->b.info.binary_size;
-         hk_gpu_busy_shader_source(shader->code_ptr, shader->code_size, nir->info.name,
-                                   nir->info.source_blake3, nir->info.stage);
          shader->info.clip_distance_array_size =
             nir->info.clip_distance_array_size;
          shader->info.cull_distance_array_size =
@@ -8276,10 +8250,6 @@ hk_apple9_eager_variant(struct hk_device *dev, uint32_t count,
          api[MESA_SHADER_VERTEX] = stub;
       }
    }
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_EAGER))
-      fprintf(stderr, "HK_APPLE9_EAGER: %u stages vs=%d fs=%d flags=%#llx\n", count,
-              !!api[MESA_SHADER_VERTEX], !!api[MESA_SHADER_FRAGMENT],
-              pstate ? (unsigned long long)pstate->pipeline_flags : 0ull);
    if ((!api[MESA_SHADER_VERTEX] && !api[MESA_SHADER_MESH]) ||
        (pstate && (pstate->pipeline_flags &
                    VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)))
@@ -8747,9 +8717,6 @@ hk_apple9_compile_variant(struct hk_device *dev,
          ralloc_free(infos[i].nir);
       return result;
    }
-
-   struct hk_cpu_compile_scope scope;
-   hk_cpu_timing_compile_begin(&scope);
    /* A draw-time compile stalls the recording thread: let its register
     * allocation use one helper thread. Precompiles run on low-priority
     * threads and stay serial so bulk compiles don't oversubscribe the CPU. */
@@ -8764,9 +8731,6 @@ hk_apple9_compile_variant(struct hk_device *dev,
          dev, count, infos, NULL, key, NULL, NULL, compiled, true);
    }
    agx_apple9_set_parallel_ra(false);
-   hk_cpu_timing_compile_end(&scope, hk_apple9_eager_compile
-                                        ? HK_CPU_COMPILE_EAGER
-                                        : HK_CPU_COMPILE_DRAW);
    if (result != VK_SUCCESS) {
       for (unsigned i = 0; i < count; ++i) {
          if (compiled[i])
@@ -9203,7 +9167,6 @@ hk_compile_shaders_timed(struct vk_device *vk_dev, uint32_t shader_count,
                    const VkAllocationCallbacks *pAllocator,
                    struct vk_shader **shaders_out)
 {
-   agx_timeline_emit(100, 103, 0, shader_count, 0, 0, 0, 0, 0, 0);
    struct hk_device *dev = container_of(vk_dev, struct hk_device, vk);
    nir_shader *shaders[shader_count];
 
@@ -9301,12 +9264,9 @@ hk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
                    const VkAllocationCallbacks *pAllocator,
                    struct vk_shader **shaders_out)
 {
-   struct hk_cpu_compile_scope scope;
-   hk_cpu_timing_compile_begin(&scope);
    VkResult result = hk_compile_shaders_timed(vk_dev, shader_count, infos,
                                               state, features, pAllocator,
                                               shaders_out);
-   hk_cpu_timing_compile_end(&scope, HK_CPU_COMPILE_API);
    return result;
 }
 

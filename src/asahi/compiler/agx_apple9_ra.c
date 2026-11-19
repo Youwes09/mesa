@@ -1,4 +1,3 @@
-#include "asahi/debug.h"
 #include "c11/threads.h"
 #include "agx_compile_apple9.h"
 /*
@@ -2377,8 +2376,6 @@ apple9_allocate_candidate(struct agx_apple9_vir_program *program,
       *reason = apple9_duplicate_candidate_reason;
       goto cleanup;
    }
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_SHARED_RA))
-      agx_print_shader(ra.ctx, stderr);
    if (!agx_ra(ra.ctx)) {
       *reason = ra.ctx->ra_error;
       goto cleanup;

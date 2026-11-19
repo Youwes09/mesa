@@ -4,7 +4,6 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/debug.h"
 #include "hk_device_memory.h"
 
 #include "hk_device.h"
@@ -199,21 +198,6 @@ hk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
       }
    }
 
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_REPLAY)) {
-      const VkMemoryAllocateFlagsInfo *flags_info =
-         vk_find_struct_const(pAllocateInfo->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
-      const VkMemoryOpaqueCaptureAddressAllocateInfo *opaque_info =
-         vk_find_struct_const(pAllocateInfo->pNext,
-                              MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
-      fprintf(stderr,
-              "hk-replay: memory size=0x%" PRIx64 " type=%u flags=0x%x "
-              "requested=0x%" PRIx64 " got=0x%" PRIx64 "\n",
-              (uint64_t)pAllocateInfo->allocationSize,
-              pAllocateInfo->memoryTypeIndex,
-              flags_info ? flags_info->flags : 0,
-              opaque_info ? opaque_info->opaqueCaptureAddress : 0,
-              mem->bo->va ? mem->bo->va->addr : 0);
-   }
 
    /* Under virtio the host compositor reads WSI images with implicit sync,
     * which virglrenderer derives from a submission's external resources.

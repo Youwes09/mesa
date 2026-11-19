@@ -2960,16 +2960,6 @@ agx_apple9_validate_vir_allocation(const struct agx_apple9_vir_program *program,
       if (!encoding_tuple(instruction, program->phys, tuple, &tuple_count) ||
           !agx_apple9_encoding_accepts_gpr_tuple(instruction->encoding, tuple,
                                                  tuple_count, 32)) {
-         if (agx_apple9_trace_enabled()) {
-            fprintf(stderr,
-                    "APPLE9_VALIDATE_FAIL i=%u op=%u enc=%u dst=r%u src=", i,
-                    instruction->op, instruction->encoding,
-                    program->phys[instruction->dest]);
-            for (unsigned s = 0; s < instruction->nr_srcs; ++s)
-               fprintf(stderr, "%sr%u", s ? "," : "",
-                       program->phys[instruction->src[s]]);
-            fputc('\n', stderr);
-         }
          if (reason != NULL)
             *reason = "Apple9 allocation violates an encoding constraint";
          return false;
@@ -3990,33 +3980,6 @@ agx_apple9_allocate_vir(struct agx_apple9_vir_program *program,
       }
 
       if (selected == AGX_APPLE9_PHYS_INVALID) {
-         if (agx_apple9_trace_enabled()) {
-            fprintf(
-               stderr,
-               "APPLE9_ALLOC_FAIL i=%u op=%u dest=v%u width=%u fixed=%u live=%u peak=%u owners=",
-               i, instruction->op, instruction->dest, components,
-               program->fixed_phys[instruction->dest], live, peak);
-            for (unsigned gpr = 0; gpr <= APPLE9_LAST_ALLOCATABLE_GPR; ++gpr)
-               fprintf(stderr, "%s%d", gpr ? "," : "", owner[gpr]);
-            fputc('\n', stderr);
-            for (unsigned j = 0; j < program->instruction_count; ++j) {
-               const struct agx_apple9_vir_instr *vir =
-                  program->instructions[j];
-               fprintf(stderr, "APPLE9_ALLOC_VIR i=%u op=%u enc=%u dest=", j,
-                       vir->op, vir->encoding);
-               if (vir->dest == AGX_APPLE9_VREG_INVALID)
-                  fputs("-", stderr);
-               else
-                  fprintf(stderr, "v%u fixed=%u", vir->dest,
-                          program->fixed_phys[vir->dest]);
-               if (vir->op == AGX_APPLE9_VIR_PHI_SRC)
-                  fprintf(stderr, " target=v%u", vir->target);
-               fputs(" src=", stderr);
-               for (unsigned s = 0; s < vir->nr_srcs; ++s)
-                  fprintf(stderr, "%sv%u", s ? "," : "", vir->src[s]);
-               fprintf(stderr, " imm=%#x\n", vir->immediate);
-            }
-         }
          free(events);
          free(last_use);
          free(defined);

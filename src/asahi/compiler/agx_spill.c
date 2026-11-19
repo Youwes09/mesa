@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "util/bitset.h"
 #include "util/hash_table.h"
 #include "util/ralloc.h"
@@ -94,12 +93,6 @@ loops_exited(agx_context *ctx, const unsigned *loop_end, agx_block *pred,
    return exits;
 }
 
-
-static bool
-spill_trace_loops(void)
-{
-   return agx_apple9_debug_enabled(AGX_A9_DBG_SPILL_LOOPS);
-}
 
 struct next_uses {
    struct hash_table_u64 *ht;
@@ -1152,11 +1145,6 @@ compute_w_entry_loop_header(struct spill_ctx *ctx)
       }
       unsigned own = peak > through ? peak - through : 0;
       through_budget = own < ctx->k ? ctx->k - own : 0;
-      if (spill_trace_loops())
-         fprintf(stderr,
-                 "SPILL_LOOP header=%u end=%u k=%u live_in=%u peak=%u "
-                 "through=%u budget=%u\n",
-                 block->index, end, ctx->k, j, peak, through, through_budget);
    }
 
    /* Take as much as we can */
@@ -1182,10 +1170,6 @@ compute_w_entry_loop_header(struct spill_ctx *ctx)
          if (through)
             through_taken += comps;
       }
-      if (spill_trace_loops())
-         fprintf(stderr, "  %%%u size=%u dist=%u%s%s\n", node, comps,
-                 candidates[i].dist, through ? " through" : "",
-                 fits ? " W" : "");
    }
 
    assert(ctx->nW <= ctx->k);
@@ -1752,9 +1736,4 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
    /* Remat can introduce dead code */
    agx_dce(ctx, false);
 
-   if (spill_trace_loops()) {
-      fprintf(stderr, "SPILL_RESULT_BEGIN\n");
-      agx_print_shader(ctx, stderr);
-      fprintf(stderr, "SPILL_RESULT_END\n");
-   }
 }

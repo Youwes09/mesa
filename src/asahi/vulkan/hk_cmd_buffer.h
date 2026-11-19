@@ -523,26 +523,8 @@ enum hk_cs_type {
    HK_CS_VDM,
 };
 
-/* Why a control stream ended (HK_TIMELINE_FILE per-command records). */
-enum hk_cs_end {
-   HK_CS_END_UNKNOWN = 0,
-   HK_CS_END_CMDBUF = 1,      /* vkEndCommandBuffer */
-   HK_CS_END_RENDER_PASS = 2, /* vkCmdEndRendering */
-   HK_CS_END_BARRIER = 3,     /* pipeline barrier that split the stream */
-   HK_CS_END_EVENT = 4,       /* set/reset/wait event */
-   HK_CS_END_QUERY = 5,       /* timestamp or occlusion segment */
-   HK_CS_END_RENDER_SPLIT = 6,/* scissor/bias/state overflow, render split */
-   HK_CS_END_BEGIN_RENDER = 7,/* compute ended by vkCmdBeginRendering */
-   HK_CS_END_PASS_SPLIT = 8,  /* HK_GPU_PASS_SPLIT */
-};
-
 struct hk_cs {
    struct list_head node;
-
-   /* GPU pass attribution (diagnostic): first shader, its grid, and count. */
-   uint64_t pass_code;
-   uint32_t pass_grid[3];
-   uint32_t pass_count;
 
    /* Render merging: a draw of this stream writes memory, and an image
     * barrier was hoisted ahead of this stream (hk_cmd_sync_barrier). */
@@ -575,11 +557,6 @@ struct hk_cs {
     * place it differently. */
    uint16_t apple9_ppp_viewport_offset, apple9_ppp_viewport_words;
    uint8_t apple9_ppp_last[AGX_APPLE9_PPP_RECORD_MAX];
-
-   /* enum hk_cs_end, and whether an hk meta operation created the stream. */
-   uint8_t end_reason;
-   bool meta;
-   bool feedback_decompression, feedback_color;
 
    /* Parent command buffer. Convenience. */
    struct hk_cmd_buffer *cmd;
@@ -684,18 +661,6 @@ struct hk_cs {
     * restart indices is complicated and just checking the saved value is cheap.
     */
    uint32_t restart_index;
-
-   /* HK_TIMELINE_FILE (TL_RENDER_INFO): what this render stream targets. */
-   struct {
-      uint64_t color0, depth;          /* image identity */
-      uint32_t area;                   /* width | height << 16 */
-      uint32_t view;                   /* base mip | base layer << 8 | layers << 20 */
-      uint32_t color0_format, depth_format;
-      uint8_t color_count, samples;
-      /* bit 0 colour-0 cleared, 1 depth cleared, 2 colour-0 compressed,
-       * 3 colour-0 storage usage, 4 depth compressed */
-      uint8_t clears;
-   } diag;
 };
 
 /*
@@ -863,7 +828,6 @@ struct hk_cmd_buffer {
    bool feedback_decompress;
    bool rendering;
    struct util_dynarray feedback_raw;
-   struct hk_feedback_stats feedback_stats;
 
    /* HK_APPLE9_MERGE_RENDERS: the control stream of a render pass that has
     * ended but is kept open, so the next render pass on the same attachments
@@ -945,9 +909,6 @@ struct hk_cmd_buffer {
     * behaviour.
     */
    bool in_meta;
-
-   /* enum hk_cs_end for the next stream end (timeline diagnostics). */
-   uint8_t end_hint;
 
    /* XXX: move me?
     *
@@ -1139,11 +1100,9 @@ bool hk_render_merge_key_init(struct hk_render_merge_key *key,
                               struct hk_image_view *stencil, uint8_t ds_read_only,
                               VkRect2D area);
 void hk_cmd_empty_barriers_flush(struct hk_cmd_buffer *cmd, bool merge);
-void hk_cmd_render_merge_flush_why(struct hk_cmd_buffer *cmd, const char *why);
+void hk_cmd_render_merge_flush(struct hk_cmd_buffer *cmd);
 struct hk_cs *hk_render_merge_pre_cs(struct hk_cmd_buffer *cmd, unsigned stages);
-void hk_render_merge_trace(const char *why, uint64_t a, uint64_t b);
 bool hk_render_merge_move_enabled(void);
-#define hk_cmd_render_merge_flush(cmd) hk_cmd_render_merge_flush_why(cmd, __func__)
 
 /* Do this before an outside-render operation uploads data or changes the meta
  * state/scope: a pending clear must precede that operation in its original
@@ -1210,8 +1169,6 @@ hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
          .current = root.cpu,
          .end = root.cpu + initial_size,
          .sync_id = util_dynarray_num_elements(&cmd->sync_remap, uint32_t),
-         .meta = cmd->in_meta,
-         .feedback_decompression = cmd->feedback_decompress,
       };
 
       util_dynarray_append(&cmd->sync_remap, cs->sync_id);
@@ -1316,22 +1273,12 @@ void hk_dispatch_imm_writes(struct hk_cmd_buffer *cmd, struct hk_cs *cs);
 void hk_tess_batch_flush(struct hk_cmd_buffer *cmd);
 bool hk_tess_fold_enabled(void);
 
-/* Record why the next stream end happens, unless a caller already did. */
-static inline void
-hk_cs_end_hint(struct hk_cmd_buffer *cmd, enum hk_cs_end reason)
-{
-   if (!cmd->end_hint)
-      cmd->end_hint = reason;
-}
-
 static void
 hk_cmd_buffer_end_compute_internal(struct hk_cmd_buffer *cmd,
                                    struct hk_cs **ptr)
 {
    if (*ptr) {
       struct hk_cs *cs = *ptr;
-      if (!cs->end_reason)
-         cs->end_reason = cmd->end_hint;
 
       /* This control stream may write immediates as it ends. Queue the writes
        * now that we're done emitting everything else.
@@ -1355,7 +1302,6 @@ static void
 hk_cmd_buffer_end_compute(struct hk_cmd_buffer *cmd)
 {
    hk_cmd_buffer_end_compute_internal(cmd, &cmd->current_cs.cs);
-   cmd->end_hint = HK_CS_END_UNKNOWN;
 }
 
 void hk_optimize_empty_vdm(struct hk_cmd_buffer *cmd);
@@ -1381,8 +1327,6 @@ hk_cmd_buffer_end_graphics(struct hk_cmd_buffer *cmd)
    cmd->merge_suspended = false;
    cmd->merge_reach = 0;
    hk_cmd_buffer_end_compute_internal(cmd, &cmd->merge_pre_cs);
-   if (cs && !cs->end_reason)
-      cs->end_reason = cmd->end_hint;
    if (cs) {
       cmd->sync_render_stages = cs->sync_stages;
       cmd->sync_render_continuation = true;
@@ -1435,7 +1379,6 @@ hk_cmd_buffer_end_graphics(struct hk_cmd_buffer *cmd)
 
    assert(cmd->current_cs.pre_gfx == NULL);
    assert(cmd->current_cs.post_gfx == NULL);
-   cmd->end_hint = HK_CS_END_UNKNOWN;
 
    /* The next render must acquire and reset the geometry heap again. Mesh
     * heap releases remain in the post-graphics stream.

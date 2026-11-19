@@ -469,7 +469,7 @@ transitions(struct hk_cmd_buffer *cmd)
       cmd->in_meta = i == ARRAY_SIZE(paths) - 1;
       CHECK(hk_apple9_prepare_draw(cmd, paths[i], paths[i]));
       struct hk_cs *next = cmd->current_cs.gfx;
-      CHECK(next != prev && prev->end_reason == HK_CS_END_RENDER_SPLIT);
+      CHECK(next != prev);
       CHECK(next->current == next->start && !next->apple9_native_mesh);
       CHECK(next->cr.bg.main.usc == r->cr.bg.partial.usc);
       CHECK(prev->cr.eot.main.usc == r->cr.eot.partial.usc);

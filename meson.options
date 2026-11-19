@@ -915,9 +915,3 @@ option(
   value : false,
   description : 'Build panfrost Rust components.'
 )
-
-option('hk-cpu-sub-timing', type : 'boolean', value : false,
-       description : 'Build HK_CPU_TIMING per-draw sub-step timers (sub_* fields; small per-draw cost)')
-
-option('hk-gpu-busy-counters', type : 'boolean', value : false,
-       description : 'Build HK firmware-timestamp GPU busy intervals (runtime: HK_GPU_BUSY_FILE)')

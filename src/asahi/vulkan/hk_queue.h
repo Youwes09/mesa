@@ -15,9 +15,6 @@ struct hk_device;
 
 struct hk_queue {
    struct vk_queue vk;
-#ifdef HK_GPU_BUSY_COUNTERS
-   struct hk_gpu_busy_queue *gpu_busy;
-#endif
    struct hk_sync_state sync;
 
    /* A render that writes memory other than its attachments (stores,

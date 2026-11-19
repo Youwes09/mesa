@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "agx_compile.h"
 #include "asahi/clc/asahi_clc.h"
 #include "asahi/isa/disasm.h"
@@ -53,13 +52,6 @@ static const struct debug_named_value agx_debug_options[] = {
 
 DEBUG_GET_ONCE_FLAGS_OPTION(agx_compiler_debug, "AGX_MESA_DEBUG",
                             agx_debug_options, 0)
-
-bool
-agx_apple9_trace_enabled(void)
-{
-   /* Any value, including an empty string or "0", enables tracing. */
-   return agx_apple9_debug_enabled(AGX_A9_DBG_TRACE);
-}
 
 int agx_compiler_debug = 0;
 

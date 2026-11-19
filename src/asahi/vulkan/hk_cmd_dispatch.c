@@ -596,11 +596,6 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    cs->stats.flushes += barrier;
    cs->stats.cmds++;
    cs->stats.calls++;
-   if (!cs->pass_count++) {
-      cs->pass_code = body->addr;
-      for (unsigned i = 0; i < 3; ++i)
-         cs->pass_grid[i] = agx_is_indirect(grid) ? 0 : grid.count[i];
-   }
 }
 
 static void
@@ -657,13 +652,6 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
       cmd->api_dispatch = !cmd->in_meta;
       hk_apple9_dispatch(cmd, cs, s->apple9_body, &s->info.apple9, grid, root, s, NULL);
       cmd->api_dispatch = false;
-      static int split = -1;
-      if (split < 0)
-         split = getenv("HK_GPU_PASS_SPLIT") != NULL;
-      if (split && !cmd->in_meta) {
-         hk_cs_end_hint(cmd, HK_CS_END_PASS_SPLIT);
-         hk_cmd_buffer_end_compute(cmd);
-      }
       return;
    }
    struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, true /* compute */);

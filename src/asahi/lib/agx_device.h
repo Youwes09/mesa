@@ -109,7 +109,6 @@ struct agx_device {
 
    /* Environment options captured at device creation, immutable while in use. */
    bool apple9_direct_render;
-   bool apple9_trace;
 
    /* Precompiled libagx binary table */
    const uint32_t **libagx_programs;

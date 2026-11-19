@@ -1,10 +1,6 @@
 # Copyright © 2022 Collabora Ltd. and Red Hat Inc.
 # SPDX-License-Identifier: MIT
 hk_files = files(
-  'agx_timeline.c',
-  'hk_gpu_busy.c',
-  'hk_gpu_busy.h',
-  'hk_gpu_busy_intervals.h',
   'hk_buffer.c',
   'hk_buffer.h',
   'hk_buffer_view.c',
@@ -29,7 +25,6 @@ hk_files = files(
   'hk_descriptor_table.c',
   'hk_descriptor_table.h',
   'hk_device.c',
-  'hk_cpu_timing.c',
   'hk_device.h',
   'hk_device_memory.c',
   'hk_device_memory.h',
@@ -101,17 +96,6 @@ hk_deps = [
   idep_libagx_shaders_h,
 ]
 
-hk_diagnostic_c_args = []
-if get_option('hk-cpu-sub-timing')
-  hk_diagnostic_c_args += '-DHK_CPU_SUB_TIMING=1'
-endif
-if get_option('hk-gpu-busy-counters')
-  if host_machine.system() != 'linux'
-    error('HK GPU busy diagnostics currently require Linux')
-  endif
-  hk_diagnostic_c_args += '-DHK_GPU_BUSY_COUNTERS=1'
-endif
-
 hk_native_index_classes = custom_target(
   'hk_apple9_native_index_classes.h',
   input : 'hk_apple9_native_index_shapes.def',
@@ -138,7 +122,7 @@ libhk = static_library(
     inc_virtio_vdrm,
   ],
   link_with : [libasahi_lib, libasahi_layout, libasahi_compiler],
-  c_args : ['-Wno-c2x-extensions'] + hk_diagnostic_c_args,
+  c_args : ['-Wno-c2x-extensions'],
   dependencies : [hk_deps],
   gnu_symbol_visibility : 'hidden',
 )
@@ -268,16 +252,6 @@ if with_tests
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [hk_deps], link_with : [libhk]),
     suite : ['asahi', 'honeykrisp'])
-  compiler_env_test = executable(
-    'hk-compiler-env', 'tests/hk-compiler-env.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-compiler-env', prog_python,
-    args : [files('tests/check-hk-compiler-env.py'), compiler_env_test],
-    suite : ['asahi', 'honeykrisp'],
-  )
   test('hk-shader-memory', executable('hk-shader-memory', 'tests/hk-shader-memory.c',
     include_directories : [inc_gallium, inc_gallium_aux, inc_include,
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
@@ -647,21 +621,4 @@ if with_tests
     suite : ['asahi'],
     protocol : 'gtest',
   )
-endif
-
-if with_tests
-  test(
-    'hk_gpu_busy',
-    executable(
-      'hk_gpu_busy_test', 'tests/hk-gpu-busy.cpp',
-      include_directories : include_directories('.'),
-      dependencies : idep_gtest,
-    ),
-    protocol : 'gtest',
-  )
-endif
-
-if with_tests
-  test('hk_gpu_busy_decode', prog_python,
-       args : files('tests/hk-gpu-busy-decode.py'))
 endif

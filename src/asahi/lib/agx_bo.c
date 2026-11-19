@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "agx_bo.h"
 #include <inttypes.h>
 #include <dlfcn.h>
@@ -523,9 +522,6 @@ agx_bo_finish_create(struct agx_device *dev, struct agx_bo *bo,
       *bo->shim_cpu_epoch = 0; /* Cache reuse must opt in again. */
    bo->label = label;
    agx_shader_body_init_bo(bo);
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_BO_LABELS))
-      fprintf(stderr, "AGX_BO_LABEL fd=%d handle=%u flags=%u size=%zu label=%s\n",
-              dev->fd, bo->uapi_handle, bo->flags, bo->size, label);
    p_atomic_set(&bo->refcnt, 1);
 
    if (dev->debug & AGX_DBG_TRACE) {

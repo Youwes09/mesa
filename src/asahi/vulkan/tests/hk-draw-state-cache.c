@@ -50,7 +50,7 @@ main(void)
    }
    CHECK((uint8_t *)cs.current - emitted == end - expected);
    CHECK(!memcmp(emitted, expected, end - expected));
-   CHECK(cs.stats.cmds == 2 && cs.pass_count == 2 && cs.primitive_count == 2);
+   CHECK(cs.stats.cmds == 2 && cs.primitive_count == 2);
    CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) == 1);
    const struct hk_sync_event *event = cmd->sync_events.data;
    CHECK(event->stream == cs.sync_id);
@@ -117,7 +117,7 @@ main(void)
    hk_apple9_draw(cmd, 0, draw);
    CHECK((uint8_t *)cs.current - emitted == end - expected);
    CHECK(!memcmp(emitted, expected, end - expected));
-   CHECK(cs.stats.cmds == 27 && cs.pass_count == 27);
+   CHECK(cs.stats.cmds == 27);
 
    /* Root/push changes update tables and launches in the reuse path; they
     * must not force rebuilding the unchanged raster state. */

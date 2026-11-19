@@ -797,7 +797,6 @@ agx_open_device(void *memctx, struct agx_device *dev)
 
    /* Apple9 GPUs require their generation-specific graphics path. */
    dev->apple9_direct_render = agx_is_apple9(dev);
-   dev->apple9_trace = agx_apple9_trace_enabled();
 
    if (agx_is_apple9(dev)) {
       simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);

@@ -250,20 +250,6 @@ hk_meta_decompress_hit(struct hk_cmd_buffer *cmd, const struct hk_image *image,
                        unsigned level, unsigned layer)
 {
    bool hit = hk_feedback_is_raw(cmd, image, level, layer);
-   if (unlikely(hk_cpu_level)) {
-      cmd->feedback_stats.calls++;
-      if (hit) {
-         cmd->feedback_stats.hits++;
-      } else {
-         cmd->feedback_stats.misses++;
-         for (unsigned p = 0; p < image->plane_count; ++p) {
-            cmd->feedback_stats.bytes +=
-               (uint64_t)u_minify(image->vk.extent.width, level) *
-               u_minify(image->vk.extent.height, level) *
-               util_format_get_blocksize(image->planes[p].layout.format);
-         }
-      }
-   }
    return hit;
 }
 

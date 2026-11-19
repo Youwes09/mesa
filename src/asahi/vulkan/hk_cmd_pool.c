@@ -49,10 +49,8 @@ hk_cmd_bo_create(struct hk_cmd_pool *pool, enum hk_cmd_pool_kind kind,
       "USC command pool",
       "Render context command pool",
    };
-   uint64_t t_bo = hk_cpu_sub_begin();
    bo->bo = agx_bo_create(&dev->dev, HK_CMD_BO_SIZE, 0,
                           hk_cmd_pool_bo_flags(dev, kind), labels[kind]);
-   hk_cpu_sub_end(t_bo, HK_CPU_SUB_CMD_BO);
    if (bo->bo == NULL) {
       vk_free(&dev->vk.alloc, bo);
       return vk_error(pool, VK_ERROR_OUT_OF_DEVICE_MEMORY);
@@ -177,8 +175,6 @@ hk_cmd_pool_free_bo_list(struct hk_cmd_pool *pool, enum hk_cmd_pool_kind kind,
    simple_mtx_unlock(&cache->lock);
 
    list_for_each_entry_safe(struct hk_cmd_bo, bo, &excess, link) {
-      hk_cpu_sub_count(release ? HK_CPU_SUB_CMD_BO_DESTROY_RELEASE
-                               : HK_CPU_SUB_CMD_BO_DESTROY_CAP);
       hk_cmd_bo_destroy(dev, bo);
    }
 }

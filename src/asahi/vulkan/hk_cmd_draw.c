@@ -745,7 +745,6 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
     * an earlier pass stored but this one does not would lose the earlier
     * pass's results outside this pass's render area. */
    if (cmd->merge_store_mask & ~store_mask) {
-      hk_render_merge_trace("begin: store", cmd->merge_store_mask, store_mask);
       return false;
    }
 
@@ -992,8 +991,6 @@ hk_feedback_prepare_draw(struct hk_cmd_buffer *cmd)
       render->raw_zs ? NULL : hk_feedback_zs_view(cmd, &info);
    if (!mask && !zs_view)
       return true;
-
-   hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
    hk_cmd_buffer_end_graphics(cmd);
    struct hk_rendering_state saved = *render;
    if (!hk_feedback_decompress(cmd, &info, mask, zs_view))
@@ -1064,11 +1061,7 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       if (merge)
          hk_cmd_empty_barriers_flush(cmd, true);
       if (!merge) {
-         hk_render_merge_trace(cmd->in_meta ? "begin: meta" : "begin: mismatch",
-                               pRenderingInfo->colorAttachmentCount,
-                               pRenderingInfo->colorAttachmentCount ?
-                                  pRenderingInfo->pColorAttachments[0].loadOp : ~0ull);
-         hk_cmd_render_merge_flush_why(cmd, NULL);
+         hk_cmd_render_merge_flush(cmd);
       }
    }
 
@@ -1433,8 +1426,6 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
    /* Reordering barrier for post-gfx, in case we had any. */
    hk_cmd_buffer_end_compute_internal(cmd, &cmd->current_cs.post_gfx);
-
-   hk_cs_end_hint(cmd, HK_CS_END_BEGIN_RENDER);
    /* Don't reorder compute across render passes.
     *
     * TODO: Check if this is necessary if the proper PipelineBarriers are
@@ -1617,7 +1608,6 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
          } else {
             cmd->merge_cs = NULL;
             cmd->merge_empty = false;
-            hk_cs_end_hint(cmd, HK_CS_END_RENDER_PASS);
             hk_cmd_buffer_end_graphics(cmd);
          }
       }
@@ -1627,23 +1617,6 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
       assert(cmd->merge_event != HK_SYNC_NONE &&
              "a stream with draws has a sync event");
    } else {
-      if (cs) {
-         /* Why this render is not kept open (diagnostic). */
-         bool resolve = false;
-         for (unsigned i = 0; i < render->color_att_count; ++i)
-            resolve |= render->color_att[i].resolve_mode != VK_RESOLVE_MODE_NONE;
-         hk_render_merge_trace(
-            "end: ineligible",
-            (render->depth_att.iview || render->stencil_att.iview) |
-               resolve << 1 | cmd->sync_fallback << 2 |
-               (cmd->current_cs.pre_gfx || cmd->current_cs.post_gfx) << 3 |
-               !!cmd->tess_batch.draws << 4 |
-               !!cmd->state.gfx.occlusion.active_count << 5 | cmd->in_meta << 6 |
-               (cmd->vk.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY) << 7 |
-               !cs->stats.cmds << 8 | !render->color_att_count << 9,
-            render->flags);
-      }
-      hk_cs_end_hint(cmd, HK_CS_END_RENDER_PASS);
       hk_cmd_buffer_end_graphics(cmd);
    }
 
@@ -3377,10 +3350,6 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       grid_vs = grid_gs = draw.b;
       grid_gs.count[0] = u_decomposed_prims_for_vertices(mode, draw.b.count[0]);
    }
-
-   hk_cpu_timing_note_gs(count->info.gs.shape, agx_is_indirect(draw.b),
-                         (uint64_t)grid_gs.count[0] * grid_gs.count[1],
-                         count->info.gs.max_indices);
 
    /* Transform feedback and geometry statistics need the count and pre-GS
     * programs.
@@ -5171,15 +5140,11 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    polygon_points &= !xfb_outputs;
    /* A per-vertex cull mask is the primitive's only for points. */
    bool cull_mask = last_sw->info.cull_mask;
-   /* Each reason for a passthrough GS, also counted under HK_CPU_TIMING. */
-   unsigned reasons = (xfb_outputs ? HK_CPU_PTGS_XFB : 0) |
-                      (stipple_gs ? HK_CPU_PTGS_STIPPLE : 0) |
-                      (polygon_points ? HK_CPU_PTGS_POINTS : 0) |
-                      (cull_mask &&
-                             u_reduced_prim(hk_gs_in_prim(cmd)) != MESA_PRIM_POINTS
-                          ? HK_CPU_PTGS_CULL_MASK : 0);
+   bool needed = xfb_outputs || stipple_gs || polygon_points ||
+                 (cull_mask &&
+                  u_reduced_prim(hk_gs_in_prim(cmd)) != MESA_PRIM_POINTS);
    for (unsigned i = 0; i < ARRAY_SIZE(gfx->pg_query); ++i)
-      reasons |= gfx->pg_query[i] ? HK_CPU_PTGS_PG_QUERY : 0;
+      needed |= gfx->pg_query[i] != 0;
 
    /* ...or to give the fragment shader flat copies of per-vertex inputs */
    struct hk_api_shader *fs_api_copies = gfx->shaders[MESA_SHADER_FRAGMENT];
@@ -5191,11 +5156,11 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
           ((fs_copies->info.fs.per_vertex_bary[0] ||
             fs_copies->info.fs.per_vertex_bary[1]) &&
            !weights_by_vs))
-         reasons |= HK_CPU_PTGS_FS_COPIES;
+         needed = true;
    }
 
    /* If we don't need a GS but we do have a passthrough, unbind it */
-   if (!reasons) {
+   if (!needed) {
       if (gs != NULL) {
          assert(gs->is_passthrough);
          hk_cmd_bind_graphics_shader(cmd, MESA_SHADER_GEOMETRY, NULL);
@@ -5204,7 +5169,6 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    }
 
    /* Else, we need to bind a passthrough GS */
-   hk_cpu_timing_note_ptgs(reasons);
    size_t key_size = poly_passthrough_gs_key_size(xfb_outputs);
    struct poly_passthrough_gs_key *key = alloca(key_size);
 
@@ -5680,11 +5644,9 @@ hk_apple9_resolve_shaders(struct hk_cmd_buffer *cmd, bool prefer_native)
    BITSET_SET(state.dynamic, MESA_VK_DYNAMIC_CB_COLOR_WRITE_ENABLES);
 
    struct hk_api_shader *out[HK_APPLE9_GFX_STAGES];
-   uint64_t t_slow = hk_cpu_sub_begin();
    VkResult result = hk_apple9_resolve_graphics(dev, gfx->apple9_api, &state,
                                                 out, prefer_native,
                                                 fs_statistics);
-   hk_cpu_sub_end(t_slow, HK_CPU_SUB_RESOLVE_SLOW);
    if (result != VK_SUCCESS) {
       vk_command_buffer_set_error(&cmd->vk, result);
       return false;
@@ -6055,7 +6017,6 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (!defer_prepare &&
           !hk_apple9_prepare_draw(cmd, agx_is_indirect(draw_.b) || draw_.indexed, false))
          return;
-      uint64_t t_resolve = hk_cpu_sub_begin();
       const struct hk_graphics_state *gfx = &cmd->state.gfx;
       mesa_shader_stage producer = gfx->shaders[MESA_SHADER_GEOMETRY]
                                       ? MESA_SHADER_GEOMETRY
@@ -6069,7 +6030,6 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
              ? hk_apple9_native_gs_state_eligible(cmd, draw_)
              : hk_apple9_native_tess_state_eligible(cmd, draw_));
       bool resolved = hk_apple9_resolve_shaders(cmd, prefer_native);
-      hk_cpu_sub_end(t_resolve, HK_CPU_SUB_RESOLVE);
       if (!resolved)
          return;
       if (cmd->feedback_raw.size) {
@@ -6192,24 +6152,13 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
             draw = hk_apple9_draw_without_adj(cmd, draw);
          else if (!cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
                   !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-                  hk_apple9_needs_index_copy(cmd, draw)) {
-            uint64_t t = hk_cpu_sub_begin();
+                  hk_apple9_needs_index_copy(cmd, draw))
             draw = hk_apple9_robust_index(cmd, draw);
-            hk_cpu_sub_end(t, HK_CPU_SUB_ROBUST_INDEX);
-         }
-         if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL]) {
-            uint64_t t = hk_cpu_sub_begin();
+         if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
             draw = hk_apple9_launch_tess(cmd, draw, false);
-            hk_cpu_sub_end(t, HK_CPU_SUB_TESS);
-         }
-         if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY]) {
-            uint64_t t = hk_cpu_sub_begin();
+         if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
             draw = hk_apple9_launch_gs(cmd, draw);
-            hk_cpu_sub_end(t, HK_CPU_SUB_GS);
-         }
-         uint64_t t = hk_cpu_sub_begin();
          hk_apple9_draw(cmd, draw_id, draw);
-         hk_cpu_sub_end(t, HK_CPU_SUB_A9DRAW);
       }
       return;
    }

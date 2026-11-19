@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "util/u_debug.h"
 #include "agx_compile_apple9.h"
 #include "asahi/lib/agx_abi.h"
 #include "agx_apple9_ir.h"
+#include "agx_compiler.h"
+#include "agx_debug.h"
 #include "agx_apple9_dag_cache.h"
 #include "agx_apple9_mesh.h"
 #include "agx_nir.h"
@@ -3546,7 +3547,7 @@ apple9_find_buffer_dag(nir_shader *nir, const struct apple9_buffer_map *map,
       nir_foreach_instr(instr, block) {
          if (!apple9_instruction_is_in_subset(
                 instr, nir->info.stage != MESA_SHADER_COMPUTE)) {
-            if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR)) {
+            if (agx_compiler_debug & AGX_DBG_SHADERS) {
                fprintf(stderr, "Apple9 unsupported instruction: ");
                nir_print_instr(instr, stderr);
                fprintf(stderr, "\n");
@@ -6155,7 +6156,7 @@ apple9_log(void)
 void
 agx_apple9_dump_info(const struct agx_shader_info *info)
 {
-   if (!agx_apple9_debug_enabled(AGX_A9_DBG_ASM))
+   if (!(agx_compiler_debug & AGX_DBG_SHADERS))
       return;
    FILE *f = apple9_log();
    fprintf(f, "APPLE9_INFO stage=%u body_only=%u tri_merge_off=%u tag_write_off=%u "
@@ -6254,7 +6255,7 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
       agx_nir_hoist_apple9_samples(nir);
    if (!agx_nir_lower_apple9_object_calls(nir, reason))
       return false;
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_FINAL_NIR))
+   if (agx_compiler_debug & AGX_DBG_SHADERS)
       nir_print_shader(nir, apple9_log());
 
    struct util_dynarray loads = UTIL_DYNARRAY_INIT;
@@ -6577,36 +6578,6 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
        !agx_apple9_layout_object_calls(&lower.program, reason))
       goto fail;
 
-   if (agx_apple9_trace_enabled()) {
-      fprintf(apple9_log(), "APPLE9_ALLOC_STATS stage=%u peak_live_gprs=%u publications=%u scratch_bytes=%u spill_slots=%u\n",
-              nir->info.stage, lower.program.peak_live_gprs,
-              lower.program.publication_count, lower.program.scratch_size,
-              lower.program.spill_slots);
-      for (unsigned i = 0; i < lower.program.instruction_count; ++i) {
-         const struct agx_apple9_vir_instr *instruction =
-            lower.program.instructions[i];
-         fprintf(apple9_log(), "APPLE9_ALLOC i=%u op=%u enc=%u dst=", i,
-                 instruction->op, instruction->encoding);
-         if (instruction->dest == AGX_APPLE9_VREG_INVALID)
-            fputs("-", apple9_log());
-         else
-            fprintf(apple9_log(), "%c%u",
-                    lower.program.publication[instruction->dest] ? 'p' : 'r',
-                    lower.program.phys[instruction->dest]);
-         if (instruction->op == AGX_APPLE9_VIR_PHI_SRC)
-            fprintf(apple9_log(), " target=r%u",
-                    lower.program.phys[instruction->target]);
-         fputs(" src=", apple9_log());
-         for (unsigned s = 0; s < instruction->nr_srcs; ++s)
-            fprintf(apple9_log(), "%s%c%u", s ? "," : "",
-                    lower.program.publication[instruction->src[s]] ? 'p' : 'r',
-                    lower.program.phys[instruction->src[s]]);
-         fprintf(apple9_log(), " imm=%#x live=%#x slot=%u producer_slot=%u\n",
-                 instruction->immediate, instruction->live_after_mask,
-                 instruction->scoreboard_slot,
-                 instruction->producer_scoreboard_slot);
-      }
-   }
 
    struct apple9_emitter emitter = {.bytes = UTIL_DYNARRAY_INIT};
    struct agx_apple9_packed_instruction packed;
@@ -6633,53 +6604,11 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
       if (!agx_apple9_pack_vir_instruction(instruction, lower.program.phys,
                                            &packed, reason) ||
           !apple9_emit_packed(&emitter, &packed)) {
-         if (agx_apple9_trace_enabled()) {
-            fprintf(apple9_log(), "APPLE9_PACK_FAIL i=%u op=%u enc=%u dst=", i,
-                    instruction->op, instruction->encoding);
-            if (instruction->dest == AGX_APPLE9_VREG_INVALID)
-               fputs("-", apple9_log());
-            else
-               fprintf(apple9_log(), "%c%u",
-                       lower.program.publication[instruction->dest] ? 'p' : 'r',
-                       lower.program.phys[instruction->dest]);
-            fputs(" src=", apple9_log());
-            for (unsigned s = 0; s < instruction->nr_srcs; ++s)
-               fprintf(apple9_log(), "%s%c%u", s ? "," : "",
-                       lower.program.publication[instruction->src[s]] ? 'p' : 'r',
-                       lower.program.phys[instruction->src[s]]);
-            fprintf(apple9_log(), " tex=%u samp=%u dim=%u fetch=%u ms=%u shadow=%u "
-                    "imm=%u comps=%u mask=%x slot=%u\n",
-                    instruction->texture_index, instruction->sampler_index,
-                    instruction->texture_dimension, instruction->texture_fetch,
-                    instruction->texture_multisampled,
-                    instruction->texture_shadow, instruction->immediate,
-                    instruction->dest_components,
-                    instruction->texture_result_mask,
-                    instruction->producer_scoreboard_slot);
-         }
          if (*reason == NULL)
             *reason = "Apple9 DAG instruction pack failed";
          util_dynarray_fini(&emitter.bytes);
          free(vir_offsets);
          goto fail;
-      }
-      if (agx_apple9_trace_enabled()) {
-         fprintf(apple9_log(), "APPLE9_VIR i=%u op=%u enc=%u dst=", i,
-                 instruction->op, instruction->encoding);
-         if (instruction->dest == AGX_APPLE9_VREG_INVALID)
-            fputs("-", apple9_log());
-         else
-            fprintf(apple9_log(), "%c%u",
-                    lower.program.publication[instruction->dest] ? 'p' : 'r',
-                    lower.program.phys[instruction->dest]);
-         fputs(" src=", apple9_log());
-         for (unsigned s = 0; s < instruction->nr_srcs; ++s)
-            fprintf(apple9_log(), "%s%c%u", s ? "," : "",
-                    lower.program.publication[instruction->src[s]] ? 'p' : 'r',
-                    lower.program.phys[instruction->src[s]]);
-         fprintf(apple9_log(), " live=%#x slot=%u producer_slot=%u\n",
-                 instruction->live_after_mask, instruction->scoreboard_slot,
-                 instruction->producer_scoreboard_slot);
       }
    }
    vir_offsets[lower.program.instruction_count] = emitter.bytes.size;
@@ -6729,7 +6658,7 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
    }
    /* List final packed bytes after branch fixups, without changing codegen.
     * A row can contain multiple instructions for an expanded VIR pseudo. */
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_ASM)) {
+   if (agx_compiler_debug & AGX_DBG_SHADERS) {
       fprintf(apple9_log(), "%s_ASM_BEGIN stage=%u\n",
               preamble ? "APPLE9_PREAMBLE" : "APPLE9", nir->info.stage);
       for (unsigned i = 0; i < lower.program.instruction_count; ++i) {
@@ -6755,13 +6684,6 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
       fputs("APPLE9_ASM_END\n", apple9_log());
    }
    free(vir_offsets);
-   if (agx_apple9_trace_enabled()) {
-      fputs("APPLE9_BINARY ", apple9_log());
-      const uint8_t *binary = emitter.bytes.data;
-      for (unsigned i = 0; i < emitter.bytes.size; ++i)
-         fprintf(apple9_log(), "%02x", binary[i]);
-      fputc('\n', apple9_log());
-   }
    if (!lower.object_calls)
       apple9_emit_stop(&emitter);
    if (cost) {
@@ -6786,7 +6708,7 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
          }
       }
    }
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_STATS)) {
+   if (agx_compiler_debug & AGX_DBG_SHADERDB) {
       unsigned copies = 0, waits = 0, saves = 0, fills = 0;
       for (unsigned i = 0; i < lower.program.instruction_count; ++i) {
          const struct agx_apple9_vir_instr *ins = lower.program.instructions[i];
@@ -6867,13 +6789,6 @@ apple9_compile_dag_once(nir_shader *nir, struct agx_shader_part *out,
                                   lower.per_vertex_count;
    out->info.main_size = emitter.bytes.size;
    out->info.binary_size = emitter.bytes.size;
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_BINARY)) {
-      fprintf(apple9_log(), "APPLE9_BINARY stage=%u size=%u ", nir->info.stage,
-              (unsigned)emitter.bytes.size);
-      for (unsigned i = 0; i < emitter.bytes.size; ++i)
-         fprintf(apple9_log(), "%02x", ((const uint8_t *)emitter.bytes.data)[i]);
-      fprintf(apple9_log(), "\n");
-   }
    /* nr_gprs is the architectural GPR high-water mark for Apple9.  Keep the
     * established minimum tier, but do not collapse every program using r16+
     * back to the old 16-register capture tier. */
@@ -7892,8 +7807,6 @@ apple9_try_preamble(nir_shader *nir, struct agx_shader_part *out,
          }
       }
    }
-   if (agx_apple9_trace_enabled() && candidate_reason)
-      fprintf(stderr, "APPLE9_PREAMBLE_FALLBACK %s\n", candidate_reason);
    *setup_spilled = setup.info.scratch_size != 0;
    *preamble_bytes = setup.info.main_size;
    *preamble_words = sizes[nir_preamble_class_general];
@@ -7952,13 +7865,9 @@ apple9_preamble_trial(nir_shader *nir, struct agx_shader_part *out,
       if (setup_spilled && setup_retried)
          *setup_retried = true;
       if (setup_spilled && apple9_safe_reads_enabled()) {
-         if (agx_apple9_trace_enabled())
-            fprintf(stderr, "APPLE9_PREAMBLE_RETRY setup spilled: safe reads dropped\n");
          apple9_safe_reads_override = 0;
       } else if (setup_spilled) {
          budget = MIN2(budget, words) / 2;
-         if (agx_apple9_trace_enabled())
-            fprintf(stderr, "APPLE9_PREAMBLE_RETRY setup spilled: budget %u\n", budget);
       } else if (bytes <= max_bytes) {
          break;
       } else if (promote_constants) {
@@ -8438,7 +8347,7 @@ apple9_compile_workgroup_body(nir_shader *nir, struct agx_shader_part *out,
    nir_lower_alu_to_scalar(nir, NULL, NULL);
    nir_lower_all_phis_to_scalar(nir);
 
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
+   if (agx_compiler_debug & AGX_DBG_SHADERS)
       nir_print_shader(nir, stderr);
 
    const char *reason = NULL;
@@ -8475,7 +8384,7 @@ apple9_compile_workgroup_body(nir_shader *nir, struct agx_shader_part *out,
 unsupported:
    if (reason_out != NULL)
       *reason_out = reason;
-   if (agx_apple9_debug_enabled(AGX_A9_DBG_NIR))
+   if (agx_compiler_debug & AGX_DBG_SHADERS)
       fprintf(stderr, "Apple9 compute compilation failed: %s\n",
               reason ? reason : "unknown reason");
    return false;
@@ -11362,8 +11271,6 @@ apple9_compile_graphics(nir_shader *nir, struct agx_shader_part *out,
             continue;
          nir_tex_instr *tex = nir_instr_as_tex(instr);
          if (!apple9_texture_supported(tex)) {
-            if (agx_apple9_trace_enabled())
-               nir_print_instr(instr, stderr);
             *reason = "Apple9 requires supported FP32 texture operations";
             return false;
          }
@@ -11412,8 +11319,6 @@ apple9_compile_graphics(nir_shader *nir, struct agx_shader_part *out,
             "Apple9 graphics requires at most 32 supported buffer bindings";
       return false;
    }
-   if (agx_apple9_trace_enabled())
-      nir_print_shader(nir, stderr);
    if (layout) {
       for (unsigned i = 0; i < ARRAY_SIZE(varyings.mask); ++i) {
          if (varyings.mask[i])

@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "util/u_debug.h"
 #include "util/bitset.h"
 #include "util/macros.h"
@@ -19,7 +18,6 @@
 #include "agx_opcodes.h"
 #include "shader_enums.h"
 
-#include "agx_ra_audit.h"
 
 
 /* SSA-based register allocator */
@@ -344,44 +342,6 @@ reserved_size(agx_context *ctx)
 
 static unsigned preferred_phi_register(struct ra_ctx *rctx, unsigned ssa,
                                        bool available);
-
-/* Opt-in evidence for failed phi-web affinities; never changes placement. */
-static void
-pressure_web_event(struct ra_ctx *rctx, unsigned ssa, const char *event,
-                   unsigned chosen, const struct agx_reg_constraint *constraint)
-{
-   if (pressure_audit.ctx != rctx->shader ||
-       !agx_apple9_debug_enabled(AGX_A9_DBG_RA_WEBS) || rctx->classes[ssa] != RA_GPR)
-      return;
-   unsigned root = phi_web_find(rctx->phi_web, ssa);
-   unsigned want = preferred_phi_register(rctx, ssa, false);
-   unsigned count = rctx->ncomps[ssa];
-   fprintf(stderr, "RA_WEB_%s id=%u block=%u loop=%u ssa=%u web=%u "
-           "op=%s want=%u chosen=%u width=%u bound=%u min=%u max=%u align=%u owners=",
-           event, pressure_audit.serial, rctx->block->index,
-           rctx->block->loop_header, ssa, root,
-           agx_opcodes_info[rctx->instr->op].name, want, chosen, count,
-           rctx->bound[RA_GPR], constraint ? constraint->min : 0,
-           constraint ? constraint->max : rctx->bound[RA_GPR] - count,
-           constraint ? constraint->align : count);
-   if (want != ~0u) {
-      for (unsigned reg = reserved_size(rctx->shader);
-           reg < rctx->bound[RA_GPR];) {
-         if (!BITSET_TEST(rctx->used_regs[RA_GPR], reg)) {
-            ++reg;
-            continue;
-         }
-         unsigned owner = rctx->reg_to_ssa[reg];
-         unsigned width = rctx->ncomps[owner];
-         assert(width);
-         if (reg < want + count && want < reg + width)
-            fprintf(stderr, "%u:%u:%u:%u,", owner,
-                    phi_web_find(rctx->phi_web, owner), reg, width);
-         reg += width;
-      }
-   }
-   fputc('\n', stderr);
-}
 
 UNUSED static void
 print_reg_file(struct ra_ctx *rctx, FILE *fp)
@@ -1150,7 +1110,6 @@ agx_emit_move_before_phi(agx_context *ctx, agx_block *block,
 
    agx_instr *phi = agx_phi_to(&b, agx_register_like(copy->dest, copy->src),
                                agx_num_predecessors(block));
-   pressure_tag_phi(ctx, phi, "eviction-reconcile");
    assert(!copy->src.kill);
 
    agx_foreach_src(phi, s) {
@@ -1259,7 +1218,6 @@ reserve_live_in(struct ra_ctx *rctx)
       if (nr_preds > 1) {
          /* We'll fill in the destination after, to coalesce one of the moves */
          agx_instr *phi = agx_phi_to(&b, agx_null(), nr_preds);
-         pressure_tag_phi(rctx->shader, phi, "live-in-reconcile");
 
          agx_foreach_predecessor(rctx->block, pred) {
             unsigned pred_idx = agx_predecessor_index(rctx->block, *pred);
@@ -1310,7 +1268,6 @@ static void
 assign_regs(struct ra_ctx *rctx, agx_index v, unsigned reg)
 {
    enum ra_class cls = ra_class_for_index(v);
-   pressure_web_event(rctx, v.value, "ASSIGN", reg, NULL);
    assert(reg < rctx->bound[cls] && "must not overflow register file");
    assert(v.type == AGX_INDEX_NORMAL && "only SSA gets registers allocated");
    set_ssa_to_reg(rctx, v.value, reg);
@@ -1440,8 +1397,6 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
       }
    }
 
-   if (!defined)
-      pressure_web_event(rctx, ssa, "CHOOSE", ~0u, &c);
    if (defined) {
       unsigned reg = rctx->ssa_to_reg[ssa];
       if (reg >= first && reg <= last && !(reg % align)) {
@@ -1807,7 +1762,6 @@ pick_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
 
    unsigned align = count;
 
-   pressure_web_event(rctx, idx.value, "CHOOSE", ~0u, NULL);
    unsigned preferred = preferred_phi_register(rctx, idx.value, true);
    if (preferred != ~0u)
       return preferred;
@@ -2209,7 +2163,6 @@ agx_insert_parallel_copies(agx_context *ctx, agx_block *block)
       unsigned i = 0;
 
       agx_foreach_phi_in_block(succ, phi) {
-         pressure_audit_edge(ctx, block, succ, phi, pred_index);
          agx_index dest = phi->dest[0];
          agx_index src = phi->src[pred_index];
 
@@ -2321,7 +2274,6 @@ constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
 bool
 agx_ra(agx_context *ctx)
 {
-   pressure_audit_begin(ctx);
    ctx->ra_error = NULL;
    /* Destructive input operands get a private SSA lifetime. Ordinary move
     * coalescing removes the copy when the original value dies here. */
@@ -2423,7 +2375,6 @@ agx_ra(agx_context *ctx)
    }
 
    if (!validate_constraint_windows(ctx, max_possible_regs)) {
-      pressure_audit_end(ctx);
       return false;
    }
 
@@ -2463,10 +2414,8 @@ agx_ra(agx_context *ctx)
              "internal shaders are unspillable");
 
       agx_spill(ctx, max_possible_regs, remat);
-      pressure_audit_spilled(ctx);
 
       if (!validate_constraint_windows(ctx, max_possible_regs)) {
-         pressure_audit_end(ctx);
          return false;
       }
 
@@ -2481,7 +2430,6 @@ agx_ra(agx_context *ctx)
    if (ctx->ra_target.within_spill_budget &&
        !ctx->ra_target.within_spill_budget(ctx, ctx->ra_target.spill_budget_data)) {
       ctx->ra_error = "Register allocation candidate exceeds spill budget";
-      pressure_audit_end(ctx);
       return false;
    }
 
@@ -2781,7 +2729,6 @@ agx_ra(agx_context *ctx)
 
    assert(ctx->max_reg <= max_regs);
 
-   pressure_audit_phis(ctx);
 
    /* Validate RA after assigning registers just before lowering SSA */
    agx_validate_ra(ctx);
@@ -2924,7 +2871,6 @@ cleanup:
       block->nr_ssa_to_reg_out = 0;
    }
 
-   pressure_audit_end(ctx);
    ralloc_free(web_memctx);
    free(phi_web);
    free(src_to_collect);

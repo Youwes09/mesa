@@ -468,8 +468,6 @@ enum hk_pre_raster_reads {
    /* hk-internal pre-rasterization work (meta, transform feedback,
     * tessellation, geometry): keep the tiling wait. */
    HK_READS_INTERNAL = BITFIELD_BIT(3),
-   /* A meta draw (statistics only; its shaders carry their own class). */
-   HK_READS_META = BITFIELD_BIT(4),
    /* A pre-rasterization stage stores to memory or runs atomics
     * (vertexPipelineStoresAndAtomics): keep the tiling wait. */
    HK_READS_WRITES = BITFIELD_BIT(5),

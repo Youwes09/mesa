@@ -1973,11 +1973,6 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
 
    NIR_PASS(_, nir, agx_nir_lower_multisampled_image_store);
 
-   if (apple9_render && dev->apple9_trace) {
-      fprintf(stderr, "APPLE9_RENDER_NIR stage=%s before bounded compiler\n",
-              _mesa_shader_stage_to_abbrev(so->type));
-      nir_print_shader(nir, stderr);
-   }
 
    struct agx_shader_part apple9_stage = {0};
    struct agx_apple9_texture_mapping apple9_texture_mapping = {0};
@@ -3510,11 +3505,6 @@ agx_build_meta_shader_internal(struct agx_context *ctx,
    builder(&b, data);
 
    struct agx_device *dev = agx_device(ctx->base.screen);
-   if (agx_apple9_direct_render_enabled(dev) && dev->apple9_trace &&
-       builder == agx_nir_vs_prolog) {
-      fprintf(stderr, "APPLE9_RENDER_NIR stage=VS_PROLOG before compiler\n");
-      nir_print_shader(b.shader, stderr);
-   }
 
    if (!prolog) {
       agx_preprocess_nir(b.shader);
@@ -6381,7 +6371,6 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
                           bool fragment,
                           uint64_t *texture_table, uint64_t *sampler_table)
 {
-   const struct agx_device *dev = agx_device(batch->ctx->base.screen);
    *texture_table = *sampler_table = 0;
    if (!rs->texture_mask && !rs->image_mask)
       return;
@@ -6451,17 +6440,6 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
       if (!agx_apple9_translate_texture(descriptor, &legacy)) {
          UNREACHABLE("Apple9 texture descriptor translation failed");
       }
-      if (dev->apple9_trace) {
-         fprintf(stderr, "APPLE9_DESCRIPTOR binding=%u ", binding);
-         for (unsigned i = 0; i < 32; ++i) fprintf(stderr, "%02x", descriptor[i]);
-         fprintf(stderr, "\n");
-         fprintf(stderr,
-                 "APPLE9_TEXTURE_DRAW draw=%u binding=%u table=0x%" PRIx64
-                 " address=0x%" PRIx64 " size=%ux%u format=%s\n",
-                 batch->apple9_draw_count, binding, textures.gpu,
-                 agx_map_texture_gpu(resource, 0), resource->base.width0,
-                 resource->base.height0, util_format_name(view->format));
-      }
    }
    u_foreach_bit(binding, rs->image_mask) {
       struct pipe_image_view *view = &shader->images[binding];
@@ -6485,15 +6463,6 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
              view->u.tex.last_layer - view->u.tex.first_layer + 1,
              !view->u.tex.single_layer_view, dimension)) {
          UNREACHABLE("Apple9 unsupported block image descriptor");
-      }
-      if (dev->apple9_trace) {
-         fprintf(stderr, "APPLE9_BLOCK_IMAGE_DRAW draw=%u binding=%u desc=",
-                 batch->apple9_draw_count, binding);
-         for (unsigned word = 0; word < 8; ++word) {
-            uint32_t value;
-            memcpy(&value, descriptor + 4 * word, 4);
-            mesa_loge("%08x%s", value, word == 7 ? "" : " ");
-         }
       }
       if (fragment)
          agx_batch_writes_fragment(batch, resource, level);
@@ -6547,11 +6516,6 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
       if (!agx_apple9_pack_sampler_state(descriptor, &native)) {
          UNREACHABLE("Apple9 sampler descriptor translation failed");
       }
-      if (dev->apple9_trace) {
-         fprintf(stderr, "APPLE9_SAMPLER ");
-         for (unsigned i = 0; i < 8; ++i) fprintf(stderr, "%02x", descriptor[i]);
-         fprintf(stderr, "\n");
-      }
    }
    if (rs->uses_texel_fetch) {
       /* Integer fetch still consumes hardware sampler LOD state. Keep
@@ -6579,8 +6543,6 @@ agx_apple9_upload_compute_textures(struct agx_batch *batch,
    };
    agx_apple9_upload_textures(batch, &batch->ctx->stage[cs->stage], &bindings, false,
                               textures, samplers);
-   if (agx_device(batch->ctx->base.screen)->apple9_trace)
-      fprintf(stderr, "APPLE9_COMPUTE_TEXTURES stage=%u masks=%x,%x tables=%llx,%llx abi=%u pubs=%u\n", cs->stage, bindings.texture_mask, bindings.sampler_mask, (unsigned long long)*textures, (unsigned long long)*samplers, cs->apple9_compute_profile.abi, cs->apple9_compute_profile.publication_count);
 }
 
 static void

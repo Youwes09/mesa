@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_descriptor_set.h"
-#include "hk_gpu_busy.h"
 #include "asahi/lib/agx_bo.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
@@ -256,7 +255,6 @@ hk_pack_storage_image(struct hk_device *dev, void *out,
          ext->metadata.base = hk_apple9_view_residency(dev, view, 0);
          ext->native_ok |= view->apple9_store_flags |
                           (view->apple9_pbe_index << HK_APPLE9_STORAGE_PBE_SHIFT);
-         hk_gpu_busy_storage_format(view->vk.format, ext->store_encode);
       } else {
          *ext = (struct hk_apple9_storage_descriptor){0};
          agx_set_null_texture(&ext->common.tex);

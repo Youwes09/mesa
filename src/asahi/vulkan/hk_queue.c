@@ -12,11 +12,8 @@
  * Copyright © 2015 Intel Corporation
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/debug.h"
-#include "hk_gpu_busy.h"
 #include "hk_queue.h"
 #include <inttypes.h>
-#include "agx_timeline_uapi.h"
 #include "hk_buffer.h"
 
 #include "agx_bg_eot.h"
@@ -306,10 +303,6 @@ max_commands_per_submit(struct hk_device *dev)
 struct hk_extres {
    uint32_t count;
    struct asahi_ccmd_submit_res *res;
-
-   /* HK_TIMELINE_FILE: per command, enum hk_cs_end | (meta << 8), or NULL
-    * when the timeline is not recording. */
-   const uint16_t *reasons;
 };
 
 static VkResult
@@ -322,13 +315,7 @@ queue_submit_single(struct hk_device *dev, struct drm_asahi_submit *submit,
       .extres = extres->res,
    };
 
-   /* HK_TIMELINE_FILE: ioctl begin/end records around the submit. */
-   uint64_t trace_id = agx_timeline_enabled() ? agx_timeline_id() : 0;
-   agx_timeline_submit(TL_IOCTL_BEGIN, trace_id, dev->dev.fd, submit, 0,
-                       extres->reasons);
    int ret = dev->dev.ops.submit(&dev->dev, submit, &virt);
-   agx_timeline_emit(TL_IOCTL_END, 0, trace_id, (uint64_t)(int64_t)ret,
-                     errno, 0, 0, 0, 0, 0);
    int submit_errno = errno;
 
    /* The kernel rejects submissions once the GPU has failed (EIO) or when
@@ -397,14 +384,10 @@ queue_submit_looped(struct hk_device *dev, struct drm_asahi_submit *submit,
 
       /* Each slice lists the external resources: the first waits for the
        * compositor, the last hands its fence to it. */
-      struct hk_extres slice_extres = *extres;
-      if (slice_extres.reasons)
-         slice_extres.reasons += command_count - commands_remaining - count;
       VkResult result =
-         queue_submit_single(dev, &submit_ioctl, queue, &slice_extres);
+         queue_submit_single(dev, &submit_ioctl, queue, extres);
       if (result != VK_SUCCESS)
          return result;
-
    }
 
    return VK_SUCCESS;
@@ -848,10 +831,7 @@ hk_resolve_sync(struct hk_cmd_buffer *cmd, struct hk_sync_state *state,
  * in order, and fragment work waits for the same render completions as
  * before. Without that flag the firmware holds the render's tiling until the
  * previous render's fragment work completes, so renders never overlap.
- * HK_APPLE9_FRAGMENT_BARRIER=0 keeps every render dependency before tiling.
  */
-DEBUG_GET_ONCE_BOOL_OPTION(hk_apple9_fragment_barrier,
-                           "HK_APPLE9_FRAGMENT_BARRIER", true)
 
 /* A barrier into pre-rasterization stages (as applications commonly write
  * for render targets read by "any shader") orders the render's tiling after
@@ -871,72 +851,23 @@ DEBUG_GET_ONCE_BOOL_OPTION(hk_apple9_fragment_barrier,
  * A buffer aliasing an attachment's memory observes the render's writes
  * only for linear attachments (an optimally tiled image's contents are
  * undefined through a buffer alias), so renders storing a linear colour
- * attachment count as writers too. HK_APPLE9_NO_TILING_ELISION=1 disables
- * the elision.
+ * attachment count as writers too.
  */
-DEBUG_GET_ONCE_BOOL_OPTION(hk_apple9_no_tiling_elision,
-                           "HK_APPLE9_NO_TILING_ELISION", false)
-
-/* HK_TILING_ELISION_STATS=1 (diagnostic): how renders with an earlier
- * render dependency were classified, printed every 4096 such renders. */
-enum hk_tiling_class {
-   HK_TILING_FRAGMENT_ONLY, /* no tiling dependency on earlier renders */
-   HK_TILING_ELIDED,        /* tiling dependency elided */
-   HK_TILING_IMAGES,        /* kept: pre-rasterization reads images */
-   HK_TILING_UNKNOWN,       /* kept: unclassified pre-rasterization shader */
-   HK_TILING_INTERNAL,      /* kept: meta, XFB, tessellation or geometry */
-   HK_TILING_WRITER,        /* kept: reads buffers while a writer may run */
-   HK_TILING_STORES,        /* kept: pre-rasterization writes memory */
-   HK_TILING_OFF,           /* kept: elision disabled */
-   HK_TILING_CLASSES,
-};
-
-static void
-hk_tiling_stat(enum hk_tiling_class cls, bool meta)
-{
-   static uint64_t counts[HK_TILING_CLASSES], total, meta_elided, meta_kept;
-   if (!agx_apple9_debug_enabled(AGX_A9_DBG_TILING))
-      return;
-   counts[cls]++;
-   if (meta) {
-      if (cls == HK_TILING_FRAGMENT_ONLY || cls == HK_TILING_ELIDED)
-         meta_elided++;
-      else
-         meta_kept++;
-   }
-   if (++total % 4096 == 0)
-      fprintf(stderr, "HK_TILING renders=%" PRIu64 " fragment_only=%" PRIu64
-              " elided=%" PRIu64 " images=%" PRIu64 " unknown=%" PRIu64
-              " internal=%" PRIu64 " writer=%" PRIu64 " stores=%" PRIu64
-              " off=%" PRIu64 " meta_elided=%" PRIu64 " meta_kept=%" PRIu64
-              "\n", total,
-              counts[HK_TILING_FRAGMENT_ONLY], counts[HK_TILING_ELIDED],
-              counts[HK_TILING_IMAGES], counts[HK_TILING_UNKNOWN],
-              counts[HK_TILING_INTERNAL], counts[HK_TILING_WRITER],
-              counts[HK_TILING_STORES], counts[HK_TILING_OFF], meta_elided,
-              meta_kept);
-}
 
 static bool
 hk_defer_render_wait(struct hk_device *dev, struct hk_queue *queue,
                      const struct hk_cs *cs, const struct hk_sync_stream *s)
 {
    if (!(dev->dev.params.features & DRM_ASAHI_FEATURE_FRAGMENT_BARRIER) ||
-       !debug_get_option_hk_apple9_fragment_barrier() ||
        s->wait.engine[HK_SYNC_RENDER] == HK_SYNC_NONE)
       return false;
-   enum hk_tiling_class cls =
-      s->wait_tiling.engine[HK_SYNC_RENDER] == HK_SYNC_NONE ? HK_TILING_FRAGMENT_ONLY
-      : debug_get_option_hk_apple9_no_tiling_elision()     ? HK_TILING_OFF
-      : (cs->pre_raster_reads & HK_READS_INTERNAL)         ? HK_TILING_INTERNAL
-      : (cs->pre_raster_reads & HK_READS_UNKNOWN)          ? HK_TILING_UNKNOWN
-      : (cs->pre_raster_reads & HK_READS_WRITES)           ? HK_TILING_STORES
-      : (cs->pre_raster_reads & HK_READS_IMAGES)           ? HK_TILING_IMAGES
-      : ((cs->pre_raster_reads & HK_READS_BUFFERS) &&
-         queue->render_writer_pending)                     ? HK_TILING_WRITER
-                                                           : HK_TILING_ELIDED;
-   hk_tiling_stat(cls, cs->pre_raster_reads & HK_READS_META);
-   return cls == HK_TILING_FRAGMENT_ONLY || cls == HK_TILING_ELIDED;
+   if (s->wait_tiling.engine[HK_SYNC_RENDER] == HK_SYNC_NONE)
+      return true;
+   if (cs->pre_raster_reads &
+       (HK_READS_INTERNAL | HK_READS_UNKNOWN | HK_READS_WRITES | HK_READS_IMAGES))
+      return false;
+   return !((cs->pre_raster_reads & HK_READS_BUFFERS) &&
+            queue->render_writer_pending);
 }
 
 /* Track memory-writing renders for hk_defer_render_wait. A render whose
@@ -962,23 +893,10 @@ hk_ioctl_barrier(uint32_t index, uint32_t submitted)
    return rebased == HK_SYNC_NONE ? DRM_ASAHI_BARRIER_NONE : rebased;
 }
 
-/* Replay diagnostics, read once rather than on every submit.
- * HK_ABORT_BEFORE_SUBMIT=1 exits at the first queue submit;
- * HK_NULL_SUBMIT=1 drops all GPU work (see queue_submit). */
-DEBUG_GET_ONCE_BOOL_OPTION(hk_abort_before_submit, "HK_ABORT_BEFORE_SUBMIT",
-                           false)
-DEBUG_GET_ONCE_BOOL_OPTION(hk_null_submit, "HK_NULL_SUBMIT", false)
-
 static VkResult
 queue_submit(struct hk_device *dev, struct hk_queue *queue,
              struct vk_queue_submit *submit)
 {
-   if (unlikely(debug_get_option_hk_abort_before_submit())) {
-      fprintf(stderr, "hk-replay: HK_ABORT_BEFORE_SUBMIT, exiting before the "
-                      "first queue submit\n");
-      _exit(3);
-   }
-
    /* TODO: Support asynchronous sparse queue? */
    if (submit->buffer_bind_count || submit->image_bind_count ||
        submit->image_opaque_bind_count) {
@@ -987,13 +905,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
       if (result != VK_SUCCESS)
          return result;
    }
-
-   /* Diagnostic: run an application (a GFXR replay) with no GPU work at
-    * all. Command buffers are dropped; fences and semaphores signal as for an
-    * empty submit.
-    */
-   if (unlikely(debug_get_option_hk_null_submit()))
-      return queue_submit_empty(dev, queue, submit);
 
    unsigned command_count = 0;
 
@@ -1116,8 +1027,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
 
             struct drm_asahi_cmd_compute cmd;
             asahi_fill_cdm_command(dev, cs, &cmd);
-            hk_gpu_busy_set_pass(queue, cs->pass_code, cs->pass_grid, cs->pass_count, 0);
-            hk_gpu_busy_compute(queue, &cmd);
             util_dynarray_append(&payload, cmd);
             nr_cdm++;
          } else {
@@ -1134,30 +1043,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
             if (deferred)
                cmd.flags |= DRM_ASAHI_RENDER_VDM_BARRIER_FRAGMENT;
             hk_track_render_writes(queue, cs, &streams[cs->sync_id], deferred);
-            /* Render keys omit the per-frame draw count, which varies. */
-            /* Diagnostic key: meta / decompression blit / feedback render. */
-            unsigned pass_flags = cs->meta | (cs->feedback_decompression << 1) |
-                                  (cs->feedback_color << 2);
-            hk_gpu_busy_set_pass(queue, cs->pass_code, cs->pass_grid, 0, pass_flags);
-            hk_gpu_busy_render(queue, &cmd);
-            if (agx_timeline_enabled()) {
-               /* flags: which earlier work this render waits for, overall
-                * and from its tiling (pre-rasterization) stage. */
-               const struct hk_sync_stream *ws = &streams[cs->sync_id];
-               unsigned waits =
-                  (ws->wait.engine[HK_SYNC_RENDER] != HK_SYNC_NONE) |
-                  ((ws->wait.engine[HK_SYNC_CDM] != HK_SYNC_NONE) << 1) |
-                  ((ws->wait_tiling.engine[HK_SYNC_RENDER] != HK_SYNC_NONE) << 2) |
-                  ((ws->wait_tiling.engine[HK_SYNC_CDM] != HK_SYNC_NONE) << 3);
-               agx_timeline_emit(TL_RENDER_INFO, waits, tl_timestamp_key(cmd.ts_vtx.start),
-                  cs->diag.color0, cs->diag.depth,
-                  cs->diag.area | ((uint64_t)cs->diag.view << 32),
-                  cs->diag.color_count | (cs->diag.samples << 8) |
-                     (cs->diag.clears << 16),
-                  cs->diag.color0_format | ((uint64_t)cs->diag.depth_format << 32),
-                  cs->stats.cmds | ((uint64_t)cs->stats.calls << 32),
-                  cs->pass_code);
-            }
             util_dynarray_append(&payload, cmd);
             nr_vdm++;
          }
@@ -1211,22 +1096,10 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
          }
       }
    }
-   uint16_t *reasons = NULL;
-   if (agx_timeline_enabled()) {
-      reasons = malloc(command_count * sizeof(*reasons));
-      unsigned r = 0;
-      for (unsigned i = 0; reasons && i < submit->command_buffer_count; ++i) {
-         struct hk_cmd_buffer *cmdbuf =
-            (struct hk_cmd_buffer *)submit->command_buffers[i];
-         list_for_each_entry(struct hk_cs, cs, &cmdbuf->control_streams, node)
-            reasons[r++] = cs->end_reason | (cs->meta << 8);
-      }
-   }
    const struct hk_extres extres = {
       .count = util_dynarray_num_elements(&extres_list,
                                           struct asahi_ccmd_submit_res),
       .res = util_dynarray_begin(&extres_list),
-      .reasons = reasons,
    };
 
    VkResult result;
@@ -1237,7 +1110,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
                                    queue, &extres);
    }
 
-   free(reasons);
    util_dynarray_fini(&extres_list);
    util_dynarray_fini(&payload);
    if (result == VK_SUCCESS) {
@@ -1256,18 +1128,6 @@ hk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
    if (vk_queue_is_lost(&queue->vk))
       return VK_ERROR_DEVICE_LOST;
 
-   if (hk_cpu_level) {
-      unsigned total = 0;
-      for (unsigned i = 0; i < submit->command_buffer_count; ++i) {
-         struct hk_cmd_buffer *cmd =
-            container_of(submit->command_buffers[i], struct hk_cmd_buffer, vk);
-         hk_cpu_timing_note_heap(cmd->heap_renders, false);
-         hk_cpu_timing_note_feedback(&cmd->feedback_stats);
-         total += cmd->heap_renders;
-      }
-      hk_cpu_timing_note_heap(total, true);
-   }
-
    /* Submissions using the geometry heap are serialized on the CPU, so that
     * each is submitted after the heap has grown to what it needs. */
    uint64_t heap_min_B = 0;
@@ -1283,7 +1143,6 @@ hk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
       hk_heap_prepare_submit(dev, heap_min_B);
    }
 
-   hk_gpu_busy_sample(queue);
    VkResult result = queue_submit(dev, queue, submit);
    if (uses_heap)
       simple_mtx_unlock(&dev->heap_lock);
@@ -1399,14 +1258,12 @@ hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
                        "DRM_IOCTL_TIMELINE_SYNCOBJ_SIGNAL failed: %m");
    }
 
-   hk_gpu_busy_init(queue);
    return VK_SUCCESS;
 }
 
 void
 hk_queue_finish(struct hk_device *dev, struct hk_queue *queue)
 {
-   hk_gpu_busy_finish(queue);
    drmSyncobjDestroy(dev->dev.fd, queue->drm.syncobj);
    agx_destroy_command_queue(&dev->dev, queue->drm.id);
    vk_queue_finish(&queue->vk);

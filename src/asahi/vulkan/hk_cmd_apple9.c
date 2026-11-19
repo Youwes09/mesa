@@ -497,7 +497,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
    bool append = hk_apple9_native_can_append(cmd, cs, native_mesh);
    if ((cs->apple9_native_mesh && !append) ||
        (native_mesh && !cs->apple9_native_mesh && cs->current != cs->start)) {
-      hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
       hk_cmd_buffer_end_graphics(cmd);
       cs = hk_cmd_buffer_get_cs(cmd, false);
       if (!cs)
@@ -515,7 +514,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
    if (ogfx->occlusion.segment_dirty && ogfx->occlusion.active_count &&
        cs->occlusion_segments == HK_OCCLUSION_SEGMENTS) {
       perf_debug(cmd, "Splitting control stream for occlusion segments");
-      hk_cs_end_hint(cmd, HK_CS_END_QUERY);
       hk_cmd_buffer_end_graphics(cmd);
       cs = hk_cmd_buffer_get_cs(cmd, false);
       if (!cs)
@@ -534,7 +532,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
       uint32_t positions = hk_apple9_draw_sample_positions(dyn, samples);
       if (cs->has_sample_locations && cs->ppp_multisamplectl != positions) {
          perf_debug(cmd, "Splitting Apple9 render: sample positions changed");
-         hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
          hk_cmd_buffer_end_graphics(cmd);
          cs = hk_cmd_buffer_get_cs(cmd, false);
          if (!cs)
@@ -562,7 +559,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
       /* The existing partial-render background, EOT and ZLS state stores and
        * reloads attachments. Only the final stream uses the API store ops.
        */
-      hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
       hk_cmd_buffer_end_graphics(cmd);
       cs = hk_cmd_buffer_get_cs(cmd, false);
       if (!cs)
@@ -586,7 +582,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
    writes |= gfx->shaders[MESA_SHADER_MESH] && gfx->shaders[MESA_SHADER_MESH]->writes_memory;
    if (unlikely(writes && cs->merge_hoisted)) {
       perf_debug(cmd, "Splitting Apple9 render: memory writes after a hoisted barrier");
-      hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
       hk_cmd_buffer_end_graphics(cmd);
       cs = hk_cmd_buffer_get_cs(cmd, false);
       if (!cs)
@@ -606,8 +601,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
     * shaders carry a read class (vk_meta vertex shaders read push constants
     * and its own vertex data). */
    uint8_t reads = reads_buffers ? HK_READS_BUFFERS : 0;
-   if (cmd->in_meta)
-      reads |= HK_READS_META;
    if (gfx->xfb_enabled || gfx->shaders[MESA_SHADER_TESS_CTRL] ||
        gfx->shaders[MESA_SHADER_TESS_EVAL] || gfx->shaders[MESA_SHADER_GEOMETRY] ||
        (native_mesh && gfx->shaders[MESA_SHADER_TASK]))
@@ -838,9 +831,6 @@ hk_apple9_account_draw(struct hk_cs *cs,
                                    draw.b.count[1]));
    }
    cs->stats.cmds++;
-   if (!cs->pass_count++)
-      cs->pass_code = fragment->apple9_body ? fragment->apple9_body->addr :
-                      (fragment->bo ? fragment->bo->va->addr : 0);
 }
 
 /* Whether a bound stage reads the draw index from the root table. Other
@@ -1425,12 +1415,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (hk_apple9_reads_draw_id(gfx))
       gfx->descriptors.root.draw.draw_id = draw_id;
    gfx->descriptors.root_dirty = true;
-   uint64_t t_sub = hk_cpu_sub_begin();
    hk_cmd_buffer_flush_push_descriptors(cmd, &gfx->descriptors);
-   hk_cpu_sub_end(t_sub, HK_CPU_SUB_PUSH_DESC);
-   t_sub = hk_cpu_sub_begin();
    gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
-   hk_cpu_sub_end(t_sub, HK_CPU_SUB_ROOT);
    struct hk_apple9_prerast_bindings bindings =
       hk_apple9_draw_bindings(cmd, draw);
    uint64_t draw_params = bindings.draw_params;
@@ -1439,15 +1425,12 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       const struct agx_apple9_render_stage *s =
          stage ? fragment : vertex;
       uint64_t sysvals = 0;
-      t_sub = hk_cpu_sub_begin();
       bool textures_ok = hk_apple9_upload_textures(
          cmd, shaders[stage], true,
          pipeline.primitive == AGX_PRIMITIVE_TRIANGLE_FAN, lines,
          &record->texture_table[stage], &record->sampler_table[stage], &sysvals);
-      hk_cpu_sub_end(t_sub, HK_CPU_SUB_TEXTURES);
       if (!textures_ok)
          UNSUPPORTED("texture or sampler state cannot be uploaded");
-      t_sub = hk_cpu_sub_begin();
       for (unsigned slot = 0; slot < s->resource_count; ++slot) {
          unsigned binding = s->resource_binding[slot];
          uint64_t address;
@@ -1472,16 +1455,13 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          record->fragment_table = table;
       else
          record->vertex_table = table;
-      hk_cpu_sub_end(t_sub, HK_CPU_SUB_TABLES);
    }
    const struct agx_apple9_uniform_draw *previous =
       cmd->apple9_prev_cs == cs ? &cmd->apple9_draw[!cmd->apple9_draw_current]
                                 : NULL;
-   t_sub = hk_cpu_sub_begin();
    bool prepared = agx_apple9_prepare_draw_alloc(
       &dev->dev, cmd, hk_apple9_usc_alloc, cmd, hk_apple9_context_alloc,
       &pipeline, record, previous);
-   hk_cpu_sub_end(t_sub, HK_CPU_SUB_PREPARE_ALLOC);
    if (!prepared)
       UNSUPPORTED("the draw state cannot be prepared");
    cmd->apple9_draw_current = !cmd->apple9_draw_current;

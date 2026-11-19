@@ -4,7 +4,6 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/debug.h"
 #include "hk_cmd_buffer.h"
 #include <inttypes.h>
 #include "util/simple_mtx.h"
@@ -290,7 +289,6 @@ hk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
    cmd->sync_render_continuation = false;
    cmd->api_dispatch = false;
    cmd->feedback_decompress = false;
-   memset(&cmd->feedback_stats, 0, sizeof(cmd->feedback_stats));
    cmd->rendering = false;
 
    memset(&cmd->state, 0, sizeof(cmd->state));
@@ -486,9 +484,7 @@ hk_EndCommandBuffer(VkCommandBuffer commandBuffer)
 
    perf_debug(cmd, "End command buffer");
    hk_flush_query_writes(cmd);
-   hk_cs_end_hint(cmd, HK_CS_END_CMDBUF);
    hk_cmd_buffer_end_compute(cmd);
-   hk_cs_end_hint(cmd, HK_CS_END_CMDBUF);
    hk_cmd_buffer_end_compute_internal(cmd, &cmd->current_cs.post_gfx);
 
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
@@ -596,45 +592,13 @@ hk_cmd_sync_before_gfx(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    return true;
 }
 
-/* HK_APPLE9_MERGE_TRACE (diagnostic): counts what ends renders kept open
- * for merging, printed to stderr every 5000 events as MERGE_TRACE lines. */
 void
-hk_render_merge_trace(const char *why, uint64_t a, uint64_t b)
-{
-   if (!agx_apple9_debug_enabled(AGX_A9_DBG_MERGE))
-      return;
-   static simple_mtx_t lock = SIMPLE_MTX_INITIALIZER;
-   static struct { const char *why; uint64_t a, b, n; } table[64];
-   static unsigned events;
-   simple_mtx_lock(&lock);
-   unsigned i = 0;
-   while (i < ARRAY_SIZE(table) && table[i].why &&
-          (table[i].why != why || table[i].a != a || table[i].b != b))
-      ++i;
-   if (i < ARRAY_SIZE(table)) {
-      table[i].why = why;
-      table[i].a = a;
-      table[i].b = b;
-      ++table[i].n;
-   }
-   if (++events % 5000 == 0) {
-      for (unsigned j = 0; j < ARRAY_SIZE(table) && table[j].why; ++j)
-         fprintf(stderr, "MERGE_TRACE events=%u why=%s a=0x%" PRIx64 " b=0x%" PRIx64 " n=%" PRIu64 "\n",
-                 events, table[j].why, table[j].a, table[j].b, table[j].n);
-   }
-   simple_mtx_unlock(&lock);
-}
-
-void
-hk_cmd_render_merge_flush_why(struct hk_cmd_buffer *cmd, const char *why)
+hk_cmd_render_merge_flush(struct hk_cmd_buffer *cmd)
 {
    if (!cmd->merge_cs)
       return;
-   if (why)
-      hk_render_merge_trace(why, 0, 0);
 
    assert(cmd->current_cs.gfx == cmd->merge_cs);
-   hk_cs_end_hint(cmd, HK_CS_END_RENDER_PASS);
    hk_cmd_buffer_end_graphics(cmd);
    assert(!cmd->merge_cs);
 }
@@ -706,10 +670,8 @@ hk_render_merge_pre_cs(struct hk_cmd_buffer *cmd, unsigned stages)
    bool created = !cmd->merge_pre_cs;
    struct hk_cs *cs =
       hk_cmd_buffer_get_cs_general(cmd, &cmd->merge_pre_cs, true, stages);
-   if (created && cs) {
+   if (created && cs)
       perf_debug(cmd, "Moving compute ahead of the open render");
-      hk_render_merge_trace("moved ahead", cmd->merge_move_stage, cmd->merge_reach);
-   }
    hk_render_merge_place_events(cmd, first);
    return cs;
 }
@@ -907,14 +869,10 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
          hk_sync_reindex_events(cmd->sync_first_event.data, events,
                                 cmd->merge_event, count + 1);
          cmd->merge_event++;
-         hk_render_merge_trace("barrier kept", src, dst);
          return;
       }
 
-      hk_render_merge_trace(cmd->in_meta ? "meta barrier" : "barrier",
-                            src | (uint64_t)!!src_access << 63,
-                            dst | (uint64_t)!!dst_access << 63);
-      hk_cmd_render_merge_flush_why(cmd, NULL);
+      hk_cmd_render_merge_flush(cmd);
    }
 
    unsigned src_stages = hk_sync_stage_mask(src, true);
@@ -955,13 +913,11 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
          hk_cdm_cache_flush(dev, cs);
    } else if (cmd->sync_fallback ||
        (cmd->current_cs.cs && (cmd->current_cs.cs->sync_stages & ordered))) {
-      hk_cs_end_hint(cmd, HK_CS_END_BARRIER);
       hk_cmd_buffer_end_compute(cmd);
    }
 
    if (cmd->sync_fallback ||
        (cmd->current_cs.gfx && (cmd->current_cs.gfx->sync_stages & ordered))) {
-      hk_cs_end_hint(cmd, HK_CS_END_BARRIER);
       hk_cmd_buffer_end_graphics(cmd);
    }
 
@@ -1081,7 +1037,6 @@ hk_apple9_end_native_batch(struct hk_cmd_buffer *cmd)
 {
    if (cmd->current_cs.gfx && cmd->current_cs.gfx->apple9_native_dispatches &&
        hk_apple9_native_blocks_enabled(hk_cmd_buffer_device(cmd))) {
-      hk_cs_end_hint(cmd, HK_CS_END_RENDER_SPLIT);
       hk_cmd_buffer_end_graphics(cmd);
    }
 }
@@ -1771,7 +1726,6 @@ hk_cs_init_graphics(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    uint8_t *map = cs->current;
 
    cs->tib = render->tilebuffer;
-   cs->feedback_color = render->feedback;
    /* Segment slots are per control stream; active queries continue in a new
     * segment here. */
    cs->occlusion_base = 0;
@@ -1783,28 +1737,6 @@ hk_cs_init_graphics(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
     * initially use the partial background/EOT program and ZLS control.
     * hk_BeginRendering/hk_EndRendering will override.
     */
-   const struct hk_image_view *c0 = render->color_att[0].iview;
-   const struct hk_image_view *zs = render->depth_att.iview ?: render->stencil_att.iview;
-   cs->diag.color0 = c0 ? (uintptr_t)c0->vk.image : 0;
-   cs->diag.depth = zs ? (uintptr_t)zs->vk.image : 0;
-   cs->diag.area = MIN2(render->area.extent.width, 0xffff) |
-                   (MIN2(render->area.extent.height, 0xffff) << 16);
-   const struct hk_image_view *v = c0 ?: zs;
-   cs->diag.view = v ? (MIN2(v->vk.base_mip_level, 0xff) |
-                        (MIN2(v->vk.base_array_layer, 0xfff) << 8) |
-                        (MIN2(render->layer_count, 0xfff) << 20)) : 0;
-   cs->diag.color0_format = render->color_att[0].vk_format;
-   cs->diag.depth_format = render->depth_att.vk_format;
-   cs->diag.color_count = render->color_att_count;
-   cs->diag.samples = render->tilebuffer.nr_samples;
-   /* clears: colour-0 cleared, depth cleared, colour-0 compressed, colour-0
-    * storage usage, depth compressed. */
-   const struct hk_image *c0i = c0 ? container_of(c0->vk.image, struct hk_image, vk) : NULL;
-   const struct hk_image *zsi = zs ? container_of(zs->vk.image, struct hk_image, vk) : NULL;
-   cs->diag.clears = render->color_att[0].clear | (render->depth_att.clear << 1) |
-                     ((c0i && c0i->planes[0].layout.compressed) << 2) |
-                     ((c0i && (c0i->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT)) << 3) |
-                     ((zsi && zsi->planes[0].layout.compressed) << 4);
 
    cs->cr = render->cr;
    cs->cr.bg.main = render->cr.bg.partial;

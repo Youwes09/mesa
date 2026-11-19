@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/debug.h"
 #include "agx_apple9.h"
 #include "asahi/compiler/agx_apple9_ir.h"
 #include "asahi/lib/pool.h"
@@ -642,17 +641,6 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
                                            launch.gpu) ||
           !agx_apple9_launch_template_set_roots(launch.cpu, tmpl, record.cpu))
          return false;
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_LAUNCH_CHECK)) {
-         uint8_t ref[AGX_APPLE9_COMPUTE_LAUNCH_SIZE];
-         size_t size = agx_apple9_compute_launch_size(profile);
-         if (!apple9_build_compute_launch(ref, dev->shader_base, launch.gpu,
-                                          record.gpu, record.cpu, entry,
-                                          profile, preamble_address) ||
-             memcmp(ref, launch.cpu, size)) {
-            fprintf(stderr, "HK_APPLE9_LAUNCH_CHECK: template launch differs\n");
-            abort();
-         }
-      }
    } else if (!apple9_build_compute_launch(launch.cpu, dev->shader_base,
                                            launch.gpu, record.gpu, record.cpu,
                                            entry, profile, preamble_address)) {
@@ -1452,19 +1440,6 @@ agx_apple9_prepare_graphics_stage(
       if (!agx_apple9_launch_template_emit(roots + roots_size, tmpl, state.gpu,
                                            entry, state.gpu + roots_size))
          return false;
-      if (agx_apple9_debug_enabled(AGX_A9_DBG_LAUNCH_CHECK)) {
-         uint8_t ref[AGX_APPLE9_GRAPHICS_LAUNCH_SIZE];
-         params.resource_table = state.gpu;
-         params.launch_address = state.gpu + roots_size;
-         if (!agx_apple9_launch_build(
-                ref, launch_size,
-                fragment ? AGX_APPLE9_LAUNCH_FRAGMENT : AGX_APPLE9_LAUNCH_VERTEX,
-                &params) ||
-             memcmp(ref, roots + roots_size, launch_size)) {
-            fprintf(stderr, "HK_APPLE9_LAUNCH_CHECK: graphics template launch differs\n");
-            abort();
-         }
-      }
       *launch = agx_usc_addr(dev, state.gpu + roots_size);
       return true;
    }
