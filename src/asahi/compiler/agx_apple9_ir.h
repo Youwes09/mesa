@@ -887,14 +887,7 @@ bool agx_apple9_pack_subgroup_reduce_umax(
    struct agx_apple9_packed_instruction *packed);
 bool agx_apple9_pack_mov_imm32(unsigned dst, uint32_t value,
                                struct agx_apple9_packed_instruction *packed);
-bool agx_apple9_pack_mov(unsigned dst, unsigned src,
-                         struct agx_apple9_packed_instruction *packed);
 
-bool
-agx_apple9_pack_device_load_u32(unsigned dst, unsigned index, unsigned binding,
-                                uint8_t flags,
-                                enum agx_apple9_scoreboard_slot scoreboard_slot,
-                                struct agx_apple9_packed_instruction *packed);
 bool agx_apple9_pack_device_load_u32_raw(
    unsigned dst, unsigned index, unsigned binding,
    enum agx_apple9_device_load_index_kind index_kind, uint8_t flags,

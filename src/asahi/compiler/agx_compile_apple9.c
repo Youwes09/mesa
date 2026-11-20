@@ -11049,12 +11049,3 @@ agx_compile_apple9_vertex_inputs(
           apple9_compile_graphics(nir, out, layout, NULL, NULL, 1, reason);
 }
 
-bool
-agx_compile_apple9_vertex_prolog(nir_shader *nir, struct agx_shader_part *out,
-                                 const char **reason)
-{
-   memset(out, 0, sizeof(*out));
-   if (reason)
-      *reason = "Apple9 vertex-fetch ABI is not implemented";
-   return false;
-}

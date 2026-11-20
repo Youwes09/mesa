@@ -475,18 +475,11 @@ bool agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
                             unsigned layer_count, bool layered,
                             unsigned dimension);
 
-bool agx_apple9_translate_sampler(void *out,
-                                  const struct agx_sampler_packed *state);
-
-void agx_apple9_pack_r32f_texture(void *out, uint64_t address, uint32_t width,
-                                  uint32_t height, uint32_t stride_B);
-
 bool agx_apple9_sampler_wrap_supported(unsigned wrap);
 void agx_apple9_pack_sampler(void *out, bool min_linear, bool mag_linear,
                               unsigned mip_filter, float min_lod, float max_lod,
                          unsigned wrap_s, unsigned wrap_t, unsigned max_anisotropy);
 void agx_apple9_pack_fetch_sampler(void *out);
-void agx_apple9_pack_nearest_sampler(void *out);
 
 /*
  * Apple9 command and shader ABIs are intentionally kept outside the older

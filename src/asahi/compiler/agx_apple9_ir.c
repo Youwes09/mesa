@@ -3844,16 +3844,6 @@ apple9_vir_is_async(const struct agx_apple9_vir_instr *ins)
           (ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC && !ins->atomic_discard);
 }
 
-static bool
-apple9_vir_is_load_token(const struct agx_apple9_vir_program *program,
-                         uint32_t value, uint16_t raw_token)
-{
-   const struct agx_apple9_vir_instr *producer =
-      apple9_vir_producer_instruction(program, value);
-   return producer != NULL && producer->op == AGX_APPLE9_VIR_DEVICE_LOAD &&
-          producer->device_load_raw_token == raw_token;
-}
-
 static enum agx_apple9_dependency_layout
 apple9_instruction_dependency_layout(
    const struct agx_apple9_vir_instr *instruction)
@@ -4907,43 +4897,6 @@ agx_apple9_pack_mov_imm32(unsigned dst, uint32_t value,
       return false;
    packed_init(packed, bytes, sizeof(bytes));
    return true;
-}
-
-bool
-agx_apple9_pack_mov(unsigned dst, unsigned src,
-                    struct agx_apple9_packed_instruction *packed)
-{
-   if (dst >= 16 || src >= 64)
-      return false;
-   const uint8_t bytes[10] = {
-      (dst << 4) | 0x0b,
-      (src << 1) | 1,
-      0x1f,
-      0x01,
-      0x02,
-      0x00,
-      0x00,
-      0x80,
-      0x00,
-      0x00,
-   };
-   packed_init(packed, bytes, sizeof(bytes));
-   return true;
-}
-
-bool
-agx_apple9_pack_device_load_u32(unsigned dst, unsigned index, unsigned binding,
-                                uint8_t flags,
-                                enum agx_apple9_scoreboard_slot scoreboard_slot,
-                                struct agx_apple9_packed_instruction *packed)
-{
-   uint16_t raw_token;
-   if (!apple9_scalar_load_token_for_slot(scoreboard_slot, &raw_token))
-      return false;
-
-   return agx_apple9_pack_device_load_u32_raw(
-      dst, index, binding, AGX_APPLE9_DEVICE_LOAD_INDEX_RETAINED_GPR, flags,
-      AGX_APPLE9_SCOREBOARD_SLOT_NONE, raw_token, packed);
 }
 
 bool

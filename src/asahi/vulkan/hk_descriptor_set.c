@@ -797,7 +797,6 @@ hk_descriptor_set_create(struct hk_device *dev, struct hk_descriptor_pool *pool,
                          struct hk_descriptor_set **out_set)
 {
    struct hk_descriptor_set *set;
-   VkResult result;
 
    uint32_t mem_size =
       sizeof(struct hk_descriptor_set) +

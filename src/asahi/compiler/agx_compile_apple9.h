@@ -558,10 +558,6 @@ bool agx_nir_lower_apple9_vertex_inputs(
 bool agx_compile_apple9_vertex(nir_shader *nir, struct agx_shader_part *out,
                                const char **reason);
 
-/* Vertex-fetch packaging is not implemented; this entry point rejects. */
-bool agx_compile_apple9_vertex_prolog(nir_shader *nir,
-                                      struct agx_shader_part *out,
-                                      const char **reason);
 
 #ifdef __cplusplus
 }

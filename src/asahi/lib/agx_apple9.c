@@ -784,25 +784,6 @@ agx_apple9_emit_indirect_dispatch(
    return true;
 }
 
-void
-agx_apple9_pack_r32f_texture(void *out, uint64_t address, uint32_t width,
-                             uint32_t height, uint32_t stride_B)
-{
-   assert((address & 0xf) == 0);
-   assert(width > 0 && width <= 0x4000 && height > 0 && height <= 0x4000);
-   /* The linear R32F profile has an implicit tightly-packed row stride. */
-   assert(stride_B == width * 4);
-   uint32_t w = width - 1, h = height - 1;
-   uint64_t units = address >> 4;
-   uint32_t words[8] = {
-      0x09688862 | ((w & 0xf) << 28),
-      ((w >> 4) & 0x3ff) | (h << 10),
-      units,
-      (units >> 32) & 0xfff,
-   };
-   memcpy(out, words, sizeof(words));
-}
-
 bool
 agx_apple9_texture_format_supported(enum pipe_format format)
 {
@@ -1074,13 +1055,6 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
    return true;
 }
 
-bool
-agx_apple9_translate_sampler(void *out, const struct agx_sampler_packed *state)
-{
-   agx_unpack(stderr, state, SAMPLER, sampler);
-   return agx_apple9_pack_sampler_state(out, &sampler);
-}
-
 /* Texel fetches return zero outside the image, as image robustness
  * requires: clamp every axis to the transparent black border.
  */
@@ -1094,13 +1068,6 @@ agx_apple9_pack_fetch_sampler(void *out)
    memcpy(&modes, (uint8_t *)out + 4, 4);
    modes |= apple9_sampler_address(PIPE_TEX_WRAP_CLAMP_TO_BORDER) << 3;
    memcpy((uint8_t *)out + 4, &modes, 4);
-}
-
-void
-agx_apple9_pack_nearest_sampler(void *out)
-{
-   agx_apple9_pack_sampler(out, false, false, 0, 0, 14,
-                            PIPE_TEX_WRAP_CLAMP_TO_EDGE, PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
 }
 
 /* The default coefficient table occupies the end of the graphics resource
