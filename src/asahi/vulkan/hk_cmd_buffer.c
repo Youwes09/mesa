@@ -722,11 +722,8 @@ static bool
 hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
                               VkAccessFlags2 dst_access)
 {
-   static int enabled = -1;
-   if (enabled < 0)
-      enabled = debug_get_bool_option("HK_APPLE9_MERGE_HOIST_BARRIERS", true);
    const struct hk_image *image = cmd->barrier_image;
-   if (!enabled || !image || cmd->barrier_qfot || cmd->in_meta ||
+   if (!image || cmd->barrier_qfot || cmd->in_meta ||
        cmd->merge_cs->merge_writes || image->planes[0].sparse_map)
       return false;
    /* Read-only depth/stencil is immutable for this render, whether it is
@@ -794,18 +791,6 @@ hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 s
    return true;
 }
 
-/* HK_APPLE9_MERGE_MOVE_COMPUTE=0 keeps compute and transfer work in order
- * after a render kept open for merging, and ends the render at every barrier
- * that does not involve it. */
-bool
-hk_render_merge_move_enabled(void)
-{
-   static int enabled = -1;
-   if (enabled < 0)
-      enabled = debug_get_bool_option("HK_APPLE9_MERGE_MOVE_COMPUTE", true);
-   return enabled;
-}
-
 void
 hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
                     VkPipelineStageFlags2 src, VkPipelineStageFlags2 dst,
@@ -827,7 +812,7 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
       if (!input_read && ((!cmd->in_meta &&
            hk_render_merge_barrier(src, dst, src_access, dst_access)) ||
           (image_barrier = hk_render_merge_image_barrier(cmd, src, dst_access)) ||
-          (unrelated = hk_render_merge_move_enabled() && !cmd->in_meta &&
+          (unrelated = !cmd->in_meta &&
                        !(xsrc & cmd->merge_reach)))) {
          cmd->merge_cs->merge_hoisted |= image_barrier;
          if (!image_barrier && !unrelated) {
@@ -981,10 +966,7 @@ hk_defer_empty_barriers(struct hk_cmd_buffer *cmd, const VkDependencyInfo *info)
          return false;
 #undef READS_INPUT
 
-   static int enabled = -1;
-   if (enabled < 0)
-      enabled = debug_get_bool_option("HK_APPLE9_FOLD_EMPTY_CLEARS", true);
-   if (!enabled || !cmd->merge_cs || !cmd->merge_empty ||
+   if (!cmd->merge_cs || !cmd->merge_empty ||
        cmd->merge_suspended || cmd->merge_feedback || cmd->merge_pre_cs ||
        cmd->in_meta || cmd->sync_fallback ||
        (info->dependencyFlags & ~VK_DEPENDENCY_BY_REGION_BIT))

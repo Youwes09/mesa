@@ -748,18 +748,6 @@ hk_CmdDispatchIndirect(VkCommandBuffer commandBuffer, VkBuffer _buffer,
    dispatch(cmd, agx_grid_indirect(dispatch_addr));
 }
 
-DEBUG_GET_ONCE_BOOL_OPTION(tess_fold, "HK_APPLE9_TESS_FOLD", true)
-
-/* Fold the libagx passes of batched tessellated draws (see tess_batch in
- * struct hk_cmd_buffer). HK_APPLE9_TESS_FOLD=0 opts out. Air, TES D64 per
- * render: 3.85 -> 3.51 us/draw emulated, 11.91 -> 11.66 native.
- */
-bool
-hk_tess_fold_enabled(void)
-{
-   return debug_get_option_tess_fold();
-}
-
 /* Record a libagx program's dispatch into a batch lane. Called while
  * flushing, so it bypasses hk_dispatch_precomp's stream selection.
  */

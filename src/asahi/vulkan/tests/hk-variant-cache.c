@@ -466,11 +466,6 @@ persistent_process(struct hk_device *dev, struct hk_api_shader **api,
 int
 main(int argc, char **argv)
 {
-   if (argc == 2 && !strcmp(argv[1], "--codegen-knobs")) {
-      for (unsigned i = 0; i < ARRAY_SIZE(hk_codegen_env); ++i)
-         puts(hk_codegen_env[i]);
-      return 0;
-   }
    glsl_type_singleton_init_or_ref();
    struct hk_device *dev = calloc(1, sizeof(*dev));
    struct hk_physical_device *pdev = calloc(1, sizeof(*pdev));
@@ -493,17 +488,6 @@ main(int argc, char **argv)
    struct hk_api_shader *again[HK_APPLE9_GFX_STAGES];
    struct hk_api_shader *out[HK_APPLE9_GFX_STAGES];
    api_create(dev, api, false);
-   if (argc == 2 && !strcmp(argv[1], "--key")) {
-      struct hk_apple9_graphics_key key;
-      hk_apple9_graphics_key(&key, NULL);
-      blake3_hash hash;
-      CHECK(hk_apple9_variant_cache_key(dev, api, &key, hash));
-      for (unsigned i = 0; i < sizeof(hash); ++i)
-         printf("%02x", hash[i]);
-      puts("");
-      api_destroy(dev, api);
-      goto finish;
-   }
    if (argc == 2 && (!strcmp(argv[1], "--cold-process") ||
                      !strcmp(argv[1], "--warm-process"))) {
       persistent_process(dev, api, argv[1]);

@@ -11,17 +11,12 @@
  * https://link.springer.com/content/pdf/10.1007/978-3-642-37051-9_6.pdf
  */
 
-#include "util/u_debug.h"
 #include "util/hash_table.h"
 #include "util/ralloc.h"
 #include "util/u_dynarray.h"
 #include "agx_builder.h"
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
-
-/* Coalescing noninterfering spill homes is the default; AGX_SPILL_COALESCE=0
- * restores one home per spilled variable. */
-DEBUG_GET_ONCE_BOOL_OPTION(agx_spill_coalesce, "AGX_SPILL_COALESCE", true)
 
 struct repair_block {
    /* For a loop header, whether phis operands have been added */
@@ -57,7 +52,7 @@ record_write(struct repair_ctx *ctx, agx_block *block, unsigned node,
              agx_index val)
 {
    assert(node < ctx->n);
-   if (ctx->homes && val.memory)
+   if (val.memory)
       _mesa_hash_table_u64_insert(ctx->homes, val.value,
                                   (void *)(uintptr_t)(node + 1));
    struct hash_table_u64 *defs = repair_block(ctx, block)->defs;
@@ -317,8 +312,7 @@ agx_repair_ssa(agx_context *ctx)
    }
 
    unsigned n = ctx->alloc;
-   struct hash_table_u64 *homes = debug_get_option_agx_spill_coalesce()
-      ? _mesa_hash_table_u64_create(blocks) : NULL;
+   struct hash_table_u64 *homes = _mesa_hash_table_u64_create(blocks);
 
    /* Spilling breaks SSA only for the variables it reloads or
     * rematerializes, which now have several definitions. A variable with one
@@ -366,7 +360,7 @@ agx_repair_ssa(agx_context *ctx)
             }
 
             if (!BITSET_TEST(redefined, handle)) {
-               if (homes && I->dest[d].memory)
+               if (I->dest[d].memory)
                   _mesa_hash_table_u64_insert(homes, handle,
                                               (void *)(uintptr_t)(handle + 1));
                continue;
@@ -431,15 +425,13 @@ agx_repair_ssa(agx_context *ctx)
    ralloc_free(ctx->spill_home);
    ctx->spill_home = NULL;
    ctx->spill_home_count = 0;
-   if (homes) {
-      ctx->spill_home = rzalloc_array(ctx, unsigned, ctx->alloc);
-      ctx->spill_home_count = ctx->alloc;
-      agx_foreach_instr_global(ctx, I) {
-         agx_foreach_ssa_dest(I, d) {
-            if (I->dest[d].memory)
-               ctx->spill_home[I->dest[d].value] = (uintptr_t)
-                  _mesa_hash_table_u64_search(homes, I->dest[d].value);
-         }
+   ctx->spill_home = rzalloc_array(ctx, unsigned, ctx->alloc);
+   ctx->spill_home_count = ctx->alloc;
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_ssa_dest(I, d) {
+         if (I->dest[d].memory)
+            ctx->spill_home[I->dest[d].value] = (uintptr_t)
+               _mesa_hash_table_u64_search(homes, I->dest[d].value);
       }
    }
    ralloc_free(blocks);

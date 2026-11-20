@@ -30,9 +30,6 @@
 #include "vk_meta.h"
 #include "vk_queue.h"
 
-DEBUG_GET_ONCE_OPTION(cached_hk_apple9_sparse_scratch,
-                      "HK_APPLE9_SPARSE_SCRATCH", NULL)
-
 struct hk_physical_device;
 struct vk_pipeline_cache;
 
@@ -258,13 +255,12 @@ hk_device_alloc_scratch(struct hk_device *dev, mesa_shader_stage stage,
 /* With soft faults, accesses to unmapped GPU pages read zero and drop
  * writes, which is strict sparse residency. Apple9 then leaves unbound
  * sparse ranges unmapped instead of mapping the shared scratch page, whose
- * contents reads would observe. HK_APPLE9_SPARSE_SCRATCH=1 restores scratch.
+ * contents reads would observe.
  */
 static inline bool
 hk_sparse_unbound_unmapped(const struct agx_device *dev)
 {
-   return agx_is_apple9(dev) && agx_has_soft_fault((struct agx_device *)dev) &&
-          !debug_get_option_cached_hk_apple9_sparse_scratch();
+   return agx_is_apple9(dev) && agx_has_soft_fault((struct agx_device *)dev);
 }
 void hk_device_init_usc_heap(struct hk_device *dev);
 void hk_device_finish_usc_heap(struct hk_device *dev);

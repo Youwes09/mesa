@@ -631,7 +631,6 @@ agx_apple9_wide_float_immediate_slot(enum agx_apple9_encoding encoding,
 
 /* AGX_APPLE9_NO_COMPARE_LITERAL=1 keeps compare operands in registers and
  * uniform words. */
-bool agx_apple9_compare_literals_disabled(void);
 
 /* Compare operand B of a select or predicate takes a literal in the byte
  * that otherwise names a uniform: a minifloat with its sign beside it for

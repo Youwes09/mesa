@@ -9,18 +9,6 @@
 #include "util/hash_table.h"
 #include "util/u_memory.h"
 
-DEBUG_GET_ONCE_OPTION(cached_agx_apple9_no_pointer_load,
-                      "AGX_APPLE9_NO_POINTER_LOAD", NULL)
-
-DEBUG_GET_ONCE_OPTION(apple9_no_compare_literal,
-                      "AGX_APPLE9_NO_COMPARE_LITERAL", NULL)
-
-bool
-agx_apple9_compare_literals_disabled(void)
-{
-   return debug_get_option_apple9_no_compare_literal() != NULL;
-}
-
 /* Selection creates address arithmetic and packing which did not exist
  * during NIR optimization. Keep a semantic whitelist: publications, implicit
  * state, derivatives and memory operations are not ordinary scalar ALU. */
@@ -471,8 +459,7 @@ static void
 inline_compare_literal(struct agx_apple9_vir_instr *I, const bool *constant,
                        const uint32_t *values)
 {
-   if (agx_apple9_compare_literals_disabled() ||
-       !agx_apple9_compare_literal_slot(I, 1) || I->nr_srcs < 2 ||
+   if (!agx_apple9_compare_literal_slot(I, 1) || I->nr_srcs < 2 ||
        ((I->alu_src_uniform_mask | I->alu_src_immediate_mask) & 3))
       return;
    const bool is_float = agx_apple9_compare_is_float(I);
@@ -642,12 +629,6 @@ drop_zero_load_index(struct agx_apple9_vir_instr *I, const bool *constant,
    if (I->op != AGX_APPLE9_VIR_DEVICE_LOAD ||
        I->encoding != AGX_APPLE9_ENC_DEVICE_LOAD_INDIRECT || I->nr_srcs != 3 ||
        !constant[I->src[0]] || values[I->src[0]] != 0)
-      return;
-   /* AGX_APPLE9_NO_POINTER_LOAD=1 keeps the materialized zero index. */
-   static int disabled = -1;
-   if (disabled < 0)
-      disabled = debug_get_option_cached_agx_apple9_no_pointer_load() != NULL;
-   if (disabled)
       return;
    I->encoding = AGX_APPLE9_ENC_DEVICE_LOAD_POINTER;
    I->src[0] = I->src[1];

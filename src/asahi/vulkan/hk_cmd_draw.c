@@ -66,10 +66,6 @@
 #include "vk_standard_sample_locations.h"
 #include "vk_util.h"
 
-DEBUG_GET_ONCE_OPTION(cached_hk_apple9_tess_batch, "HK_APPLE9_TESS_BATCH", NULL)
-DEBUG_GET_ONCE_OPTION(cached_hk_apple9_tess_scan_block,
-                      "HK_APPLE9_TESS_SCAN_BLOCK", NULL)
-
 #define IS_DIRTY(bit) BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_##bit)
 
 #define IS_SHADER_DIRTY(bit)                                                   \
@@ -81,10 +77,7 @@ DEBUG_GET_ONCE_OPTION(cached_hk_apple9_tess_scan_block,
 /* CTS coverage of indirect draws is pretty bad, so it's helpful to be able to
  * get some extra smoke testing.
  */
-/* Read once: the environment is scanned linearly, which on every draw cost
- * 50-100 ns in a typical Proton environment. */
-DEBUG_GET_ONCE_BOOL_OPTION(hk_test_indirects, "HK_TEST_INDIRECTS", false)
-#define HK_TEST_INDIRECTS debug_get_option_hk_test_indirects()
+#define HK_TEST_INDIRECTS (0)
 
 UNUSED static inline void
 print_draw(struct agx_draw d, FILE *fp)
@@ -628,11 +621,7 @@ hk_attachment_may_be_sampled(const VkRenderingAttachmentInfo *att)
 static bool
 hk_render_merge_enabled(struct hk_cmd_buffer *cmd)
 {
-   static int enabled = -1;
-   if (enabled < 0)
-      enabled = debug_get_bool_option("HK_APPLE9_MERGE_RENDERS", true);
-
-   return enabled && agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
+   return agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
           cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY && !cmd->in_meta;
 }
 
@@ -763,11 +752,8 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
 static bool
 hk_render_suspend_keeps_open(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
 {
-   static int enabled = -1;
-   if (enabled < 0)
-      enabled = debug_get_bool_option("HK_APPLE9_MERGE_RESUME", true);
    const struct hk_rendering_state *render = &cmd->state.gfx.render;
-   return enabled && cs && !render->feedback && !render->raw_color_mask &&
+   return cs && !render->feedback && !render->raw_color_mask &&
           !render->raw_zs &&
           (render->flags & VK_RENDERING_SUSPENDING_BIT) &&
           agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
@@ -3153,12 +3139,6 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
     * hk_tess_batch_flush). The stage order within each draw is kept by the
     * barrier after every lane.
     */
-   /* HK_APPLE9_TESS_BATCH=0 turns batching off. */
-   static int batch_env = -1;
-   if (batch_env < 0) {
-      const char *env = debug_get_option_cached_hk_apple9_tess_batch();
-      batch_env = !env || strcmp(env, "0") != 0;
-   }
    /* Only small draws are latency-bound enough to gain from overlapping;
     * a large one fills the GPU on its own and is kept inline, which also
     * keeps its passes out of the stream-end lanes.
@@ -3168,7 +3148,6 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
                               : (draw.b.count[0] / input_patch_size) *
                                    draw.b.count[1];
    bool batch =
-      batch_env &&
       !agx_is_indirect(draw.b) &&
       batch_patches <= max_batch_patches &&
       !hk_stat_enabled(hk_pipeline_stat_addr(
@@ -3176,11 +3155,9 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
          VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT)) &&
       !hk_stat_enabled(c_prims) && !hk_stat_enabled(c_inv) && !gfx->xfb_enabled;
    /* A full fold table starts a new batch. */
-   bool fold = batch && hk_tess_fold_enabled();
-   if (!batch ||
-       (fold && util_dynarray_num_elements(&cmd->tess_batch.fold,
-                                           struct hk_tess_fold) >=
-                   HK_TESS_FOLD_MAX_DRAWS))
+   if (!batch || util_dynarray_num_elements(&cmd->tess_batch.fold,
+                                            struct hk_tess_fold) >=
+                    HK_TESS_FOLD_MAX_DRAWS)
       hk_tess_batch_flush(cmd);
 
 #define HK_TESS_LANE(l) cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
@@ -3190,7 +3167,7 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    HK_TESS_LANE(1);
    hk_apple9_dispatch_prerast(cmd, tcs, grid_tcs, &bindings);
 
-   if (fold) {
+   if (batch) {
       /* The flush runs the count, prefix sum and emit passes of every folded
        * draw (hk_tess_fold_flush).
        */
@@ -3207,28 +3184,16 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    }
 
    /* First generate counts, then prefix sum them, and then tessellate. */
-   HK_TESS_LANE(2);
    libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX,
                      gfx->tess.info.mode, POLY_TESS_MODE_COUNT, state);
-   HK_TESS_LANE(3);
    /* One workgroup walking every patch takes milliseconds for large draws,
     * so direct draws past a few blocks scan blocks in parallel instead.
     */
-   /* HK_APPLE9_TESS_SCAN_BLOCK=<n> sets the block size, so that tests with
-    * small draws reach the blocked path too.
-    */
-   static unsigned block_patches = 0;
-   if (!block_patches) {
-      const char *env = debug_get_option_cached_hk_apple9_tess_scan_block();
-      block_patches = env ? MAX2(strtoul(env, NULL, 0), 1) : 8192;
-   }
+   const unsigned block_patches = 8192;
    unsigned nr_patches =
       agx_is_indirect(draw.b) ? 0
                               : ((struct poly_tess_params *)tess_args.cpu)->nr_patches;
-   /* The three passes depend on each other, so they cannot share a stage
-    * lane with other draws' passes: batched draws keep the single scan.
-    */
-   if (!batch && nr_patches > 2 * block_patches) {
+   if (nr_patches > 2 * block_patches) {
       uint64_t counts = ((struct poly_tess_params *)tess_args.cpu)->counts;
       unsigned nr_blocks = DIV_ROUND_UP(nr_patches, block_patches);
       uint64_t block_sums = hk_pool_alloc(cmd, nr_blocks * 4, 4).gpu;
@@ -3246,13 +3211,9 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       libagx_prefix_sum_tess(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
                              state, c_prims, c_inv, c_prims || c_inv);
    }
-   HK_TESS_LANE(4);
    libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX,
                      gfx->tess.info.mode, POLY_TESS_MODE_WITH_COUNTS, state);
-   cmd->tess_batch.capture = NULL;
 #undef HK_TESS_LANE
-   if (batch)
-      cmd->tess_batch.draws++;
 
    return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws,
                                    AGX_INDEX_SIZE_U32, false);

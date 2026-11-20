@@ -18,10 +18,6 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
-DEBUG_GET_ONCE_OPTION(cached_agx_apple9_parallel_ra,
-                      "AGX_APPLE9_PARALLEL_RA", NULL)
-DEBUG_GET_ONCE_OPTION(cached_agx_apple9_verify_probe_reuse,
-                      "AGX_APPLE9_VERIFY_PROBE_REUSE", NULL)
 
 /* Apple9 selection keeps its machine operands and encoding contracts. The
  * shared IR carries their SSA dataflow, including genuine CFG phis, through
@@ -2593,14 +2589,6 @@ agx_apple9_set_parallel_ra(bool enable)
    apple9_parallel_ra = enable;
 }
 
-static bool
-apple9_parallel_ra_enabled(void)
-{
-   static int forced = -1;
-   if (unlikely(forced < 0))
-      forced = debug_get_option_cached_agx_apple9_parallel_ra() ? atoi(debug_get_option_cached_agx_apple9_parallel_ra()) : 2;
-   return forced == 2 ? apple9_parallel_ra : forced != 0;
-}
 
 struct apple9_candidate_job {
    struct agx_apple9_vir_program *program;
@@ -2806,54 +2794,6 @@ apple9_first_candidate(struct agx_apple9_vir_program *program, nir_shader *nir,
                                     seen);
 }
 
-/* AGX_APPLE9_VERIFY_PROBE_REUSE: recompute a replayed first candidate from
- * the input's state before the replay and abort unless the allocation, the
- * input's retain masks, the fingerprints and the flags all match. */
-static void
-apple9_verify_probe_reuse(struct agx_apple9_vir_program *program, nir_shader *nir,
-                          const uint16_t *retain_before,
-                          const struct agx_apple9_vir_program *best,
-                          const struct util_dynarray *seen, bool remat_used,
-                          bool copy_register)
-{
-   const unsigned n = program->instruction_count;
-   uint16_t *retain_after = malloc(MAX2(n, 1) * sizeof(*retain_after));
-   struct agx_apple9_vir_program fresh;
-   agx_apple9_vir_init(&fresh);
-   struct util_dynarray fresh_seen, key_best, key_fresh;
-   util_dynarray_init(&fresh_seen, NULL);
-   util_dynarray_init(&key_best, NULL);
-   util_dynarray_init(&key_fresh, NULL);
-   const char *reason = NULL;
-   bool fresh_remat = false, fresh_copy = false;
-   if (!retain_after)
-      abort();
-   for (unsigned i = 0; i < n; ++i) {
-      retain_after[i] = program->instructions[i]->retain_mask;
-      program->instructions[i]->retain_mask = retain_before[i];
-   }
-   bool ok = apple9_first_candidate(program, nir, &fresh, &reason, &fresh_remat,
-                                    &fresh_copy, &fresh_seen) &&
-             agx_apple9_vir_key(best, &key_best) &&
-             agx_apple9_vir_key(&fresh, &key_fresh);
-   for (unsigned i = 0; ok && i < n; ++i)
-      ok = program->instructions[i]->retain_mask == retain_after[i];
-   ok = ok && fresh_remat == remat_used && fresh_copy == copy_register &&
-        fresh_seen.size == seen->size &&
-        !memcmp(fresh_seen.data, seen->data, seen->size) &&
-        key_best.size == key_fresh.size &&
-        !memcmp(key_best.data, key_fresh.data, key_best.size);
-   if (!ok) {
-      fprintf(stderr, "Apple9 replayed probe allocation differs from a recomputed one\n");
-      abort();
-   }
-   util_dynarray_fini(&fresh_seen);
-   util_dynarray_fini(&key_best);
-   util_dynarray_fini(&key_fresh);
-   agx_apple9_vir_finish(&fresh);
-   free(retain_after);
-}
-
 bool
 agx_apple9_allocate_shared(struct agx_apple9_vir_program *program,
                            nir_shader *nir, const char **reason)
@@ -2884,21 +2824,8 @@ agx_apple9_allocate_shared(struct agx_apple9_vir_program *program,
                       apple9_probe_key(program, nir, &probe_key);
    bool replayed = false;
    if (keyed && !agx_apple9_ra_probe) {
-      const bool verify = debug_get_option_cached_agx_apple9_verify_probe_reuse();
-      uint16_t *retain_before = NULL;
-      if (verify) {
-         retain_before = malloc(MAX2(program->instruction_count, 1) * sizeof(*retain_before));
-         if (!retain_before)
-            abort();
-         for (unsigned i = 0; i < program->instruction_count; ++i)
-            retain_before[i] = program->instructions[i]->retain_mask;
-      }
       replayed = apple9_take_probe_result(&probe_key, program, &best, &seen,
                                           &remat_used[0][0], &copy_register);
-      if (replayed && verify)
-         apple9_verify_probe_reuse(program, nir, retain_before, &best, &seen,
-                                   remat_used[0][0], copy_register);
-      free(retain_before);
    }
    if (!replayed &&
        !apple9_first_candidate(program, nir, &best, reason, &remat_used[0][0],
@@ -2938,7 +2865,7 @@ agx_apple9_allocate_shared(struct agx_apple9_vir_program *program,
    for (unsigned i = 0; i < program->instruction_count; ++i)
       long_dependencies += apple9_dependency_delay(program->instructions[i]) > 1;
    struct apple9_candidate_job prefetched[2] = {0};
-   const bool parallel = apple9_parallel_ra_enabled();
+   const bool parallel = apple9_parallel_ra;
    if (parallel && bank_candidates && long_dependencies > 1) {
       apple9_candidate_job_init(&prefetched[0], program, nir, &seen, true, false,
                                 0, copy_register, true, false, cost.spills);

@@ -1745,15 +1745,12 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * rasterization shader writes the view's layer. Query counters are updated
     * by task/mesh kernels before the deferred availability write, using the
     * same query-pool machinery as other graphics stages.
-    * HK_APPLE9_MESH_SHADER=0 hides it.
     */
-   if (debug_get_bool_option("HK_APPLE9_MESH_SHADER", true)) {
-      ext->EXT_mesh_shader = true;
-      feat->meshShader = true;
-      feat->taskShader = true;
-      feat->multiviewMeshShader = true;
-      feat->meshShaderQueries = true;
-   }
+   ext->EXT_mesh_shader = true;
+   feat->meshShader = true;
+   feat->taskShader = true;
+   feat->multiviewMeshShader = true;
+   feat->meshShaderQueries = true;
 
    /* Fragment shader interlock: the compiler acquires the pixel in raster
     * order at shader entry, holds it through the end of the shader and fences
@@ -1998,13 +1995,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_pdev_alloc;
    }
 
-   /* HK_EXPERIMENTAL_APPLE9=0 hides the device, e.g. to fall back to
-    * another Vulkan implementation. */
-   if (agx_is_apple9(&pdev->dev) &&
-       !debug_get_bool_option("HK_EXPERIMENTAL_APPLE9", true)) {
-      result = VK_ERROR_INCOMPATIBLE_DRIVER;
-      goto fail_agx_device;
-   }
 
    /* A private install prefix or a DRIRC_CONFIGDIR override loses the
     * application options silently otherwise. */
@@ -2046,12 +2036,11 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
          hk_sparse_unbound_unmapped(&pdev->dev);
    }
 
-   /* VK_EXT_descriptor_buffer, with its memory type; HK_APPLE9_DESCRIPTOR_BUFFER=0
-    * hides both. With 128 B image and sampler parts vkd3d-proton finds its
+   /* VK_EXT_descriptor_buffer, with its memory type. With 128 B image and
+    * sampler parts vkd3d-proton finds its
     * host copy templates; in-world ELDEN RING runs 13% faster with it (x86
     * driver) and 5% (FEX thunk), with descriptor CPU near zero (2026-10-11). */
-   if (agx_is_apple9(&pdev->dev) &&
-       debug_get_bool_option("HK_APPLE9_DESCRIPTOR_BUFFER", true)) {
+   if (agx_is_apple9(&pdev->dev)) {
       supported_extensions.EXT_descriptor_buffer = true;
       supported_features.descriptorBuffer = true;
       supported_features.descriptorBufferPushDescriptors = true;
@@ -2115,8 +2104,7 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    };
 
    pdev->apple9_descriptor_mem_type = UINT8_MAX;
-   if (agx_is_apple9(&pdev->dev) &&
-       debug_get_bool_option("HK_APPLE9_DESCRIPTOR_BUFFER", true)) {
+   if (agx_is_apple9(&pdev->dev)) {
       pdev->apple9_descriptor_mem_type = pdev->mem_type_count;
       pdev->mem_types[pdev->mem_type_count++] = (VkMemoryType){
          .propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |

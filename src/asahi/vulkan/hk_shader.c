@@ -76,10 +76,6 @@
 #include "util/u_debug.h"
 #include "vulkan/vulkan_core.h"
 
-DEBUG_GET_ONCE_OPTION(cached_hk_apple9_dump_fragment_dir,
-                      "HK_APPLE9_DUMP_FRAGMENT_DIR", NULL)
-DEBUG_GET_ONCE_OPTION(cached_hk_apple9_eager_variants,
-                      "HK_APPLE9_EAGER_VARIANTS", NULL)
 
 
 /* Set while a pipeline-time eager variant compiles on this thread. */
@@ -124,142 +120,14 @@ shared_var_info(const struct glsl_type *type, unsigned *size, unsigned *align)
    *size = comp_size * length, *align = comp_size;
 }
 
-/* Code-generation environment controls key the shader caches: a warm cache
- * must not hand one setting's shaders to another. Diagnostics and known
- * runtime-only controls are excluded. Zero when none is set keeps existing
- * default caches valid.
- */
-static uint64_t hk_compiler_env_hash_value;
-static once_flag hk_compiler_env_hash_once = ONCE_FLAG_INIT;
-
-/* Environment knobs whose value changes generated code: their values key the
- * shader caches. Keep this list next to the knobs; any other AGX_* or
- * HK_APPLE9_* variable (traces, dumps, statistics, runtime switches, or a
- * codegen knob missing here) keys the caches by name only, so output paths
- * never split them while an unlisted knob still does, conservatively.
- */
-static const char *const hk_codegen_env[] = {
-   "AGX_MESA_DEBUG",
-   "AGX_SPILL_COALESCE",
-   "AGX_APPLE9_NO_COMPARE_LITERAL",
-   "AGX_APPLE9_NO_DESCRIPTOR_HOIST",
-   "AGX_APPLE9_NO_POINTER_LOAD",
-   "AGX_APPLE9_NO_PROMOTE",
-   "AGX_APPLE9_NO_SAMPLER_HOIST",
-   "AGX_APPLE9_NO_UNIFORM_MOVE",
-   "HK_APPLE9_DESCRIPTOR_BUFFER",
-   "HK_APPLE9_MESH_SHADER",
-   "HK_APPLE9_NATIVE_MESH",
-   "HK_APPLE9_NATIVE_MESH_ATTRIBUTES",
-   "HK_APPLE9_NATIVE_MESH_PRIMITIVE_LOWERING",
-   "HK_APPLE9_NATIVE_MESH_PACKED_SHAPES",
-   "HK_APPLE9_NATIVE_INDEX",
-   "HK_APPLE9_NATIVE_STAGES",
-   "HK_APPLE9_GS_MESH_PROBE",
-   "HK_APPLE9_GS_NATIVE",
-   "HK_APPLE9_TESS_MESH_PROBE",
-   "HK_APPLE9_TESS_NATIVE",
-};
-
-/* These controls change diagnostics, memory backing, when a variant is
- * compiled, or command recording/submission. They do not change shader code.
- * Keep them available for runtime investigations without splitting caches. */
-static const char *const hk_ignored_env[] = {
-   "HK_APPLE9_VARIANT_CACHE_VERIFY", "HK_APPLE9_DUMP_FRAGMENT_DIR",
-   "HK_APPLE9_EAGER_VARIANTS",       "HK_APPLE9_SPARSE_SCRATCH",
-   "HK_APPLE9_TESS_BATCH",           "HK_APPLE9_TESS_SCAN_BLOCK",
-   "HK_APPLE9_MERGE_RENDERS",        "HK_APPLE9_MERGE_RESUME",
-   "HK_APPLE9_MERGE_HOIST_BARRIERS", "HK_APPLE9_MERGE_MOVE_COMPUTE",
-   "HK_APPLE9_FRAGMENT_BARRIER",     "HK_APPLE9_NO_TILING_ELISION",
-   "HK_APPLE9_MESH_ROUTE_LOG",       "HK_APPLE9_GS_ROUTE_LOG",
-   "HK_APPLE9_TESS_ROUTE_LOG",       "HK_APPLE9_FOLD_EMPTY_CLEARS",
-   "HK_APPLE9_TESS_FOLD",
-   "HK_APPLE9_NATIVE_BLOCKS",        "HK_APPLE9_NATIVE_LANES",
-   "HK_APPLE9_NATIVE_BATCH_LOG",     "HK_APPLE9_NATIVE_RENDER_PRIMITIVES",
-   /* The parallel and serial allocations are identical; the others only
-    * verify or count. */
-   "AGX_APPLE9_PARALLEL_RA",         "AGX_APPLE9_VERIFY_PROBE_REUSE",
-};
-
-static bool
-hk_env_named(const char *var, const char *const *names, unsigned count)
-{
-   const size_t len = strcspn(var, "=");
-   for (unsigned i = 0; i < count; ++i) {
-      if (strlen(names[i]) == len && !strncmp(var, names[i], len))
-         return true;
-   }
-   return false;
-}
-
-/* How an environment entry keys the caches: 0 not at all, 1 by name, 2 by
- * value. */
-static unsigned
-hk_env_key_kind(const char *var)
-{
-   if (strncmp(var, "AGX_", 4) && strncmp(var, "HK_APPLE9_", 10))
-      return 0;
-   if (hk_env_named(var, hk_ignored_env, ARRAY_SIZE(hk_ignored_env)))
-      return 0;
-   return hk_env_named(var, hk_codegen_env, ARRAY_SIZE(hk_codegen_env)) ? 2 : 1;
-}
-
-static int
-hk_compare_env(const void *a, const void *b)
-{
-   return strcmp(*(const char *const *)a, *(const char *const *)b);
-}
-
-static void
-hk_compiler_env_hash_init(void)
-{
-   extern char **environ;
-   unsigned count = 0;
-   for (char **e = environ; e && *e; ++e)
-      count += hk_env_key_kind(*e) != 0;
-   if (!count)
-      return;
-
-   const char **vars = malloc(count * sizeof(*vars));
-   if (!vars) {
-      hk_compiler_env_hash_value = ~0ull;
-      return;
-   }
-   unsigned n = 0;
-   for (char **e = environ; e && *e && n < count; ++e) {
-      if (hk_env_key_kind(*e))
-         vars[n++] = *e;
-   }
-   qsort(vars, n, sizeof(*vars), hk_compare_env);
-
-   struct mesa_blake3 ctx;
-   _mesa_blake3_init(&ctx);
-   for (unsigned i = 0; i < n; ++i) {
-      /* Name-only knobs hash "NAME", value knobs "NAME=VALUE". */
-      const size_t len = hk_env_key_kind(vars[i]) == 2 ? strlen(vars[i])
-                                                       : strcspn(vars[i], "=");
-      _mesa_blake3_update(&ctx, vars[i], len);
-      _mesa_blake3_update(&ctx, "", 1);
-   }
-   blake3_hash hash;
-   _mesa_blake3_final(&ctx, hash);
-   memcpy(&hk_compiler_env_hash_value, hash, sizeof(hk_compiler_env_hash_value));
-   free(vars);
-}
-
 uint64_t
 hk_physical_device_compiler_flags(const struct hk_physical_device *pdev)
 {
-   call_once(&hk_compiler_env_hash_once, hk_compiler_env_hash_init);
    /* Soft faults follow a kernel parameter, so they can change between
     * boots with the same cache. */
-   uint64_t flags = pdev->dev.debug |
-                    ((uint64_t)pdev->apple9_layered_2d << 63) |
-                    ((uint64_t)agx_has_soft_fault((struct agx_device *)&pdev->dev) << 62) |
-                    ((uint64_t)pdev->apple9_d3d_mip_rounding << 61) |
-                    ((uint64_t)false << 60) |
-                    ((uint64_t)0 << 58);
-   return flags ^ hk_compiler_env_hash_value;
+   return pdev->dev.debug | ((uint64_t)pdev->apple9_layered_2d << 63) |
+          ((uint64_t)agx_has_soft_fault((struct agx_device *)&pdev->dev) << 62) |
+          ((uint64_t)pdev->apple9_d3d_mip_rounding << 61);
 }
 
 const nir_shader_compiler_options *
@@ -4625,51 +4493,6 @@ hk_apple9_use_descriptor_handle(nir_builder *b, nir_tex_instr *tex,
    nir_src_rewrite(&tex->src[src].src, nir_iadd(b, base, offset));
 }
 
-/* Debug: HK_APPLE9_DUMP_FRAGMENT_DIR saves each draw-time fragment compile's
- * input (serialized NIR, varying layout, blend states) as
- * <binary hash>-<size>.a9frag, named like the GPU pass log's shader hashes.
- * agx_apple9_fragment_replay recompiles it on the host. */
-#define HK_APPLE9_FRAGMENT_DUMP_MAGIC "A9FRAG01"
-
-static bool
-hk_apple9_fragment_dump_begin(const nir_shader *nir, struct blob *blob)
-{
-   if (!debug_get_option_cached_hk_apple9_dump_fragment_dir())
-      return false;
-   blob_init(blob);
-   nir_serialize(blob, nir, false);
-   return !blob->out_of_memory;
-}
-
-static void
-hk_apple9_fragment_dump_end(struct blob *nir_blob, bool compiled,
-                            const struct agx_apple9_varying_layout *varyings,
-                            const struct agx_apple9_blend *blend,
-                            unsigned targets, const struct agx_shader_part *part)
-{
-   const char *dir = debug_get_option_cached_hk_apple9_dump_fragment_dir();
-   if (compiled && dir) {
-      const unsigned blends = MAX2(targets, 1);
-      const uint32_t header[] = {
-         sizeof(*varyings), sizeof(*blend), targets, blends, nir_blob->size,
-      };
-      char path[512];
-      snprintf(path, sizeof(path), "%s/%08x-%u.a9frag", dir,
-               _mesa_hash_data(part->binary, part->info.binary_size),
-               part->info.binary_size);
-      FILE *f = fopen(path, "wbx");
-      if (f) {
-         fwrite(HK_APPLE9_FRAGMENT_DUMP_MAGIC, 1, 8, f);
-         fwrite(header, sizeof(header), 1, f);
-         fwrite(varyings, sizeof(*varyings), 1, f);
-         fwrite(blend, sizeof(*blend), blends, f);
-         fwrite(nir_blob->data, 1, nir_blob->size, f);
-         fclose(f);
-      }
-   }
-   blob_finish(nir_blob);
-}
-
 /* Which memory a shader reads, from its intrinsics: texture and image
  * operations read images; loads from any buffer, global or descriptor
  * memory and vertex attributes read buffers. Queries and stores do not
@@ -7193,15 +7016,10 @@ hk_apple9_compile_graphics_path(struct hk_device *dev, uint32_t count,
                   varyings.count += 3;
                }
             }
-            struct blob dump_nir;
-            const bool dump = hk_apple9_fragment_dump_begin(nir, &dump_nir);
             hk_assert_final_push_mask(nir, shader);
-            const bool compiled = agx_compile_apple9_fragment_mrt(
-               nir, &varyings, key.blend, key.targets, &shader->b, &reason);
-            if (dump)
-               hk_apple9_fragment_dump_end(&dump_nir, compiled, &varyings,
-                                           key.blend, key.targets, &shader->b);
-            if (!compiled) {
+            if (!agx_compile_apple9_fragment_mrt(
+                   nir, &varyings, key.blend, key.targets, &shader->b,
+                   &reason)) {
                reason = reason ?: "unsupported fragment NIR";
                result = vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
                                   "Apple9 fragment: %s", reason);
@@ -7662,8 +7480,6 @@ hk_apple9_defer_graphics(struct hk_device *dev, uint32_t count,
             hk_api_shader_destroy(&dev->vk, out[i], alloc);
       }
       memset(out, 0, count * sizeof(*out));
-   } else if (debug_get_option_cached_hk_apple9_eager_variants()) {
-      hk_apple9_eager_variant(dev, count, out, state, false);
    }
    return result;
 }
@@ -8385,8 +8201,7 @@ hk_compile_shaders_timed(struct vk_device *vk_dev, uint32_t shader_count,
          /* With complete state, the variant draws select is known: resolve
           * it now, as RADV and ANV compile at creation, so that draws do not
           * stall the recording thread. */
-         if (result == VK_SUCCESS && deferral == HK_APPLE9_DEFER_COMPLETE &&
-             !debug_get_option_cached_hk_apple9_eager_variants())
+         if (result == VK_SUCCESS && deferral == HK_APPLE9_DEFER_COMPLETE)
             hk_apple9_eager_variant(dev, shader_count, shaders_out, state,
                                     true);
          return result;

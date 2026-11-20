@@ -2983,22 +2983,6 @@ retry_apple9_inputs:
    memcpy(link_key.prolog.vs.attribs, &ctx->attributes->key,
           sizeof(link_key.prolog.vs.attribs));
 
-   if (agx_apple9_direct_render_enabled(dev) &&
-       getenv("AGX_APPLE9_TRACE_VBO_PROLOG") != NULL) {
-      nir_builder diagnostic = nir_builder_init_simple_shader(
-         MESA_SHADER_VERTEX, &agx_nir_options, "Apple9 diagnostic VS prolog");
-      agx_nir_vs_prolog(&diagnostic, &link_key.prolog.vs);
-      fprintf(stderr, "APPLE9_RENDER_NIR stage=VS_PROLOG lowered VBO ABI\n");
-      nir_print_shader(diagnostic.shader, stderr);
-      ralloc_free(diagnostic.shader);
-
-      /* This mode exists to inspect the generated prolog before it is safe
-       * to execute.  Terminate before command emission, never after it.
-       */
-      if (getenv("AGX_APPLE9_TRACE_VBO_PROLOG_EXIT") != NULL)
-         exit(0);
-   }
-
    void *old = ctx->linked.vs;
 
    ctx->linked.vs =

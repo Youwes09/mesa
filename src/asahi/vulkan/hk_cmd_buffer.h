@@ -870,10 +870,9 @@ struct hk_cmd_buffer {
     * compute barrier after each (hk_tess_batch_flush). capture, if set,
     * redirects hk_apple9_dispatch into a lane.
     *
-    * With folding (hk_tess_fold_enabled, the default), batched draws leave the count,
-    * prefix sum and emit lanes empty and append a struct hk_tess_fold to
-    * fold instead; the flush turns them into one dispatch per stage and
-    * primitive.
+    * Batched draws leave the count, prefix sum and emit lanes empty and
+    * append a struct hk_tess_fold to fold instead; the flush turns them into
+    * one dispatch per stage and primitive.
     */
    struct {
       struct util_dynarray lane[HK_TESS_BATCH_LANES];
@@ -1079,7 +1078,6 @@ bool hk_render_merge_key_init(struct hk_render_merge_key *key,
 void hk_cmd_empty_barriers_flush(struct hk_cmd_buffer *cmd, bool merge);
 void hk_cmd_render_merge_flush(struct hk_cmd_buffer *cmd);
 struct hk_cs *hk_render_merge_pre_cs(struct hk_cmd_buffer *cmd, unsigned stages);
-bool hk_render_merge_move_enabled(void);
 
 /* Do this before an outside-render operation uploads data or changes the meta
  * state/scope: a pending clear must precede that operation in its original
@@ -1113,8 +1111,7 @@ hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
    if (unlikely(cmd->merge_cs) && ptr != &cmd->merge_pre_cs) {
       if (compute && ptr == &cmd->current_cs.cs && cmd->merge_move_stage &&
           !cmd->merge_suspended && !cmd->empty_barriers.size &&
-          !(cmd->merge_move_stage & cmd->merge_reach) &&
-          hk_render_merge_move_enabled())
+          !(cmd->merge_move_stage & cmd->merge_reach))
          return hk_render_merge_pre_cs(cmd, stages);
       hk_cmd_render_merge_flush(cmd);
    }
@@ -1246,7 +1243,6 @@ hk_cs_destroy(struct hk_cs *cs)
 
 void hk_dispatch_imm_writes(struct hk_cmd_buffer *cmd, struct hk_cs *cs);
 void hk_tess_batch_flush(struct hk_cmd_buffer *cmd);
-bool hk_tess_fold_enabled(void);
 
 static void
 hk_cmd_buffer_end_compute_internal(struct hk_cmd_buffer *cmd,
