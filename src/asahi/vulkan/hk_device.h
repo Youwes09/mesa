@@ -68,6 +68,12 @@ struct hk_sampler_heap {
    struct hash_table *ht;
 };
 
+/* The geometry heap's backing BOs at most. Each growth binds one more and at
+ * least doubles the backing, from HK_HEAP_MIN_B to HK_HEAP_VA_MAX_B
+ * (hk_cmd_buffer.h).
+ */
+#define HK_HEAP_MAX_BOS 8
+
 struct hk_device {
    struct vk_device vk;
    struct agx_device dev;
@@ -156,13 +162,17 @@ struct hk_device {
     * expected to be a legitimate problem. If it is, we can rework later.
     *
     * Recorded draws address the heap by its fixed VA range, backed from its
-    * start by the heap BO. Submissions using the heap hold heap_lock, under
-    * which hk_heap_prepare_submit grows the backing. heap_overflows counts
-    * the new maxima of what the heap needed past its backing (draws were
-    * dropped), heap_reported_B is the last such maximum.
+    * start by heap_bos BOs, bound back to back, heap_backed_B bytes in all.
+    * Submissions using the heap hold heap_lock, under which
+    * hk_heap_prepare_submit grows the backing by binding another BO after
+    * it. heap_overflows counts the new maxima of what the heap needed past
+    * its backing (draws were dropped), heap_reported_B is the last such
+    * maximum.
     */
    struct agx_va *heap_va;
-   struct agx_bo *heap;
+   struct agx_bo *heap[HK_HEAP_MAX_BOS];
+   unsigned heap_bos;
+   uint64_t heap_backed_B;
    util_once_flag heap_init_once;
    simple_mtx_t heap_lock;
    uint32_t heap_overflows;

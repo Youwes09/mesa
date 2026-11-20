@@ -692,7 +692,8 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
       }
       agx_va_free(&dev->dev, dev->heap_va, true);
    }
-   agx_bo_unreference(&dev->dev, dev->heap);
+   for (unsigned i = 0; i < dev->heap_bos; ++i)
+      agx_bo_unreference(&dev->dev, dev->heap[i]);
    simple_mtx_destroy(&dev->heap_lock);
    agx_bo_unreference(&dev->dev, dev->mesh_heap);
    agx_bg_eot_cleanup(&dev->bg_eot);

@@ -1387,8 +1387,8 @@ hk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
       hk_cpu_timing_note_heap(total, true);
    }
 
-   /* Submissions using the geometry heap are serialized, so that one can
-    * grow the heap while no other is in flight. */
+   /* Submissions using the geometry heap are serialized on the CPU, so that
+    * each is submitted after the heap has grown to what it needs. */
    uint64_t heap_min_B = 0;
    bool uses_heap = false;
    for (unsigned i = 0; i < submit->command_buffer_count; ++i) {

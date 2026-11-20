@@ -43,7 +43,9 @@ record_and_replay(bool graphics)
    struct agx_va va = {.addr = 0x20000000};
    struct agx_bo bo = {.va = &va, .size = 128 * 1024 * 1024};
    dev->dev.chip = AGX_CHIP_G16G;
-   dev->heap = &bo;
+   dev->heap[0] = &bo;
+   dev->heap_bos = 1;
+   dev->heap_backed_B = bo.size;
    dev->heap_va = &va;
    va.size_B = bo.size;
    dev->heap_init_once.called = true;

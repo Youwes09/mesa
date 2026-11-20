@@ -1739,8 +1739,19 @@ hk_heap_map(struct hk_device *dev)
    return agx_bo_map(dev->rodata.bo) + off;
 }
 
-/* Back the geometry heap's VA range with a new BO of size_B bytes from its
- * start, releasing the old backing. The heap must be idle. */
+static_assert(HK_HEAP_VA_MAX_B / HK_HEAP_MIN_B == 1u << (HK_HEAP_MAX_BOS - 1),
+              "one backing BO per doubling");
+
+/* Bind bo at offset_B in the geometry heap's VA range. */
+static int
+hk_heap_bind(struct hk_device *dev, struct agx_bo *bo, uint64_t offset_B)
+{
+   return agx_bo_bind(&dev->dev, bo, dev->heap_va->addr + offset_B, bo->size,
+                      0, DRM_ASAHI_BIND_READ | DRM_ASAHI_BIND_WRITE);
+}
+
+/* Back the geometry heap with one new BO of size_B bytes, replacing its
+ * backing. The heap must be idle. */
 static bool
 hk_heap_back(struct hk_device *dev, uint64_t size_B)
 {
@@ -1749,24 +1760,55 @@ hk_heap_back(struct hk_device *dev, uint64_t size_B)
    if (!bo)
       return false;
 
-   if (dev->heap) {
-      agx_bo_bind(&dev->dev, NULL, dev->heap_va->addr, dev->heap->size, 0,
+   if (dev->heap_bos) {
+      agx_bo_bind(&dev->dev, NULL, dev->heap_va->addr, dev->heap_backed_B, 0,
                   DRM_ASAHI_BIND_UNBIND);
    }
 
-   if (agx_bo_bind(&dev->dev, bo, dev->heap_va->addr, size_B, 0,
-                   DRM_ASAHI_BIND_READ | DRM_ASAHI_BIND_WRITE)) {
+   if (hk_heap_bind(dev, bo, 0)) {
       agx_bo_unreference(&dev->dev, bo);
       /* Keep the old backing mapped, if any. */
-      if (dev->heap)
-         agx_bo_bind(&dev->dev, dev->heap, dev->heap_va->addr,
-                     dev->heap->size, 0,
-                     DRM_ASAHI_BIND_READ | DRM_ASAHI_BIND_WRITE);
+      uint64_t offset_B = 0;
+      for (unsigned i = 0; i < dev->heap_bos; ++i) {
+         hk_heap_bind(dev, dev->heap[i], offset_B);
+         offset_B += dev->heap[i]->size;
+      }
       return false;
    }
 
-   agx_bo_unreference(&dev->dev, dev->heap);
-   dev->heap = bo;
+   for (unsigned i = 0; i < dev->heap_bos; ++i)
+      agx_bo_unreference(&dev->dev, dev->heap[i]);
+   dev->heap[0] = bo;
+   dev->heap_bos = 1;
+   dev->heap_backed_B = size_B;
+   hk_heap_map(dev)->size = size_B - POLY_HEAP_SINK_B;
+   return true;
+}
+
+/* Grow the geometry heap's backing to size_B bytes by binding a new BO after
+ * it. Work still using the heap keeps its memory: the backing it has stays
+ * bound, and the larger size, published once the new BO is bound, only lets
+ * it allocate from bound memory. So growth need not wait for that work.
+ */
+static bool
+hk_heap_extend(struct hk_device *dev, uint64_t size_B)
+{
+   assert(size_B > dev->heap_backed_B);
+   if (dev->heap_bos == HK_HEAP_MAX_BOS)
+      return false;
+
+   struct agx_bo *bo = agx_bo_create(&dev->dev, size_B - dev->heap_backed_B,
+                                     0, 0, "Geometry heap");
+   if (!bo)
+      return false;
+
+   if (hk_heap_bind(dev, bo, dev->heap_backed_B)) {
+      agx_bo_unreference(&dev->dev, bo);
+      return false;
+   }
+
+   dev->heap[dev->heap_bos++] = bo;
+   dev->heap_backed_B = size_B;
    hk_heap_map(dev)->size = size_B - POLY_HEAP_SINK_B;
    return true;
 }
@@ -1839,7 +1881,7 @@ hk_heap_decay(struct hk_device *dev, uint64_t min_B, uint64_t needed_B)
    uint64_t target_B =
       MAX3(min_B, HK_HEAP_MIN_B,
            util_next_power_of_two64(dev->heap_period_need_B + POLY_HEAP_SINK_B));
-   if (dev->heap->size > 2 * target_B) {
+   if (dev->heap_backed_B > 2 * target_B) {
       perf_debug_dev(&dev->dev, "Shrinking the geometry heap to %" PRIu64
                      " MiB", target_B >> 20);
       if (hk_heap_back(dev, target_B))
@@ -1857,12 +1899,12 @@ hk_heap_decay(struct hk_device *dev, uint64_t min_B, uint64_t needed_B)
 /* Before a submission whose command buffers use the geometry heap, with the
  * heap lock held: back at least min_B bytes, and what earlier submissions
  * needed. Allocations that did not fit dropped their draws, and the heap grows
- * past them at once, to the next power of two. Waits for the device to idle.
+ * past them at once, to the next power of two.
  */
 void
 hk_heap_prepare_submit(struct hk_device *dev, uint64_t min_B)
 {
-   if (!dev->heap)
+   if (!dev->heap_bos)
       return;
 
    const struct poly_heap *heap = hk_heap_map(dev);
@@ -1881,22 +1923,14 @@ hk_heap_prepare_submit(struct hk_device *dev, uint64_t min_B)
                      ? util_next_power_of_two64(needed_B + POLY_HEAP_SINK_B)
                      : 0);
    target_B = MIN2(target_B, dev->heap_va->size_B);
-   if (target_B <= dev->heap->size) {
+   if (target_B <= dev->heap_backed_B) {
       hk_heap_decay(dev, min_B, needed_B);
       return;
    }
 
-   /* Earlier submissions may still use the heap. */
-   vk_foreach_queue(iter, &dev->vk) {
-      struct hk_queue *queue = container_of(iter, struct hk_queue, vk);
-      drmSyncobjTimelineWait(dev->dev.fd, &queue->drm.syncobj,
-                             &queue->drm.timeline_value, 1, INT64_MAX,
-                             DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT, NULL);
-   }
-
    perf_debug_dev(&dev->dev, "Growing the geometry heap to %" PRIu64 " MiB",
                   target_B >> 20);
-   hk_heap_back(dev, target_B);
+   hk_heap_extend(dev, target_B);
 }
 
 uint64_t
@@ -1915,7 +1949,7 @@ hk_heap(struct hk_cmd_buffer *cmd)
    cmd->heap_min_B = MAX2(cmd->heap_min_B, min_B);
 
    util_call_once_data(&dev->heap_init_once, hk_init_heap, cmd);
-   if (!dev->heap) {
+   if (!dev->heap_bos) {
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       return 0;
    }
