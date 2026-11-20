@@ -258,15 +258,12 @@ agx_rw_addr_to_ro(struct agx_device *dev, uint64_t addr)
    return addr + dev->sparse_ro_offset;
 }
 
-void agx_bo_note_cpu_write(struct agx_bo *bo, uint64_t offset, uint64_t size);
-
 /* Back the shader entry arena up to end_B, with apple9_entry_lock held (or
  * while opening the device). Returns false if a chunk cannot be allocated. */
 bool agx_apple9_entry_back(struct agx_device *dev, uint32_t end_B);
 /* Write size bytes at offset in the backed shader entry arena. */
 void agx_apple9_entry_write(struct agx_device *dev, uint32_t offset,
                             const void *data, uint32_t size);
-bool agx_bo_sync_cpu_read(struct agx_bo *bo);
 
 /* A separate mapping of the first size bytes of a BO, at fixed_addr unless
  * NULL, owned and unmapped by the caller. API memory maps use this so that
@@ -280,18 +277,12 @@ void agx_bo_mapping_dontfork(void *map, size_t size);
 static inline void *
 agx_bo_map_range(struct agx_bo *bo, void *fixed_addr, size_t size)
 {
-   /* An ordinary map can escape and be written after any submission. */
-   if (bo->shim_cpu_epoch)
-      *bo->shim_cpu_epoch = 0;
-
    return bo->dev->ops.bo_mmap(bo->dev, bo, fixed_addr, size);
 }
 
 static inline void *
 agx_bo_map(struct agx_bo *bo)
 {
-   if (bo->shim_cpu_epoch)
-      *bo->shim_cpu_epoch = 0;
    if (!bo->_map)
       bo->_map = bo->dev->ops.bo_mmap(bo->dev, bo, NULL, bo->size);
 

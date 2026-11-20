@@ -4231,7 +4231,6 @@ hk_apple9_body_upload(struct hk_device *dev, const struct hk_shader *shader)
    if (shader->data_size)
       memcpy((char *)map + data_offset,
              shader->data_ptr, shader->data_size);
-   agx_bo_note_cpu_write(bo, offset, body->alloc_size);
 
    struct list_head evicted;
    list_inithead(&evicted);

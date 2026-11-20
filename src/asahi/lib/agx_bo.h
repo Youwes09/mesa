@@ -96,7 +96,6 @@ struct agx_bo {
    struct agx_va *va;
 
    /* Suffixed to force agx_bo_map access */
-   uint64_t *shim_cpu_epoch; /* Optional shim-owned CPU-write generation. */
    void *_map;
 
    /* Process-local index */

@@ -86,7 +86,6 @@ hk_apple9_tile_helper(struct hk_device *dev,
       goto done;
    }
    memcpy(agx_bo_map(created->bo), part.binary, part.info.binary_size);
-   agx_bo_note_cpu_write(created->bo, 0, part.info.binary_size);
    agx_apple9_stage_launch_cache_init(&created->launch);
    _mesa_hash_table_insert(ht, &created->key, created);
    helper = created;

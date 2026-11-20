@@ -1629,7 +1629,6 @@ agx_apple9_install_vertex_stage(struct agx_device *dev,
    if (!stage->bo)
       abort();
    memcpy(agx_bo_map(stage->bo), stage->binary, stage->binary_size);
-   agx_bo_note_cpu_write(stage->bo, 0, stage->binary_size);
 }
 
 static struct agx_compiled_shader *
@@ -1679,7 +1678,6 @@ agx_apple9_compile_prerast(struct agx_device *dev, nir_shader *nir,
       abort();
    memcpy(agx_bo_map(compiled->bo), compiled->b.binary,
           compiled->b.info.binary_size);
-   agx_bo_note_cpu_write(compiled->bo, 0, compiled->b.info.binary_size);
    return compiled;
 }
 
@@ -1869,7 +1867,6 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
       }
       memcpy(agx_bo_map(compiled->bo), compiled->b.binary,
              compiled->b.info.binary_size);
-      agx_bo_note_cpu_write(compiled->bo, 0, compiled->b.info.binary_size);
 
       ralloc_free(early);
       return compiled;
@@ -2191,7 +2188,6 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
          abort();
       }
       memcpy(agx_bo_map(stage->bo), stage->binary, stage->binary_size);
-      agx_bo_note_cpu_write(stage->bo, 0, stage->binary_size);
    }
 
    if (apple9_render)

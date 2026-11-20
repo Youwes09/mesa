@@ -6,7 +6,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include <errno.h>
-#include <dlfcn.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <xf86drm.h>
@@ -662,21 +661,6 @@ agx_resource_create_with_modifiers(struct pipe_screen *screen,
       return NULL;
    }
 
-   /* Tiled transfers expose staging memory, never the BO pointer. Other maps
-    * revoke this optional shim optimization. Imported/shared and already mapped
-    * BOs stay on content comparison, including persistent linear mappings. */
-   if (nresource->modifier != DRM_FORMAT_MOD_LINEAR &&
-       !(create_flags & AGX_BO_SHAREABLE) && !nresource->bo->_map) {
-      typedef uint64_t *(*epoch_fn)(int, uint32_t);
-      epoch_fn get_epoch = (epoch_fn)dlsym(RTLD_DEFAULT, "asahi_m1n1_cpu_epoch");
-      if (get_epoch) {
-         nresource->bo->shim_cpu_epoch =
-            get_epoch(dev->fd, nresource->bo->uapi_handle);
-         if (nresource->bo->shim_cpu_epoch)
-            *nresource->bo->shim_cpu_epoch = 1;
-      }
-   }
-
    agx_resource_debug(nresource, "New: ");
    return &nresource->base;
 }
@@ -789,15 +773,6 @@ agx_shadow(struct agx_context *ctx, struct agx_resource *rsrc, bool needs_copy)
       return false;
 
    if (needs_copy) {
-      /* A completed GPU writer may still own the authoritative contents on
-       * transports with separate CPU and GPU memory. Fetch them before copying
-       * untouched pixels into the replacement allocation.
-       */
-      if (!agx_bo_sync_cpu_read(old)) {
-         agx_bo_unreference(dev, new_);
-         return false;
-      }
-
       perf_debug_ctx(ctx, "Shadowing %zu bytes on the CPU (%s)", size,
                      (old->flags & AGX_BO_WRITEBACK) ? "cached" : "uncached");
       agx_resource_debug(rsrc, "Shadowed: ");
@@ -1115,15 +1090,6 @@ agx_transfer_map(struct pipe_context *pctx, struct pipe_resource *resource,
    bool staging_blit = ail_is_level_logically_compressed(&rsrc->layout, level);
 
    agx_prepare_for_map(ctx, rsrc, level, usage, box, staging_blit);
-
-   /* The remote shim keeps a separate device copy. Synchronizing its fence
-    * alone does not make GPU writes visible in the host mmap. Writes also
-    * need a current baseline: rewriting old host bytes over unread GPU data
-    * must not disappear from the shim's differential upload, including when
-    * a BO is recycled for a new resource. */
-   if (!staging_blit && (usage & (PIPE_MAP_READ | PIPE_MAP_WRITE)) &&
-       !agx_bo_sync_cpu_read(rsrc->bo))
-      return NULL;
 
    /* Track the written buffer range */
    if (resource->target == PIPE_BUFFER) {
@@ -1697,38 +1663,6 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
       c->ts_vtx.start.offset = timestamp_offset(batch, vtx_start);
       c->ts_frag.end.offset = timestamp_offset(batch, frag_end);
    }
-}
-
-/* Explicit pbuffer presentation for the optional m1n1 shim. No resource is
- * exported, and the caller retains the surface for this synchronous call. */
-static void
-agx_m1n1_flush_frontbuffer(struct pipe_screen *screen, struct pipe_context *ctx,
-                           struct pipe_resource *resource, unsigned level,
-                           unsigned layer, void *drawable, unsigned nboxes,
-                           struct pipe_box *boxes)
-{
-   if (!drawable)
-      return;
-   int *status = drawable;
-   *status = -EINVAL;
-   struct agx_resource *rsrc = agx_resource(resource);
-   if (level || layer ||
-       (resource->format != PIPE_FORMAT_B8G8R8A8_UNORM &&
-        resource->format != PIPE_FORMAT_B8G8R8X8_UNORM) ||
-       rsrc->modifier != DRM_FORMAT_MOD_APPLE_GPU_TILED)
-      return;
-
-   typedef int (*present_fn)(int, uint32_t, uint32_t, uint32_t,
-                             uint32_t, uint32_t);
-   present_fn present = (present_fn)dlsym(RTLD_DEFAULT, "asahi_m1n1_present_surface");
-   if (!present) {
-      *status = -ENOSYS;
-      return;
-   }
-   *status = present(agx_device(screen)->fd, rsrc->bo->handle,
-                     resource->width0, resource->height0,
-                     ail_get_wsi_stride_B(&rsrc->layout, level),
-                     rsrc->layout.level_offsets_B[level]);
 }
 
 /*
@@ -3054,11 +2988,6 @@ agx_screen_create(int fd, struct renderonly *ro,
       screen->nir_options[MESA_SHADER_FRAGMENT] =
          &agx_screen->apple9_graphics_nir_options;
    }
-
-   const char *shim_present = getenv("G16G_RENDER_PRESENT_ON_SWAP");
-   if (agx_apple9_direct_render_enabled(&agx_screen->dev) && shim_present &&
-       strcmp(shim_present, "1") == 0)
-      screen->flush_frontbuffer = agx_m1n1_flush_frontbuffer;
 
    screen->resource_create = u_transfer_helper_resource_create;
    screen->resource_destroy = u_transfer_helper_resource_destroy;

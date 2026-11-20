@@ -1,8 +1,30 @@
 /* SPDX-License-Identifier: MIT
  * Exercise the body cache with page-rounded host BOs. No GPU execution. */
 #include "../hk_cmd_buffer.h"
-#include "../hk_shader.c"
 #include "util/u_thread.h"
+
+/* An upload maps its body's BO without holding a lock, after allocating the
+ * body and before publishing it: pause there so that two uploads of one
+ * shader overlap. A new slab is also mapped, under the body lock: count the
+ * locks this thread holds to tell the two apart.
+ */
+static bool gate_uploads;
+static util_barrier upload_gate;
+static thread_local unsigned locks_held;
+static inline void *
+gated_bo_map(struct agx_bo *bo)
+{
+   if (gate_uploads && !locks_held)
+      util_barrier_wait(&upload_gate);
+   return agx_bo_map(bo);
+}
+#define agx_bo_map gated_bo_map
+#define simple_mtx_lock(m) (locks_held++, simple_mtx_lock(m))
+#define simple_mtx_unlock(m) (locks_held--, simple_mtx_unlock(m))
+#include "../hk_shader.c"
+#undef agx_bo_map
+#undef simple_mtx_lock
+#undef simple_mtx_unlock
 #define CHECK(c)                                                               \
    do {                                                                        \
       if (!(c)) {                                                              \
@@ -13,17 +35,6 @@
 static unsigned live_bos;
 static bool fail_create, fail_map;
 static uint64_t next_va = 0x100000;
-static bool gate_uploads;
-static util_barrier upload_gate;
-void __wrap_agx_bo_note_cpu_write(struct agx_bo *, uint64_t, uint64_t);
-void
-__wrap_agx_bo_note_cpu_write(struct agx_bo *bo, uint64_t offset, uint64_t size)
-{
-   if (bo)
-      CHECK(offset + size <= bo->size);
-   if (gate_uploads)
-      util_barrier_wait(&upload_gate);
-}
 static void *
 map_fail(struct agx_device *dev, struct agx_bo *bo, void *addr, size_t size)
 {

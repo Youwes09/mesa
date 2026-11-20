@@ -335,8 +335,6 @@ agx_bo_import(struct agx_device *dev, int fd)
       /* If this bo came back to us via import, it had better
        * been marked shared to begin with.
        */
-      if (bo->shim_cpu_epoch)
-         *bo->shim_cpu_epoch = 0;
       assert(bo->flags & AGX_BO_SHAREABLE);
       assert(bo->flags & AGX_BO_SHARED);
       assert(bo->prime_fd != -1);
@@ -885,7 +883,6 @@ agx_apple9_entry_write(struct agx_device *dev, uint32_t offset,
       uint32_t in_chunk = offset % AGX_APPLE9_ENTRY_CHUNK_SIZE;
       uint32_t n = MIN2(size, AGX_APPLE9_ENTRY_CHUNK_SIZE - in_chunk);
       memcpy((uint8_t *)agx_bo_map(bo) + in_chunk, src, n);
-      agx_bo_note_cpu_write(bo, in_chunk, n);
       offset += n;
       src += n;
       size -= n;

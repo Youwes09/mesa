@@ -71,12 +71,12 @@ encode_target(uint8_t out[10], enum agx_apple9_launch_stage stage,
       return false;
    if (entry_offset > AGX_APPLE9_ENTRY_MAX_OFFSET)
       return false;
-   /* EXP200: the header and fixed control fields were constructed from live
-    * bit-forcing/clearing tests with authored shaders, including multi-frame
-    * returned-atomic checks. Reserved/modifier bits are zero. The two control
-    * bits below remain required: clearing byte 7 bit 1 times out; clearing
-    * byte 8 bit 7 can suppress a later dispatch. Their individual scheduling
-    * semantics are not yet established. See README.apple9-launchers.md. */
+   /* The header and fixed control fields were constructed from bit-forcing
+    * and bit-clearing tests with authored shaders, including multi-frame
+    * returned-atomic checks. Reserved and modifier bits are zero. The two
+    * control bits below are required: clearing byte 7 bit 1 times out, and
+    * clearing byte 8 bit 7 can suppress a later dispatch. Their individual
+    * scheduling semantics are not yet established. */
    uint32_t entry = 2 * entry_offset + 0x2a;
    memset(out, 0, 10);
    write16(out, 0x177);

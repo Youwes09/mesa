@@ -2028,7 +2028,7 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       properties.variableSampleLocations =
          instance->drirc.misc.variable_sample_locations;
       /* Opt-in: under MSAA pixel interlock orders whole microtiles, several
-       * times slower with small primitives (README.apple9.md). */
+       * times slower with small primitives. */
       supported_features.fragmentShaderPixelInterlock =
          instance->drirc.misc.enable_pixel_interlock;
       /* Unmapped with soft faults: unbound reads are zero, writes dropped. */

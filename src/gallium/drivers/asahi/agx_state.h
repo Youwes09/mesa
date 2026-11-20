@@ -1100,11 +1100,7 @@ static inline void *
 agx_map_texture_cpu(struct agx_resource *rsrc, unsigned level, unsigned z,
                     void *transient_map)
 {
-   /* Only for synchronous tile/detile copies; this pointer must not escape.
-    * Mark even reads conservatively. A revoked epoch must stay revoked. */
    struct agx_bo *bo = rsrc->bo;
-   if (bo->shim_cpu_epoch && *bo->shim_cpu_epoch)
-      ++*bo->shim_cpu_epoch;
    void *map = transient_map;
    if (!map) {
       if (!bo->_map)

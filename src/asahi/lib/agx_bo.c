@@ -6,7 +6,6 @@
 
 #include "agx_bo.h"
 #include <inttypes.h>
-#include <dlfcn.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -52,25 +51,6 @@ agx_bo_cache_remove_locked(struct agx_device *dev, struct agx_bo *bo)
  * cache. If it fails, it returns NULL signaling the caller to allocate a new
  * BO. */
 
-typedef int (*reused_fn)(int, uint32_t);
-
-/* The m1n1 shim's reuse hook, looked up once. The pointer itself is the
- * published value, so a racing reader sees either "unresolved" or the hook. */
-#define AGX_BO_REUSED_UNRESOLVED ((reused_fn)(uintptr_t)1)
-
-static reused_fn
-agx_bo_reused_hook(void)
-{
-   static reused_fn hook = AGX_BO_REUSED_UNRESOLVED;
-
-   reused_fn fn = p_atomic_read(&hook);
-   if (fn == AGX_BO_REUSED_UNRESOLVED) {
-      fn = (reused_fn)dlsym(RTLD_DEFAULT, "asahi_m1n1_bo_reused");
-      p_atomic_set(&hook, fn);
-   }
-   return fn;
-}
-
 struct agx_bo *
 agx_bo_cache_fetch(struct agx_device *dev, size_t size, size_t align,
                    uint32_t flags, const bool dontwait)
@@ -99,17 +79,6 @@ agx_bo_cache_fetch(struct agx_device *dev, size_t size, size_t align,
       break;
    }
    simple_mtx_unlock(&dev->bo_cache.lock);
-
-   if (bo) {
-      /* A cached allocation has a new owner. The remote copy may contain
-       * writes by the previous GPU user even where the host bytes did not
-       * change. Start a new upload baseline before exposing it for CPU use. */
-      reused_fn reused = agx_bo_reused_hook();
-      if (reused && reused(dev->fd, bo->uapi_handle)) {
-         agx_bo_free(dev, bo);
-         bo = NULL;
-      }
-   }
 
    return bo;
 }
@@ -518,8 +487,6 @@ static void
 agx_bo_finish_create(struct agx_device *dev, struct agx_bo *bo,
                      const char *label)
 {
-   if (bo->shim_cpu_epoch)
-      *bo->shim_cpu_epoch = 0; /* Cache reuse must opt in again. */
    bo->label = label;
    agx_shader_body_init_bo(bo);
    p_atomic_set(&bo->refcnt, 1);
@@ -536,20 +503,3 @@ agx_bo_finish_create(struct agx_device *dev, struct agx_bo *bo,
    }
 }
 
-/* Native DRM mappings are coherent; the remote shim needs an explicit pull. */
-bool
-agx_bo_sync_cpu_read(struct agx_bo *bo)
-{
-   typedef int (*read_fn)(int, uint32_t);
-   read_fn read = (read_fn)dlsym(RTLD_DEFAULT, "asahi_m1n1_cpu_read");
-   return !read || read(bo->dev->fd, bo->uapi_handle) == 0;
-}
-
-void
-agx_bo_note_cpu_write(struct agx_bo *bo, uint64_t offset, uint64_t size)
-{
-   typedef void (*note_fn)(int, uint32_t, uint64_t, uint64_t);
-   note_fn note = (note_fn)dlsym(RTLD_DEFAULT, "asahi_m1n1_cpu_written");
-   if (note)
-      note(bo->dev->fd, bo->uapi_handle, offset, size);
-}

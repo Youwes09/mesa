@@ -211,8 +211,7 @@ if with_tests
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [hk_deps], link_with : [libhk],
     link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference',
-                 '-Wl,--wrap=agx_bo_unreference',
-                 '-Wl,--wrap=agx_bo_note_cpu_write']), suite : ['asahi', 'honeykrisp'])
+                 '-Wl,--wrap=agx_bo_unreference']), suite : ['asahi', 'honeykrisp'])
   test('hk-sliced-3d', executable('hk-sliced-3d', 'tests/hk-sliced-3d.c',
     include_directories : [inc_gallium, inc_gallium_aux, inc_include,
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],

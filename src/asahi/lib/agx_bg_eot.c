@@ -263,7 +263,6 @@ agx_compile_apple9_precompiled(struct agx_bg_eot_cache *cache,
       return false;
    }
    memcpy(agx_bo_map(p->bo), part.binary, part.info.binary_size);
-   agx_bo_note_cpu_write(p->bo, 0, part.info.binary_size);
    p->ptr = p->bo->va->addr;
    free(part.binary);
    return true;
