@@ -109,62 +109,6 @@ const struct agx_apple9_machine agx_apple9_machine = {
  * cache, liveness, or source-file state.
  */
 static const struct agx_apple9_encoding_info encodings[] = {
-   [AGX_APPLE9_ENC_MESH_CONTROL] = {
-      .name = "mesh_control", .length = 6, .operand_count = 2,
-      .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_BYTE_DIFF,
-      .dependency_layout = AGX_APPLE9_DEPENDENCY_MASK_12_17,
-      /* T8132 r6: either slot 1 or slot 2 completes U0 at the first channel
-       * submit. H4/H5 remain equivalent; choose slot 1, without claiming a
-       * hidden token count. This is an implicit producer, not an output tag. */
-      .fixed_producer_slot = 1,
-      .fixed_producer_alternates = 0x02,
-      .operands = {
-         /* Whole-word allocation conservatively protects the other half.
-          * The selected halfword is read and cleared by the instruction. */
-         GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_16, 95, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_HARDWARE),
-         GPR(AGX_APPLE9_OPERAND_SRC1, AGX_APPLE9_WIDTH_16, 95, 2,
-             /* Qualified U0 captures preserve the selected B halfword,
-              * including low/high remaps and both control42 values. Let its
-              * normal SSA uses retain it instead of manufacturing a dead
-              * clobber copy. This does not impose a numeric register window. */
-             AGX_APPLE9_OPERAND_ALLOCATABLE,
-             AGX_APPLE9_EVIDENCE_HARDWARE),
-      },
-   },
-   [AGX_APPLE9_ENC_MESH_SUBMIT_SCALAR] = {
-      .name = "mesh_submit_scalar", .length = 6, .operand_count = 2,
-      .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_BYTE_DIFF,
-      .dependency_layout = AGX_APPLE9_DEPENDENCY_MASK_12_17,
-      .requires_prior_completion = true,
-      .operands = {
-         /* Conservative even when release=0: preservation is unqualified. */
-         GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32, 94, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_BYTE_DIFF),
-         /* Implicitly addressed at base+1, explicitly tracked by allocation.
-          * 0 and 3 pass; 0x10/0x20/0x30/0x40 suppress geometry on T8132.
-          * The field meaning and preservation are still unqualified. */
-         GPR(AGX_APPLE9_OPERAND_SRC1, AGX_APPLE9_WIDTH_32, 95, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_HARDWARE),
-      },
-   },
-   [AGX_APPLE9_ENC_MESH_SUBMIT_CHANNEL] = {
-      .name = "mesh_submit_channel", .length = 6, .operand_count = 2,
-      .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_BYTE_DIFF,
-      .dependency_layout = AGX_APPLE9_DEPENDENCY_MASK_12_17,
-      .requires_prior_completion = true,
-      .operands = {
-         GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32, 94, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_BYTE_DIFF),
-         GPR(AGX_APPLE9_OPERAND_SRC1, AGX_APPLE9_WIDTH_32, 95, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_BYTE_DIFF),
-      },
-   },
    [AGX_APPLE9_ENC_HALT] = {
       .name = "halt", .length = 4,
       .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
@@ -181,8 +125,8 @@ static const struct agx_apple9_encoding_info encodings[] = {
    /* Native T8132 Metal issues both the fence and the barrier with device
     * and threadgroup loads and returning device and threadgroup atomics
     * outstanding, including before another invocation's store to a loaded
-    * location, and waits at the results' consumers. The scheduler still drains the raster-order and
-    * object-grid fence forms, which have no such evidence. */
+    * location, and waits at the results' consumers. The scheduler still drains the raster-order
+    * fence form, which has no such evidence. */
    [AGX_APPLE9_ENC_DEVICE_FENCE] = {
       .name = "device_fence", .length = 6,
       .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_BYTE_DIFF,
@@ -208,27 +152,6 @@ static const struct agx_apple9_encoding_info encodings[] = {
    },
    [AGX_APPLE9_ENC_SHARED_STORE] = {
       .name = "shared_store", .length = 14, .operand_count = 2,
-      .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-      .operands = {
-         GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32, 63, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_HARDWARE),
-         GPR(AGX_APPLE9_OPERAND_SRC1, AGX_APPLE9_WIDTH_32, 63, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE, AGX_APPLE9_EVIDENCE_HARDWARE),
-      },
-   },
-   [AGX_APPLE9_ENC_LOCAL_STORE] = {
-      .name = "local_store", .length = 14, .operand_count = 1,
-      .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-      .operands = {
-         /* Preserve live data through the allocator, as for shared stores. */
-         GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32, 63, 2,
-             AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
-             AGX_APPLE9_EVIDENCE_HARDWARE),
-      },
-   },
-   [AGX_APPLE9_ENC_LOCAL_STORE_INDEXED] = {
-      .name = "local_store_indexed", .length = 14, .operand_count = 2,
       .allocator_safe = true, .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
       .operands = {
          GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32, 63, 2,
@@ -2046,34 +1969,6 @@ static const struct agx_apple9_encoding_info encodings[] = {
                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_PUBLICATION,
                  AGX_APPLE9_EVIDENCE_HARDWARE)},
       },
-   [AGX_APPLE9_ENC_OBJECT_GRID_EXPORT] =
-      {
-         .name = "object_grid_export",
-         .length = 8,
-         .operand_count = 1,
-         .allocator_safe = true,
-         .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-         .operands =
-            {GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32,
-                 AGX_APPLE9_PUBLICATION_COUNT - 1,
-                 2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_PUBLICATION,
-                 AGX_APPLE9_EVIDENCE_HARDWARE)},
-      },
-   [AGX_APPLE9_ENC_OBJECT_CALL] = {
-      .name = "object_call", .length = 10, .allocator_safe = true,
-      .requires_prior_completion = true,
-      .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-   },
-   [AGX_APPLE9_ENC_OBJECT_RETURN] = {
-      .name = "object_return", .length = 4, .allocator_safe = true,
-      .requires_prior_completion = true,
-      .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-   },
-   [AGX_APPLE9_ENC_OBJECT_RESUME] = {
-      .name = "object_resume", .length = 6, .allocator_safe = true,
-      .requires_prior_completion = true,
-      .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
-   },
    [AGX_APPLE9_ENC_PUBLICATION_PAIR] =
       {
          .name = "publication_pair",

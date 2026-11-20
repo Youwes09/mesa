@@ -91,15 +91,6 @@ apple9_schedule_resources(const agx_instr *I, uint32_t *reads, uint32_t *writes)
        ins->op == AGX_APPLE9_VIR_PUBLICATION_TUPLE)
       *reads |= *writes = APPLE9_SCHED_PUBLICATION;
    switch (ins->op) {
-   case AGX_APPLE9_VIR_MESH_CONTROL:
-   case AGX_APPLE9_VIR_MESH_SUBMIT_SCALAR:
-   case AGX_APPLE9_VIR_MESH_SUBMIT_CHANNEL:
-      /* Mesh publication consumes local output and externally visible
-       * formation records. Keep it ordered with both and with other mesh
-       * operations; execution-mask state is already an input above. */
-      *reads |= APPLE9_SCHED_MEMORY | APPLE9_SCHED_MESH;
-      *writes |= APPLE9_SCHED_MEMORY | APPLE9_SCHED_MESH;
-      return;
    case AGX_APPLE9_VIR_GET_GLOBAL_ID:
    case AGX_APPLE9_VIR_GET_SR:
    case AGX_APPLE9_VIR_DERIVATIVE:
@@ -201,9 +192,6 @@ apple9_identity(const struct agx_apple9_vir_instr *ins)
 static unsigned
 apple9_source_width(const struct agx_apple9_vir_instr *ins, unsigned source)
 {
-   if ((ins->op == AGX_APPLE9_VIR_MESH_SUBMIT_CHANNEL ||
-        ins->op == AGX_APPLE9_VIR_MESH_SUBMIT_SCALAR) && source == 0)
-      return 2;
    if ((ins->op == AGX_APPLE9_VIR_DEVICE_STORE ||
         ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC ||
         ins->op == AGX_APPLE9_VIR_SHARED_ATOMIC) && source == 0)
@@ -301,8 +289,6 @@ apple9_publication(const struct agx_apple9_vir_instr *ins)
 static bool
 apple9_after_logical_end(const struct agx_apple9_vir_instr *ins)
 {
-   if (ins->local_control)
-      return false;
    switch (ins->op) {
    case AGX_APPLE9_VIR_EXEC_MASK_PUSH:
    case AGX_APPLE9_VIR_EXEC_MASK_ELSE:
@@ -1147,7 +1133,6 @@ apple9_can_fold_wait(const struct agx_apple9_vir_instr *ins,
     * Check this before the generic ordering-only case below. */
    if (apple9_scalar_publication(producer))
       return (ins->op == AGX_APPLE9_VIR_VARY_STORE ||
-              ins->op == AGX_APPLE9_VIR_OBJECT_GRID_EXPORT ||
               ins->op == AGX_APPLE9_VIR_COVERAGE) &&
              ins->src[0] == producer->dest;
    bool reads = false;
@@ -1243,7 +1228,6 @@ apple9_reads_sources_at_issue(const struct agx_apple9_vir_instr *ins)
    case AGX_APPLE9_VIR_DEVICE_ATOMIC:
    case AGX_APPLE9_VIR_PRIVATE_LOAD:
    case AGX_APPLE9_VIR_SHARED_LOAD:
-   case AGX_APPLE9_VIR_MESH_CONTROL:
       return true;
    default:
       return false;
@@ -1256,12 +1240,6 @@ static bool
 apple9_resource_hazard(const struct agx_apple9_vir_instr *ins,
                        const struct agx_apple9_vir_instr *producer)
 {
-   /* T8132 r6 isolates the first channel submit as U0's publication consumer.
-    * The post-U0 store is not a consumer. A/B are read at issue, so ordinary
-    * register reuse must not manufacture an earlier publication deadline. */
-   if (producer->op == AGX_APPLE9_VIR_MESH_CONTROL &&
-       ins->op == AGX_APPLE9_VIR_MESH_SUBMIT_CHANNEL)
-      return true;
    /* This compound encoding contains a fixed slot-1 publication and wait. */
    return (ins->encoding == AGX_APPLE9_ENC_BLOCK_IMAGE_STORE ||
            ins->encoding == AGX_APPLE9_ENC_IMAGE_WRITE) &&
@@ -2880,11 +2858,7 @@ bool
 agx_apple9_allocate_shared(struct agx_apple9_vir_program *program,
                            nir_shader *nir, const char **reason)
 {
-   /* Reject unsafe U0 repetition before allocation or scheduling can insert
-    * waits that would disguise it as an ordered, but still unqualified, form. */
    agx_apple9_vir_reindex(program);
-   if (!agx_apple9_validate_mesh_control(program, reason))
-      return false;
 
    /* Apple9 bypasses agx_compile_shader_nir, which initializes these flags
     * for the older backend. The shared allocator still consumes them. */

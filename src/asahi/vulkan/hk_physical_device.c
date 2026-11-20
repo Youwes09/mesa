@@ -23,7 +23,6 @@
 #include "hk_private.h"
 #include "hk_sampler.h"
 #include "hk_shader.h"
-#include "hk_apple9_mesh.h"
 #include "hk_wsi.h"
 
 #include "util/simple_mtx.h"
@@ -1990,7 +1989,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    pdev->master_fd = -1;
    pdev->render_dev = render_dev;
    pdev->dev.fd = fd;
-   pdev->dev.native_mesh_classes = hk_apple9_native_index_class_hash();
    /* Logical devices open their own agx_device, see hk_CreateDevice. */
    pdev->dev.probe_only = true;
 
@@ -2077,9 +2075,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       instance->drirc.misc.apple9_arrayed_2d_views;
    pdev->apple9_d3d_mip_rounding = agx_is_apple9(&pdev->dev) &&
       instance->drirc.misc.apple9_d3d_mip_rounding;
-   pdev->disable_native_index = instance->drirc.misc.disable_native_index;
-   pdev->disable_native_blocks = instance->drirc.misc.disable_native_blocks;
-   pdev->disable_native_stages = instance->drirc.misc.disable_native_stages;
 
    hk_physical_device_init_pipeline_cache(pdev);
 

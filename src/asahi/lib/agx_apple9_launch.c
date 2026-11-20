@@ -31,8 +31,6 @@ agx_apple9_launch_call_offset(enum agx_apple9_launch_stage stage,
 {
    if (stage == AGX_APPLE9_LAUNCH_VERTEX || stage == AGX_APPLE9_LAUNCH_FRAGMENT)
       return 68;
-   if (stage == AGX_APPLE9_LAUNCH_TASK || stage == AGX_APPLE9_LAUNCH_MESH)
-      return 16 + 14 * (AGX_APPLE9_MESH_ARGUMENT_WORDS / 4) + 8;
    if (stage != AGX_APPLE9_LAUNCH_COMPUTE || !resource_count ||
        resource_count > AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)
       return 0;
@@ -49,9 +47,7 @@ encode_allocation(uint8_t out[8], enum agx_apple9_launch_stage stage,
    out[0] = 0x77;
    out[2] = 0x2a;
    out[3] = 0x41;
-   if ((stage == AGX_APPLE9_LAUNCH_COMPUTE ||
-        stage == AGX_APPLE9_LAUNCH_TASK || stage == AGX_APPLE9_LAUNCH_MESH) &&
-       params->threadgroup_memory_bytes) {
+   if (stage == AGX_APPLE9_LAUNCH_COMPUTE && params->threadgroup_memory_bytes) {
       write16(out + 4, (params->threadgroup_memory_bytes << 2) | 0x80);
       out[6] = params->threadgroup_memory_bytes >> 14;
    } else if (stage == AGX_APPLE9_LAUNCH_FRAGMENT) {
@@ -73,22 +69,6 @@ encode_target(uint8_t out[10], enum agx_apple9_launch_stage stage,
 {
    if (entry_offset & 1)
       return false;
-   if (stage == AGX_APPLE9_LAUNCH_TASK || stage == AGX_APPLE9_LAUNCH_MESH) {
-      /* Native launch DATA exposes a full absolute target, unlike the
-       * compact USC-relative graphics/compute target. No executable source
-       * is used to construct this form. */
-      const uint64_t limit = ((UINT64_C(1) << 48) - 0x2a) / 2;
-      if ((shader_base & 1) || shader_base > limit ||
-          entry_offset > limit - shader_base)
-         return false;
-      uint64_t target = 2 * (shader_base + entry_offset) + 0x2a;
-      memset(out, 0, 10);
-      write16(out, 0x177);
-      for (unsigned i = 0; i < 6; ++i)
-         out[2 + i] = target >> (8 * i);
-      out[8] = stage == AGX_APPLE9_LAUNCH_MESH ? 6 : 2;
-      return true;
-   }
    if (entry_offset > AGX_APPLE9_ENTRY_MAX_OFFSET)
       return false;
    /* EXP200: the header and fixed control fields were constructed from live
@@ -126,16 +106,14 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
              const struct agx_apple9_launch_parameters *params,
              struct agx_apple9_launch_template *tmpl)
 {
-   if (!out || !params || (unsigned)stage > AGX_APPLE9_LAUNCH_MESH)
+   if (!out || !params || (unsigned)stage > AGX_APPLE9_LAUNCH_COMPUTE)
       return false;
    bool compute = stage == AGX_APPLE9_LAUNCH_COMPUTE;
-   bool mesh =
-      stage == AGX_APPLE9_LAUNCH_TASK || stage == AGX_APPLE9_LAUNCH_MESH;
    size_t size = compute ? AGX_APPLE9_COMPUTE_LAUNCH_SIZE
                          : AGX_APPLE9_GRAPHICS_LAUNCH_SIZE;
    if (capacity < size || params->publication_count > 1022 ||
        (params->threadgroup_memory_bytes &&
-        (!(compute || mesh) || !agx_apple9_launch_threadgroup_memory_supported(
+        (!compute || !agx_apple9_launch_threadgroup_memory_supported(
                         params->threadgroup_memory_bytes))) ||
        (compute && !agx_apple9_launch_call_offset(stage, params->resource_count)) ||
        (stage == AGX_APPLE9_LAUNCH_FRAGMENT &&
@@ -155,8 +133,7 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
    unsigned at = 16;
    unsigned words = compute
                        ? agx_apple9_compute_root_words(params->resource_count)
-                    : mesh ? AGX_APPLE9_MESH_ARGUMENT_WORDS
-                           : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
+                    : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
    unsigned roots = words / 2;
    if (compute) {
       /* The root words are known when the launch is emitted: materialize

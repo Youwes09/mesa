@@ -1556,10 +1556,6 @@ agx_apple9_prepare_draw_alloc(
    }
    for (unsigned stage = 0; stage < 2; stage++) {
       const struct agx_apple9_render_stage *shader = stages[stage];
-      if (stage == 0 && shader->native_mesh) {
-         draw->launch[0] = 0;
-         continue;
-      }
       uint64_t table = stage ? draw->fragment_table : draw->vertex_table;
       if (agx_apple9_draw_reuses_launch(previous, draw, stage)) {
          draw->launch[stage] = previous->launch[stage];
@@ -1749,8 +1745,7 @@ agx_apple9_update_draw_tables_alloc(
    for (unsigned stage = 0; stage < 2; ++stage) {
       assert(draw->program_id[stage] == stages[stage]->program_id);
       assert(draw->code[stage] == apple9_stage_body(stages[stage])->addr);
-      if (tables[stage] == old_tables[stage] ||
-          (stage == 0 && stages[stage]->native_mesh))
+      if (tables[stage] == old_tables[stage])
          continue;
       if (!agx_apple9_prepare_graphics_stage(
              dev, usc_allocator, usc_alloc, stages[stage], stage != 0,

@@ -24,7 +24,6 @@
 #include "shader_enums.h"
 
 #include "hk_private.h"
-#include "hk_apple9_native_batch.h"
 #include "hk_shader.h"
 #include "hk_sync.h"
 
@@ -351,7 +350,6 @@ struct hk_graphics_state {
     * inputs change. render_gen counts render pass instances. */
    struct {
       bool valid;
-      bool prefer_native;
       /* Whether it counted fragment invocations for an active query. */
       bool fs_statistics;
       /* Whether the resolution exported depth late for a depth/stencil
@@ -539,24 +537,6 @@ struct hk_cs {
    uint8_t pre_raster_reads;
    /* The stream's render stores a linear colour attachment. */
    bool linear_store;
-
-   /* The stream leads with a native mesh block. With a qualified
-    * asahi_native_blocks profile, further native and (if mixed) ordinary
-    * blocks may follow it (hk_apple9_native_stream_admits). */
-   bool apple9_native_mesh;
-   /* Native dispatches (blocks) in the stream. */
-   unsigned apple9_native_dispatches;
-   /* Estimated binned primitives of the stream's native render (blocks
-    * and the ordinary draws between them). */
-   uint64_t apple9_native_primitives;
-   /* PPP state of the stream's last native block, for blocks that update
-    * only what changed (on by default; HK_APPLE9_NATIVE_PPP_DELTA=0 turns it off). Any other draw clears it. */
-   bool apple9_ppp_valid;
-   uint16_t apple9_ppp_size;
-   /* Its viewport block's offset and words: records of the same size can
-    * place it differently. */
-   uint16_t apple9_ppp_viewport_offset, apple9_ppp_viewport_words;
-   uint8_t apple9_ppp_last[AGX_APPLE9_PPP_RECORD_MAX];
 
    /* Parent command buffer. Convenience. */
    struct hk_cmd_buffer *cmd;
@@ -781,9 +761,6 @@ struct hk_cmd_buffer {
     * without hashing. Records are allocated per control stream (batch). */
    struct agx_apple9_uniform_draw apple9_draw[2];
    unsigned apple9_draw_current;
-   /* Estimated binned primitives of the draw being recorded, for the native
-    * render bound (hk_apple9_native_stream_admits); UINT64_MAX: unknown. */
-   uint64_t apple9_draw_primitives;
    struct hk_cs *apple9_prev_cs;
 
    /* Prepared ordinary draw state. Dynamic/shader/vertex state dirties this
@@ -1126,7 +1103,6 @@ hk_cmd_flush_empty_clears(struct hk_cmd_buffer *cmd)
 uint64_t hk_heap(struct hk_cmd_buffer *cmd);
 void hk_heap_prepare_submit(struct hk_device *dev, uint64_t min_B);
 
-size_t hk_apple9_graphics_root_size(const struct hk_device *dev);
 
 static inline struct hk_cs *
 hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
@@ -1147,8 +1123,7 @@ hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
       /* Most control streams are short. Reserve only a small root block;
        * hk_ensure_cs_has_space() chains larger blocks for long streams.
        */
-      size_t initial_size =
-         compute ? 4096 : hk_apple9_graphics_root_size(hk_cmd_buffer_device(cmd));
+      size_t initial_size = 4096;
       struct agx_ptr root = hk_pool_cs_alloc(cmd, initial_size, 1024, compute);
       if (!root.cpu)
          return NULL;
@@ -1539,28 +1514,16 @@ bool hk_apple9_pin_entry(void *allocator, struct agx_shader_body *body);
 void hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd);
 /* reads_buffers: the draw's tiling reads buffer memory itself (indices or
  * indirect arguments). */
-struct hk_apple9_native_profile hk_apple9_native_profile(const struct hk_device *dev);
-bool hk_apple9_native_blocks_enabled(const struct hk_device *dev);
-bool hk_apple9_native_lanes(const struct hk_device *dev);
-uint64_t hk_apple9_native_render_primitives(void);
-void hk_apple9_end_native_batch(struct hk_cmd_buffer *cmd);
-bool hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
-                             bool native_mesh);
-bool hk_apple9_use_native_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw);
-bool hk_apple9_use_native_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw);
-bool hk_apple9_use_native_mesh(struct hk_cmd_buffer *cmd, const uint32_t *direct,
-                                uint64_t count_addr);
-void hk_apple9_draw_native_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
-                                uint64_t grid);
+bool hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers);
 /* Software-stage outputs, queries and multiview have additional per-draw
  * state. Keep their existing preparation path. A null/out-of-range index
  * binding allocates a fresh zero range, so it must also use that path. */
 static inline bool
 hk_apple9_draw_cache_supported(const struct hk_cmd_buffer *cmd,
-                               struct agx_draw draw, uint64_t native_grid)
+                               struct agx_draw draw)
 {
    const struct hk_graphics_state *gfx = &cmd->state.gfx;
-   return !native_grid && !agx_is_indirect(draw.b) && !cmd->in_meta &&
+   return !agx_is_indirect(draw.b) && !cmd->in_meta &&
           !gfx->render.view_mask && !gfx->xfb_enabled &&
           !gfx->shaders[MESA_SHADER_GEOMETRY] &&
           !gfx->shaders[MESA_SHADER_TESS_EVAL] &&
@@ -1577,7 +1540,7 @@ hk_apple9_draw_cache_supported(const struct hk_cmd_buffer *cmd,
 
 static inline bool
 hk_apple9_draw_state_reusable(const struct hk_cmd_buffer *cmd,
-                              struct agx_draw draw, uint64_t native_grid)
+                              struct agx_draw draw)
 {
    const struct hk_graphics_state *gfx = &cmd->state.gfx;
    return cmd->apple9_draw_state.valid &&
@@ -1585,7 +1548,7 @@ hk_apple9_draw_state_reusable(const struct hk_cmd_buffer *cmd,
           !cmd->merge_cs && cmd->apple9_draw_state.render_gen == gfx->render_gen &&
           !gfx->dirty && !gfx->shaders_dirty &&
           !vk_dynamic_graphics_state_any_dirty(&cmd->vk.dynamic_graphics_state) &&
-          hk_apple9_draw_cache_supported(cmd, draw, native_grid) &&
+          hk_apple9_draw_cache_supported(cmd, draw) &&
           /* Prepared bindings read only first vertex/base vertex and base
            * instance. Counts and index fetch state belong to the VDM draw. */
           (draw.indexed ? draw.index_bias : draw.start) ==

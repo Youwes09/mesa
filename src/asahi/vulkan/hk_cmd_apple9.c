@@ -11,7 +11,6 @@
 #include "util/u_debug.h"
 #include "vk_util.h"
 #include "hk_cmd_buffer.h"
-#include "hk_apple9_mesh.h"
 #include "hk_device.h"
 #include "hk_physical_device.h"
 #include "hk_image.h"
@@ -364,120 +363,8 @@ hk_apple9_draw_sample_positions(const struct vk_dynamic_graphics_state *dyn,
              : hk_default_sample_positions(samples);
 }
 
-DEBUG_GET_ONCE_BOOL_OPTION(native_blocks, "HK_APPLE9_NATIVE_BLOCKS", true)
-DEBUG_GET_ONCE_BOOL_OPTION(native_lanes, "HK_APPLE9_NATIVE_LANES", true)
-DEBUG_GET_ONCE_BOOL_OPTION(native_batch_log, "HK_APPLE9_NATIVE_BATCH_LOG", false)
-DEBUG_GET_ONCE_NUM_OPTION(native_render_primitives, "HK_APPLE9_NATIVE_RENDER_PRIMITIVES",
-                          HK_APPLE9_NATIVE_RENDER_PRIMITIVES)
-
-/* The bound on estimated binned primitives per native render, for batching
- * and for single native draws (hk_apple9_use_native_mesh). A mesh-mode render
- * that reaches the TVB cap loses work; HK_APPLE9_NATIVE_RENDER_PRIMITIVES
- * overrides the calibrated default (research, e.g. a lowered tvb_max_blocks). */
-uint64_t
-hk_apple9_native_render_primitives(void)
-{
-   int64_t v = debug_get_option_native_render_primitives();
-   return v > 0 ? (uint64_t)v : HK_APPLE9_NATIVE_RENDER_PRIMITIVES;
-}
-
-/* The admission profile of this device's VM: its latched asahi_native_blocks
- * profile (sampled around VM_CREATE with asahi_native_mesh, at one
- * generation), only together with the qualified native path. drirc
- * hk_disable_native_blocks and HK_APPLE9_NATIVE_BLOCKS=0 keep one native
- * block per render. */
-struct hk_apple9_native_profile
-hk_apple9_native_profile(const struct hk_device *dev)
-{
-   /* Every graphics stream asks (hk_apple9_graphics_root_size): stay cheap and
-    * device-independent unless the VM latched a qualified profile. */
-   if (!dev->dev.native_blocks.qualified)
-      return (struct hk_apple9_native_profile){.batch = 1};
-   const struct hk_physical_device *pdev =
-      hk_device_physical((struct hk_device *)dev);
-   struct hk_apple9_native_profile p = hk_apple9_native_profile_from_kernel(
-      &dev->dev.native_blocks, dev->dev.native_mesh_qualified,
-      !debug_get_option_native_blocks() || !pdev || pdev->disable_native_blocks);
-   if (p.max_render_primitives)
-      p.max_render_primitives = hk_apple9_native_render_primitives();
-   return p;
-}
-
 bool
-hk_apple9_native_blocks_enabled(const struct hk_device *dev)
-{
-   struct hk_apple9_native_profile p = hk_apple9_native_profile(dev);
-   return p.batch > 1 && p.blocks;
-}
-
-/* Whether native GS/TES producer passes of batched native renders use the
- * tessellation batch lanes (hk_tess_batch_flush): one compute barrier per
- * stage for all of a render's draws instead of one per pass. They follow the
- * native blocks profile; HK_APPLE9_NATIVE_LANES=0 opts out.
- * hk_cmd_buffer_end_graphics flushes the lanes into the ending render's own
- * pre_gfx stream, so every pass still completes before the tiling that
- * consumes it. */
-bool
-hk_apple9_native_lanes(const struct hk_device *dev)
-{
-   return hk_apple9_native_blocks_enabled(dev) && debug_get_option_native_lanes();
-}
-
-/* Batched native graphics streams must not link (the decoder admits none):
- * give them room for the profile's decode budget plus the ensure padding. */
-size_t
-hk_apple9_graphics_root_size(const struct hk_device *dev)
-{
-   if (!hk_apple9_native_blocks_enabled(dev))
-      return 4096;
-   struct hk_apple9_native_profile p = hk_apple9_native_profile(dev);
-   return hk_apple9_native_decode_bytes(&p) > 4096 ? 16384 : 8192;
-}
-
-/* Whether a draw may continue the open native render, under the device's
- * profile (hk_apple9_native_stream_admits). */
-static bool
-hk_apple9_native_can_append(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
-                            bool native)
-{
-   const struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   if (!cs->apple9_native_mesh || !hk_apple9_native_mesh_available_device(dev))
-      return false;
-   uint8_t *start = cs->start, *current = cs->current;
-   const struct hk_apple9_stream_summary stream = {
-      .native = cs->apple9_native_mesh,
-      .dispatches = cs->apple9_native_dispatches,
-      /* A continued stream has left the root chunk: never admissible. */
-      .bytes = current >= start ? current - start : SIZE_MAX / 2,
-      .capacity = cs->stream_linked ||
-                        cs->root_size < 0x800 + AGX_VDM_STREAM_LINK_LENGTH
-                     ? 0
-                     : cs->root_size - 0x800 - AGX_VDM_STREAM_LINK_LENGTH,
-      .primitives = cs->apple9_native_primitives,
-   };
-   struct hk_apple9_draw_summary draw = {
-      .native = native,
-      .meta = cmd->in_meta,
-      .queries = gfx->occlusion.active_count ||
-                 gfx->descriptors.root.draw.pipeline_stats_flags,
-      .task = gfx->shaders[MESA_SHADER_TASK],
-      .xfb = gfx->xfb_enabled,
-      .mesh = gfx->shaders[MESA_SHADER_MESH],
-      .gs = gfx->shaders[MESA_SHADER_GEOMETRY],
-      .tess = gfx->shaders[MESA_SHADER_TESS_CTRL] ||
-              gfx->shaders[MESA_SHADER_TESS_EVAL],
-      .primitives = cmd->apple9_draw_primitives,
-   };
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s)
-      draw.writes_memory |= gfx->shaders[s] && gfx->shaders[s]->writes_memory;
-   const struct hk_apple9_native_profile profile = hk_apple9_native_profile(dev);
-   return hk_apple9_native_stream_admits(&stream, &draw, &profile);
-}
-
-bool
-hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
-                         bool native_mesh)
+hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
 {
    if (vk_command_buffer_has_error(&cmd->vk))
       return false;
@@ -488,20 +375,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
 
    const struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
    const struct hk_rendering_state *render = &cmd->state.gfx.render;
-
-   /* A native render leads with a native block. End it before any draw the
-    * VM's native blocks profile does not admit (always, without one), and
-    * end an ordinary stream before its first native draw. Existing
-    * partial-render stores/reloads and continuation dependencies preserve
-    * attachments and order; no emitted work is rerouted retroactively. */
-   bool append = hk_apple9_native_can_append(cmd, cs, native_mesh);
-   if ((cs->apple9_native_mesh && !append) ||
-       (native_mesh && !cs->apple9_native_mesh && cs->current != cs->start)) {
-      hk_cmd_buffer_end_graphics(cmd);
-      cs = hk_cmd_buffer_get_cs(cmd, false);
-      if (!cs)
-         return false;
-   }
 
    /* A draw that selects a new occlusion segment in a stream without free
     * segments ends that stream (hk_occlusion_prepare_draw). Do it here,
@@ -595,15 +468,13 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
    cs->merge_writes |= writes;
 
    /* What the draw's pre-rasterization work reads. hk-internal pre-raster
-    * work (tessellation, geometry, transform feedback, native task bridge)
-    * keeps the tiling wait. Emulated task draws retain their existing read
-    * classification. Meta draws compile their pipelines like applications', so their
+    * work (tessellation, geometry, transform feedback) keeps the tiling wait.
+    * Emulated task draws retain their existing read classification. Meta draws compile their pipelines like applications', so their
     * shaders carry a read class (vk_meta vertex shaders read push constants
     * and its own vertex data). */
    uint8_t reads = reads_buffers ? HK_READS_BUFFERS : 0;
    if (gfx->xfb_enabled || gfx->shaders[MESA_SHADER_TESS_CTRL] ||
-       gfx->shaders[MESA_SHADER_TESS_EVAL] || gfx->shaders[MESA_SHADER_GEOMETRY] ||
-       (native_mesh && gfx->shaders[MESA_SHADER_TASK]))
+       gfx->shaders[MESA_SHADER_TESS_EVAL] || gfx->shaders[MESA_SHADER_GEOMETRY])
       reads |= HK_READS_INTERNAL;
    for (unsigned s = 0; s < ARRAY_SIZE(gfx->shaders); ++s) {
       if (s == MESA_SHADER_FRAGMENT || s == MESA_SHADER_COMPUTE || !gfx->shaders[s])
@@ -616,76 +487,6 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers,
    cs->linear_store |= gfx->render.linear_store;
 
    return true;
-}
-
-/* The compiler's local roots and ordinary graphics roots share one table.
- * No scene allocation, cursor, resource ID or alias crosses into userspace.
- * Command-pool storage and pinned shader BOs survive command-buffer reuse. */
-static bool
-hk_apple9_prepare_native_mesh(struct hk_cmd_buffer *cmd,
-                               const struct hk_shader *mesh,
-                               const struct hk_shader *object,
-                               const struct agx_apple9_uniform_draw *draw,
-                               uint64_t grid,
-                               uint32_t state[AGX_APPLE9_MESH_STATE_WORDS])
-{
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   if (!hk_apple9_native_mesh_available_device(dev) ||
-       !grid || (grid & 3) ||
-       mesh->info.apple9_native_stage != HK_APPLE9_NATIVE_MESH ||
-       object->info.apple9_native_stage != HK_APPLE9_NATIVE_OBJECT)
-      return false;
-   struct agx_apple9_launch_parameters p[2];
-   const struct hk_shader *shaders[] = {mesh, object};
-   for (unsigned i = 0; i < 2; ++i) {
-      const struct hk_shader *shader = shaders[i];
-      if (!shader->apple9_body ||
-          !hk_apple9_native_launch_parameters(
-             &p[i], &shader->b.info, &shader->info.apple9_native,
-             shader->info.apple9_native_stage, dev->dev.shader_base,
-             shader->apple9_body->addr))
-         return false;
-      simple_mtx_lock(&dev->dev.apple9_entry_lock);
-      bool pinned = hk_apple9_pin_entry(cmd, shader->apple9_body);
-      simple_mtx_unlock(&dev->dev.apple9_entry_lock);
-      if (!pinned)
-         return false;
-   }
-   struct agx_apple9_mesh_arguments args = {
-      .graphics = {draw->texture_table[0], draw->sampler_table[0],
-                   draw->vertex_table},
-      .output_root = HK_APPLE9_NATIVE_OUTPUT_ROOT,
-      .grid_root = HK_APPLE9_NATIVE_GRID_ROOT,
-      .draw = grid,
-   };
-   uint64_t words[AGX_APPLE9_MESH_ARGUMENT_WORDS / 2];
-   if (!agx_apple9_mesh_arguments_build(words, &args))
-      return false;
-   uint64_t arguments = hk_pool_upload(cmd, words, sizeof(words), 64);
-   struct agx_ptr launch = hk_pool_usc_alloc(
-      cmd, 2 * AGX_APPLE9_GRAPHICS_LAUNCH_SIZE, 128);
-   if (!arguments || !launch.cpu || launch.gpu < dev->dev.shader_base ||
-       launch.gpu - dev->dev.shader_base >
-          UINT32_MAX - 2 * AGX_APPLE9_GRAPHICS_LAUNCH_SIZE)
-      return false;
-   for (unsigned i = 0; i < 2; ++i) {
-      p[i].resource_table = arguments;
-      p[i].launch_address = launch.gpu + i * AGX_APPLE9_GRAPHICS_LAUNCH_SIZE;
-      if (!agx_apple9_launch_build(
-             (uint8_t *)launch.cpu + i * AGX_APPLE9_GRAPHICS_LAUNCH_SIZE,
-             AGX_APPLE9_GRAPHICS_LAUNCH_SIZE,
-             i ? AGX_APPLE9_LAUNCH_TASK : AGX_APPLE9_LAUNCH_MESH, &p[i]))
-         return false;
-   }
-   struct agx_apple9_mesh_state_parameters params = {
-      .layout = &mesh->info.apple9_native.layout,
-      .mesh_launch = agx_usc_addr(&dev->dev, launch.gpu) / 64,
-      .object_launch = agx_usc_addr(
-         &dev->dev, launch.gpu + AGX_APPLE9_GRAPHICS_LAUNCH_SIZE) / 64,
-      .threads = mesh->b.info.workgroup_size[0],
-      .has_object_stage = true,
-   };
-   return agx_apple9_mesh_state_build(state, &params);
 }
 
 /* Index fetch is per-command state. It does not feed the prepared raster,
@@ -704,15 +505,11 @@ hk_apple9_set_index_fetch(struct agx_apple9_render_pipeline *pipeline,
          : MIN2(range - offset, (uint64_t)draw.b.count[0] * pipeline->index_size);
 }
 
-DEBUG_GET_ONCE_BOOL_OPTION(native_ppp_delta, "HK_APPLE9_NATIVE_PPP_DELTA", true)
-
 static void
 hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
                              const struct agx_apple9_render_pipeline *pipeline,
                              struct agx_draw draw)
 {
-   /* Ordinary draws update the whole PPP state their own way. */
-   cs->apple9_ppp_valid = false;
    if (agx_is_indirect(draw.b))
       cs->current =
          agx_apple9_emit_indirect_draw(cs->current, pipeline, draw.b.ptr) - 4;
@@ -722,97 +519,13 @@ hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
                        draw.indexed ? draw.index_bias : draw.start) - 4;
 }
 
-static_assert(HK_APPLE9_MESH_COMMAND_BYTES == HK_APPLE9_NATIVE_BLOCK_MAX_B,
-              "batch reservation covers a complete native block");
-
-/* Backstop for hk_apple9_native_stream_admits: a block appended to a batched
- * native stream must stay in the root chunk and the decoder budget, and be
- * no larger than the reservation the predicate assumed. Otherwise the paired
- * kernel rejects the whole render at SUBMIT, so fail recording instead. */
-static bool
-hk_apple9_check_native_block(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
-                             const uint8_t *before)
+/* Record the final draw packet after its resources and pipeline are prepared. */
+static void
+hk_apple9_record_draw(struct hk_cs *cs,
+                      const struct agx_apple9_render_pipeline *pipeline,
+                      struct agx_draw draw)
 {
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   if (!cs->apple9_native_mesh || !hk_apple9_native_blocks_enabled(dev))
-      return true;
-   const struct hk_apple9_native_profile profile = hk_apple9_native_profile(dev);
-   const uint8_t *start = cs->start, *current = cs->current;
-   if (!cs->stream_linked && before >= start && current >= before &&
-       current + 4 - before <= HK_APPLE9_BATCH_BLOCK_MAX_B &&
-       current + 4 - start <=
-          MIN2(cs->root_size, hk_apple9_native_decode_bytes(&profile)))
-      return true;
-   fprintf(stderr, "HK_NATIVE_BATCH_OVERFLOW stream=%" PRIx64 " linked=%u\n",
-           cs->addr, cs->stream_linked);
-   vk_command_buffer_set_error(&cmd->vk, VK_ERROR_UNKNOWN);
-   return false;
-}
-
-/* Record the final draw packet after its resources and pipeline are prepared.
- * Keep both routes here so admission and actual packet emission use one policy. */
-static bool
-hk_apple9_record_draw(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
-                       const struct agx_apple9_render_pipeline *pipeline,
-                       struct agx_draw draw, uint64_t native_grid,
-                       struct hk_api_shader *mesh,
-                       const struct hk_shader *vertex,
-                       const struct agx_apple9_uniform_draw *record)
-{
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   if (native_grid) {
-      uint32_t state[AGX_APPLE9_MESH_STATE_WORDS];
-      const uint32_t object_groups[] = {1, 1, 1};
-      const struct hk_shader *object = hk_native_producer_object(mesh);
-      const uint32_t object_local_size[] = {
-         object->b.info.workgroup_size[0], object->b.info.workgroup_size[1],
-         object->b.info.workgroup_size[2],
-      };
-      /* Each native block is complete: its own state words, launch records
-       * and arguments, whether it leads the render or continues it. */
-      /* A block continuing a native render may update only the PPP blocks
-       * that changed since the previous native block (HK_APPLE9_NATIVE_PPP_DELTA=0
-       * restores full updates). */
-      const bool delta = debug_get_option_native_ppp_delta() && cs->apple9_native_mesh &&
-                         cs->apple9_ppp_valid && cs->apple9_ppp_size == record->ppp_size &&
-                         cs->apple9_ppp_viewport_offset == pipeline->ppp_viewport_offset &&
-                         cs->apple9_ppp_viewport_words == pipeline->ppp_viewport_words;
-      size_t bytes;
-      if ((cs->apple9_native_mesh && !hk_apple9_native_can_append(cmd, cs, true)) ||
-          !hk_apple9_prepare_native_mesh(
-             cmd, vertex, object, record, native_grid, state) ||
-          !hk_apple9_mesh_command_build_delta(
-             cs->current, HK_APPLE9_MESH_COMMAND_BYTES, pipeline, state,
-             object_groups, object_local_size,
-             hk_apple9_native_mesh_available_device(dev),
-             delta ? cs->apple9_ppp_last : NULL, delta ? record->ppp_record : NULL,
-             &bytes))
-         return false;
-      memcpy(cs->apple9_ppp_last, record->ppp_record, record->ppp_size);
-      cs->apple9_ppp_size = record->ppp_size;
-      cs->apple9_ppp_viewport_offset = pipeline->ppp_viewport_offset;
-      cs->apple9_ppp_viewport_words = pipeline->ppp_viewport_words;
-      cs->apple9_ppp_valid = true;
-      const uint8_t *before = cs->current;
-      cs->current += bytes - 4;
-      cs->apple9_native_mesh = true;
-      ++cs->apple9_native_dispatches;
-      cs->apple9_native_primitives += cmd->apple9_draw_primitives;
-      if (!hk_apple9_check_native_block(cmd, cs, before))
-         return false;
-      if (debug_get_option_native_batch_log())
-         fprintf(stderr, "HK_NATIVE_BATCH stream=%" PRIx64 " dispatch=%u cap=%u\n",
-                 cs->addr, cs->apple9_native_dispatches,
-                 hk_apple9_native_profile(dev).batch);
-   } else {
-      const uint8_t *before = cs->current;
-      hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
-      if (!hk_apple9_check_native_block(cmd, cs, before))
-         return false;
-      if (cs->apple9_native_mesh)
-         cs->apple9_native_primitives += cmd->apple9_draw_primitives;
-   }
-   return true;
+   hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
 }
 
 static void
@@ -852,9 +565,9 @@ hk_apple9_reads_draw_id(const struct hk_graphics_state *gfx)
  */
 static bool
 hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
-                          struct agx_draw draw, uint64_t native_grid)
+                          struct agx_draw draw)
 {
-   if (!hk_apple9_draw_state_reusable(cmd, draw, native_grid))
+   if (!hk_apple9_draw_state_reusable(cmd, draw))
       return false;
 
    struct hk_graphics_state *gfx = &cmd->state.gfx;
@@ -920,12 +633,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    }
 
    hk_ensure_cs_has_space(cmd, cs, 256);
-   const uint8_t *before = cs->current;
    hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
-   if (!hk_apple9_check_native_block(cmd, cs, before))
-      return true;
-   if (cs->apple9_native_mesh)
-      cs->apple9_native_primitives += cmd->apple9_draw_primitives;
    hk_apple9_account_draw(cs, pipeline, draw, false,
                           cmd->apple9_draw_state.fragment);
    return true;
@@ -933,14 +641,14 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
 static void
 hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
-                    struct agx_draw draw, uint64_t native_grid)
+                    struct agx_draw draw)
 {
    if (vk_command_buffer_has_error(&cmd->vk))
       return;
    /* Geometry shaders can produce empty rasterization draws. */
    if (!agx_is_indirect(draw.b) && (!draw.b.count[0] || !draw.b.count[1]))
       return;
-   if (hk_apple9_try_cached_draw(cmd, draw_id, draw, native_grid))
+   if (hk_apple9_try_cached_draw(cmd, draw_id, draw))
       return;
    cmd->apple9_draw_state.valid = false;
    const char *failure = NULL;
@@ -971,14 +679,6 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_api_shader *tes = gfx->shaders[MESA_SHADER_TESS_EVAL];
    /* Mesh shaders have written their records as compute. */
    struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
-   if (native_grid) {
-      mesh = hk_api_shader_native(mesh ?: gs ?: tes);
-      if (!mesh || (gs && !hk_apple9_native_stage_available_device(
-                             dev, MESA_SHADER_GEOMETRY)) ||
-          (tes && !hk_apple9_native_stage_available_device(
-                             dev, MESA_SHADER_TESS_EVAL)))
-         UNSUPPORTED("no native shader for the geometry stages");
-   }
    /* Without an API fragment shader, the null program only applies the API
     * sample mask. A full mask needs no fragment work at all. */
    const bool null_fs = !gfx->shaders[MESA_SHADER_FRAGMENT] ||
@@ -990,28 +690,13 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       (dyn->ms.sample_mask & BITFIELD_MASK(null_samples)) ==
          BITFIELD_MASK(null_samples);
    struct hk_api_shader *fragment_api = gfx->shaders[MESA_SHADER_FRAGMENT];
-   if (native_grid && !null_fs) {
-      fragment_api = hk_api_shader_native(fragment_api);
-      if (!fragment_api)
-         UNSUPPORTED("no native fragment shader");
-   }
    shaders[0] =
-      native_grid ? hk_native_producer_main(mesh)
-      : mesh ? &mesh->variants[HK_MESH_VARIANT_RAST]
+      mesh  ? &mesh->variants[HK_MESH_VARIANT_RAST]
       : gs  ? &gs->variants[HK_GS_VARIANT_RAST]
       : tes ? &tes->variants[HK_VS_VARIANT_HW]
             : hk_any_variant(gfx->shaders[MESA_SHADER_VERTEX]);
    shaders[1] = hk_any_variant(null_trivial ? dev->null_fs_trivial
                                            : fragment_api ?: dev->null_fs);
-   if (native_grid &&
-       (!mesh ||
-        (gfx->shaders[MESA_SHADER_TASK] &&
-         (!hk_apple9_native_task_bridge_enabled() ||
-          mesh->vk.stage != MESA_SHADER_MESH ||
-          !shaders[0]->info.mesh.native_task_bridge)) || (tes && gs) ||
-        shaders[0]->info.apple9_native_stage != HK_APPLE9_NATIVE_MESH ||
-        dyn->rs.polygon_mode != VK_POLYGON_MODE_FILL || gfx->render.view_mask))
-      UNSUPPORTED("the pipeline cannot run as native mesh");
    /* Geometry and tessellation have already run as compute, and draw their
     * own output topology. Adjacency primitives without a geometry shader
     * draw a generated list without the adjacent vertices.
@@ -1166,14 +851,6 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    cs = hk_occlusion_prepare_draw(cmd, cs);
    if (!cs)
       return;
-   /* Selection and preparation guarantee a leading native state and blocks
-    * the profile admits. Keep this backstop before publishing a malformed
-    * stream. */
-   bool append = hk_apple9_native_can_append(cmd, cs, !!native_grid);
-   if ((cs->apple9_native_mesh && !append) ||
-       (native_grid && ((!append && cs->current != cs->start) ||
-                        pipeline.samples != 1 || gfx->render.layer_count != 1)))
-      UNSUPPORTED("the native mesh stream cannot be appended");
    cs->tib = gfx->render.tilebuffer;
    const struct vk_dynamic_graphics_state *ms_dyn = &cmd->vk.dynamic_graphics_state;
    gfx->apple9_sample_positions =
@@ -1283,7 +960,6 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       bool effects = gfx->xfb_enabled;
       for (unsigned s = 0; s < MESA_SHADER_FRAGMENT && !effects; ++s)
          effects = gfx->shaders[s] && gfx->shaders[s]->writes_memory;
-      effects |= native_grid && mesh && mesh->writes_memory;
       if (!effects)
          return;
       bbox[0] = bbox[1] = bbox[2] = bbox[3] = 0;
@@ -1388,9 +1064,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    memcpy(&record->raster_control, &cull, 4);
    bool front_ccw = dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE;
    /* The hardware-VS TES consumes the tessellator's unswapped indices, so
-    * encode its domain winding here. Native TES already applies the existing
-    * software-TES index swap, including domain origin: do not flip twice. */
-   if (tes && !gs && !native_grid) {
+    * encode its domain winding here. */
+   if (tes && !gs) {
       front_ccw ^= gfx->tess.info.ccw;
       front_ccw ^= dyn->ts.domain_origin ==
                    VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
@@ -1472,13 +1147,11 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    pipeline.vertex_launch = record->launch[0] / 0x40;
    pipeline.pipeline_word = 0x01000000;
    hk_ensure_cs_has_space(cmd, cs, 256);
-   if (!hk_apple9_record_draw(cmd, cs, &pipeline, draw, native_grid,
-                               mesh, shaders[0], record))
-      UNSUPPORTED("the draw record cannot be encoded");
+   hk_apple9_record_draw(cs, &pipeline, draw);
    hk_apple9_account_draw(cs, &pipeline, draw, gs || tes || mesh, shaders[1]);
    /* Only ordinary single-view draws reuse prepared state. Other paths
     * still consume dynamic state in their software-stage lowering. */
-   if (hk_apple9_draw_cache_supported(cmd, draw, native_grid)) {
+   if (hk_apple9_draw_cache_supported(cmd, draw)) {
       cmd->apple9_draw_state.valid = true;
       cmd->apple9_draw_state.render_gen = gfx->render_gen;
       cmd->apple9_draw_state.first_vertex = draw.indexed ? draw.index_bias : draw.start;
@@ -1506,13 +1179,5 @@ fail:
 void
 hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id, struct agx_draw draw)
 {
-   hk_apple9_draw_impl(cmd, draw_id, draw, 0);
-}
-
-void
-hk_apple9_draw_native_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
-                            uint64_t grid)
-{
-   hk_apple9_draw_impl(cmd, draw_id,
-                       (struct agx_draw){.b = agx_3d(3, 1, 1)}, grid);
+   hk_apple9_draw_impl(cmd, draw_id, draw);
 }

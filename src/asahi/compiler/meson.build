@@ -5,13 +5,10 @@
 libasahi_agx_files = files(
   'agx_compile.c',
   'agx_apple9_machine.c',
-  'agx_apple9_mesh_encoding.c',
   'agx_apple9_ir.c',
   'agx_apple9_opt.c',
   'agx_apple9_ra.c',
   'agx_compile_apple9.c',
-  'agx_nir_lower_apple9_mesh.c',
-  'agx_nir_apple9_mesh_native.c',
   'agx_nir_lower_apple9_texture.c',
   'agx_nir_lower_apple9_math.c',
   'agx_nir_lower_apple9_preserve.c',
@@ -142,90 +139,6 @@ if with_tests
     link_with : [libasahi_compiler],
   )
   test('apple9-ra-budget', apple9_ra_budget_test, suite : ['asahi'])
-  apple9_mesh_limits_test = executable('apple9-mesh-limits',
-    'test/apple9-mesh-limits.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-mesh-limits', apple9_mesh_limits_test, suite : ['asahi'])
-  apple9_native_shared_test = executable('apple9-native-shared',
-    'test/apple9-native-shared.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-native-shared', prog_python,
-    args : [files('test/check-apple9-native-shared.py'), apple9_native_shared_test],
-    suite : ['asahi'])
-  apple9_native_workgroup_test = executable('apple9-native-workgroup',
-    'test/apple9-native-workgroup.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-native-workgroup', apple9_native_workgroup_test, suite : ['asahi'])
-  apple9_native_object_test = executable('apple9-native-object',
-    'test/apple9-native-object.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-native-object', apple9_native_object_test, suite : ['asahi'])
-  apple9_limits_workgroup_test = executable('apple9-limits-workgroup',
-    'test/apple9-limits-workgroup.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-limits-workgroup', apple9_limits_workgroup_test, suite : ['asahi'])
-  apple9_native_primitive_test = executable('apple9-native-primitive',
-    'test/apple9-native-primitive.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-native-primitive', apple9_native_primitive_test, suite : ['asahi'])
-  apple9_native_mesh_test = executable('apple9-native-mesh',
-    'test/apple9-native-mesh.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  apple9_packed_indices_test = executable('apple9-packed-indices',
-    'test/apple9-packed-indices.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-packed-indices', apple9_packed_indices_test, suite : ['asahi'])
-  executable('apple9-native-capability-probe',
-    'research/native-capability-20261022/compile_native.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-native-mesh', prog_python,
-    args : [files('test/check-apple9-native-mesh.py'), apple9_native_mesh_test],
-    suite : ['asahi'],
-  )
-  test('apple9-native-mesh-counts', apple9_native_mesh_test,
-    args : ['--counts'],
-    suite : ['asahi'],
-  )
-  test('apple9-native-mesh-groups', prog_python,
-    args : [files('test/check-apple9-mesh-groups.py'), apple9_native_mesh_test],
-    suite : ['asahi'],
-  )
   test(
     'agx_tests',
     executable(
@@ -233,8 +146,6 @@ if with_tests
       files(
          'test/test-compact-constants.cpp',
          'test/test-apple9.cpp',
-         'test/test-apple9-mesh.cpp',
-         'test/test-apple9-object.cpp',
          'test/test-apple9-opt.cpp',
          'test/test-apple9-shared-ra.cpp',
          'test/test-pressure-schedule.cpp',

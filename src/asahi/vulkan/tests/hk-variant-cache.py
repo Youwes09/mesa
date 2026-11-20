@@ -12,17 +12,8 @@ env = {k: v for k, v in os.environ.items()
 with tempfile.TemporaryDirectory(prefix="hk-variant-cache-") as directory:
     env["MESA_SHADER_CACHE_DIR"] = directory
     subprocess.run([binary], env=env, check=True)
-    subprocess.run([binary, "--native-cache"], env=env | {
-        "HK_APPLE9_NATIVE_MESH": "1", "HK_APPLE9_NATIVE_MESH_ATTRIBUTES": "1",
-        "HK_APPLE9_NATIVE_MESH_PRIMITIVE_LOWERING": "1"}, check=True)
     subprocess.run([binary, "--cold-process"], env=env, check=True)
     subprocess.run([binary, "--warm-process"], env=env, check=True)
-    verify = subprocess.run([binary, "--verify-process"],
-                            env=env | {"HK_APPLE9_VARIANT_CACHE_VERIFY": "1"},
-                            capture_output=True, text=True, check=True)
-    assert "cache mismatch" not in verify.stderr, verify.stderr
-    assert "variant cache verified" in verify.stderr, verify.stderr
-    print("verification mode recompiled the warm entry without a mismatch")
 
     def key(**settings):
         return subprocess.check_output([binary, "--key"],
@@ -34,12 +25,11 @@ with tempfile.TemporaryDirectory(prefix="hk-variant-cache-") as directory:
     for knob in knobs:
         zero, one = key(**{knob: "0"}), key(**{knob: "1"})
         assert len({original, zero, one}) == 3, knob
-    assert key(HK_APPLE9_VARIANT_CACHE_VERIFY="1") == original
     assert key(AGX_APPLE9_TRACE="first/path") == key(AGX_APPLE9_TRACE="second/path")
     assert key(HK_APPLE9_UNKNOWN_TEST="1") != original
     assert key(HK_APPLE9_UNKNOWN_TEST="1") == key(HK_APPLE9_UNKNOWN_TEST="2")
     assert key(UNRELATED_TEST="1") == original
     assert key(AGX_APPLE9_NO_PROMOTE="1", AGX_APPLE9_NO_UNIFORM_MOVE="0") == key(
         AGX_APPLE9_NO_UNIFORM_MOVE="0", AGX_APPLE9_NO_PROMOTE="1")
-    print(f"cache keys: all {len(knobs)} active codegen knob values, ignored verification, "
+    print(f"cache keys: all {len(knobs)} active codegen knob values, "
           "diagnostic path stability, unknown names and environment order pass")

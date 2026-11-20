@@ -37,7 +37,7 @@ main(void)
       .primitive = AGX_PRIMITIVE_TRIANGLES, .pipeline_word = 0x1000000,
       .vertex_launch = 0x100, .vertex_state_class = 0x404,
    };
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
 
    /* Replay an already prepared draw through the real fast path. It must
     * still emit both draws and declare the normal graphics execution scope.
@@ -59,8 +59,8 @@ main(void)
 
 #define INVALIDATE(field, value) do { \
    __typeof__(field) saved = field; \
-   field = value; CHECK(!hk_apple9_draw_state_reusable(cmd, draw, 0)); \
-   field = saved; CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0)); \
+   field = value; CHECK(!hk_apple9_draw_state_reusable(cmd, draw)); \
+   field = saved; CHECK(hk_apple9_draw_state_reusable(cmd, draw)); \
 } while (0)
    INVALIDATE(cmd->apple9_draw_state.valid, false);
    INVALIDATE(cmd->current_cs.gfx, &other);
@@ -69,7 +69,7 @@ main(void)
    INVALIDATE(cmd->state.gfx.dirty, HK_DIRTY_VB);
    INVALIDATE(cmd->state.gfx.shaders_dirty, BITFIELD_BIT(MESA_SHADER_VERTEX));
    BITSET_SET(cmd->vk.dynamic_graphics_state.dirty, MESA_VK_DYNAMIC_VP_SCISSORS);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
    vk_dynamic_graphics_state_clear_dirty(&cmd->vk.dynamic_graphics_state);
    INVALIDATE(cmd->state.gfx.render.view_mask, 3);
    INVALIDATE(cmd->state.gfx.xfb_enabled, true);
@@ -86,8 +86,7 @@ main(void)
    INVALIDATE(draw.start, 3);
    INVALIDATE(draw.start_instance, 1);
    INVALIDATE(draw.indexed, true);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw, 0x1000));
-   CHECK(!hk_apple9_draw_state_reusable(cmd, agx_draw_indirect(0x2000), 0));
+   CHECK(!hk_apple9_draw_state_reusable(cmd, agx_draw_indirect(0x2000)));
 
    /* Index offsets, buffers, sizes, counts and indexed/non-indexed mode
     * feed only command emission. Vary them through the actual cache hit path
@@ -99,7 +98,7 @@ main(void)
          i % 3 == 0 ? AGX_INDEX_SIZE_U8 :
          i % 3 == 1 ? AGX_INDEX_SIZE_U16 : AGX_INDEX_SIZE_U32, false);
       cmd->state.gfx.index.restart = BITFIELD_MASK(bytes * 8);
-      CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0));
+      CHECK(hk_apple9_draw_state_reusable(cmd, draw));
       struct agx_apple9_render_pipeline pipeline = cmd->apple9_draw_state.pipeline;
       pipeline.index_size = bytes;
       pipeline.index_buffer = draw.index_buffer + draw.start * bytes;
@@ -110,7 +109,7 @@ main(void)
       hk_apple9_draw(cmd, 0, draw);
    }
    draw = (struct agx_draw){.b = agx_3d(6, 2, 1)};
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
    struct agx_apple9_render_pipeline pipeline = cmd->apple9_draw_state.pipeline;
    pipeline.index_size = 0;
    end = agx_apple9_emit_direct_draw(end, &pipeline, 6, 2, 0) - 4;
@@ -123,15 +122,15 @@ main(void)
     * must not force rebuilding the unchanged raster state. */
    cmd->state.gfx.descriptors.root_dirty = true;
    cmd->state.gfx.descriptors.push_dirty = 1;
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
 
    /* A null index binding needs its existing fresh zero-range allocation. */
    draw = agx_draw_indexed(3, 1, 0, 0, 0, 0, 0, AGX_INDEX_SIZE_U16, false);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
    draw.index_buffer_range_B = 16;
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
    draw.start = 8;
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw, 0));
+   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
 
    util_dynarray_fini(&cmd->sync_events);
    util_dynarray_fini(&cmd->sync_remap);

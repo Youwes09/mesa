@@ -40,11 +40,6 @@ struct hk_physical_device {
    bool apple9_layered_2d;
    /* Apple9 with hk_apple9_d3d_mip_rounding (driconf, vkd3d-proton). */
    bool apple9_d3d_mip_rounding;
-   /* Kill switch for the qualified native-index default, not research opt-ins. */
-   bool disable_native_index;
-   /* Kill switch for batched native blocks (asahi_native_blocks). */
-   bool disable_native_blocks;
-   bool disable_native_stages;
    dev_t render_dev;
    int master_fd;
 

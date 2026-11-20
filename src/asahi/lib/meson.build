@@ -7,13 +7,11 @@ libasahi_lib_files = files(
   'agx_apple9.c',
   'agx_apple9_geometry.c',
   'agx_apple9_launch.c',
-  'agx_apple9_mesh.c',
   'agx_apple9_libagx.c',
   'agx_bo.c',
   'agx_shader_body.c',
   'agx_border.c',
   'agx_device.c',
-  'agx_native_mesh.c',
   'agx_device_virtio.c',
   'agx_linker.c',
   'agx_bg_eot.c',
@@ -75,11 +73,6 @@ libasahi_lib = static_library(
 )
 
 if with_tests
-  test('native-mesh-advertisement', executable('native-mesh-advertisement',
-    'tests/test-native-mesh-advertisement.c'), suite : ['asahi'])
-  test('native-blocks-advertisement', executable('native-blocks-advertisement',
-    'tests/test-native-blocks-advertisement.c', 'agx_native_mesh.c'),
-    suite : ['asahi'])
   test('apple9-draw-tables', executable('apple9-draw-tables',
     'tests/test-apple9-draw-tables.c',
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],

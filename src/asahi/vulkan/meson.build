@@ -12,7 +12,6 @@ hk_files = files(
   'hk_cmd_draw.c',
   'hk_apple9_polygon_points.c',
   'hk_cmd_apple9.c',
-  'hk_apple9_mesh.c',
   'hk_cmd_meta.c',
   'hk_cmd_pool.c',
   'hk_cmd_pool.h',
@@ -41,8 +40,6 @@ hk_files = files(
   'hk_instance.h',
   'hk_nir_lower_descriptors.c',
   'hk_nir_lower_mesh.c',
-  'hk_nir_gs_mesh.c',
-  'hk_nir_tes_mesh.c',
   'hk_physical_device.c',
   'hk_physical_device.h',
   'hk_private.h',
@@ -96,19 +93,11 @@ hk_deps = [
   idep_libagx_shaders_h,
 ]
 
-hk_native_index_classes = custom_target(
-  'hk_apple9_native_index_classes.h',
-  input : 'hk_apple9_native_index_shapes.def',
-  output : 'hk_apple9_native_index_classes.h',
-  command : [prog_python, files('hk_apple9_native_index_hash.py'), '@INPUT@', '@OUTPUT@'],
-)
-
 libhk = static_library(
   'hk',
   [
     hk_entrypoints,
     hk_drirc,
-    hk_native_index_classes,
     hk_files,
     sha1_h,
   ],
@@ -200,7 +189,7 @@ if with_tests
     ),
     suite : ['asahi', 'honeykrisp'],
   )
-  foreach t : ['hk-feedback', 'hk-descriptor-parts', 'hk-constant-data', 'hk-draw-state-cache', 'hk-render-merge', 'hk-empty-clear-barriers', 'hk-image-limits', 'hk-stage-output-limits', 'hk-cull-output-limits', 'hk-pregfx-recording', 'hk-heap-resubmit', 'hk-heap-addresses', 'hk-native-image-store', 'hk-native-store-rw', 'hk-mesh-query', 'hk-native-mesh', 'hk-robust-bounded-vector', 'hk-gs-mesh', 'hk-tes-mesh']
+  foreach t : ['hk-feedback', 'hk-descriptor-parts', 'hk-constant-data', 'hk-draw-state-cache', 'hk-render-merge', 'hk-empty-clear-barriers', 'hk-image-limits', 'hk-stage-output-limits', 'hk-cull-output-limits', 'hk-pregfx-recording', 'hk-heap-resubmit', 'hk-heap-addresses', 'hk-native-image-store', 'hk-native-store-rw', 'hk-mesh-query', 'hk-robust-bounded-vector']
     contract_test = executable(
       t,
       'tests/' + t + '.c',
@@ -213,45 +202,10 @@ if with_tests
     test(
       t,
       contract_test,
-      env : t == 'hk-native-mesh' ? ['HK_APPLE9_NATIVE_MESH=1'] : [],
       suite : ['asahi', 'honeykrisp'],
     )
-    if t == 'hk-native-mesh'
-      test('hk-native-object-mask', prog_python,
-        args : [files('tests/check-native-object-mask.py'), contract_test],
-        suite : ['asahi', 'honeykrisp'])
-    endif
   endforeach
   # Corpus inspection is an explicit host tool, not part of the driver.
-  executable('hk-native-mesh-coverage', 'tests/hk-native-mesh-coverage.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk], build_by_default : false)
-  test('hk-native-batch-admits',
-       executable('hk-native-batch-admits', 'tests/hk-native-batch-admits.c',
-                  include_directories : [inc_src]),
-       suite : ['asahi', 'honeykrisp'])
-  test('hk-native-mesh-open', executable('hk-native-mesh-open',
-    'tests/hk-native-mesh-open.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=drmGetVersion', '-Wl,--wrap=drmFreeVersion',
-                 '-Wl,--wrap=drmIoctl', '-Wl,--wrap=agx_native_mesh_probe',
-                 '-Wl,--wrap=agx_bo_create']), env : ['HK_APPLE9_NATIVE_INDEX=1'],
-    suite : ['asahi', 'honeykrisp'])
-  routing_test = executable(
-    'hk-native-mesh-routing', 'tests/hk-native-mesh-routing.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-native-task-bridge', executable(
-    'hk-native-task-bridge', 'tests/hk-native-task-bridge.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk]),
-    suite : ['asahi', 'honeykrisp'])
   test('hk-shader-memory', executable('hk-shader-memory', 'tests/hk-shader-memory.c',
     include_directories : [inc_gallium, inc_gallium_aux, inc_include,
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
@@ -296,207 +250,6 @@ if with_tests
     ),
     suite : ['asahi', 'honeykrisp'],
   )
-  test('hk-native-mesh-routing', routing_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-draw-state', executable('hk-native-draw-state', 'tests/hk-native-draw-state.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=__vk_errorf']),
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_GS_NATIVE=1',
-           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-task-routing', routing_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_TASK_BRIDGE=1'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-gs-routing', routing_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_GS_NATIVE=1',
-           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-tess-routing', routing_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_TESS_NATIVE=1',
-           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2'],
-    suite : ['asahi', 'honeykrisp'])
-  hybrid_test = executable(
-    'hk-native-mesh-hybrid', 'tests/hk-native-mesh-hybrid.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference',
-                 '-Wl,--wrap=agx_bo_unreference', '-Wl,--wrap=__vk_errorf',
-                 '-Wl,--wrap=agx_compile_apple9_native_mesh_lowered',
-                 '-Wl,--wrap=agx_compile_apple9_tiny',
-                 '-Wl,--wrap=agx_compile_apple9_fragment_mrt'],
-  )
-  native_stage_policy = executable(
-    'hk-native-stage-policy', 'tests/hk-native-stage-policy.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference',
-                 '-Wl,--wrap=agx_bo_unreference', '-Wl,--wrap=agx_bo_cache_evict_all',
-                 '-Wl,--wrap=__vk_errorf', '-Wl,--wrap=agx_compile_apple9_native_mesh_lowered',
-                 '-Wl,--wrap=agx_compile_apple9_tiny',
-                 '-Wl,--wrap=agx_compile_apple9_fragment_mrt'],
-  )
-  test('hk-native-stage-policy', prog_python,
-    args : [files('tests/check-native-stage-policy.py'), native_stage_policy],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-stage-policy-gs-pack', prog_python,
-    args : [files('tests/check-native-stage-policy.py'), native_stage_policy],
-    env : ['HK_APPLE9_NATIVE_GS_PACK=1'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-stage-policy-tes-pack', prog_python,
-    args : [files('tests/check-native-stage-policy.py'), native_stage_policy],
-    env : ['HK_APPLE9_NATIVE_TES_PACK=1'],
-    suite : ['asahi', 'honeykrisp'])
-  native_index_identity = executable(
-    'hk-native-index-identity', 'tests/hk-native-index-identity.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference',
-                 '-Wl,--wrap=agx_bo_unreference', '-Wl,--wrap=__vk_errorf',
-                 '-Wl,--wrap=agx_compile_apple9_native_mesh_lowered',
-                 '-Wl,--wrap=agx_compile_apple9_tiny',
-                 '-Wl,--wrap=agx_compile_apple9_fragment_mrt'],
-  )
-  native_index_recording = executable(
-    'hk-native-index-recording', 'tests/hk-native-index-recording.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_unreference',
-                 '-Wl,--wrap=agx_bo_cache_evict_all'],
-  )
-  foreach mode, controls : {
-    'default': [], 'enabled': ['HK_APPLE9_NATIVE_INDEX=1'],
-    'env': ['HK_APPLE9_NATIVE_INDEX=0'],
-    'drirc': ['HK_APPLE9_NATIVE_INDEX=1'],
-    'kernel-absent': ['HK_APPLE9_NATIVE_INDEX=1'],
-    'vm-absent': ['HK_APPLE9_NATIVE_INDEX=1'],
-  }
-    test('hk-native-index-recording-' + mode, native_index_recording,
-      args : [mode], env : controls, suite : ['asahi', 'honeykrisp'])
-  endforeach
-  test('hk-native-gs-hybrid', hybrid_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_GS_NATIVE=1',
-           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-tess-hybrid', hybrid_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_TESS_NATIVE=1',
-           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2'],
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-mesh-hybrid', hybrid_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_MESH_ATTRIBUTES=1',
-           'HK_APPLE9_NATIVE_MESH_PRIMITIVE_LOWERING=1'],
-    suite : ['asahi', 'honeykrisp'],
-  )
-  test(
-    'hk-native-mesh-options',
-    executable(
-      'hk-native-mesh-options', 'tests/hk-native-mesh-options.c',
-      include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                             inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-      dependencies : [hk_deps],
-      link_with : [libhk],
-    ),
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_MESH_ATTRIBUTES=1',
-           'HK_APPLE9_NATIVE_MESH_PRIMITIVE_LOWERING=1'],
-    suite : ['asahi', 'honeykrisp'],
-  )
-  native_stage_varyings = executable(
-    'hk-native-stage-varyings', 'tests/hk-native-stage-varyings.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  foreach packed : ['0', '1']
-    test('hk-native-stage-varyings-pack-' + packed, native_stage_varyings,
-         env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_GS_PACK=' + packed,
-                'HK_APPLE9_NATIVE_TES_PACK=' + packed,
-                'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V3P1,T16V4P2,T32V24P17,T32V32P16'],
-         suite : ['asahi', 'honeykrisp'])
-  endforeach
-  native_rounds_test = executable(
-    'hk-native-mesh-rounds', 'tests/hk-native-mesh-rounds.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-native-mesh-rounds-off', native_rounds_test,
-    suite : ['asahi', 'honeykrisp'])
-  test('hk-native-mesh-rounds-research', native_rounds_test, args : ['research'],
-    env : ['HK_APPLE9_NATIVE_MESH=1'],
-    suite : ['asahi', 'honeykrisp'])
-  native_cull_test = executable(
-    'hk-native-mesh-cull', 'tests/hk-native-mesh-cull.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-native-mesh-cull', native_cull_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1'], suite : ['asahi', 'honeykrisp'])
-  native_lines_test = executable(
-    'hk-native-mesh-lines', 'tests/hk-native-mesh-lines.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-native-mesh-lines', native_lines_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_MESH_ATTRIBUTES=1'],
-    suite : ['asahi', 'honeykrisp'])
-  native_primitive_test = executable(
-    'hk-native-mesh-primitive', 'tests/hk-native-mesh-primitive.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  test('hk-native-mesh-primitive', native_primitive_test,
-    env : ['HK_APPLE9_NATIVE_MESH=1', 'HK_APPLE9_NATIVE_MESH_ATTRIBUTES=1',
-           'HK_APPLE9_NATIVE_MESH_PRIMITIVE_LOWERING=1'],
-    suite : ['asahi', 'honeykrisp'])
-  packed_indices_test = executable(
-    'hk-native-packed-indices', 'tests/hk-native-packed-indices.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-  )
-  foreach mode, selection : {
-    'base': '',
-    'subset': 'T16V3P2,T16V4P2',
-    'capacity': 'T16V16P21,T32V32P42',
-    'v16': 'T16V16P16',
-    'boolean': '1',
-    'unlisted': 'T16V3P2,T16V16P15',
-    'off': 'T16V3P2',
-  }
-    test('hk-native-packed-indices-' + mode, packed_indices_test,
-      args : [mode],
-      env : ['HK_APPLE9_NATIVE_MESH=' + (mode == 'off' ? '0' : '1'),
-             'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=' + selection],
-      suite : ['asahi', 'honeykrisp'])
-  endforeach
-  foreach mode, controls : {
-    'default': [],
-    'enabled': ['HK_APPLE9_NATIVE_INDEX=1'],
-    'shape-cannot-widen': ['HK_APPLE9_NATIVE_INDEX=1',
-                           'HK_APPLE9_NATIVE_MESH_PACKED_SHAPES=T16V16P16'],
-    'killed': ['HK_APPLE9_NATIVE_INDEX=0'],
-    'legacy-off': ['HK_APPLE9_NATIVE_INDEX=1', 'HK_APPLE9_NATIVE_MESH=0'],
-    'drirc': ['HK_APPLE9_NATIVE_INDEX=1'],
-  }
-    argument = mode
-    if mode == 'shape-cannot-widen'
-      argument = 'enabled'
-    elif mode == 'legacy-off'
-      argument = 'killed'
-    endif
-    test('hk-native-index-' + mode, packed_indices_test,
-      args : [argument],
-      env : controls, suite : ['asahi', 'honeykrisp'])
-  endforeach
   test(
     'hk_sparse_residency',
     executable(

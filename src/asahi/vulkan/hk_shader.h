@@ -20,7 +20,8 @@
 #include "hk_descriptor_memory.h"
 
 #include "hk_device.h"
-#include "hk_apple9_mesh.h"
+#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_apple9_launch.h"
 #include "hk_device_memory.h"
 #include "hk_private.h"
 
@@ -33,22 +34,6 @@
 
 #define HK_APPLE9_DRAW_PARAMS_BINDING 65
 #define HK_APPLE9_VERTEX_BUFFERS_BINDING 66
-
-/* Compiler-only research: no native GS draw routing is enabled. */
-struct hk_apple9_graphics_key;
-nir_shader *hk_nir_gs_mesh(const nir_shader *source, const char **reason);
-bool hk_apple9_compile_gs_mesh_program(
-   const nir_shader *source, const struct hk_apple9_graphics_key *key,
-   struct agx_shader_part *out, struct agx_apple9_mesh_body_info *info,
-   const char **reason);
-
-/* Position-only TES realization over the existing tessellator index stream. */
-nir_shader *hk_nir_tes_mesh(const nir_shader *source, const char **reason);
-nir_shader *hk_nir_tes_mesh_object(void);
-bool hk_apple9_compile_tes_mesh_program(
-   const nir_shader *source, const struct hk_apple9_graphics_key *key,
-   struct agx_shader_part *out, struct agx_apple9_mesh_body_info *info,
-   const char **reason);
 
 struct hk_physical_device;
 struct hk_pipeline_compilation_ctx;
@@ -110,9 +95,7 @@ struct hk_mesh_info {
    /* The rasterizing vertex shader draws HK_PP_MAX_VERTICES points per
     * triangle for polygon mode POINT. */
    uint8_t polygon_points;
-   /* Native mesh consumes compute-task grids and per-parent payloads. */
-   bool native_task_bridge;
-   uint8_t _pad[5];
+   uint8_t _pad[6];
 };
 
 /* Fragment shaders read user per-primitive varyings from the output records,
@@ -167,7 +150,6 @@ hk_mesh_primitives_offset_B(const struct hk_mesh_info *info)
 void hk_mesh_gather_info(const nir_shader *nir, struct hk_mesh_info *info);
 void hk_nir_lower_mesh_main(nir_shader *nir, const struct hk_mesh_info *info);
 void hk_nir_lower_task_main(nir_shader *nir);
-void hk_nir_lower_native_mesh_task(nir_shader *nir);
 uint32_t hk_nir_task_mesh_bound(nir_shader *nir);
 #define HK_MAX_PER_VERTEX_COPIES 4
 
@@ -212,14 +194,6 @@ struct hk_apple9_stipple_slots
 hk_apple9_line_stipple_slots(const nir_shader *last, const nir_shader *fs);
 
 struct hk_shader_info {
-   /* A complete compiler contract, qualified by the gated native uploader.
-    * Kept with serialized shader metadata, never inferred from shader bytes. */
-   uint8_t apple9_native_stage;
-   /* Native GS mesh bodies: GS invocations per input primitive. Each
-    * (primitive, invocation) is one logical GS run (hk_nir_gs_mesh). */
-   uint8_t apple9_gs_invocations;
-   struct agx_apple9_mesh_body_info apple9_native;
-
    uint8_t apple9_render_targets;
    /* Fragment shaders: stippled lines rasterize with the first vertex
     * provoking whatever the API mode, which no other input observes. */
@@ -397,11 +371,6 @@ enum hk_gs_variant {
    HK_GS_VARIANT_PRE,
 
    HK_GS_VARIANTS,
-
-   /* A native GS leaf retains its API stage, but owns mesh and object code.
-    * These names must never be used for the compute/raster realization. */
-   HK_GS_VARIANT_NATIVE_MESH = HK_GS_VARIANT_RAST,
-   HK_GS_VARIANT_NATIVE_OBJECT = HK_GS_VARIANT_MAIN,
 };
 
 enum hk_mesh_variant {
@@ -412,10 +381,6 @@ enum hk_mesh_variant {
    HK_MESH_VARIANT_RAST,
 
    HK_MESH_VARIANTS,
-
-   /* Under the native gate the second variant is the generated object stage,
-    * instead of an emulation rasterization shader. */
-   HK_MESH_VARIANT_OBJECT = HK_MESH_VARIANT_RAST,
 };
 
 /* clang-format off */
@@ -511,34 +476,6 @@ struct hk_api_shader {
     */
    struct hk_apple9_deferred *apple9_deferred;
 
-   /* Eager pipelines own an emulated realization and this optional native
-    * leaf. Deferred variants compile only the requested path: a native
-    * result is itself a leaf, with no emulated realization attached. */
-   struct hk_api_shader *apple9_native;
-
-   /* Native mesh/FS realizations have the same content-derived compile ID.
-    * Store the ID in cache blobs so independently reloaded stages can still
-    * prove that their producer/consumer interfaces were compiled together.
-    * Leaves have no deferred source or further alternative. */
-   bool apple9_native_leaf;
-   blake3_hash apple9_native_pair_id;
-
-   /* Shader capability, established before deferred state-dependent linking.
-    * Draw state can still require the emulated realization. A deferred native
-    * rejection clears this atomically while recording threads may read it. */
-   bool apple9_native_candidate;
-   /* Whole-primitive culling that requires degenerate triangles to be empty,
-    * including CullPrimitiveEXT and per-vertex CullDistance. */
-   bool apple9_native_cull_primitive;
-
-   /* A native TES uses the program-info union for mesh metadata. Retain
-    * the API tessellation mode independently for the existing producer. */
-   struct hk_tess_info apple9_native_tess;
-   /* Production admission of the API producer. Also persisted on deferred
-    * candidates and every leaf in a linked native realization. Zero denotes
-    * ordinary fallback or an explicitly selected research realization. */
-   uint8_t apple9_native_stage_mask;
-
    /* Immutable after compilation/cache reload; avoids walking variants at
     * every shader bind, including shaders with no constant data. */
    uint64_t constant_data_addr;
@@ -546,47 +483,12 @@ struct hk_api_shader {
    struct hk_shader variants[];
 };
 
-static inline struct hk_api_shader *
-hk_api_shader_native(const struct hk_api_shader *shader)
-{
-   if (!shader)
-      return NULL;
-   return shader->apple9_native_leaf ? (struct hk_api_shader *)shader
-                                     : shader->apple9_native;
-}
-
-static inline struct hk_shader *
-hk_native_producer_main(struct hk_api_shader *shader)
-{
-   assert(shader->vk.stage == MESA_SHADER_MESH ||
-          shader->vk.stage == MESA_SHADER_GEOMETRY ||
-          shader->vk.stage == MESA_SHADER_TESS_EVAL);
-   return &shader->variants[shader->vk.stage == MESA_SHADER_GEOMETRY
-                               ? HK_GS_VARIANT_NATIVE_MESH
-                            : shader->vk.stage == MESA_SHADER_TESS_EVAL
-                               ? HK_VS_VARIANT_HW
-                               : HK_MESH_VARIANT_MAIN];
-}
-
-static inline struct hk_shader *
-hk_native_producer_object(struct hk_api_shader *shader)
-{
-   assert(shader->vk.stage == MESA_SHADER_MESH ||
-          shader->vk.stage == MESA_SHADER_GEOMETRY ||
-          shader->vk.stage == MESA_SHADER_TESS_EVAL);
-   return &shader->variants[shader->vk.stage == MESA_SHADER_GEOMETRY
-                               ? HK_GS_VARIANT_NATIVE_OBJECT
-                            : shader->vk.stage == MESA_SHADER_TESS_EVAL
-                               ? HK_VS_VARIANT_SW
-                               : HK_MESH_VARIANT_OBJECT];
-}
-
 struct vk_graphics_pipeline_state;
 
 VkResult hk_apple9_resolve_graphics(
    struct hk_device *dev, struct hk_api_shader *const api[HK_APPLE9_GFX_STAGES],
    const struct vk_graphics_pipeline_state *state,
-   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES], bool prefer_native,
+   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES],
    bool fs_statistics);
 
 void hk_apple9_precompile_init(struct hk_device *dev);
@@ -649,26 +551,21 @@ hk_only_variant(struct hk_api_shader *obj)
 
 /* Large constants are extracted before variants are cloned or generated.
  * Generated variants may not use them, but all original variants retain the
- * same data layout, including the optional native realization. Any uploaded
- * copy can serve the API stage's root slot without a draw-path rebind.
+ * same data layout. Any uploaded copy can serve the API stage's root slot
+ * without a draw-path rebind.
  */
 static inline void
 hk_api_shader_init_constant_data(struct hk_api_shader *shader)
 {
    const struct hk_shader *data = NULL;
-   const struct hk_api_shader *paths[] = {shader, shader->apple9_native};
-   for (unsigned p = 0; p < ARRAY_SIZE(paths); ++p) {
-      if (!paths[p])
+   for (unsigned v = 0; v < hk_num_variants(shader->vk.stage); ++v) {
+      const struct hk_shader *s = &shader->variants[v];
+      if (!s->data_size)
          continue;
-      for (unsigned v = 0; v < hk_num_variants(shader->vk.stage); ++v) {
-         const struct hk_shader *s = &paths[p]->variants[v];
-         if (!s->data_size)
-            continue;
-         assert(!data || (data->data_size == s->data_size &&
-                         !memcmp(data->data_ptr, s->data_ptr, s->data_size)));
-         if (!data)
-            data = s;
-      }
+      assert(!data || (data->data_size == s->data_size &&
+                       !memcmp(data->data_ptr, s->data_ptr, s->data_size)));
+      if (!data)
+         data = s;
    }
    shader->constant_data_addr = data ? data->data_addr : 0;
 }
@@ -812,25 +709,7 @@ struct hk_apple9_graphics_key {
     * publishes interpolated cull planes, see hk_apple9_compile_vertex_culls.
     * Otherwise geometry shaders publish one flat primitive cull mask. */
    bool gs_cull_planes;
-   /* The linked fragment shader reads gl_ClipDistance: a native mesh also
-    * links its clip distances as varyings (hk_apple9_native_mesh_options). */
-   bool fs_reads_clip_distance;
-   /* Per-device policy; actual use still requires an exact qualified mesh. */
-   bool native_index;
-   /* Immutable task records feed native mesh children. API task stays compute. */
-   bool native_task_bridge;
-   /* Independently keyed stage admission; never implied by a native mesh. */
-   uint8_t native_stages;
 };
-
-bool hk_apple9_compile_native_mesh_program(
-   nir_shader *nir, const struct hk_apple9_graphics_key *key,
-   struct agx_shader_part *out, struct agx_apple9_mesh_body_info *info,
-   const char **reason);
-
-VkResult hk_apple9_native_mesh_check(nir_shader *nir,
-   const struct hk_apple9_graphics_key *key, bool *supported,
-   const char **reason);
 
 VkResult hk_apple9_compile_internal_gs(struct hk_device *dev, nir_shader *nir,
                                        const uint64_t fs_interp[2],

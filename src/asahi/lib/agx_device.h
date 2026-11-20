@@ -5,7 +5,6 @@
 
 #pragma once
 #include "agx_apple9_layout.h"
-#include "agx_native_mesh.h"
 
 #include <stdint.h>
 #include <xf86drm.h>
@@ -125,17 +124,9 @@ struct agx_device {
    /* Device handle */
    int fd;
 
-   /* Set the expected class hash before opening the device. Qualification is
-    * sampled around this VM's creation and never upgraded later. */
-   const char *native_mesh_classes;
-
    /* Opened only to query the device (a Vulkan physical device): no shader
     * entries are allocated, so their 8 MiB arena is not created. */
    bool probe_only;
-   bool native_mesh_qualified;
-   /* The VM's latched asahi_native_blocks profile; qualified only together
-    * with native_mesh_qualified, at the same generation. */
-   struct agx_native_blocks_support native_blocks;
 
    /* VM handle */
    uint32_t vm_id;

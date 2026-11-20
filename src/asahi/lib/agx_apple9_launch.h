@@ -16,10 +16,6 @@ enum agx_apple9_launch_stage {
    AGX_APPLE9_LAUNCH_VERTEX,
    AGX_APPLE9_LAUNCH_FRAGMENT,
    AGX_APPLE9_LAUNCH_COMPUTE,
-   /* Native absolute target and local allocation DATA model. Consumer
-    * publication/retirement still requires the client's native-contract gate. */
-   AGX_APPLE9_LAUNCH_TASK,
-   AGX_APPLE9_LAUNCH_MESH,
 };
 
 enum {

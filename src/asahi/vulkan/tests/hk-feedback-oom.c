@@ -58,7 +58,7 @@ main(void)
    CHECK(!cmd->rendering && !cmd->current_cs.gfx);
 
    /* Draw entry points must not inspect absent shaders/render state or try
-    * decompression again once recording has failed, including native mesh. */
+    * decompression again once recording has failed. */
    cmd->current_cs.gfx = (void *)(uintptr_t)1;
    hk_CmdDraw(handle, 3, 1, 0, 0);
    hk_CmdDrawIndexed(handle, 3, 1, 0, 0, 0);
