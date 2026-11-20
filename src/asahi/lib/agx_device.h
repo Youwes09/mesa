@@ -156,24 +156,6 @@ struct agx_device {
    struct util_vma_heap replay_heap, replay_usc_heap;
    uint64_t guard_size;
 
-   /* VAs freed after a GEM close, kept out of their heap for a while: FIFO,
-    * with a byte cap per heap (main, USC, context, replay, replay USC; the
-    * replay caps are 0). Protected by vma_lock. See agx_va_retire.
-    */
-   struct {
-      struct list_head list;
-      uint64_t bytes[5], cap[5];
-      /* Statistics (AGX_VA_QUARANTINE_STATS prints them at teardown):
-       * retired VAs, the largest total quarantined, and releases by cause.
-       */
-      uint64_t retired, high_water_B;
-      uint64_t released_cap, released_exhaustion, released_fixed;
-      /* Bytes taken from each heap (live plus quarantined), its high water,
-       * and the context heap's size, for the same report.
-       */
-      uint64_t heap_used_B[5], heap_high_water_B[5], context_size_B;
-   } va_quarantine;
-
    /* To emulate sparse-resident buffers, we map buffers in both the bottom half
     * and top half of the address space. sparse_ro_offset controls the
     * partitioning. This is a power-of-two that &'s zero in bottom (read-write)
@@ -398,10 +380,6 @@ struct agx_va *agx_va_alloc(struct agx_device *dev, uint64_t size_B,
                             uint64_t align_B, enum agx_va_flags flags,
                             uint64_t fixed_va);
 void agx_va_free(struct agx_device *dev, struct agx_va *va, bool unbind);
-void agx_va_retire(struct agx_device *dev, struct agx_va *va);
-void agx_va_quarantine_init(struct agx_device *dev, uint64_t main_B,
-                            uint64_t usc_B, uint64_t context_B);
-void agx_va_quarantine_finish(struct agx_device *dev);
 
 static inline struct drm_asahi_cmd_header
 agx_cmd_header(bool compute, uint16_t barrier_vdm, uint16_t barrier_cdm)

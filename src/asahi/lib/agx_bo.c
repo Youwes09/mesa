@@ -315,10 +315,8 @@ agx_bo_close(struct agx_device *dev, const struct agx_bo *bo)
       return;
    }
 
-   /* Do not recycle a VA until its old kernel mappings are gone: the close
-    * may only have deferred them (see agx_va_retire).
-    */
-   agx_va_retire(dev, bo->va);
+   /* The close unmapped the BO, so its VA can be reused now. */
+   agx_va_free(dev, bo->va, false);
 }
 
 static bool

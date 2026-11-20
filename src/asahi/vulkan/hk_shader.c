@@ -185,7 +185,6 @@ static const char *const hk_ignored_env[] = {
    /* The parallel and serial allocations are identical; the others only
     * verify or count. */
    "AGX_APPLE9_PARALLEL_RA",         "AGX_APPLE9_VERIFY_PROBE_REUSE",
-   "AGX_VA_QUARANTINE_STATS",
 };
 
 static bool
