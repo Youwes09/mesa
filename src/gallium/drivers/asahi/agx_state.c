@@ -1666,9 +1666,9 @@ agx_apple9_compile_prerast(struct agx_device *dev, nir_shader *nir,
    const char *reason = NULL;
    if (!agx_compile_apple9_tiny(nir, &compiled->b,
                                &compiled->apple9_compute_profile, &reason)) {
-      fprintf(stderr, "Apple9 %s pre-rasterization compile failed: %s\n",
-              _mesa_shader_stage_to_abbrev(descriptor_stage), reason ?: "unknown");
-      nir_print_shader(nir, stderr);
+      mesa_loge("Apple9 %s pre-rasterization compile failed: %s",
+                _mesa_shader_stage_to_abbrev(descriptor_stage),
+                reason ?: "unknown");
       FREE(compiled);
       return NULL;
    }
@@ -1766,8 +1766,7 @@ agx_apple9_compile_geometry(struct agx_device *dev,
       struct agx_shader_part part = {0};
       if (!agx_compile_apple9_vertex_inputs(copy, &key->apple9_inputs,
                                            &part, &reason)) {
-         fprintf(stderr, "Apple9 GS raster compile failed: %s\n", reason ?: "unknown");
-         nir_print_shader(copy, stderr);
+         mesa_loge("Apple9 GS raster compile failed: %s", reason ?: "unknown");
          goto fail_compiled;
       }
       compiled->gs_copy = CALLOC_STRUCT(agx_compiled_shader);
@@ -1789,8 +1788,8 @@ cleanup:
    ralloc_free(pre);
    return compiled;
 fail:
-   fprintf(stderr, "Apple9 pre-rasterization lowering failed: %s\n", reason ?: "vertex input");
-   nir_print_shader(nir, stderr);
+   mesa_loge("Apple9 pre-rasterization lowering failed: %s",
+             reason ?: "vertex input");
    ralloc_free(nir);
    return NULL;
 }
@@ -1821,11 +1820,9 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
       if (so->type == MESA_SHADER_VERTEX && key_->vs.apple9_inputs.capture_xfb)
          supported = true;
       if (!supported) {
-         fprintf(stderr,
-                 "Apple9 bootstrap render compiler rejected unsupported "
-                 "%s shader IO/signature: %s\n",
-                 _mesa_shader_stage_to_abbrev(so->type), signature_reason);
-         nir_print_shader(bootstrap, stderr);
+         mesa_loge("Apple9 bootstrap render compiler rejected unsupported "
+                   "%s shader IO/signature: %s",
+                   _mesa_shader_stage_to_abbrev(so->type), signature_reason);
          ralloc_free(bootstrap);
          return NULL;
       }
@@ -1845,11 +1842,9 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
 
       if (!agx_compile_apple9_tiny(
              early, &compiled->b, &compiled->apple9_compute_profile, &reason)) {
-         fprintf(stderr,
-                 "Apple9 compute shader is outside the bounded NIR "
-                 "compiler: %s\n",
-                 reason ?: "unknown reason");
-         nir_print_shader(early, stderr);
+         mesa_loge("Apple9 compute shader is outside the bounded NIR "
+                   "compiler: %s",
+                   reason ?: "unknown reason");
          ralloc_free(early);
          FREE(compiled);
          return NULL;
@@ -2041,12 +2036,10 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
             : agx_compile_apple9_vertex_inputs(apple9_nir, &key_->vs.apple9_inputs,
                                                &apple9_stage, &reason));
       if (!compiled_stage) {
-         fprintf(stderr,
-                 "Apple9 %s shader is outside the bounded render compiler: "
-                 "%s\n",
-                 _mesa_shader_stage_to_abbrev(so->type),
-                 reason ?: "unknown reason");
-         nir_print_shader(apple9_nir, stderr);
+         mesa_loge("Apple9 %s shader is outside the bounded render compiler: "
+                   "%s",
+                   _mesa_shader_stage_to_abbrev(so->type),
+                   reason ?: "unknown reason");
          ralloc_free(apple9_nir);
          ralloc_free(nir);
          ralloc_free(pre_gs);
@@ -2199,7 +2192,7 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
                                 AGX_BO_EXEC | AGX_BO_LOW_VA | AGX_BO_WRITEBACK,
                                 "Apple9 compiled shader");
       if (!stage->bo) {
-         fprintf(stderr, "Failed to allocate Apple9 compiled shader\n");
+         mesa_loge("Failed to allocate Apple9 compiled shader");
          abort();
       }
       memcpy(agx_bo_map(stage->bo), stage->binary, stage->binary_size);
@@ -3954,8 +3947,7 @@ agx_launch_internal(struct agx_batch *batch, struct agx_grid grid,
    struct agx_device *dev = agx_device(ctx->base.screen);
 
    if (agx_apple9_compute_enabled(dev)) {
-      fprintf(stderr, "Apple9 requires native code for internal compute launches\n");
-      abort();
+      UNREACHABLE("Apple9 requires native code for internal compute launches");
    }
 
    uint32_t *out = (uint32_t *)batch->cdm.current;
@@ -4029,8 +4021,7 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
           dev, &batch->pipeline_pool, bo, profile, addresses, count, textures, samplers, &geometry,
           profile->preamble_size ? bo->va->addr + profile->preamble_offset : 0,
           &launch)) {
-      fprintf(stderr, "Apple9 pre-rasterization launch state is invalid\n");
-      abort();
+      UNREACHABLE("Apple9 pre-rasterization launch state is invalid");
    }
    bool indirect_local = grid.mode == AGX_CDM_MODE_INDIRECT_LOCAL;
    unsigned size = indirect_local ? AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE
@@ -6141,7 +6132,7 @@ agx_apple9_validate_resources(struct agx_context *ctx)
    struct agx_apple9_render_pipeline pipeline;
    if (!agx_apple9_link_render_pipeline(&pipeline, &(ctx->gs ? ctx->gs->gs_copy : ctx->vs)->apple9_render_stage,
                                         &ctx->fs->apple9_render_stage)) {
-      fprintf(stderr, "Apple9 graphics stages cannot be linked\n");
+      mesa_loge("Apple9 graphics stages cannot be linked");
       return false;
    }
 
@@ -6175,9 +6166,8 @@ agx_apple9_validate_resources(struct agx_context *ctx)
                     stage->cb[binding].buffer && stage->cb[binding].buffer_size;
          }
          if (!valid) {
-            fprintf(stderr,
-                    "Apple9 graphics buffer binding %u is unavailable\n",
-                    binding);
+            mesa_loge("Apple9 graphics buffer binding %u is unavailable",
+                      binding);
             return false;
          }
       }
@@ -6191,14 +6181,15 @@ agx_apple9_validate_resources(struct agx_context *ctx)
       u_foreach_bit(binding, rs->texture_mask) {
          struct agx_sampler_view *view = stage->textures[binding];
          if (!agx_apple9_texture_view_supported(view)) {
-            fprintf(stderr, "Apple9 texture binding %u has an unsupported view "
-                    "(target=%u format=%s tiling=%u compressed=%u samples=%u layer=%u)\n",
-                    binding, view ? view->base.target : 0,
-                    view ? util_format_short_name(view->format) : "unbound",
-                    view ? view->rsrc->layout.tiling : 0,
-                    view ? view->rsrc->layout.compressed : 0,
-                    view ? view->rsrc->base.nr_samples : 0,
-                    view ? view->base.u.tex.first_layer : 0);
+            mesa_loge(
+               "Apple9 texture binding %u has an unsupported view "
+               "(target=%u format=%s tiling=%u compressed=%u samples=%u layer=%u)",
+               binding, view ? view->base.target : 0,
+               view ? util_format_short_name(view->format) : "unbound",
+               view ? view->rsrc->layout.tiling : 0,
+               view ? view->rsrc->layout.compressed : 0,
+               view ? view->rsrc->base.nr_samples : 0,
+               view ? view->base.u.tex.first_layer : 0);
             return false;
          }
       }
@@ -6207,7 +6198,7 @@ agx_apple9_validate_resources(struct agx_context *ctx)
          struct agx_sampler_state *sampler =
             api < ARRAY_SIZE(stage->samplers) ? stage->samplers[api] : NULL;
          if (!sampler) {
-            fprintf(stderr, "Apple9 sampler binding %u is unavailable\n", api);
+            mesa_loge("Apple9 sampler binding %u is unavailable", api);
             return false;
          }
          const struct pipe_sampler_state *state = &sampler->base;
@@ -6218,8 +6209,7 @@ agx_apple9_validate_resources(struct agx_context *ctx)
              !agx_apple9_sampler_wrap_supported(state->wrap_r) ||
              (state->compare_mode != PIPE_TEX_COMPARE_NONE &&
               state->compare_mode != PIPE_TEX_COMPARE_R_TO_TEXTURE)) {
-            fprintf(stderr, "Apple9 sampler binding %u has unsupported state\n",
-                    api);
+            mesa_loge("Apple9 sampler binding %u has unsupported state", api);
             return false;
          }
       }
@@ -6411,8 +6401,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
    u_foreach_bit(binding, rs->texture_mask) {
       struct agx_sampler_view *view = shader->textures[binding];
       if (!view) {
-         fprintf(stderr, "Apple9 texture is unbound\n");
-         abort();
+         UNREACHABLE("Apple9 texture is unbound");
       }
       uint8_t *descriptor = (uint8_t *)textures.cpu +
                             slot++ * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
@@ -6460,8 +6449,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
       struct agx_texture_packed legacy;
       agx_pack_texture(&legacy, resource, view->format, &physical);
       if (!agx_apple9_translate_texture(descriptor, &legacy)) {
-         fprintf(stderr, "Apple9 texture descriptor translation failed\n");
-         abort();
+         UNREACHABLE("Apple9 texture descriptor translation failed");
       }
       if (dev->apple9_trace) {
          fprintf(stderr, "APPLE9_DESCRIPTOR binding=%u ", binding);
@@ -6496,8 +6484,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
              agx_map_texture_gpu(resource, view->u.tex.first_layer), level,
              view->u.tex.last_layer - view->u.tex.first_layer + 1,
              !view->u.tex.single_layer_view, dimension)) {
-         fprintf(stderr, "Apple9 unsupported block image descriptor\n");
-         abort();
+         UNREACHABLE("Apple9 unsupported block image descriptor");
       }
       if (dev->apple9_trace) {
          fprintf(stderr, "APPLE9_BLOCK_IMAGE_DRAW draw=%u binding=%u desc=",
@@ -6505,7 +6492,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
          for (unsigned word = 0; word < 8; ++word) {
             uint32_t value;
             memcpy(&value, descriptor + 4 * word, 4);
-            fprintf(stderr, "%08x%s", value, word == 7 ? "\n" : " ");
+            mesa_loge("%08x%s", value, word == 7 ? "" : " ");
          }
       }
       if (fragment)
@@ -6518,8 +6505,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
       unsigned api = rs->texture_mapping.samplers[binding];
       struct agx_sampler_state *sampler = shader->samplers[api];
       if (!sampler) {
-         fprintf(stderr, "Apple9 sampler is unbound\n");
-         abort();
+         UNREACHABLE("Apple9 sampler is unbound");
       }
       const struct pipe_sampler_state *state = &sampler->base;
       if (state->min_img_filter > PIPE_TEX_FILTER_LINEAR ||
@@ -6559,8 +6545,7 @@ agx_apple9_upload_textures(struct agx_batch *batch, struct agx_stage *shader,
          .seamful_cube_maps = !state->seamless_cube_map,
       };
       if (!agx_apple9_pack_sampler_state(descriptor, &native)) {
-         fprintf(stderr, "Apple9 sampler descriptor translation failed\n");
-         abort();
+         UNREACHABLE("Apple9 sampler descriptor translation failed");
       }
       if (dev->apple9_trace) {
          fprintf(stderr, "APPLE9_SAMPLER ");
@@ -7108,7 +7093,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       assert(linked && "Apple9 render stages must be compiled before draw");
 
       if (!agx_apple9_collect_color_targets(batch, &pipeline)) {
-         fprintf(stderr, "Apple9 direct render requires one to eight color surfaces\n");
+         mesa_loge("Apple9 direct render requires one to eight color surfaces");
          return;
       }
       batch->apple9_render_initialized = true;
@@ -7269,8 +7254,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
             } else {
                struct pipe_constant_buffer *cb = &ctx->stage[shader].cb[binding];
                if (!cb->buffer || !cb->buffer_size) {
-                  fprintf(stderr, "Apple9 graphics UBO is unbound\n");
-                  abort();
+                  UNREACHABLE("Apple9 graphics UBO is unbound");
                }
                struct agx_resource *ubo = agx_resource(cb->buffer);
                if (stage)
@@ -7320,8 +7304,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
                                    &batch->apple9_context_pool,
                                    &pipeline,
                                    record, previous)) {
-         fprintf(stderr, "Failed to encode Apple9 draw state\n");
-         abort();
+         UNREACHABLE("Failed to encode Apple9 draw state");
       }
       batch->apple9_previous_draw = *record;
       ++batch->apple9_draw_count;
@@ -7652,17 +7635,16 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
          if (!info->grid[d])
             return;
          if (!info->block[d]) {
-            fprintf(stderr, "compute local size dimension %u is zero\n", d);
+            mesa_loge("compute local size dimension %u is zero", d);
             return;
          }
 
          uint64_t last = info->last_block[d] ?: info->block[d];
          uint64_t count = (uint64_t)(info->grid[d] - 1) * info->block[d] + last;
          if (last > info->block[d] || count > UINT32_MAX) {
-            fprintf(stderr,
-                    "compute global size dimension %u is invalid or "
-                    "overflows 32 bits\n",
-                    d);
+            mesa_loge("compute global size dimension %u is invalid or "
+                      "overflows 32 bits",
+                      d);
             return;
          }
       }
@@ -7676,7 +7658,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
    struct hash_entry *variant =
       _mesa_hash_table_next_entry(uncompiled->variants, NULL);
    if (unlikely(!variant)) {
-      fprintf(stderr, "compute shader has no compiled variant\n");
+      mesa_loge("compute shader has no compiled variant");
       return;
    }
    struct agx_compiled_shader *cs = variant->data;
@@ -7684,8 +7666,8 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
    if (cs->apple9_tiny && is_indirect &&
        !agx_apple9_compute_indirect_dispatch_supported(
           &cs->apple9_compute_profile)) {
-      fprintf(stderr,
-              "Apple9 compute package ABI does not support indirect dispatch\n");
+      mesa_loge(
+         "Apple9 compute package ABI does not support indirect dispatch");
       return;
    }
 
@@ -7701,7 +7683,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
       struct agx_resource *rsrc = agx_resource(info->indirect);
       if (info->indirect_offset > info->indirect->width0 ||
           info->indirect->width0 - info->indirect_offset < 3 * sizeof(uint32_t)) {
-         fprintf(stderr, "compute indirect grid record is out of bounds\n");
+         mesa_loge("compute indirect grid record is out of bounds");
          return;
       }
       agx_batch_reads(batch, rsrc);
@@ -7750,8 +7732,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
          apple9_invocation_count = 1;
          for (unsigned d = 0; d < 3; ++d) {
             if (global[d] > UINT64_MAX / apple9_invocation_count) {
-               fprintf(stderr,
-                       "Apple9 direct grid invocation count overflows\n");
+               mesa_loge("Apple9 direct grid invocation count overflows");
                return;
             }
             apple9_invocation_count *= global[d];
@@ -7761,9 +7742,8 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
       uint64_t threadgroup_memory_bytes = cs->b.info.local_size;
       if (info->variable_shared_mem &&
           !cs->apple9_has_variable_shared_mem) {
-         fprintf(stderr,
-                 "Apple9 compute shader does not declare variable "
-                 "threadgroup memory\n");
+         mesa_loge("Apple9 compute shader does not declare variable "
+                   "threadgroup memory");
          return;
       }
       threadgroup_memory_bytes += info->variable_shared_mem;
@@ -7773,9 +7753,8 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
       uint64_t allocation = threadgroup_memory_bytes
          ? util_next_power_of_two64(MAX2(threadgroup_memory_bytes, 128)) : 0;
       if (allocation != required_threadgroup_memory_bytes) {
-         fprintf(stderr,
-                 "Apple9 compute threadgroup memory total is outside the "
-                 "compiled shader profile\n");
+         mesa_loge("Apple9 compute threadgroup memory total is outside the "
+                   "compiled shader profile");
          return;
       }
    }
@@ -7812,8 +7791,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
       if (!resource_count || resource_count > PIPE_MAX_SHADER_BUFFERS ||
           !resource_record_size ||
           (read_mask | write_mask) & ~BITFIELD_MASK(resource_count)) {
-         fprintf(stderr,
-                 "Apple9 compute profile has an invalid resource interface\n");
+         mesa_loge("Apple9 compute profile has an invalid resource interface");
          return;
       }
 
@@ -7834,9 +7812,8 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
             if (binding >= PIPE_MAX_SHADER_BUFFERS ||
                 !(stage->ssbo_mask & BITFIELD_BIT(binding)) ||
                 !stage->ssbo[binding].buffer) {
-               fprintf(stderr,
-                       "Apple9 compute ABI requires SSBO binding %u\n",
-                       binding);
+               mesa_loge("Apple9 compute ABI requires SSBO binding %u",
+                         binding);
                return;
             }
             resources[i] = agx_resource(stage->ssbo[binding].buffer);
@@ -7851,16 +7828,14 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
             if (binding >= PIPE_MAX_CONSTANT_BUFFERS ||
                 !(stage->cb_mask & BITFIELD_BIT(binding)) ||
                 !stage->cb[binding].buffer) {
-               fprintf(stderr,
-                       "Apple9 compute ABI requires UBO binding %u\n",
-                       binding);
+               mesa_loge("Apple9 compute ABI requires UBO binding %u", binding);
                return;
             }
             resources[i] = agx_resource(stage->cb[binding].buffer);
             resource_offsets[i] = stage->cb[binding].buffer_offset;
             resource_sizes[i] = stage->cb[binding].buffer_size;
          } else {
-            fprintf(stderr, "Apple9 compute ABI has an invalid resource kind\n");
+            mesa_loge("Apple9 compute ABI has an invalid resource kind");
             return;
          }
          resource_addresses[i] =
@@ -7887,8 +7862,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
              cs->apple9_compute_profile.preamble_size
                 ? cs->bo->va->addr + cs->apple9_compute_profile.preamble_offset : 0,
              &launch_address)) {
-         fprintf(stderr, "Failed to encode Apple9 compute dispatch state\n");
-         abort();
+         UNREACHABLE("Failed to encode Apple9 compute dispatch state");
       }
 
       const unsigned cdm_record_size =
@@ -7905,7 +7879,7 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
                  geometry.threads, geometry.local,
                  &cs->apple9_compute_profile, true);
       if (!cdm_built) {
-         fprintf(stderr, "Apple9 dispatch encoding failed\n");
+         mesa_loge("Apple9 dispatch encoding failed");
          return;
       }
       batch->cdm.current += cdm_record_size;

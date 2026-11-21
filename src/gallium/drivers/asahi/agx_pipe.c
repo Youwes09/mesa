@@ -1925,8 +1925,7 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
 
    if (agx_apple9_direct_render_enabled(dev)) {
       if (batch->key.nr_cbufs > 8) {
-         fprintf(stderr,
-                 "Apple9 direct render supports up to eight color targets\n");
+         mesa_loge("Apple9 direct render supports up to eight color targets");
          return false;
       }
 
@@ -1934,7 +1933,7 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
       uint32_t load_usc = batch->apple9_color_reload_launch;
       uint32_t store_usc = batch->apple9_color_store_launch;
       if (!package_ready || !load_usc || !store_usc) {
-         fprintf(stderr, "failed to prepare Apple9 color target\n");
+         mesa_loge("failed to prepare Apple9 color target");
          return false;
       }
 

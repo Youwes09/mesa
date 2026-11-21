@@ -209,9 +209,10 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
    unsigned batch_idx = agx_batch_idx(batch);
 
    if (u_printf_check_abort(stdout, &dev->printf)) {
-      fprintf(stderr, "GPU abort: batch %u printf header %#x %#x at %#llx\n",
-              batch_idx, dev->printf.map[0], dev->printf.map[1],
-              (unsigned long long)((struct agx_bo *)dev->printf.bo)->va->addr);
+      mesa_loge(
+         "GPU abort: batch %u printf header %#x %#x at %#llx", batch_idx,
+         dev->printf.map[0], dev->printf.map[1],
+         (unsigned long long)((struct agx_bo *)dev->printf.bo)->va->addr);
       abort();
    }
 
@@ -1059,8 +1060,8 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
       uint64_t point = seqid;
       int tret = drmSyncobjTimelineSignal(dev->fd, &screen->flush_syncobj, &point, 1);
       if (sret || tret) {
-         fprintf(stderr, "asahi: cannot discard failed batch (%d/%d); aborting\n",
-                 sret, tret);
+         mesa_loge("asahi: cannot discard failed batch (%d/%d); aborting", sret,
+                   tret);
          abort();
       }
       if (!ctx->any_faults) {
