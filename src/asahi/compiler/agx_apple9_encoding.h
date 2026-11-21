@@ -21,10 +21,10 @@ agx_apple9_encode_literal32(uint8_t out[8], unsigned dst, uint32_t value)
    if (dst >= 64)
       return false;
    const uint8_t bytes[8] = {
-      ((dst & 0xf) << 4) | 0x0c, 0x80 | (value & 0x7f),
-      ((dst >> 4) << 6) | 0x02,  (value >> 24) & 0xfe,
-      (value >> 6) & 0x1e,       (value >> 9) & 0x0c,
-      (value >> 13) & 0xff,      (value >> 21) & 0x0f,
+      (uint8_t)(((dst & 0xf) << 4) | 0x0c), (uint8_t)(0x80 | (value & 0x7f)),
+      (uint8_t)(((dst >> 4) << 6) | 0x02),  (uint8_t)((value >> 24) & 0xfe),
+      (uint8_t)((value >> 6) & 0x1e),       (uint8_t)((value >> 9) & 0x0c),
+      (uint8_t)((value >> 13) & 0xff),      (uint8_t)((value >> 21) & 0x0f),
    };
    memcpy(out, bytes, sizeof(bytes));
    return true;
@@ -41,8 +41,20 @@ agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
        base >= 63 || offset > 255)
       return false;
    const uint8_t bytes[14] = {
-      0x67, 0,      0x54, dst << 1, base, 0, 0, 0, count == 2 ? 0x57 : 0x59,
-      0,    offset, 0x40, 0x26,     0,
+      0x67,
+      0,
+      0x54,
+      (uint8_t)(dst << 1),
+      (uint8_t)base,
+      0,
+      0,
+      0,
+      (uint8_t)(count == 2 ? 0x57 : 0x59),
+      0,
+      (uint8_t)offset,
+      0x40,
+      0x26,
+      0,
    };
    memcpy(out, bytes, sizeof(bytes));
    return true;
@@ -57,7 +69,7 @@ agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
    if (!out || (displacement & 1) || displacement < -(INT64_C(1) << 47) ||
        displacement >= (INT64_C(1) << 47))
       return false;
-   uint8_t bytes[10] = {0x0f, any ? 0x00 : 0x01, 0x54};
+   uint8_t bytes[10] = {0x0f, (uint8_t)(any ? 0x00 : 0x01), 0x54};
    for (unsigned byte = 0; byte < 6; ++byte)
       bytes[3 + byte] = (uint64_t)displacement >> (8 * byte);
    memcpy(out, bytes, sizeof(bytes));
@@ -74,10 +86,10 @@ agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
    if (dst >= 64 || src >= 64)
       return false;
    const uint8_t bytes[4] = {
-      ((dst & 15) << 4) | 0x0b,
-      (src << 1) & 0x7f,
-      9 | ((dst >> 4) << 6),
-      4 | (wait ? 0x40 : 0),
+      (uint8_t)(((dst & 15) << 4) | 0x0b),
+      (uint8_t)((src << 1) & 0x7f),
+      (uint8_t)(9 | ((dst >> 4) << 6)),
+      (uint8_t)(4 | (wait ? 0x40 : 0)),
    };
    memcpy(out, bytes, sizeof(bytes));
    return true;

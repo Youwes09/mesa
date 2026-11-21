@@ -3,13 +3,15 @@
 #include "poly-indirect-size.h"
 #include "poly/geometry.h"
 
-static_assert(
-   TEST_POLY_GS_SHAPE_DYNAMIC_INDEXED == POLY_GS_SHAPE_DYNAMIC_INDEXED &&
-      TEST_POLY_GS_SHAPE_STATIC_INDEXED == POLY_GS_SHAPE_STATIC_INDEXED &&
-      TEST_POLY_GS_SHAPE_STATIC_PER_PRIM == POLY_GS_SHAPE_STATIC_PER_PRIM &&
-      TEST_POLY_GS_SHAPE_STATIC_PER_INSTANCE ==
-         POLY_GS_SHAPE_STATIC_PER_INSTANCE,
-   "shape values must match poly/geometry.h");
+static_assert((int)TEST_POLY_GS_SHAPE_DYNAMIC_INDEXED ==
+                    (int)POLY_GS_SHAPE_DYNAMIC_INDEXED &&
+                 (int)TEST_POLY_GS_SHAPE_STATIC_INDEXED ==
+                    (int)POLY_GS_SHAPE_STATIC_INDEXED &&
+                 (int)TEST_POLY_GS_SHAPE_STATIC_PER_PRIM ==
+                    (int)POLY_GS_SHAPE_STATIC_PER_PRIM &&
+                 (int)TEST_POLY_GS_SHAPE_STATIC_PER_INSTANCE ==
+                    (int)POLY_GS_SHAPE_STATIC_PER_INSTANCE,
+              "shape values must match poly/geometry.h");
 
 bool
 test_poly_gs_indirect_fits(unsigned prim, unsigned shape, uint32_t max_indices,

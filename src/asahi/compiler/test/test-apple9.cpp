@@ -206,8 +206,9 @@ TEST(Apple9Compiler, GuardedLoadsHoistOnlySafeUniformAddressChains)
          EXPECT_EQ(nir_def_instr(address)->block ==
                       nir_start_block(nir_shader_get_entrypoint(b.shader)),
                    !varying_offset && !guarded_descriptor);
-         if (guarded_descriptor)
+         if (guarded_descriptor) {
             EXPECT_EQ(nir_def_instr(root)->block, guard);
+         }
          nir_validate_shader(b.shader, "guarded uniform address hoisting");
          ralloc_free(b.shader);
       }
@@ -9170,9 +9171,9 @@ TEST(Apple9Compiler, GraphicsLoopResultsReachMergedOutputs)
          nir_store_output(
             &b, nir_vec4(&b, value, value, value, nir_imm_float(&b, 1)),
             nir_imm_int(&b, 0), .write_mask = 15, .src_type = nir_type_float32,
-            .io_semantics = {
-               .location =
-                  unsigned(fragment ? FRAG_RESULT_DATA0 : VARYING_SLOT_POS)});
+            .io_semantics = {.location = fragment
+                                            ? unsigned(FRAG_RESULT_DATA0)
+                                            : unsigned(VARYING_SLOT_POS)});
          b.shader->info.io_lowered = true;
          agx_shader_part compiled = {};
          const char *reason = nullptr;
@@ -12275,8 +12276,8 @@ TEST(Apple9Compiler, PrivateArraysUseNativeScratchInAllStages)
                   nir_imm_int(&b, 0), .write_mask = 15,
                   .src_type = nir_type_float32,
                   .io_semantics = {.location = stage == MESA_SHADER_VERTEX
-                                                  ? VARYING_SLOT_POS
-                                                  : FRAG_RESULT_DATA0,
+                                                  ? unsigned(VARYING_SLOT_POS)
+                                                  : unsigned(FRAG_RESULT_DATA0),
                                    .num_slots = 1});
                b.shader->info.io_lowered = true;
             }
@@ -12495,8 +12496,9 @@ TEST(Apple9Spilling, ReturningAtomicKeepsFrameHeadAndPublishesItsSlot)
             EXPECT_LE(atomic_slot, AGX_APPLE9_SCOREBOARD_SLOT_6);
             ++atomics;
          }
-         if (ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC_RESULT)
+         if (ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC_RESULT) {
             EXPECT_EQ(ins->producer_scoreboard_slot, atomic_slot);
+         }
          if (ins->op == AGX_APPLE9_VIR_SPILL_STORE ||
              ins->op == AGX_APPLE9_VIR_SPILL_LOAD) {
             EXPECT_GE(ins->immediate, 4u);
@@ -13113,8 +13115,9 @@ TEST_F(Apple9Completion, LoadsWithOneConsumerShareASlot)
       EXPECT_NE(ins->op, AGX_APPLE9_VIR_WAIT);
       if (ins->op == AGX_APPLE9_VIR_DEVICE_LOAD)
          slots[loads++] = ins->producer_scoreboard_slot;
-      if (ins->op == AGX_APPLE9_VIR_IADD)
+      if (ins->op == AGX_APPLE9_VIR_IADD) {
          EXPECT_EQ(ins->scoreboard_slot, slots[0]);
+      }
    }
    ASSERT_EQ(loads, 3u);
    EXPECT_EQ(slots[0], slots[1]);
@@ -13206,10 +13209,11 @@ TEST_F(Apple9Completion, LoadsAfterAFenceWaitForEarlierLoads)
       SetUp();
       auto zero = imm(0);
       auto guard = load(zero, 0);
-      if (fenced)
+      if (fenced) {
          ASSERT_TRUE(agx_apple9_vir_emit_side_effect(
             &p, AGX_APPLE9_VIR_DEVICE_FENCE, AGX_APPLE9_ENC_DEVICE_FENCE,
             nullptr, 0, AGX_APPLE9_FENCE_DEVICE));
+      }
       auto payload = load(zero, 1);
       output(payload, 0);
       output(guard, 1);
@@ -13275,8 +13279,9 @@ TEST(Apple9Encoding, RetainingConsumersHaveDependencyFields)
 {
    for (unsigned e = 0; e < AGX_APPLE9_ENC_COUNT; ++e) {
       const auto *info = agx_apple9_encoding_info(agx_apple9_encoding(e));
-      if (info->dependency_retains_sources)
+      if (info->dependency_retains_sources) {
          EXPECT_NE(info->dependency_layout, AGX_APPLE9_DEPENDENCY_NONE) << e;
+      }
    }
 }
 
@@ -13443,8 +13448,9 @@ TEST(Apple9CompletionArms, ElseAluWriteOverPendingThenLoadWaits)
       if (in_else) {
          bool writes = ins->dest != AGX_APPLE9_VREG_INVALID &&
                        p.phys[ins->dest] == load_reg;
-         if (writes)
+         if (writes) {
             EXPECT_TRUE(waited);
+         }
          wrote_same |= writes;
          waited |= (ins->op == AGX_APPLE9_VIR_WAIT &&
                     (ins->immediate & BITFIELD_BIT(slot - 1))) ||
@@ -13567,8 +13573,9 @@ TEST_F(Apple9Completion, AsyncSystemReadsAvoidSlotConflictsAndFoldRealUses)
       }
       /* The loads leave slot 1 to the fixed system-value reads that follow
        * them, so neither read has to retire a load first. */
-      if (ins->op == AGX_APPLE9_VIR_DEVICE_LOAD)
+      if (ins->op == AGX_APPLE9_VIR_DEVICE_LOAD) {
          EXPECT_NE(ins->producer_scoreboard_slot, AGX_APPLE9_SCOREBOARD_SLOT_1);
+      }
       EXPECT_NE(ins->op, AGX_APPLE9_VIR_WAIT);
       if (ins->op == AGX_APPLE9_VIR_IXOR) {
          EXPECT_EQ(ins->scoreboard_slot, AGX_APPLE9_SCOREBOARD_SLOT_1);
@@ -13811,8 +13818,9 @@ TEST_F(Apple9Completion, DependentTextureWaitsBeforeCoordinatePublication)
           samples == 1)
          ++waits;
       if (ins->op == AGX_APPLE9_VIR_TEXTURE_SAMPLE) {
-         if (samples++)
+         if (samples++) {
             EXPECT_EQ(waits, 1u);
+         }
       }
    }
    EXPECT_EQ(samples, 2u);
@@ -13941,8 +13949,9 @@ TEST_F(Apple9Completion, TexturesShareTagsWithMemoryAndJoinOnExhaustion)
           ins->encoding == AGX_APPLE9_ENC_LOGIC_EXPORT) {
          unsigned slot = ins->producer_scoreboard_slot;
          bool exporting = ins->encoding == AGX_APPLE9_ENC_LOGIC_EXPORT;
-         if (count[slot])
+         if (count[slot]) {
             EXPECT_FALSE(exporting || exported[slot]);
+         }
          exported[slot] = exporting;
          EXPECT_LE(++count[slot], 7u);
          samples += ins->op == AGX_APPLE9_VIR_TEXTURE_SAMPLE;

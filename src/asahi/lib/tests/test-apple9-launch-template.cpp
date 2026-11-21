@@ -64,8 +64,9 @@ TEST(Apple9LaunchTemplate, MatchesBuild)
             break;
          ASSERT_TRUE(agx_apple9_launch_template_emit(
             b, &tmpl, q.resource_table, q.entry_offset, q.launch_address));
-         if (compute)
+         if (compute) {
             ASSERT_TRUE(agx_apple9_launch_template_set_roots(b, &tmpl, roots));
+         }
          ASSERT_EQ(memcmp(a, b, capacity), 0)
             << "stage " << stage << " iter " << iter << " launch " << launch;
          ++checked;

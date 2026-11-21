@@ -1542,8 +1542,9 @@ TEST_F(Apple9Optimization, SelectXorSwapsComplementaryArmsAndKeepsOtherUses)
          ASSERT_EQ(S->op, AGX_APPLE9_VIR_SELECT);
          ASSERT_EQ(R->op, AGX_APPLE9_VIR_SELECT);
          EXPECT_EQ(R->alu_src_uniform_mask, uniform_compare ? 2u : 0u);
-         if (uniform_compare)
+         if (uniform_compare) {
             EXPECT_EQ(R->alu_src_value[1], 241u);
+         }
          EXPECT_EQ(R->src[0], input);
          /* An arm is an 8-bit literal or one of the last GPR sources. */
          auto arm = [&](const agx_apple9_vir_instr *I, unsigned k) {
