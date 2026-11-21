@@ -532,7 +532,7 @@ struct agx_apple9_vir_program {
    unsigned live_out_capacity;
    bool reserved_gprs[AGX_APPLE9_GPR_COUNT];
 
-   /* Filled by agx_apple9_allocate_vir(). */
+   /* Filled by register allocation. */
    uint8_t *phys;
    /* Export publications have their own index namespace. Slots remain distinct
     * through completion; ordinary GPRs with the same index are independent. */
@@ -838,6 +838,10 @@ bool agx_apple9_schedule_physical(struct agx_apple9_vir_program *program,
 bool agx_apple9_allocate_publications(struct agx_apple9_vir_program *program,
                                       const char **reason);
 
+/* Assign registers to a hand-built program (the unit tests): each value takes
+ * its fixed register, others take fresh ones that are never reused.
+ * Constraints beyond a destination's encoding must be fixed by the caller.
+ * Compiled shaders use agx_apple9_allocate_shared(). */
 bool agx_apple9_allocate_vir(struct agx_apple9_vir_program *program,
                              const char **reason);
 

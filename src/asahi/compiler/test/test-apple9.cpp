@@ -3421,6 +3421,9 @@ TEST(Apple9Vir, ReturningAtomicUsesAdjacentNativeResultMaterializer)
    EXPECT_EQ(program.instructions[2]->scoreboard_slot,
              AGX_APPLE9_SCOREBOARD_SLOT_6);
 
+   /* The materializer names the result in a nibble. */
+   ASSERT_TRUE(agx_apple9_vir_set_fixed_phys(
+      &program, program.instructions[0]->dest, 2));
    ASSERT_TRUE(agx_apple9_allocate_vir(&program, &reason))
       << (reason ? reason : "");
    agx_apple9_packed_instruction atomic = {};
@@ -4089,29 +4092,6 @@ TEST(Apple9Allocator, ReleasesKilledSourcesAfterTheirConsumer)
    agx_apple9_vir_finish(&program);
 }
 
-TEST(Apple9Allocator, ReportsNoSpillPressureLimit)
-{
-   agx_apple9_vir_program program;
-   agx_apple9_vir_init(&program);
-   uint32_t values[17];
-   for (unsigned i = 0; i < ARRAY_SIZE(values); ++i) {
-      values[i] =
-         agx_apple9_vir_emit(&program, AGX_APPLE9_VIR_IMM,
-                             AGX_APPLE9_ENC_MOV_IMM_COMPACT, nullptr, 0, i);
-   }
-   program.output = values[ARRAY_SIZE(values) - 1];
-   for (unsigned i = 0; i + 1 < ARRAY_SIZE(values); ++i)
-      ASSERT_TRUE(agx_apple9_vir_add_live_out(&program, values[i]));
-
-   const char *reason = nullptr;
-   EXPECT_FALSE(agx_apple9_allocate_vir(&program, &reason));
-   ASSERT_NE(reason, nullptr);
-   EXPECT_STREQ(
-      reason,
-      "Apple9 no-spill allocator exhausted the compact destination bank");
-   agx_apple9_vir_finish(&program);
-}
-
 TEST(Apple9Allocator, UsesR16ThroughR63ForGeneralPressure)
 {
    agx_apple9_vir_program program;
@@ -4406,31 +4386,6 @@ TEST(Apple9Allocator, StoreIndexLifetimeUsesAccessDescriptorWithoutCopy)
                                                &packed, &reason))
       << (reason ? reason : "");
    EXPECT_EQ(packed.bytes[6], 0x21);
-   agx_apple9_vir_finish(&program);
-}
-
-TEST(Apple9Allocator, CollectCoalescesAnAlreadyAdjacentKilledTuple)
-{
-   agx_apple9_vir_program program;
-   agx_apple9_vir_init(&program);
-   uint32_t index = agx_apple9_vir_input(&program, 13);
-   uint32_t data[4];
-   for (unsigned c = 0; c < 4; ++c) {
-      data[c] =
-         agx_apple9_vir_emit(&program, AGX_APPLE9_VIR_IMM,
-                             AGX_APPLE9_ENC_MOV_IMM_COMPACT, nullptr, 0, c + 1);
-   }
-   ASSERT_TRUE(
-      agx_apple9_vir_emit_device_store(&program, 0, index, data, 4, 32));
-   const uint32_t tuple = program.instructions[4]->dest;
-
-   const char *reason = nullptr;
-   ASSERT_TRUE(agx_apple9_assign_vir_scoreboard_slots(&program, &reason))
-      << (reason ? reason : "");
-   ASSERT_TRUE(agx_apple9_allocate_vir(&program, &reason))
-      << (reason ? reason : "");
-   for (unsigned c = 0; c < 4; ++c)
-      EXPECT_EQ(program.phys[tuple + c], program.phys[data[c]]);
    agx_apple9_vir_finish(&program);
 }
 
@@ -9522,59 +9477,6 @@ TEST(Apple9Packer, ImageWriteDataTypeSelectsFloatOrInteger)
    EXPECT_FALSE(agx_apple9_pack_vir_instruction(&instruction, phys, &packed, &reason));
 }
 
-TEST(Apple9Allocator, PublicationsDoNotOccupyGprs)
-{
-   for (unsigned count : {1u, 36u, 64u, 65u, 96u, 128u, 129u}) {
-      agx_apple9_vir_program program;
-      agx_apple9_vir_init(&program);
-      uint32_t publications[129];
-      uint32_t ordinary[129];
-      for (unsigned i = 0; i < count; ++i) {
-         ordinary[i] = agx_apple9_vir_emit(
-            &program, AGX_APPLE9_VIR_IMM, AGX_APPLE9_ENC_MOV_IMM32,
-            nullptr, 0, 0x3f800000 + i);
-         uint32_t sources[] = {ordinary[i], ordinary[i]};
-         publications[i] = agx_apple9_vir_emit(
-            &program, i % 2 ? AGX_APPLE9_VIR_IXOR : AGX_APPLE9_VIR_FMUL,
-            i % 2 ? AGX_APPLE9_ENC_LOGIC_EXPORT : AGX_APPLE9_ENC_FLOAT2_EXPORT,
-            sources, 2, 0);
-      }
-      /* Keep every publication pending while reusing ordinary storage. */
-      for (unsigned i = 0; i < count; ++i)
-         ASSERT_TRUE(agx_apple9_vir_emit_side_effect(
-            &program, AGX_APPLE9_VIR_VARY_STORE, AGX_APPLE9_ENC_VARY_STORE,
-            &publications[i], 1, 0));
-      const char *reason = nullptr;
-      if (count > AGX_APPLE9_PUBLICATION_COUNT) {
-         EXPECT_FALSE(agx_apple9_allocate_vir(&program, &reason));
-         ASSERT_NE(reason, nullptr);
-         EXPECT_NE(strstr(reason, "publication slots"), nullptr);
-      } else {
-         ASSERT_TRUE(agx_apple9_allocate_vir(&program, &reason)) << reason;
-         EXPECT_EQ(program.publication_count, count);
-         EXPECT_EQ(program.peak_live_gprs, 1u);
-         EXPECT_EQ(program.max_phys_gpr, program.phys[ordinary[0]]);
-         bool seen[AGX_APPLE9_PUBLICATION_COUNT] = {};
-         for (unsigned i = 0; i < count; ++i) {
-            EXPECT_TRUE(program.publication[publications[i]]);
-            EXPECT_FALSE(program.publication[ordinary[i]]);
-            EXPECT_EQ(program.phys[ordinary[i]], program.phys[ordinary[0]]);
-            ASSERT_LT(program.phys[publications[i]], AGX_APPLE9_PUBLICATION_COUNT);
-            unsigned index = program.phys[publications[i]];
-            EXPECT_FALSE(seen[index]);
-            seen[index] = true;
-         }
-         if (count == AGX_APPLE9_PUBLICATION_COUNT) {
-            EXPECT_TRUE(seen[program.phys[ordinary[0]]]);
-            program.phys[publications[1]] = program.phys[publications[0]];
-            EXPECT_FALSE(agx_apple9_validate_vir_allocation(&program, &reason));
-            EXPECT_NE(strstr(reason, "overlap"), nullptr);
-         }
-      }
-      agx_apple9_vir_finish(&program);
-   }
-}
-
 TEST(Apple9Allocator, RejectsCrossNamespaceOperands)
 {
    for (bool publication_as_gpr : {false, true}) {
@@ -9710,73 +9612,6 @@ TEST(Apple9Compiler, AdvancedBlendUsesOrdinaryColorLowering)
          b.shader, &varyings, &blend, &out, &reason)) << mode << ": " << reason;
       free(out.binary);
       ralloc_free(b.shader);
-   }
-}
-
-TEST(Apple9Allocator, TexturePublicationsHaveIndependentStorageAndPendingLifetime)
-{
-   for (unsigned placement : {0u, 1u, 2u}) {
-      bool overlap = placement != 0;
-      agx_apple9_vir_program p;
-      agx_apple9_vir_init(&p);
-      uint32_t inputs[8];
-      for (unsigned i = 0; i < 8; ++i) {
-         inputs[i] = agx_apple9_vir_input(&p, i);
-         ASSERT_TRUE(agx_apple9_vir_add_live_out(&p, inputs[i]));
-      }
-      uint32_t coords[] = {inputs[0], inputs[1]};
-      ASSERT_NE(agx_apple9_vir_emit_texture_sample(&p, coords, inputs[2], 0, 0),
-                AGX_APPLE9_VREG_INVALID);
-      p.output = agx_apple9_vir_emit_texture_sample(&p, coords, inputs[2], 1, 0);
-      ASSERT_NE(p.output, AGX_APPLE9_VREG_INVALID);
-      /* Move the second parameter definition ahead of the first sample.
-       * Both publications must coexist until the first result handoff. */
-      if (placement == 1) {
-         agx_apple9_vir_move_before(&p, p.instructions[2], p.instructions[1]);
-      }
-      const char *reason = nullptr;
-      ASSERT_TRUE(agx_apple9_assign_vir_scoreboard_slots(&p, &reason)) << (reason ?: "");
-      if (placement == 2) {
-         /* More subtly, issuing the first sample does not end its parameter
-          * lifetime. Put another publication before its result handoff. */
-         unsigned second_params = 0;
-         for (unsigned i = 1; i < p.instruction_count; ++i) {
-            if (p.instructions[i]->op == AGX_APPLE9_VIR_PUBLICATION_TUPLE) {
-               second_params = i;
-               break;
-            }
-         }
-         ASSERT_GT(second_params, 2u);
-         agx_apple9_vir_move_before(&p, p.instructions[second_params], p.instructions[2]);
-      }
-      ASSERT_TRUE(agx_apple9_allocate_vir(&p, &reason)) << (reason ?: "");
-      ASSERT_TRUE(agx_apple9_validate_vir_allocation(&p, &reason)) << (reason ?: "");
-      EXPECT_EQ(p.publication_count, overlap ? 4u : 2u);
-      uint32_t pubs[2];
-      unsigned count = 0;
-      for (unsigned i = 0; i < p.instruction_count; ++i) {
-         auto &ins = *p.instructions[i];
-         if (ins.op != AGX_APPLE9_VIR_PUBLICATION_TUPLE)
-            continue;
-         ASSERT_LT(count, 2u);
-         pubs[count++] = ins.dest;
-         EXPECT_TRUE(p.publication[ins.dest]);
-         EXPECT_TRUE(p.publication[ins.dest + 1]);
-         EXPECT_EQ(p.phys[ins.dest] & 1, 0);
-      }
-      ASSERT_EQ(count, 2u);
-      for (unsigned i = 0; i < 8; ++i) {
-         EXPECT_FALSE(p.publication[inputs[i]]);
-         EXPECT_EQ(p.phys[inputs[i]], i);
-      }
-      if (overlap) {
-         p.phys[pubs[1]] = p.phys[pubs[0]];
-         p.phys[pubs[1] + 1] = p.phys[pubs[0] + 1];
-         EXPECT_FALSE(agx_apple9_validate_vir_allocation(&p, &reason));
-         ASSERT_NE(reason, nullptr);
-         EXPECT_NE(strstr(reason, "overlap"), nullptr);
-      }
-      agx_apple9_vir_finish(&p);
    }
 }
 

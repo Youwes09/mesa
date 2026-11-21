@@ -3218,21 +3218,6 @@ apple9_liveness(struct agx_apple9_vir_program *program, unsigned *last_use)
    return true;
 }
 
-struct apple9_allocation_event {
-   struct agx_apple9_vir_instr *instruction;
-   unsigned position;
-   unsigned serial;
-};
-
-static int
-apple9_compare_allocation_events(const void *a, const void *b)
-{
-   const struct apple9_allocation_event *x = a, *y = b;
-   if (x->position != y->position)
-      return x->position < y->position ? -1 : 1;
-   return x->serial < y->serial ? -1 : x->serial > y->serial;
-}
-
 static void apple9_move_after(struct agx_apple9_vir_program *, struct agx_apple9_vir_instr *, struct agx_apple9_vir_instr *);
 
 bool
@@ -3481,62 +3466,6 @@ agx_apple9_allocate_vir(struct agx_apple9_vir_program *program,
       last_use[value] = program->instruction_count;
    }
 
-   bool fixed_gpr[AGX_APPLE9_GPR_COUNT] = {0};
-   for (uint32_t value = 0; value < program->value_count; ++value) {
-      if (program->fixed_phys[value] != AGX_APPLE9_PHYS_INVALID)
-         fixed_gpr[program->fixed_phys[value]] = true;
-   }
-
-   int32_t owner[AGX_APPLE9_GPR_COUNT];
-   for (unsigned gpr = 0; gpr < AGX_APPLE9_GPR_COUNT; ++gpr)
-      owner[gpr] = (program->reserved_gprs[gpr] || fixed_gpr[gpr]) ? -2 : -1;
-   unsigned live = 0;
-   unsigned peak = 0;
-   unsigned max_phys = 1;
-
-   /* Preloaded inputs have no defining instruction and are live at entry. */
-   for (uint32_t value = 0; value < program->value_count; ++value) {
-      if (defined[value] || !used[value])
-         continue;
-
-      unsigned fixed = program->fixed_phys[value];
-      if (fixed == AGX_APPLE9_PHYS_INVALID || fixed >= AGX_APPLE9_GPR_COUNT ||
-          owner[fixed] >= 0) {
-         free(last_use);
-         free(defined);
-         free(seen_definition);
-         free(used);
-         free(phys);
-         if (reason != NULL)
-            *reason = "Apple9 virtual IR has conflicting fixed inputs";
-         return false;
-      }
-
-      phys[value] = fixed;
-      owner[fixed] = value;
-      ++live;
-      if (live > peak)
-         peak = live;
-      if (fixed > max_phys)
-         max_phys = fixed;
-   }
-
-   unsigned publication_end[AGX_APPLE9_PUBLICATION_COUNT] = {0};
-   bool publication_used[AGX_APPLE9_PUBLICATION_COUNT] = {false};
-
-   struct apple9_allocation_event *events =
-      calloc(MAX2(program->instruction_count, 1), sizeof(*events));
-   if (!events) {
-      free(last_use);
-      free(defined);
-      free(seen_definition);
-      free(used);
-      free(phys);
-      if (reason)
-         *reason = "out of memory ordering Apple9 allocations";
-      return false;
-   }
-   unsigned event_count = 0;
    for (unsigned i = 0; i < program->instruction_count; ++i) {
       struct agx_apple9_vir_instr *ins = program->instructions[i];
       ins->live_after_mask = 0;
@@ -3544,272 +3473,85 @@ agx_apple9_allocate_vir(struct agx_apple9_vir_program *program,
          if (last_use[ins->src[src]] > i)
             ins->live_after_mask |= 1u << src;
       }
-      if (!apple9_vir_dest_components(ins))
-         continue;
-      unsigned first = i;
-      if (ins->op == AGX_APPLE9_VIR_PHI) {
-         /* A phi is defined at the successor, but its assigned storage is
-          * populated on incoming masked edges. Reserve it at the first edge
-          * without moving its SSA definition out of the successor block. */
-         for (unsigned j = 0; j < program->instruction_count; ++j) {
-            const struct agx_apple9_vir_instr *edge = program->instructions[j];
-            if (edge->op == AGX_APPLE9_VIR_PHI_SRC && edge->target == ins->dest)
-               first = MIN2(first, j);
-         }
-      }
-      events[event_count++] = (struct apple9_allocation_event){ins, first, i};
    }
-   qsort(events, event_count, sizeof(*events), apple9_compare_allocation_events);
-   for (unsigned event = 0; event < event_count; ++event) {
-      struct agx_apple9_vir_instr *instruction = events[event].instruction;
-      const unsigned i = events[event].position;
-      const unsigned components = apple9_vir_dest_components(instruction);
-      for (unsigned reg = 0; reg < AGX_APPLE9_GPR_COUNT; ++reg) {
-         if (owner[reg] >= 0 && last_use[owner[reg]] < i) {
-            owner[reg] = (program->reserved_gprs[reg] || fixed_gpr[reg]) ? -2 : -1;
-            assert(live > 0);
-            --live;
-         }
-      }
-
-      if (program->publication[instruction->dest]) {
-         unsigned index;
-         for (index = 0; index + components <= AGX_APPLE9_PUBLICATION_COUNT; ++index) {
-            unsigned alignment = agx_apple9_encoding_info(instruction->encoding)
-                                    ->operands[0].alignment_halves / 2;
-            if (index % MAX2(alignment, 1))
-               continue;
-            bool available = true;
-            for (unsigned c = 0; c < components; ++c) {
-               unsigned maximum = program->max_phys[instruction->dest + c];
-               available &= (!publication_used[index + c] ||
-                             publication_end[index + c] < i) &&
-                            (maximum == AGX_APPLE9_PHYS_INVALID ||
-                             index + c <= maximum);
-            }
-            if (available)
-               break;
-         }
-         if (index + components > AGX_APPLE9_PUBLICATION_COUNT) {
-            free(events);
-            free(last_use);
-            free(defined);
-            free(seen_definition);
-            free(used);
-            free(phys);
-            if (reason)
-               *reason = "Apple9 allocator exhausted export publication slots";
-            return false;
-         }
-         unsigned end = apple9_publication_end(program, i);
-         for (unsigned c = 0; c < components; ++c) {
-            phys[instruction->dest + c] = index + c;
-            publication_used[index + c] = true;
-            publication_end[index + c] = MAX2(end, last_use[instruction->dest + c]);
-         }
-         program->publication_count = MAX2(program->publication_count,
-                                           index + components);
-         continue;
-      }
-
-      unsigned selected = AGX_APPLE9_PHYS_INVALID;
-      bool has_fixed = false;
-      for (unsigned c = 0; c < components; ++c) {
-         const unsigned fixed = program->fixed_phys[instruction->dest + c];
-         if (fixed == AGX_APPLE9_PHYS_INVALID)
-            continue;
-         if (fixed < c || (has_fixed && selected != fixed - c)) {
-            selected = AGX_APPLE9_PHYS_INVALID;
-            has_fixed = true;
-            break;
-         }
-         selected = fixed - c;
-         has_fixed = true;
-      }
-
-      bool coalesced_collect = false;
-      if (instruction->op == AGX_APPLE9_VIR_COLLECT &&
-          instruction->nr_srcs == components) {
-         const unsigned candidate = phys[instruction->src[0]];
-         bool exact = candidate != AGX_APPLE9_PHYS_INVALID &&
-                      candidate + components <= AGX_APPLE9_GPR_COUNT &&
-                      (!has_fixed || selected == candidate);
-         for (unsigned c = 0; c < components && exact; ++c) {
-            const uint32_t source = instruction->src[c];
-            const unsigned maximum =
-               program->max_phys[instruction->dest + c];
-            exact &= phys[source] == candidate + c && last_use[source] == i &&
-                     (maximum == AGX_APPLE9_PHYS_INVALID ||
-                      candidate + c <= maximum) &&
-                     !program->reserved_gprs[candidate + c] &&
-                     !fixed_gpr[candidate + c];
-         }
-         if (exact) {
-            selected = candidate;
-            coalesced_collect = true;
-         }
-      }
-
-      const bool is_pseudo_definition =
-         instruction->op == AGX_APPLE9_VIR_COLLECT ||
-         instruction->op == AGX_APPLE9_VIR_PHI;
-      const struct agx_apple9_operand_constraint *dest_constraint =
-         is_pseudo_definition
-            ? NULL
-            : agx_apple9_find_operand(instruction->encoding,
-                                      AGX_APPLE9_OPERAND_DEST);
-      unsigned range_first[2] = {APPLE9_FIRST_ALLOCATABLE_GPR,
-                                 APPLE9_FIRST_ALLOCATABLE_GPR};
-      unsigned range_last[2] = {APPLE9_LAST_ALLOCATABLE_GPR,
-                                APPLE9_LAST_ALLOCATABLE_GPR};
-      unsigned range_count = 1;
-      if (has_fixed || coalesced_collect) {
-         range_first[0] = range_last[0] = selected;
-      } else if ((is_pseudo_definition && dest_constraint == NULL) ||
-                 (dest_constraint != NULL &&
-                  dest_constraint->max_index >= APPLE9_FIRST_GENERAL_GPR)) {
-         /* Keep the compact bank available for instructions whose result has
-          * a genuine r0-r15 encoding limit.  General values start in r16 and
-          * fall back to the low bank only after r16-r95 is occupied. This
-          * includes PHI/COLLECT pseudo-definitions: loop phis must not
-          * occupy the entire constrained coordinate/result bank. */
-         const unsigned maximum = dest_constraint ? dest_constraint->max_index
-                                                   : APPLE9_LAST_ALLOCATABLE_GPR;
-         range_first[0] = APPLE9_FIRST_GENERAL_GPR;
-         range_last[0] = MIN2(maximum, APPLE9_LAST_ALLOCATABLE_GPR);
-         range_first[1] = APPLE9_FIRST_ALLOCATABLE_GPR;
-         range_last[1] = MIN2(maximum, APPLE9_FIRST_GENERAL_GPR - 1);
-         range_count = 2;
-      } else if (dest_constraint != NULL) {
-         range_last[0] = MIN2((unsigned)dest_constraint->max_index,
-                              APPLE9_LAST_ALLOCATABLE_GPR);
-      }
-
-      unsigned value_maximum = APPLE9_LAST_ALLOCATABLE_GPR;
-      for (unsigned c = 0; c < components; ++c) {
-         const unsigned maximum = program->max_phys[instruction->dest + c];
-         if (maximum != AGX_APPLE9_PHYS_INVALID) {
-            if (maximum < c)
-               value_maximum = 0;
-            else
-               value_maximum = MIN2(value_maximum, maximum - c);
-         }
-      }
-      for (unsigned range = 0; range < range_count; ++range)
-         range_last[range] = MIN2(range_last[range], value_maximum);
-
-      selected = AGX_APPLE9_PHYS_INVALID;
-      for (unsigned range = 0;
-           range < range_count && selected == AGX_APPLE9_PHYS_INVALID;
-           ++range) {
-         if (range_first[range] > range_last[range])
-            continue;
-         for (unsigned base = range_first[range]; base <= range_last[range];
-              ++base) {
-            if (base + components - 1 > APPLE9_LAST_ALLOCATABLE_GPR &&
-                !has_fixed)
-               break;
-            if (base + components > AGX_APPLE9_GPR_COUNT ||
-                (instruction->op != AGX_APPLE9_VIR_COLLECT &&
-                 instruction->op != AGX_APPLE9_VIR_PHI &&
-                 instruction->op != AGX_APPLE9_VIR_DEVICE_ATOMIC &&
-                 !agx_apple9_encoding_accepts_gpr(
-                    instruction->encoding, AGX_APPLE9_OPERAND_DEST, base, 32)))
-               continue;
-
-            bool compatible = true;
-            for (unsigned c = 0; c < components && compatible; ++c) {
-               const unsigned gpr = base + c;
-               const unsigned fixed =
-                  program->fixed_phys[instruction->dest + c];
-               if (fixed != AGX_APPLE9_PHYS_INVALID && fixed != gpr) {
-                  compatible = false;
-                  break;
-               }
-               if (owner[gpr] == -1 || (owner[gpr] == -2 && fixed == gpr))
-                  continue;
-
-               if (coalesced_collect) {
-                  compatible &= owner[gpr] == (int32_t)instruction->src[c] &&
-                                last_use[instruction->src[c]] == i;
-                  continue;
-               }
-
-               if (!has_fixed || instruction->op == AGX_APPLE9_VIR_COLLECT) {
-                  compatible = false;
-                  break;
-               }
-
-               bool destructive_kill = false;
-               for (unsigned s = 0; s < instruction->nr_srcs; ++s) {
-                  const uint32_t source = instruction->src[s];
-                  destructive_kill |=
-                     owner[gpr] == (int32_t)source && last_use[source] == i;
-               }
-               compatible &= destructive_kill;
-            }
-            if (compatible) {
-               selected = base;
-               break;
-            }
-         }
-      }
-
-      if (selected == AGX_APPLE9_PHYS_INVALID) {
-         free(events);
-         free(last_use);
-         free(defined);
-         free(seen_definition);
-         free(used);
-         free(phys);
-         if (reason != NULL)
-            *reason =
-               components == 1
-                  ? (dest_constraint != NULL &&
-                           dest_constraint->max_index < APPLE9_FIRST_GENERAL_GPR
-                        ? "Apple9 no-spill allocator exhausted the compact destination bank"
-                        : "Apple9 no-spill allocator exhausted r2-r95")
-                  : "Apple9 no-spill allocator could not place an adjacent GPR tuple";
-         return false;
-      }
-
-      unsigned destructive_replacements = 0;
-      for (unsigned c = 0; c < components; ++c) {
-         const int32_t previous_owner = owner[selected + c];
-         if (previous_owner >= 0) {
-            bool killed_here = false;
-            for (unsigned s = 0; s < instruction->nr_srcs; ++s) {
-               const uint32_t source = instruction->src[s];
-               killed_here |=
-                  previous_owner == (int32_t)source && last_use[source] == i;
-            }
-            assert(killed_here);
-            destructive_replacements++;
-         }
-         phys[instruction->dest + c] = selected + c;
-         owner[selected + c] = instruction->dest + c;
-      }
-      /* A constrained in-place instruction can define its result in the same
-       * fixed register as a source whose last use is this instruction.  That
-       * replaces one live value rather than increasing pressure. */
-      live += components - destructive_replacements;
-      if (live > peak)
-         peak = live;
-      if (selected + components - 1 > max_phys)
-         max_phys = selected + components - 1;
-
-   }
-   free(events);
-
-   free(program->phys);
-   program->phys = phys;
-   program->phys_capacity = allocation_count;
-   program->peak_live_gprs = peak;
-   program->max_phys_gpr = max_phys;
    free(last_use);
    free(defined);
    free(seen_definition);
    free(used);
+
+   /* Preloaded inputs have no defining instruction and keep their fixed
+    * registers. */
+   bool taken[AGX_APPLE9_GPR_COUNT] = {false};
+   for (uint32_t value = 0; value < program->value_count; ++value) {
+      phys[value] = program->fixed_phys[value];
+      if (program->fixed_phys[value] != AGX_APPLE9_PHYS_INVALID)
+         taken[program->fixed_phys[value]] = true;
+   }
+
+   /* Values without a fixed register take fresh registers (general ones
+    * first, then the compact bank) and publications take fresh slots, in
+    * definition order and never reused, which is correct without liveness.
+    * Constraints beyond the destination encoding are the caller's to fix. */
+   unsigned next_publication = 0, max_phys = 0;
+   for (unsigned i = 0; i < program->instruction_count; ++i) {
+      const struct agx_apple9_vir_instr *ins = program->instructions[i];
+      const unsigned components = apple9_vir_dest_components(ins);
+      if (components == 0)
+         continue;
+      if (ins->dest + components > program->value_count) {
+         free(phys);
+         if (reason != NULL)
+            *reason = "Apple9 virtual IR has an invalid SSA definition";
+         return false;
+      }
+      if (program->publication[ins->dest] &&
+          program->fixed_phys[ins->dest] == AGX_APPLE9_PHYS_INVALID) {
+         for (unsigned c = 0; c < components; ++c)
+            phys[ins->dest + c] = next_publication++;
+         continue;
+      }
+      unsigned base = AGX_APPLE9_PHYS_INVALID;
+      if (program->fixed_phys[ins->dest] == AGX_APPLE9_PHYS_INVALID) {
+         for (unsigned n = 0; n < AGX_APPLE9_GPR_COUNT - 2; ++n) {
+            unsigned candidate = APPLE9_FIRST_GENERAL_GPR + n;
+            if (candidate >= AGX_APPLE9_GPR_COUNT)
+               candidate -= AGX_APPLE9_GPR_COUNT - 2;
+            bool usable = candidate + components <= AGX_APPLE9_GPR_COUNT &&
+                          (ins->op == AGX_APPLE9_VIR_COLLECT ||
+                           ins->op == AGX_APPLE9_VIR_PHI ||
+                           ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC ||
+                           agx_apple9_encoding_accepts_gpr(
+                              ins->encoding, AGX_APPLE9_OPERAND_DEST,
+                              candidate, 32));
+            for (unsigned c = 0; c < components && usable; ++c)
+               usable &= !taken[candidate + c];
+            if (usable) {
+               base = candidate;
+               break;
+            }
+         }
+         if (base == AGX_APPLE9_PHYS_INVALID) {
+            free(phys);
+            if (reason != NULL)
+               *reason = "Apple9 virtual IR needs more registers than exist";
+            return false;
+         }
+      }
+      for (unsigned c = 0; c < components; ++c) {
+         const unsigned fixed = program->fixed_phys[ins->dest + c];
+         phys[ins->dest + c] = fixed != AGX_APPLE9_PHYS_INVALID ? fixed : base + c;
+         taken[phys[ins->dest + c]] = true;
+         max_phys = MAX2(max_phys, phys[ins->dest + c]);
+      }
+   }
+
+   free(program->phys);
+   program->phys = phys;
+   program->phys_capacity = allocation_count;
+   program->peak_live_gprs = 0;
+   for (unsigned r = 0; r < AGX_APPLE9_GPR_COUNT; ++r)
+      program->peak_live_gprs += taken[r];
+   program->max_phys_gpr = max_phys;
    if (!apple9_finalize_dependencies(program)) {
       if (reason)
          *reason = "could not analyze Apple9 dependency uses";
