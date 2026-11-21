@@ -110,26 +110,6 @@ libasahi_compiler = static_library(
   build_by_default : false,
 )
 
-if with_tests or with_tools.contains('drm-shim')
-  executable(
-    'agx_apple9_tiny_tool',
-    files('test/apple9-tiny-tool.c'),
-    c_args : [no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  executable(
-    'agx_apple9_fragment_replay',
-    files('test/apple9-fragment-replay.c'),
-    c_args : [no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-
-endif
-
 if with_tests
   apple9_ra_budget_test = executable('apple9-ra-budget',
     'test/apple9-ra-budget.c',
