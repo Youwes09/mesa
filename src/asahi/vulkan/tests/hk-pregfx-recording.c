@@ -1,10 +1,15 @@
 /* SPDX-License-Identifier: MIT */
+#include <unistd.h>
 #include "../hk_cmd_buffer.h"
 #include <sys/wait.h>
-#include <unistd.h>
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%s:%u: %s\n", \
-                          __FILE__, __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%s:%u: %s\n", __FILE__, __LINE__, #c);               \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 int
 main(void)
@@ -41,7 +46,8 @@ main(void)
    CHECK(cmd->merge_cs == &gfx && cmd->merge_event == 1);
    struct hk_sync_event *ev = cmd->sync_events.data;
    CHECK(ev[0].stream == HK_SYNC_NONE && ev[1].stream == gfx.sync_id);
-   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, gfx.sync_id) == 1);
+   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t,
+                                gfx.sync_id) == 1);
 
    /* BeginRendering continues the same stream and consumes merge_cs. The
     * continued pass's first tess/GS draw creates its pre-gfx helper through
@@ -51,15 +57,19 @@ main(void)
    struct hk_cs *pre = hk_cmd_buffer_get_cs_general(
       cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_PRE_RASTER);
    CHECK(pre && pre->sync_before_gfx && !cmd->sync_fallback);
-   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) == 3);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         3);
    ev = cmd->sync_events.data;
    CHECK(ev[0].stream == HK_SYNC_NONE);
    CHECK(ev[1].stream == pre->sync_id && ev[1].dst == HK_SYNC_ALL);
    CHECK(ev[2].stream == gfx.sync_id);
-   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, gfx.sync_id) == 2);
-   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, pre->sync_id) == 1);
+   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t,
+                                gfx.sync_id) == 2);
+   CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t,
+                                pre->sync_id) == 1);
    CHECK(cmd->merge_event == 2);
-   CHECK(cmd->control_streams.next == &pre->node && pre->node.next == &gfx.node);
+   CHECK(cmd->control_streams.next == &pre->node &&
+         pre->node.next == &gfx.node);
 
    struct hk_sync_state state;
    hk_sync_init(&state);
@@ -82,10 +92,11 @@ main(void)
    /* Later helper requests use the same fully ordered event, never an event
     * after their graphics consumer. */
    CHECK(hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx, true,
-                                     HK_SYNC_DRAW_INDIRECT) == pre);
+                                      HK_SYNC_DRAW_INDIRECT) == pre);
    CHECK(pre->sync_stages & HK_SYNC_DRAW_INDIRECT);
    CHECK(!cmd->sync_fallback && cmd->merge_event == 2);
-   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) == 3);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         3);
 
    /* Resolving another execution uses new queue-relative indices without
     * mutating the immutable recorded event identities. */
@@ -96,7 +107,8 @@ main(void)
    streams[1].before[1] = 1;
    for (unsigned i = 0; i < ARRAY_SIZE(streams); ++i)
       streams[i].wait = streams[i].wait_tiling = hk_sync_empty();
-   CHECK(hk_sync_resolve(&state, ev, 3, cmd->sync_remap.data, streams, 2, false));
+   CHECK(
+      hk_sync_resolve(&state, ev, 3, cmd->sync_remap.data, streams, 2, false));
    CHECK(streams[0].wait_tiling.engine[HK_SYNC_CDM] == 2);
    CHECK(streams[1].wait.engine[HK_SYNC_RENDER] == 6);
 

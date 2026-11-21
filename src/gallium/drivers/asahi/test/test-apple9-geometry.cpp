@@ -5,8 +5,8 @@
 
 #include "asahi/lib/agx_apple9.h"
 
-#include <gtest/gtest.h>
 #include <cstring>
+#include <gtest/gtest.h>
 
 static uint32_t
 get_u32(const uint8_t *bytes, size_t offset)
@@ -33,11 +33,12 @@ TEST(Apple9ComputeGeometry, DirectPublishesGroupCounts)
       .threads = {12, 10, 6},
       .local = {4, 5, 3},
    };
-   ASSERT_TRUE(agx_apple9_build_compute_geometry_fields(
-      record, sizeof(record), address, &geometry));
+   ASSERT_TRUE(agx_apple9_build_compute_geometry_fields(record, sizeof(record),
+                                                        address, &geometry));
    EXPECT_EQ(get_u64(record, 0x00), address + 0xc0);
    for (unsigned d = 0; d < 3; ++d) {
-      EXPECT_EQ(get_u32(record, 0xc0 + d * 4), geometry.threads[d] / geometry.local[d]);
+      EXPECT_EQ(get_u32(record, 0xc0 + d * 4),
+                geometry.threads[d] / geometry.local[d]);
    }
 }
 
@@ -51,8 +52,8 @@ TEST(Apple9ComputeGeometry, IndirectPublishesCallerRecord)
       .group_counts = 0x2fff123400ull,
       .local = {4, 4, 1},
    };
-   ASSERT_TRUE(agx_apple9_build_compute_geometry_fields(
-      record, sizeof(record), address, &geometry));
+   ASSERT_TRUE(agx_apple9_build_compute_geometry_fields(record, sizeof(record),
+                                                        address, &geometry));
    /* Every visible pointer remains intact even at the expanded capacity. */
    for (unsigned i = 0x08; i < 0xc0; ++i)
       EXPECT_EQ(record[i], 0xa5);

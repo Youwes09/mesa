@@ -171,10 +171,10 @@ pack_sampler(const struct hk_physical_device *pdev,
       }
 
       if (uses_border(info)) {
-         cfg.border_colour =
-            native_custom ? AGX_BORDER_COLOUR_CUSTOM
-                          : translate_border_color(info->borderColor,
-                                                   custom_to_1, workaround_rgba4);
+         cfg.border_colour = native_custom ? AGX_BORDER_COLOUR_CUSTOM
+                                           : translate_border_color(
+                                                info->borderColor, custom_to_1,
+                                                workaround_rgba4);
       }
    }
 }
@@ -199,7 +199,8 @@ hk_CreateSampler(VkDevice device,
    struct hk_sampler_capture_data replay = {
       .index = {HK_DESCRIPTOR_TABLE_ANY_INDEX, HK_DESCRIPTOR_TABLE_ANY_INDEX},
    };
-   if (info->flags & VK_SAMPLER_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT) {
+   if (info->flags &
+       VK_SAMPLER_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT) {
       const VkOpaqueCaptureDescriptorDataCreateInfoEXT *cap_info =
          vk_find_struct_const(info->pNext,
                               OPAQUE_CAPTURE_DESCRIPTOR_DATA_CREATE_INFO_EXT);
@@ -244,9 +245,9 @@ hk_CreateSampler(VkDevice device,
        * colour itself, so the border colour component mapping hint must not
        * be applied again here (it is for the emulated path below). */
       VkClearColorValue bc = sampler->vk.border_color_value;
-      static_assert(sizeof(sampler->apple9_border) ==
-                       sizeof(struct agx_border_packed),
-                    "G13 border layout");
+      static_assert(
+         sizeof(sampler->apple9_border) == sizeof(struct agx_border_packed),
+         "G13 border layout");
       agx_pack_border((struct agx_border_packed *)sampler->apple9_border,
                       bc.uint32, vk_format_to_pipe_format(sampler->vk.format));
    }
@@ -267,9 +268,8 @@ hk_CreateSampler(VkDevice device,
        info->mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST)
       sampler->txl_nudge_fp16 = _mesa_float_to_half(1.0f / 64.0f);
 
-   result =
-      hk_sampler_heap_add(dev, samp, replay.index[sampler->plane_count],
-                          &sampler->planes[sampler->plane_count].hw);
+   result = hk_sampler_heap_add(dev, samp, replay.index[sampler->plane_count],
+                                &sampler->planes[sampler->plane_count].hw);
    if (result != VK_SUCCESS) {
       hk_DestroySampler(device, hk_sampler_to_handle(sampler), pAllocator);
       return result;
@@ -298,10 +298,11 @@ hk_CreateSampler(VkDevice device,
          plane2_info.magFilter = chroma_filter;
          plane2_info.minFilter = chroma_filter;
 
-         pack_sampler(pdev, &plane2_info, false, workaround_rgba4, false, &samp);
-         result = hk_sampler_heap_add(
-            dev, samp, replay.index[sampler->plane_count],
-            &sampler->planes[sampler->plane_count].hw);
+         pack_sampler(pdev, &plane2_info, false, workaround_rgba4, false,
+                      &samp);
+         result =
+            hk_sampler_heap_add(dev, samp, replay.index[sampler->plane_count],
+                                &sampler->planes[sampler->plane_count].hw);
 
          if (result != VK_SUCCESS) {
             hk_DestroySampler(device, hk_sampler_to_handle(sampler),
@@ -316,9 +317,9 @@ hk_CreateSampler(VkDevice device,
        * and clamp-to-0 variants. We treat these as planes.
        */
       pack_sampler(pdev, info, false, workaround_rgba4, false, &samp);
-      result = hk_sampler_heap_add(dev, samp,
-                                   replay.index[sampler->plane_count],
-                                   &sampler->planes[sampler->plane_count].hw);
+      result =
+         hk_sampler_heap_add(dev, samp, replay.index[sampler->plane_count],
+                             &sampler->planes[sampler->plane_count].hw);
 
       if (result != VK_SUCCESS) {
          hk_DestroySampler(device, hk_sampler_to_handle(sampler), pAllocator);

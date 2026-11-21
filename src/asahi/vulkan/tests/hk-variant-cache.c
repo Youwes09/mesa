@@ -278,7 +278,8 @@ blob_tests(struct hk_device *dev, struct hk_api_shader **resolved,
    CHECK(hk_apple9_variant_cache_load(dev, blob.data, blob.size, mask,
                                       loaded_stages, loaded) == 2);
    for (unsigned i = 0; i < 2; ++i) {
-      struct hk_api_shader *s = container_of(loaded[i], struct hk_api_shader, vk);
+      struct hk_api_shader *s =
+         container_of(loaded[i], struct hk_api_shader, vk);
       CHECK(s->push_constant_mask == BITFIELD64_BIT(5 + i));
       CHECK(s->writes_memory == resolved[stages[i]]->writes_memory);
       CHECK(s->pre_raster_reads == resolved[stages[i]]->pre_raster_reads);
@@ -321,16 +322,16 @@ blob_tests(struct hk_device *dev, struct hk_api_shader **resolved,
    blob_finish(&blob);
 }
 
-
 /* The common deserializer must reject impossible payload sizes before
  * allocating host or GPU program storage, independently of the outer cache. */
 static void
 memory_effects_tests(struct hk_device *dev)
 {
    nir_shader *fs = source(MESA_SHADER_FRAGMENT, false);
-   nir_builder b = nir_builder_at(nir_after_impl(nir_shader_get_entrypoint(fs)));
+   nir_builder b =
+      nir_builder_at(nir_after_impl(nir_shader_get_entrypoint(fs)));
    nir_store_global(&b, nir_imm_int(&b, 0x57), nir_imm_int64(&b, 0x12340000),
-                     .align_mul = 4, .write_mask = 1);
+                    .align_mul = 4, .write_mask = 1);
    nir_shader_gather_info(fs, nir_shader_get_entrypoint(fs));
    CHECK(fs->info.writes_memory);
    struct vk_shader_compile_info infos[] = {
@@ -338,15 +339,18 @@ memory_effects_tests(struct hk_device *dev)
        .nir = source(MESA_SHADER_VERTEX, false),
        .robustness = &vk_robustness_disabled,
        .next_stage_mask = VK_SHADER_STAGE_FRAGMENT_BIT},
-      {.stage = MESA_SHADER_FRAGMENT, .nir = fs,
+      {.stage = MESA_SHADER_FRAGMENT,
+       .nir = fs,
        .robustness = &vk_robustness_disabled},
    };
    struct vk_shader *out[2] = {0};
-   CHECK(hk_apple9_compile_graphics(dev, 2, infos, NULL, NULL, NULL, NULL, out) ==
-         VK_SUCCESS);
+   CHECK(hk_apple9_compile_graphics(dev, 2, infos, NULL, NULL, NULL, NULL,
+                                    out) == VK_SUCCESS);
    struct hk_api_shader *resolved[HK_APPLE9_GFX_STAGES] = {0};
-   resolved[MESA_SHADER_VERTEX] = container_of(out[0], struct hk_api_shader, vk);
-   resolved[MESA_SHADER_FRAGMENT] = container_of(out[1], struct hk_api_shader, vk);
+   resolved[MESA_SHADER_VERTEX] =
+      container_of(out[0], struct hk_api_shader, vk);
+   resolved[MESA_SHADER_FRAGMENT] =
+      container_of(out[1], struct hk_api_shader, vk);
    CHECK(!resolved[MESA_SHADER_VERTEX]->writes_memory);
    CHECK(resolved[MESA_SHADER_FRAGMENT]->writes_memory);
    blob_tests(dev, resolved, MESA_SHADER_VERTEX);
@@ -358,8 +362,7 @@ static void
 payload_bounds_tests(struct hk_device *dev)
 {
    const uint32_t lengths[][3] = {
-      {UINT32_MAX, 0, 0}, {0, UINT32_MAX, 0},
-      {4, 0, 3}, {0, 4, 3}, {2, 2, 3},
+      {UINT32_MAX, 0, 0}, {0, UINT32_MAX, 0}, {4, 0, 3}, {0, 4, 3}, {2, 2, 3},
    };
    for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i) {
       struct blob blob;
@@ -389,7 +392,7 @@ embedded_limit_tests(struct hk_device *dev)
 {
    dev->vk.mem_cache = cache_create(dev, NULL, 0, false);
    struct hk_api_shader *api[HK_APPLE9_GFX_STAGES],
-                        *again[HK_APPLE9_GFX_STAGES];
+      *again[HK_APPLE9_GFX_STAGES];
    api_create(dev, api, false);
    api_create(dev, again, false);
    struct hk_api_shader *src = api[MESA_SHADER_VERTEX];
@@ -417,7 +420,8 @@ embedded_limit_tests(struct hk_device *dev)
    CHECK(dev->vk.mem_cache->object_cache->entries == limit);
    const blake3_hash evicted_key = {1};
    CHECK(!vk_pipeline_cache_lookup_object(dev->vk.mem_cache, evicted_key,
-            sizeof(evicted_key), &vk_raw_data_cache_object_ops, NULL));
+                                          sizeof(evicted_key),
+                                          &vk_raw_data_cache_object_ops, NULL));
    struct blob blob;
    blob_init(&blob);
    CHECK(hk_apple9_serialize_variants(src->apple9_deferred, &blob));
@@ -425,7 +429,8 @@ embedded_limit_tests(struct hk_device *dev)
    blob_reader_init(&reader, blob.data, blob.size);
    CHECK(blob_read_uint32(&reader) == limit);
    blob_reader_init(&reader, blob.data, blob.size);
-   CHECK(hk_apple9_deserialize_variants(dev, again[MESA_SHADER_VERTEX], &reader));
+   CHECK(
+      hk_apple9_deserialize_variants(dev, again[MESA_SHADER_VERTEX], &reader));
    CHECK(!reader.overrun && reader.current == reader.end);
    CHECK(again[MESA_SHADER_VERTEX]->apple9_deferred->variant_count == limit);
    CHECK(again[MESA_SHADER_VERTEX]->apple9_deferred->variants->object ==
@@ -436,7 +441,8 @@ embedded_limit_tests(struct hk_device *dev)
    api_destroy(dev, again);
    CHECK(dev->vk.mem_cache->object_cache->entries == 0);
    vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
-   puts("embedded variants: 64-entry LRU, refresh, eviction, serialization and shared lifetime pass");
+   puts(
+      "embedded variants: 64-entry LRU, refresh, eviction, serialization and shared lifetime pass");
 }
 
 static void
@@ -511,14 +517,16 @@ main(int argc, char **argv)
    struct blob api_blobs[2];
    const unsigned api_stages[] = {MESA_SHADER_VERTEX, MESA_SHADER_FRAGMENT};
    for (unsigned i = 0; i < 2; ++i) {
-      api[api_stages[i]]->push_constant_mask = BITFIELD64_BIT(i) | BITFIELD64_BIT(63);
+      api[api_stages[i]]->push_constant_mask =
+         BITFIELD64_BIT(i) | BITFIELD64_BIT(63);
       blob_init(&api_blobs[i]);
       CHECK(hk_api_shader_serialize(&dev->vk, &api[api_stages[i]]->vk,
                                     &api_blobs[i]));
    }
    api_create(dev, again, false);
    before = nir_loads;
-   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) == VK_SUCCESS);
+   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) ==
+         VK_SUCCESS);
    CHECK(nir_loads ==
          before); /* A different API object, same persistent key. */
    CHECK(dev->vk.mem_cache->object_cache->entries == 1);
@@ -566,7 +574,8 @@ main(int argc, char **argv)
    hk_apple9_bodies_finish(dev);
    CHECK(list_is_empty(&dev->apple9_bodies.slabs));
    fail_allocation = allocations + 1;
-   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) == VK_SUCCESS);
+   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) ==
+         VK_SUCCESS);
    CHECK(nir_loads == before + 2);
    fail_allocation = 0;
    api_destroy(dev, again);
@@ -601,7 +610,8 @@ main(int argc, char **argv)
    CHECK(nir_loads == before + 1 && out[MESA_SHADER_FRAGMENT]);
    api_create(dev, again, true);
    before = nir_loads;
-   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) == VK_SUCCESS);
+   CHECK(hk_apple9_resolve_graphics(dev, again, NULL, out, false) ==
+         VK_SUCCESS);
    CHECK(nir_loads == before && out[MESA_SHADER_FRAGMENT]);
    api_destroy(dev, again);
    api_destroy(dev, api);

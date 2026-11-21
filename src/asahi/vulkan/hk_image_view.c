@@ -4,8 +4,8 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/lib/agx_apple9.h"
 #include "hk_image_view.h"
+#include "asahi/lib/agx_apple9.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
 #include "vulkan/vulkan_core.h"
@@ -13,8 +13,8 @@
 #include "agx_helpers.h"
 #include "agx_nir_texture.h"
 #include "agx_pack.h"
-#include "hk_device.h"
 #include "hk_descriptor_set.h"
+#include "hk_device.h"
 #include "hk_entrypoints.h"
 #include "hk_image.h"
 #include "hk_physical_device.h"
@@ -337,7 +337,8 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
          assert(view->vk.layer_count == 1);
 
          cfg.address = base_addr + ail_get_layer_level_B(layout, layer, level);
-         cfg.width = alias_width_el(view, view_plane, usage, layout, level, denom.x);
+         cfg.width =
+            alias_width_el(view, view_plane, usage, layout, level, denom.x);
          cfg.height = DIV_ROUND_UP(u_minify(layout->height_px, level), denom.y);
          cfg.first_level = 0;
          cfg.last_level = 1;
@@ -511,7 +512,8 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
 
             cfg.buffer =
                base_addr + ail_get_layer_level_B(layout, layer, level);
-            cfg.width = alias_width_el(view, view_plane, usage, layout, level, denom.x);
+            cfg.width =
+               alias_width_el(view, view_plane, usage, layout, level, denom.x);
             cfg.height =
                DIV_ROUND_UP(u_minify(layout->height_px, level), denom.y);
             cfg.level = 0;
@@ -593,10 +595,11 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
    float min_lod = MAX2(view->vk.min_lod - view->vk.base_mip_level, 0.0);
    for (unsigned p = 0; p < view->plane_count; ++p) {
       for (unsigned input = 0; input < 2; ++input) {
-         struct hk_apple9_image_part *part = input ? &view->planes[p].apple9_ia
-                                                  : &view->planes[p].apple9_sampled;
-         const struct agx_texture_packed *tex = input ? &view->planes[p].ia
-                                                     : &view->planes[p].sampled;
+         struct hk_apple9_image_part *part =
+            input ? &view->planes[p].apple9_ia
+                  : &view->planes[p].apple9_sampled;
+         const struct agx_texture_packed *tex =
+            input ? &view->planes[p].ia : &view->planes[p].sampled;
          part->base_level = view->vk.base_mip_level;
          part->base_layer = view->vk.base_array_layer;
          part->min_lod_fp16 = _mesa_float_to_half(min_lod);
@@ -679,7 +682,8 @@ hk_apple9_init_render_view(struct hk_image_view *view)
          cfg = image;
       }
       out->texture_valid = agx_apple9_translate_texture(out->texture, &packed);
-      out->store_valid = hk_apple9_image_view_eot(view, layered, false, out->store);
+      out->store_valid =
+         hk_apple9_image_view_eot(view, layered, false, out->store);
    }
 }
 
@@ -760,11 +764,12 @@ hk_DestroyImageView(VkDevice _device, VkImageView imageView,
 
 bool
 hk_apple9_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
-                                enum pipe_format format, const struct ail_layout *layout,
-                                uint64_t base, unsigned level)
+                                enum pipe_format format,
+                                const struct ail_layout *layout, uint64_t base,
+                                unsigned level)
 {
-   return agx_apple9_translate_pbe(out, state, format, layout, base, level,
-                                  1, false, AGX_TEXTURE_DIMENSION_2D);
+   return agx_apple9_translate_pbe(out, state, format, layout, base, level, 1,
+                                   false, AGX_TEXTURE_DIMENSION_2D);
 }
 
 bool
@@ -776,8 +781,8 @@ hk_apple9_native_store_image(const struct hk_image *image, unsigned plane)
     * alone has neither residency table. Keep all sparse writes in software.
     */
    const VkImageCreateFlags sparse = VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
-                                    VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT |
-                                    VK_IMAGE_CREATE_SPARSE_ALIASED_BIT;
+                                     VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT |
+                                     VK_IMAGE_CREATE_SPARSE_ALIASED_BIT;
    return !(image->vk.create_flags & sparse) &&
           !image->planes[plane].layout.compressed;
 }
@@ -823,11 +828,12 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
       return;
    /* Opaque capture data does not preserve table allocation addresses. */
    if ((view->vk.create_flags &
-                   VK_IMAGE_VIEW_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT) ||
-                 (view->vk.image->create_flags &
-                   VK_IMAGE_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT))
+        VK_IMAGE_VIEW_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT) ||
+       (view->vk.image->create_flags &
+        VK_IMAGE_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT))
       return;
-   const struct hk_image *image = container_of(view->vk.image, struct hk_image, vk);
+   const struct hk_image *image =
+      container_of(view->vk.image, struct hk_image, vk);
    unsigned plane = view->planes[0].image_plane;
    const struct ail_layout *layout = &image->planes[plane].layout;
    if (!hk_apple9_native_store_image(image, plane) ||
@@ -839,9 +845,11 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
        format_for_plane(view, 0) != layout->format)
       return;
    /* Depth slices are laid out as layers, each with its own miptree. */
-   unsigned first = slices ? view->vk.storage.z_slice_offset : view->vk.base_array_layer;
-   unsigned count = slices ? view->vk.storage.z_slice_count
-                    : array ? view->vk.layer_count : 1;
+   unsigned first =
+      slices ? view->vk.storage.z_slice_offset : view->vk.base_array_layer;
+   unsigned count = slices  ? view->vk.storage.z_slice_count
+                    : array ? view->vk.layer_count
+                            : 1;
    simple_mtx_lock(&dev->usc_heap_lock);
    bool allocated = hk_usc_heap_alloc(
       &dev->usc_heap, (uint64_t)count * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
@@ -850,7 +858,7 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
    if (!allocated)
       return;
    uint64_t index = (view->apple9_pbes.addr - dev->dev.shader_base) /
-                     AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+                    AGX_APPLE9_TEXTURE_TABLE_STRIDE;
    if (index + count - 1 > HK_APPLE9_STORAGE_PBE_MASK) {
       simple_mtx_lock(&dev->usc_heap_lock);
       hk_usc_heap_free(&dev->usc_heap, &view->apple9_pbes);
@@ -860,8 +868,9 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
    uint8_t *entries = view->apple9_pbes.map;
    for (unsigned i = 0; i < count; ++i) {
       uint64_t base = hk_image_base_address(image, plane) +
-         ail_get_layer_level_B(layout, first + i, 0);
-      if (!hk_apple9_translate_storage_pbe(entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                      ail_get_layer_level_B(layout, first + i, 0);
+      if (!hk_apple9_translate_storage_pbe(
+             entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
              &view->planes[0].storage, format_for_plane(view, 0), layout, base,
              view->vk.base_mip_level)) {
          simple_mtx_lock(&dev->usc_heap_lock);
@@ -871,8 +880,9 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
       }
    }
    view->apple9_pbe_index = index;
-   view->apple9_store_flags = array || slices ? HK_APPLE9_STORAGE_LAYER_WRITE_VALID
-                                    : HK_APPLE9_STORAGE_WRITE_VALID;
+   view->apple9_store_flags = array || slices
+                                 ? HK_APPLE9_STORAGE_LAYER_WRITE_VALID
+                                 : HK_APPLE9_STORAGE_WRITE_VALID;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -902,7 +912,8 @@ hk_CreateImageView(VkDevice _device, const VkImageViewCreateInfo *pCreateInfo,
 }
 
 bool
-hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered, bool raw, void *out)
+hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered,
+                         bool raw, void *out)
 {
    if (view->plane_count != 1)
       return false;
@@ -915,7 +926,8 @@ hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered, bool ra
    /* A 3D view has one array layer but spans all depth slices. The native
     * descriptor, like the legacy PBE above, stores the base-level depth. */
    unsigned layers = view->vk.view_type == VK_IMAGE_VIEW_TYPE_3D
-                        ? image->vk.extent.depth : view->vk.layer_count;
+                        ? image->vk.extent.depth
+                        : view->vk.layer_count;
    const struct agx_pbe_packed *state =
       layered ? &view->planes[0].layered_eot : &view->planes[0].eot;
    /* Use the same dimension selection as pack_pbe without unpacking the
@@ -925,9 +937,9 @@ hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered, bool ra
       layered ? HK_DESC_USAGE_LAYERED_BG_EOT : HK_DESC_USAGE_BG_EOT);
    struct ail_layout store_layout = *layout;
    store_layout.compressed &= !raw;
-   return agx_apple9_translate_pbe(
-      out, state, format_for_plane(view, 0), &store_layout, base, view->vk.base_mip_level,
-      layered ? layers : 1, layered, dimension);
+   return agx_apple9_translate_pbe(out, state, format_for_plane(view, 0),
+                                   &store_layout, base, view->vk.base_mip_level,
+                                   layered ? layers : 1, layered, dimension);
 }
 
 uint64_t
@@ -945,8 +957,7 @@ hk_apple9_view_residency(const struct hk_device *dev,
 VKAPI_ATTR VkResult VKAPI_CALL
 hk_GetImageViewOpaqueCaptureDescriptorDataEXT(
    UNUSED VkDevice device,
-   UNUSED const VkImageViewCaptureDescriptorDataInfoEXT *pInfo,
-   void *pData)
+   UNUSED const VkImageViewCaptureDescriptorDataInfoEXT *pInfo, void *pData)
 {
    /* Capture/replay views do not allocate layer PBE caches; their descriptor
     * addresses remain image-owned. */

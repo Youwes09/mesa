@@ -1,12 +1,12 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#include "hk_descriptor_memory.h"
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <map>
 #include <random>
 #include <vector>
+#include <gtest/gtest.h>
+#include "hk_descriptor_memory.h"
 
 namespace {
 
@@ -142,8 +142,8 @@ TEST(HkDescriptorMemory, ChurnDoesNotFragmentOrLeak)
    ASSERT_EQ(hk_descriptor_memory_init(&mem, &fake_ops, &dev, 256ull << 20),
              HK_DESCRIPTOR_MEMORY_OK);
    std::mt19937 rng(1234);
-   const uint64_t sizes[] = {64, 192, 1024, 4096, 64 << 10, 900 << 10,
-                             1 << 20, 3 << 20};
+   const uint64_t sizes[] = {64,       192,       1024,    4096,
+                             64 << 10, 900 << 10, 1 << 20, 3 << 20};
    std::vector<hk_descriptor_allocation> sets;
    unsigned max_chunks = 0;
    for (unsigned round = 0; round < 200; round++) {
@@ -185,8 +185,8 @@ TEST(HkDescriptorMemory, ChurnDoesNotFragmentOrLeak)
    unsigned chunks = 0;
    list_for_each_entry(hk_descriptor_chunk, chunk, &mem.chunks, link) {
       chunks++;
-      uint64_t addr = util_vma_heap_alloc(&chunk->heap,
-                                          chunk->backing.size, 64);
+      uint64_t addr =
+         util_vma_heap_alloc(&chunk->heap, chunk->backing.size, 64);
       EXPECT_EQ(addr, chunk->backing.addr);
       if (addr)
          util_vma_heap_free(&chunk->heap, addr, chunk->backing.size);

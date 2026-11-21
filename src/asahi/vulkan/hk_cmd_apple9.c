@@ -6,15 +6,15 @@
 #include "asahi/lib/agx_apple9.h"
 #include "asahi/lib/agx_nir_apple9_tilebuffer.h"
 #include "pipe/p_defines.h"
+#include "util/u_debug.h"
 #include "util/u_math.h"
 #include "util/u_prim.h"
-#include "util/u_debug.h"
-#include "vk_util.h"
 #include "hk_cmd_buffer.h"
 #include "hk_device.h"
-#include "hk_physical_device.h"
 #include "hk_image.h"
 #include "hk_image_view.h"
+#include "hk_physical_device.h"
+#include "vk_util.h"
 
 static struct agx_ptr
 hk_apple9_usc_alloc(void *data, size_t size, size_t alignment)
@@ -137,8 +137,8 @@ hk_apple9_render_inputs(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
    }
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    uint64_t sysvals = gfx->apple9_render_sysvals;
-   if (!sysvals || memcmp(dimensions, gfx->apple9_render_dimensions,
-                          sizeof(dimensions))) {
+   if (!sysvals ||
+       memcmp(dimensions, gfx->apple9_render_dimensions, sizeof(dimensions))) {
       uint8_t metadata[AGX_APPLE9_RUNTIME_SYSVAL_SIZE] = {0};
       for (unsigned rt = 0; rt < HK_MAX_RTS; ++rt) {
          memcpy(metadata + AGX_APPLE9_TEXTURE_INFO_OFFSET +
@@ -233,7 +233,8 @@ hk_apple9_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    u_foreach_bit(rt, part_info->apple9_image_mask) {
       const struct hk_image_view *view =
          rt < key.count ? render->color_att[rt].iview : NULL;
-      uint8_t *store = (uint8_t *)textures.cpu + slot++ * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+      uint8_t *store =
+         (uint8_t *)textures.cpu + slot++ * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
       /* Feedback-raw attachments store uncompressed; the prepacked store is
        * the compressed one. */
       if (view && (render->raw_color_mask & BITFIELD_BIT(rt))) {
@@ -372,7 +373,8 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
    if (!cs)
       return false;
 
-   const struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+   const struct vk_dynamic_graphics_state *dyn =
+      &cmd->vk.dynamic_graphics_state;
    const struct hk_rendering_state *render = &cmd->state.gfx.render;
 
    /* A draw that selects a new occlusion segment in a stream without free
@@ -399,8 +401,8 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
     * neither commit nor change them.
     */
    if (!cmd->in_meta) {
-      unsigned samples = MAX2(render->tilebuffer.nr_samples ?:
-                              dyn->ms.rasterization_samples, 1);
+      unsigned samples = MAX2(
+         render->tilebuffer.nr_samples ?: dyn->ms.rasterization_samples, 1);
       uint32_t positions = hk_apple9_draw_sample_positions(dyn, samples);
       if (cs->has_sample_locations && cs->ppp_multisamplectl != positions) {
          perf_debug(cmd, "Splitting Apple9 render: sample positions changed");
@@ -414,20 +416,24 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
    }
 
    unsigned views = util_bitcount(render->view_mask ?: 1);
-   unsigned viewports = dyn->rs.rasterizer_discard_enable
-                           ? 1 : MAX2(dyn->vp.viewport_count, 1);
+   unsigned viewports =
+      dyn->rs.rasterizer_discard_enable ? 1 : MAX2(dyn->vp.viewport_count, 1);
    bool bias = dyn->rs.depth_bias.enable;
-   bool dbias_is_int = render->depth_att.vk_format == VK_FORMAT_D16_UNORM ||
+   bool dbias_is_int =
+      render->depth_att.vk_format == VK_FORMAT_D16_UNORM ||
       dyn->rs.depth_bias.representation ==
          VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
 
    bool overflow =
       cs->scissor.size / AGX_SCISSOR_LENGTH + viewports * views > UINT16_MAX ||
-      (bias && cs->depth_bias.size / AGX_DEPTH_BIAS_LENGTH + views > UINT16_MAX);
-   bool change_bias = bias && !u_tristate_set(&cs->cr.dbias_is_int, dbias_is_int);
+      (bias &&
+       cs->depth_bias.size / AGX_DEPTH_BIAS_LENGTH + views > UINT16_MAX);
+   bool change_bias =
+      bias && !u_tristate_set(&cs->cr.dbias_is_int, dbias_is_int);
    if (unlikely(overflow || change_bias)) {
       perf_debug(cmd, "Splitting Apple9 render: %s",
-                 overflow ? "scissor/depth bias overflow" : "depth bias representation");
+                 overflow ? "scissor/depth bias overflow"
+                          : "depth bias representation");
       /* The existing partial-render background, EOT and ZLS state stores and
        * reloads attachments. Only the final stream uses the API store ops.
        */
@@ -450,10 +456,13 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
       if (s != MESA_SHADER_COMPUTE && gfx->shaders[s])
          writes = gfx->shaders[s]->writes_memory;
    }
-   writes |= gfx->shaders[MESA_SHADER_TASK] && gfx->shaders[MESA_SHADER_TASK]->writes_memory;
-   writes |= gfx->shaders[MESA_SHADER_MESH] && gfx->shaders[MESA_SHADER_MESH]->writes_memory;
+   writes |= gfx->shaders[MESA_SHADER_TASK] &&
+             gfx->shaders[MESA_SHADER_TASK]->writes_memory;
+   writes |= gfx->shaders[MESA_SHADER_MESH] &&
+             gfx->shaders[MESA_SHADER_MESH]->writes_memory;
    if (unlikely(writes && cs->merge_hoisted)) {
-      perf_debug(cmd, "Splitting Apple9 render: memory writes after a hoisted barrier");
+      perf_debug(
+         cmd, "Splitting Apple9 render: memory writes after a hoisted barrier");
       hk_cmd_buffer_end_graphics(cmd);
       cs = hk_cmd_buffer_get_cs(cmd, false);
       if (!cs)
@@ -468,15 +477,18 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
 
    /* What the draw's pre-rasterization work reads. hk-internal pre-raster
     * work (tessellation, geometry, transform feedback) keeps the tiling wait.
-    * Emulated task draws retain their existing read classification. Meta draws compile their pipelines like applications', so their
-    * shaders carry a read class (vk_meta vertex shaders read push constants
-    * and its own vertex data). */
+    * Emulated task draws retain their existing read classification. Meta draws
+    * compile their pipelines like applications', so their shaders carry a read
+    * class (vk_meta vertex shaders read push constants and its own vertex
+    * data). */
    uint8_t reads = reads_buffers ? HK_READS_BUFFERS : 0;
    if (gfx->xfb_enabled || gfx->shaders[MESA_SHADER_TESS_CTRL] ||
-       gfx->shaders[MESA_SHADER_TESS_EVAL] || gfx->shaders[MESA_SHADER_GEOMETRY])
+       gfx->shaders[MESA_SHADER_TESS_EVAL] ||
+       gfx->shaders[MESA_SHADER_GEOMETRY])
       reads |= HK_READS_INTERNAL;
    for (unsigned s = 0; s < ARRAY_SIZE(gfx->shaders); ++s) {
-      if (s == MESA_SHADER_FRAGMENT || s == MESA_SHADER_COMPUTE || !gfx->shaders[s])
+      if (s == MESA_SHADER_FRAGMENT || s == MESA_SHADER_COMPUTE ||
+          !gfx->shaders[s])
          continue;
       reads |= gfx->shaders[s]->pre_raster_reads;
       if (gfx->shaders[s]->writes_memory)
@@ -493,15 +505,15 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
  * the aperture before using this for either the full or cached draw path. */
 static void
 hk_apple9_set_index_fetch(struct agx_apple9_render_pipeline *pipeline,
-                          struct agx_draw draw, uint64_t buffer,
-                          uint64_t range, uint64_t offset)
+                          struct agx_draw draw, uint64_t buffer, uint64_t range,
+                          uint64_t offset)
 {
    pipeline->index_size = agx_index_size_to_B(draw.index_size);
    pipeline->index_buffer = buffer + offset;
    pipeline->index_extent =
-      agx_is_indirect(draw.b)
-         ? range - offset
-         : MIN2(range - offset, (uint64_t)draw.b.count[0] * pipeline->index_size);
+      agx_is_indirect(draw.b) ? range - offset
+                              : MIN2(range - offset, (uint64_t)draw.b.count[0] *
+                                                        pipeline->index_size);
 }
 
 static void
@@ -515,7 +527,8 @@ hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
    else
       cs->current = agx_apple9_emit_direct_draw(
                        cs->current, pipeline, draw.b.count[0], draw.b.count[1],
-                       draw.indexed ? draw.index_bias : draw.start) - 4;
+                       draw.indexed ? draw.index_bias : draw.start) -
+                    4;
 }
 
 /* Record the final draw packet after its resources and pipeline are prepared. */
@@ -552,7 +565,8 @@ bool
 hk_apple9_reads_draw_id(const struct hk_graphics_state *gfx)
 {
    for (unsigned s = 0; s < ARRAY_SIZE(gfx->shaders); ++s) {
-      if (s != MESA_SHADER_COMPUTE && gfx->shaders[s] && gfx->shaders[s]->reads_draw_id)
+      if (s != MESA_SHADER_COMPUTE && gfx->shaders[s] &&
+          gfx->shaders[s]->reads_draw_id)
          return true;
    }
    return false;
@@ -572,9 +586,11 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   struct agx_apple9_render_pipeline *pipeline = &cmd->apple9_draw_state.pipeline;
+   struct agx_apple9_render_pipeline *pipeline =
+      &cmd->apple9_draw_state.pipeline;
    if (draw.indexed) {
-      uint64_t offset = (uint64_t)draw.start * agx_index_size_to_B(draw.index_size);
+      uint64_t offset =
+         (uint64_t)draw.start * agx_index_size_to_B(draw.index_size);
       uint64_t address = draw.index_buffer + offset;
       if (address < dev->dev.shader_base ||
           address >= dev->dev.shader_base + (1ull << 32))
@@ -598,7 +614,8 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (desc->root_dirty || desc->push_dirty) {
       if (desc->push_dirty)
          hk_cmd_buffer_flush_push_descriptors(cmd, desc);
-      uint64_t root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+      uint64_t root =
+         hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
       if (!root)
          return true; /* The pool recorded the allocation failure. */
       if (root != gfx->root) {
@@ -614,12 +631,15 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                   record->buffers[stage][slot] = root;
             }
             tables[stage] = hk_pool_upload_last(
-               cmd, stage ? HK_UPLOAD_LAST_FRAGMENT_TABLE : HK_UPLOAD_LAST_VERTEX_TABLE,
-               record->buffers[stage], shader->resource_count * sizeof(uint64_t), 64);
+               cmd,
+               stage ? HK_UPLOAD_LAST_FRAGMENT_TABLE
+                     : HK_UPLOAD_LAST_VERTEX_TABLE,
+               record->buffers[stage],
+               shader->resource_count * sizeof(uint64_t), 64);
          }
          if (!agx_apple9_update_draw_tables_alloc(
-                &dev->dev, cmd, hk_apple9_usc_alloc, cmd, hk_apple9_context_alloc,
-                pipeline, record, tables)) {
+                &dev->dev, cmd, hk_apple9_usc_alloc, cmd,
+                hk_apple9_context_alloc, pipeline, record, tables)) {
             vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
             return true;
          }
@@ -682,18 +702,17 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
     * sample mask. A full mask needs no fragment work at all. */
    const bool null_fs = !gfx->shaders[MESA_SHADER_FRAGMENT] ||
                         gfx->shaders[MESA_SHADER_FRAGMENT] == dev->null_fs;
-   const unsigned null_samples = MAX2(gfx->render.tilebuffer.nr_samples ?:
-                                      dyn->ms.rasterization_samples, 1);
+   const unsigned null_samples = MAX2(
+      gfx->render.tilebuffer.nr_samples ?: dyn->ms.rasterization_samples, 1);
    const bool null_trivial =
       null_fs && dev->null_fs_trivial &&
       (dyn->ms.sample_mask & BITFIELD_MASK(null_samples)) ==
          BITFIELD_MASK(null_samples);
    struct hk_api_shader *fragment_api = gfx->shaders[MESA_SHADER_FRAGMENT];
-   shaders[0] =
-      mesh  ? &mesh->variants[HK_MESH_VARIANT_RAST]
-      : gs  ? &gs->variants[HK_GS_VARIANT_RAST]
-      : tes ? &tes->variants[HK_VS_VARIANT_HW]
-            : hk_any_variant(gfx->shaders[MESA_SHADER_VERTEX]);
+   shaders[0] = mesh  ? &mesh->variants[HK_MESH_VARIANT_RAST]
+                : gs  ? &gs->variants[HK_GS_VARIANT_RAST]
+                : tes ? &tes->variants[HK_VS_VARIANT_HW]
+                      : hk_any_variant(gfx->shaders[MESA_SHADER_VERTEX]);
    shaders[1] = hk_any_variant(null_trivial ? dev->null_fs_trivial
                                            : fragment_api ?: dev->null_fs);
    /* Geometry and tessellation have already run as compute, and draw their
@@ -709,7 +728,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
         (!dyn->vp.viewport_count ||
          dyn->vp.viewport_count > AGX_APPLE9_MAX_VIEWPORTS ||
          dyn->vp.scissor_count != dyn->vp.viewport_count)) ||
-       (!emulated && dyn->ia.primitive_topology > VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
+       (!emulated &&
+        dyn->ia.primitive_topology > VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
         dyn->ia.primitive_topology !=
            VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA))
       UNSUPPORTED("unsupported viewport, scissor or topology state");
@@ -791,12 +811,12 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       AGX_PRIMITIVE_TRIANGLE_STRIP, AGX_PRIMITIVE_TRIANGLE_FAN,
    };
    /* Mesa meta rectangles are already expanded to two ordinary triangles. */
-   pipeline.primitive =
-      emulated ? hk_apple9_rast_primitive(gs_prim)
-      : dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA ||
-           gfx->apple9_fan_unrolled
-         ? AGX_PRIMITIVE_TRIANGLES
-         : primitives[dyn->ia.primitive_topology];
+   pipeline.primitive = emulated ? hk_apple9_rast_primitive(gs_prim)
+                        : dyn->ia.primitive_topology ==
+                                 VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA ||
+                              gfx->apple9_fan_unrolled
+                           ? AGX_PRIMITIVE_TRIANGLES
+                           : primitives[dyn->ia.primitive_topology];
    /* Emulated stages emit their primitives for the same provoking mode.
     * Stippled lines without them take the segment start from the first
     * vertex, see hk_apple9_lower_line_stipple_fs. Nothing else observes the
@@ -812,7 +832,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    pipeline.flatshade_first =
       dyn->rs.provoking_vertex != VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ||
       native_fan ||
-      (!mesh && !gs && !adjacency && shaders[1]->info.apple9_line_stipple_first);
+      (!mesh && !gs && !adjacency &&
+       shaders[1]->info.apple9_line_stipple_first);
    if (draw.indexed) {
       pipeline.index_size = agx_index_size_to_B(draw.index_size);
       uint64_t offset = agx_is_indirect(draw.b)
@@ -851,7 +872,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (!cs)
       return;
    cs->tib = gfx->render.tilebuffer;
-   const struct vk_dynamic_graphics_state *ms_dyn = &cmd->vk.dynamic_graphics_state;
+   const struct vk_dynamic_graphics_state *ms_dyn =
+      &cmd->vk.dynamic_graphics_state;
    gfx->apple9_sample_positions =
       hk_apple9_draw_sample_positions(ms_dyn, pipeline.samples);
    /* hk_apple9_prepare_draw committed the render's positions; meta draws
@@ -881,9 +903,12 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       const VkViewport *vp =
          rasterizer_discard ? &discard_viewport : &dyn->vp.viewports[v];
       float transform[6] = {
-         vp->x + vp->width * 0.5f,  vp->width * 0.5f,
-         vp->y + vp->height * 0.5f, vp->height * 0.5f,
-         vp->minDepth,              vp->maxDepth - vp->minDepth,
+         vp->x + vp->width * 0.5f,
+         vp->width * 0.5f,
+         vp->y + vp->height * 0.5f,
+         vp->height * 0.5f,
+         vp->minDepth,
+         vp->maxDepth - vp->minDepth,
       };
       if (v == 0) {
          for (unsigned axis = 0; axis < 3; ++axis) {
@@ -992,7 +1017,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
        * the exponent-dependent unit 2^(e - 23) directly. The submission
        * selects the matching mode.
        */
-      float scale = d16         ? 1.0f / (exact ? (1 << 16) : (1 << 15))
+      float scale = d16           ? 1.0f / (exact ? (1 << 16) : (1 << 15))
                     : force_unorm ? 1.0f / (exact ? (1 << 24) : (1 << 23))
                                   : 1.0f;
       assert(cs->cr.dbias_is_int == (unorm ? U_TRISTATE_YES : U_TRISTATE_NO));
@@ -1017,8 +1042,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    /* Without a depth attachment, the depth test is disabled. */
    bool depth_test = dyn->ds.depth.test_enable && gfx->render.depth_att.iview;
    record->depth_control = 0x200 | (1u << 16) | (bias ? 1u << 17 : 0) |
-                          (stencil ? 3u << 18 : 0) |
-                          (rasterizer_discard ? 1u << 21 : 0);
+                           (stencil ? 3u << 18 : 0) |
+                           (rasterizer_discard ? 1u << 21 : 0);
    record->occlusion_index = gfx->occlusion.index;
    record->visibility_mode = gfx->occlusion.mode;
    record->depth_control |= record->visibility_mode << 14;
@@ -1028,13 +1053,14 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       shaders[1]->info.fs.writes_memory &&
       !shaders[1]->info.fs.early_fragment_tests;
    gfx->descriptors.root.draw.force_never_in_shader = force_never_in_shader;
-   /* The shader fails a forced NEVER test itself (hk_apple9_clamp_depth_export). */
+   /* The shader fails a forced NEVER test itself
+    * (hk_apple9_clamp_depth_export). */
    VkCompareOp depth_compare = !depth_test ? VK_COMPARE_OP_ALWAYS
-                               : force_never_in_shader ? VK_COMPARE_OP_LESS
-                                                       : dyn->ds.depth.compare_op;
+                               : force_never_in_shader
+                                  ? VK_COMPARE_OP_LESS
+                                  : dyn->ds.depth.compare_op;
    record->depth_face[0] = record->depth_face[1] =
-      (agx_pack_line_width(dyn->rs.line.width) << 8) |
-      (depth_compare << 24) |
+      (agx_pack_line_width(dyn->rs.line.width) << 8) | (depth_compare << 24) |
       ((depth_test && dyn->ds.depth.write_enable) ? 0 : (1 << 21)) |
       (dyn->rs.polygon_mode << 18);
    for (unsigned face = 0; face < 2; ++face) {
@@ -1066,13 +1092,13 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
     * encode its domain winding here. */
    if (tes && !gs) {
       front_ccw ^= gfx->tess.info.ccw;
-      front_ccw ^= dyn->ts.domain_origin ==
-                   VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
+      front_ccw ^=
+         dyn->ts.domain_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
    }
    record->raster_control |= front_ccw ? 1u << 16 : 0;
-   record->object_type = points ? AGX_OBJECT_TYPE_POINT_SPRITE_UV01
-                        : lines ? AGX_OBJECT_TYPE_LINE
-                                : AGX_OBJECT_TYPE_TRIANGLE;
+   record->object_type = points  ? AGX_OBJECT_TYPE_POINT_SPRITE_UV01
+                         : lines ? AGX_OBJECT_TYPE_LINE
+                                 : AGX_OBJECT_TYPE_TRIANGLE;
    record->reads_tile = fragment->reads_tile;
    record->uses_discard = fragment->uses_discard;
    record->writes_depth = fragment->writes_depth;
@@ -1081,11 +1107,15 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    record->flatshade_first = pipeline.flatshade_first;
    gfx->descriptors.root.draw.api_sample_mask = dyn->ms.sample_mask;
    gfx->descriptors.root.draw.rasterized_prim =
-      (points ? 2 : lines ? 1 : 0) |
+      (points  ? 2
+       : lines ? 1
+               : 0) |
       (!emulated &&
-       dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
-       dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT
-          ? 4 : 0);
+             dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
+             dyn->rs.provoking_vertex ==
+                VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT
+          ? 4
+          : 0);
    if (hk_apple9_reads_draw_id(gfx))
       gfx->descriptors.root.draw.draw_id = draw_id;
    gfx->descriptors.root_dirty = true;
@@ -1096,13 +1126,13 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    uint64_t draw_params = bindings.draw_params;
    uint64_t vertex_table = bindings.vertex_buffers;
    for (unsigned stage = 0; stage < 2; ++stage) {
-      const struct agx_apple9_render_stage *s =
-         stage ? fragment : vertex;
+      const struct agx_apple9_render_stage *s = stage ? fragment : vertex;
       uint64_t sysvals = 0;
       bool textures_ok = hk_apple9_upload_textures(
          cmd, shaders[stage], true,
          pipeline.primitive == AGX_PRIMITIVE_TRIANGLE_FAN, lines,
-         &record->texture_table[stage], &record->sampler_table[stage], &sysvals);
+         &record->texture_table[stage], &record->sampler_table[stage],
+         &sysvals);
       if (!textures_ok)
          UNSUPPORTED("texture or sampler state cannot be uploaded");
       for (unsigned slot = 0; slot < s->resource_count; ++slot) {
@@ -1123,7 +1153,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          record->buffers[stage][slot] = address;
       }
       uint64_t table = hk_pool_upload_last(
-         cmd, stage ? HK_UPLOAD_LAST_FRAGMENT_TABLE : HK_UPLOAD_LAST_VERTEX_TABLE,
+         cmd,
+         stage ? HK_UPLOAD_LAST_FRAGMENT_TABLE : HK_UPLOAD_LAST_VERTEX_TABLE,
          record->buffers[stage], s->resource_count * sizeof(uint64_t), 64);
       if (stage)
          record->fragment_table = table;
@@ -1153,7 +1184,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (hk_apple9_draw_cache_supported(cmd, draw)) {
       cmd->apple9_draw_state.valid = true;
       cmd->apple9_draw_state.render_gen = gfx->render_gen;
-      cmd->apple9_draw_state.first_vertex = draw.indexed ? draw.index_bias : draw.start;
+      cmd->apple9_draw_state.first_vertex =
+         draw.indexed ? draw.index_bias : draw.start;
       cmd->apple9_draw_state.base_instance = draw.start_instance;
       cmd->apple9_draw_state.pipeline = pipeline;
       cmd->apple9_draw_state.fragment = shaders[1];
@@ -1176,7 +1208,8 @@ fail:
 }
 
 void
-hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id, struct agx_draw draw)
+hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+               struct agx_draw draw)
 {
    hk_apple9_draw_impl(cmd, draw_id, draw);
 }

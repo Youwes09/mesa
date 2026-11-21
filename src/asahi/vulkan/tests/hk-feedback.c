@@ -15,9 +15,12 @@
 int
 main(void)
 {
-   const VkFormat formats[] = {VK_FORMAT_R8_UINT, VK_FORMAT_R16_UINT,
-                               VK_FORMAT_R8G8_UINT, VK_FORMAT_R32_UINT,
-                               VK_FORMAT_R16G16_UINT, VK_FORMAT_R32G32_UINT,
+   const VkFormat formats[] = {VK_FORMAT_R8_UINT,
+                               VK_FORMAT_R16_UINT,
+                               VK_FORMAT_R8G8_UINT,
+                               VK_FORMAT_R32_UINT,
+                               VK_FORMAT_R16G16_UINT,
+                               VK_FORMAT_R32G32_UINT,
                                VK_FORMAT_R8G8B8A8_SRGB,
                                VK_FORMAT_R8G8B8A8_SNORM,
                                VK_FORMAT_A2B10G10R10_UNORM_PACK32,
@@ -34,7 +37,8 @@ main(void)
             ail_pixel_format[hk_format_to_pipe_format(formats[i])].channels);
       CHECK(hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, formats[i], 1));
       enum pipe_format pf = hk_format_to_pipe_format(raw);
-      struct agx_tilebuffer_layout tib = agx_build_tilebuffer_layout(&pf, 1, 1, true);
+      struct agx_tilebuffer_layout tib =
+         agx_build_tilebuffer_layout(&pf, 1, 1, true);
       struct drm_asahi_cmd_render render = {0};
       agx_tilebuffer_set_drm_cmd(&render, &tib);
       CHECK(render.utile_width_px % 16 == 0);
@@ -50,9 +54,11 @@ main(void)
       /* Depth/stencil planes decompress through copies, not raw blits. */
       CHECK(hk_feedback_raw_format(zs_formats[i]) == VK_FORMAT_UNDEFINED);
       CHECK(hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, zs_formats[i], 1));
-      CHECK(!hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, zs_formats[i], 4));
+      CHECK(
+         !hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, zs_formats[i], 4));
    }
-   CHECK(!hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, VK_FORMAT_D16_UNORM, 1));
+   CHECK(!hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D, VK_FORMAT_D16_UNORM,
+                                   1));
    CHECK(!hk_feedback_can_compress(&dev, VK_IMAGE_TYPE_2D,
                                    VK_FORMAT_D16_UNORM_S8_UINT, 1));
    dev.chip = AGX_CHIP_G14G;

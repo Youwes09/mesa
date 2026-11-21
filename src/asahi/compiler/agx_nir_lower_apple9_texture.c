@@ -1,10 +1,10 @@
 /* Copyright 2026 The Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#include "agx_nir_texture.h"
 #include "compiler/nir/nir_builder.h"
 #include "gallium/include/pipe/p_defines.h"
 #include "agx_compile_apple9.h"
+#include "agx_nir_texture.h"
 
 void
 agx_nir_legalize_apple9_texture_sources(nir_shader *nir)
@@ -85,17 +85,19 @@ agx_nir_lower_apple9_texture_lod(nir_shader *shader)
 static nir_def *
 descriptor_word(nir_builder *b, nir_def *handle, unsigned offset)
 {
-   nir_def *address = nir_pack_64_2x32_split(
-      b, nir_iadd_imm(b, handle, offset),
-      nir_imm_int(b, AGX_APPLE9_USC_BASE >> 32));
+   nir_def *address =
+      nir_pack_64_2x32_split(b, nir_iadd_imm(b, handle, offset),
+                             nir_imm_int(b, AGX_APPLE9_USC_BASE >> 32));
    /* EXP: descriptor records are constant for the draw; speculating them
     * lets the preamble hoist uniform sampler work out of control flow. */
-   return nir_load_global_constant(b, 1, 32, address, .align_mul = 4,
+   return nir_load_global_constant(
+      b, 1, 32, address, .align_mul = 4,
       .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
 }
 
 nir_def *
-agx_apple9_texture_info(nir_builder *b, const nir_tex_instr *tex, unsigned field)
+agx_apple9_texture_info(nir_builder *b, const nir_tex_instr *tex,
+                        unsigned field)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
    if (handle >= 0)
@@ -164,7 +166,8 @@ struct offset_sample {
 };
 
 nir_def *
-agx_apple9_sampler_field(nir_builder *b, const nir_tex_instr *tex, unsigned field)
+agx_apple9_sampler_field(nir_builder *b, const nir_tex_instr *tex,
+                         unsigned field)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_sampler_handle);
    if (handle >= 0)
@@ -191,8 +194,7 @@ normalize_runtime_coordinates(nir_builder *b, nir_tex_instr *tex,
    if (tex->sampler_dim != GLSL_SAMPLER_DIM_2D ||
        (tex->is_array && !(tex->backend_flags & AGX_TEXTURE_FLAG_ARRAYED_2D)) ||
        nir_tex_instr_is_query(tex) || tex->op == nir_texop_txf ||
-       tex->op == nir_texop_tex || tex->op == nir_texop_txb ||
-       tex->is_shadow ||
+       tex->op == nir_texop_tex || tex->op == nir_texop_txb || tex->is_shadow ||
        nir_tex_instr_src_index(tex, nir_tex_src_projector) >= 0 ||
        nir_tex_instr_src_index(tex, nir_tex_src_bias) >= 0 ||
        nir_tex_instr_src_index(tex, nir_tex_src_offset) >= 0)
@@ -206,9 +208,10 @@ normalize_runtime_coordinates(nir_builder *b, nir_tex_instr *tex,
    nir_def *coord = tex->src[src].src.ssa;
    nir_def *normalized[NIR_MAX_VEC_COMPONENTS];
    for (unsigned c = 0; c < coord->num_components; ++c)
-      normalized[c] = c < 2 ? nir_fdiv(b, nir_channel(b, coord, c),
-                                       nir_u2f32(b, agx_apple9_texture_info(b, tex, c)))
-                            : nir_channel(b, coord, c);
+      normalized[c] =
+         c < 2 ? nir_fdiv(b, nir_channel(b, coord, c),
+                          nir_u2f32(b, agx_apple9_texture_info(b, tex, c)))
+               : nir_channel(b, coord, c);
    nir_src_rewrite(
       &tex->src[src].src,
       nir_bcsel(b, nir_ine_imm(b, pixel, 0),
@@ -222,7 +225,7 @@ static nir_def *
 sample_border(nir_builder *b, nir_tex_instr *tex, nir_def *coord, unsigned dims)
 {
    static const nir_tex_src_type copied[] = {
-      nir_tex_src_texture_deref, nir_tex_src_sampler_deref,
+      nir_tex_src_texture_deref,  nir_tex_src_sampler_deref,
       nir_tex_src_texture_offset, nir_tex_src_sampler_offset,
       nir_tex_src_texture_handle, nir_tex_src_sampler_handle,
    };
@@ -251,8 +254,9 @@ sample_border(nir_builder *b, nir_tex_instr *tex, nir_def *coord, unsigned dims)
    for (unsigned i = 0; i < ARRAY_SIZE(copied); ++i) {
       int src = nir_tex_instr_src_index(tex, copied[i]);
       if (src >= 0)
-         bt->src[n++] = (nir_tex_src){.src_type = copied[i],
-                                      .src = nir_src_for_ssa(tex->src[src].src.ssa)};
+         bt->src[n++] =
+            (nir_tex_src){.src_type = copied[i],
+                          .src = nir_src_for_ssa(tex->src[src].src.ssa)};
    }
    nir_def_init(&bt->instr, &bt->def, 4, 32);
    nir_builder_instr_insert(b, &bt->instr);
@@ -296,9 +300,9 @@ fetch(nir_builder *b, const struct offset_sample *s, nir_def *coord,
    txf->src[1] =
       (nir_tex_src){.src_type = nir_tex_src_lod, .src = nir_src_for_ssa(lod)};
    if (handle >= 0) {
-      txf->src[2] = (nir_tex_src){
-         .src_type = nir_tex_src_texture_handle,
-         .src = nir_src_for_ssa(s->tex->src[handle].src.ssa)};
+      txf->src[2] =
+         (nir_tex_src){.src_type = nir_tex_src_texture_handle,
+                       .src = nir_src_for_ssa(s->tex->src[handle].src.ssa)};
    }
    nir_def_init(&txf->instr, &txf->def,
                 s->tex->is_shadow ? 4 : s->tex->def.num_components, 32);
@@ -413,8 +417,9 @@ gather(nir_builder *b, const struct offset_sample *s)
    nir_def *lod = nir_imm_int(b, 0);
    nir_def *base[2];
    for (unsigned c = 0; c < 2; ++c) {
-      nir_def *p = nir_fadd_imm(b, nir_fmul(b, nir_channel(b, s->coord, c),
-                                            nir_u2f32(b, s->base_size[c])),
+      nir_def *p = nir_fadd_imm(b,
+                                nir_fmul(b, nir_channel(b, s->coord, c),
+                                         nir_u2f32(b, s->base_size[c])),
                                 -0.5);
       base[c] = nir_f2i32(b, nir_ffloor(b, p));
       if (s->offset)
@@ -427,8 +432,9 @@ gather(nir_builder *b, const struct offset_sample *s)
       nir_def *border = nir_imm_false(b);
       for (unsigned c = 0; c < 2; ++c) {
          nir_def *i = nir_iadd_imm(b, base[c], taps[tap][c]);
-         coord[c] = s->state ? wrap_texel(b, i, s->base_size[c], s->state->wrap[c])
-                             : wrap_dynamic(b, i, s->base_size[c], s->wrap[c]);
+         coord[c] = s->state
+                       ? wrap_texel(b, i, s->base_size[c], s->state->wrap[c])
+                       : wrap_dynamic(b, i, s->base_size[c], s->wrap[c]);
          border = nir_ior(
             b, border,
             nir_iand(b,
@@ -437,10 +443,10 @@ gather(nir_builder *b, const struct offset_sample *s)
       }
       if (s->tex->is_array)
          coord[2] = s->layer;
-      nir_def *value = fetch(b, s, nir_vec(b, coord, 2 + s->tex->is_array),
-                             lod, border);
-      result[tap] = s->tex->is_shadow ? value
-                                      : nir_channel(b, value, s->tex->component);
+      nir_def *value =
+         fetch(b, s, nir_vec(b, coord, 2 + s->tex->is_array), lod, border);
+      result[tap] =
+         s->tex->is_shadow ? value : nir_channel(b, value, s->tex->component);
    }
    return nir_vec(b, result, 4);
 }
@@ -500,7 +506,7 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
 {
    nir_tex_instr *tex = s->tex;
    static const nir_tex_src_type copied[] = {
-      nir_tex_src_texture_deref, nir_tex_src_sampler_deref,
+      nir_tex_src_texture_deref,  nir_tex_src_sampler_deref,
       nir_tex_src_texture_offset, nir_tex_src_sampler_offset,
       nir_tex_src_texture_handle, nir_tex_src_sampler_handle,
       nir_tex_src_comparator,
@@ -514,8 +520,9 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
       if (c < s->dims) {
          nir_def *size =
             nir_umax(b, nir_ushr(b, s->base_size[c], level), nir_imm_int(b, 1));
-         nir_def *shift = nir_fmul(b, nir_i2f32(b, nir_channel(b, s->offset, c)),
-                                   nir_frcp(b, nir_u2f32(b, size)));
+         nir_def *shift =
+            nir_fmul(b, nir_i2f32(b, nir_channel(b, s->offset, c)),
+                     nir_frcp(b, nir_u2f32(b, size)));
          comps[c] = nir_fadd(b, comps[c], shift);
       }
    }
@@ -540,10 +547,12 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
    for (unsigned i = 0; i < ARRAY_SIZE(copied); ++i) {
       int src = nir_tex_instr_src_index(tex, copied[i]);
       if (src >= 0)
-         nt->src[n++] = (nir_tex_src){.src_type = copied[i],
-                                      .src = nir_src_for_ssa(tex->src[src].src.ssa)};
+         nt->src[n++] =
+            (nir_tex_src){.src_type = copied[i],
+                          .src = nir_src_for_ssa(tex->src[src].src.ssa)};
    }
-   nir_def_init(&nt->instr, &nt->def, tex->def.num_components, tex->def.bit_size);
+   nir_def_init(&nt->instr, &nt->def, tex->def.num_components,
+                tex->def.bit_size);
    nir_builder_instr_insert(b, &nt->instr);
    return &nt->def;
 }
@@ -649,8 +658,8 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
             s.border = nir_imm_ivec4(&b, 0, 0, 0, 0);
          } else {
             for (unsigned c = 0; c < s.dims; ++c)
-               s.wrap[c] = agx_apple9_sampler_field(&b, tex,
-                                         AGX_APPLE9_SAMP_WRAP_S + c);
+               s.wrap[c] =
+                  agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_WRAP_S + c);
             s.min = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIN);
             s.mag = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MAG);
             s.mip = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIP);
@@ -660,8 +669,7 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIN_LOD);
             s.max_lod =
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MAX_LOD);
-            s.bias =
-               agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BIAS);
+            s.bias = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BIAS);
             nir_def *preset =
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BORDER);
             bool floating =
@@ -681,11 +689,12 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
             for (unsigned c = 0; c < 4; ++c) {
                nir_def *channel =
                   nir_iand_imm(&b, nir_ushr_imm(&b, swizzle, 3 * c), 7);
-               nir_def *value = nir_bcsel(&b, nir_ieq_imm(&b, channel, PIPE_SWIZZLE_W),
-                                          alpha, rgb);
-               value = nir_bcsel(&b, nir_ieq_imm(&b, channel, PIPE_SWIZZLE_1), one, value);
+               nir_def *value = nir_bcsel(
+                  &b, nir_ieq_imm(&b, channel, PIPE_SWIZZLE_W), alpha, rgb);
+               value = nir_bcsel(&b, nir_ieq_imm(&b, channel, PIPE_SWIZZLE_1),
+                                 one, value);
                rgba[c] = nir_bcsel(&b, nir_ieq_imm(&b, channel, PIPE_SWIZZLE_0),
-                                    nir_imm_int(&b, 0), value);
+                                   nir_imm_int(&b, 0), value);
             }
             s.border = nir_vec(&b, rgba, 4);
             /* A custom border colour (preset 3) is known only to the native

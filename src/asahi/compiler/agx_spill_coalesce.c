@@ -59,7 +59,8 @@ agx_spill_coalesce_prepare(agx_context *ctx)
    if (!ctx->spill_home || !n || n > 4096)
       return NULL;
 
-   struct agx_spill_interference *g = rzalloc(NULL, struct agx_spill_interference);
+   struct agx_spill_interference *g =
+      rzalloc(NULL, struct agx_spill_interference);
    g->n = n;
    g->alloc = ctx->alloc;
    g->stride = BITSET_WORDS(n);
@@ -75,8 +76,8 @@ agx_spill_coalesce_prepare(agx_context *ctx)
          if (!dst.memory)
             continue;
          g->node[dst.value] = n;
-         g->home[n] = dst.value < ctx->spill_home_count
-            ? ctx->spill_home[dst.value] : 0;
+         g->home[n] =
+            dst.value < ctx->spill_home_count ? ctx->spill_home[dst.value] : 0;
          g->width[n++] = util_next_power_of_two(agx_index_size_16(dst));
       }
    }
@@ -126,7 +127,8 @@ overlap(unsigned a, unsigned aw, unsigned b, unsigned bw)
 }
 
 static bool
-record_assignment(struct agx_spill_interference *g, unsigned *old, agx_index idx)
+record_assignment(struct agx_spill_interference *g, unsigned *old,
+                  agx_index idx)
 {
    if (!idx.memory)
       return true;
@@ -177,7 +179,8 @@ agx_spill_coalesce_apply(agx_context *ctx, struct agx_spill_interference *g,
       unsigned c;
       for (c = 0; c < count; ++c) {
          unsigned r = representative[c];
-         if (!g->home[x] || g->home[x] != g->home[r] || g->width[x] != g->width[r])
+         if (!g->home[x] || g->home[x] != g->home[r] ||
+             g->width[x] != g->width[r])
             continue;
          bool conflict = false;
          for (unsigned y = 0; y < x; ++y)
@@ -210,7 +213,8 @@ agx_spill_coalesce_apply(agx_context *ctx, struct agx_spill_interference *g,
    unsigned *color = ralloc_array(memctx, unsigned, count);
    memset(color, 0xff, count * sizeof(unsigned));
    unsigned color_stride = BITSET_WORDS(*half_slots);
-   BITSET_WORD *blocked = rzalloc_array(memctx, BITSET_WORD, count * color_stride);
+   BITSET_WORD *blocked =
+      rzalloc_array(memctx, BITSET_WORD, count * color_stride);
    unsigned *saturation = rzalloc_array(memctx, unsigned, count);
    unsigned high = 0;
    for (unsigned assigned = 0; assigned < count; ++assigned) {
@@ -220,9 +224,10 @@ agx_spill_coalesce_apply(agx_context *ctx, struct agx_spill_interference *g,
             continue;
          unsigned sat = saturation[c];
          if (best == ~0u || sat > best_sat ||
-             (sat == best_sat && (degree[c] > degree[best] ||
-              (degree[c] == degree[best] &&
-               g->home[representative[c]] < g->home[representative[best]])))) {
+             (sat == best_sat &&
+              (degree[c] > degree[best] ||
+               (degree[c] == degree[best] &&
+                g->home[representative[c]] < g->home[representative[best]])))) {
             best = c;
             best_sat = sat;
          }
@@ -262,7 +267,8 @@ agx_spill_coalesce_apply(agx_context *ctx, struct agx_spill_interference *g,
       }
    }
    if (agx_get_compiler_debug() & AGX_DBG_VERBOSE)
-      fprintf(stderr, "AGX_SPILL_COALESCE values=%u groups=%u half_slots=%u->%u\n",
+      fprintf(stderr,
+              "AGX_SPILL_COALESCE values=%u groups=%u half_slots=%u->%u\n",
               g->n, count, *half_slots, high);
    *half_slots = high;
    success = true;

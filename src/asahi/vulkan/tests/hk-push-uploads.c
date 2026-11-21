@@ -1,14 +1,20 @@
 /* SPDX-License-Identifier: MIT
  * Exercise real upload/reset/pool code with host-backed BOs. */
 #include "../hk_cmd_buffer.h"
-#include "../hk_entrypoints.h"
-#include "../hk_shader.h"
 #include "../hk_descriptor_set.h"
 #include "../hk_descriptor_set_layout.h"
+#include "../hk_entrypoints.h"
+#include "../hk_shader.h"
 #include "compiler/nir/nir_builder.h"
-#include "vk_common_entrypoints.h"
 #include "vk_alloc.h"
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); abort(); } } while (0)
+#include "vk_common_entrypoints.h"
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         abort();                                                              \
+      }                                                                        \
+   } while (0)
 static unsigned live_bos, allocations, trims;
 static bool fail_alloc;
 static struct agx_bo *bos[32];
@@ -21,20 +27,24 @@ __wrap___vk_errorf(const void *obj, VkResult error, const char *file, int line,
    CHECK(fail_alloc);
    return error;
 }
-struct agx_bo *__wrap_agx_bo_create(struct agx_device *, size_t, unsigned, enum agx_bo_flags, const char *);
+struct agx_bo *__wrap_agx_bo_create(struct agx_device *, size_t, unsigned,
+                                    enum agx_bo_flags, const char *);
 void __wrap_agx_bo_unreference(struct agx_device *, struct agx_bo *);
 void __wrap_agx_bo_cache_evict_all(struct agx_device *);
 struct agx_bo *
 __wrap_agx_bo_create(struct agx_device *dev, size_t size, unsigned alignment,
                      enum agx_bo_flags flags, const char *label)
 {
-   if (fail_alloc) return NULL;
+   if (fail_alloc)
+      return NULL;
    struct agx_bo *bo = calloc(1, sizeof(*bo));
    CHECK(bo);
    bo->va = calloc(1, sizeof(*bo->va));
    bo->_map = calloc(1, size);
    CHECK(bo->va && bo->_map);
-   bo->dev = dev; bo->size = size; bo->refcnt = 1;
+   bo->dev = dev;
+   bo->size = size;
+   bo->refcnt = 1;
    bo->va->addr = (++allocations) * (uint64_t)HK_CMD_BO_SIZE;
    CHECK(allocations < ARRAY_SIZE(bos));
    bos[allocations] = bo;
@@ -42,14 +52,23 @@ __wrap_agx_bo_create(struct agx_device *dev, size_t size, unsigned alignment,
    ++live_bos;
    return bo;
 }
-void __wrap_agx_bo_unreference(struct agx_device *dev, struct agx_bo *bo)
+void
+__wrap_agx_bo_unreference(struct agx_device *dev, struct agx_bo *bo)
 {
-   if (!bo) return;
+   if (!bo)
+      return;
    CHECK(bo->refcnt == 1);
    bos[bo->va->addr / (HK_CMD_BO_SIZE)] = NULL;
-   free(bo->_map); free(bo->va); free(bo); --live_bos;
+   free(bo->_map);
+   free(bo->va);
+   free(bo);
+   --live_bos;
 }
-void __wrap_agx_bo_cache_evict_all(struct agx_device *dev) { ++trims; }
+void
+__wrap_agx_bo_cache_evict_all(struct agx_device *dev)
+{
+   ++trims;
+}
 
 static struct hk_root_descriptor_table *
 mapped(uint64_t gpu)
@@ -62,10 +81,11 @@ mapped(uint64_t gpu)
 static void
 readers(void)
 {
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX,
-                                                 &agx_nir_options, "push mask");
+   nir_builder b = nir_builder_init_simple_shader(
+      MESA_SHADER_VERTEX, &agx_nir_options, "push mask");
    CHECK(hk_nir_push_constant_mask(b.shader) == 0);
-   nir_load_push_constant(&b, 2, 32, nir_imm_int(&b, 8), .base = 4, .range = 256);
+   nir_load_push_constant(&b, 2, 32, nir_imm_int(&b, 8), .base = 4,
+                          .range = 256);
    CHECK(hk_nir_push_constant_mask(b.shader) == BITFIELD64_RANGE(3, 2));
    nir_load_push_constant(&b, 1, 16, nir_imm_int(&b, 254), .range = 256);
    CHECK(hk_nir_push_constant_mask(b.shader) ==
@@ -77,20 +97,25 @@ readers(void)
    b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, &agx_nir_options,
                                       "lowered push mask");
    nir_def *root = nir_load_root_agx(&b);
-   nir_load_global_constant(&b, 4, 32,
-      nir_iadd_imm(&b, root, hk_root_descriptor_offset(push) + 12), .align_mul = 4);
+   nir_load_global_constant(
+      &b, 4, 32, nir_iadd_imm(&b, root, hk_root_descriptor_offset(push) + 12),
+      .align_mul = 4);
    CHECK(hk_nir_push_constant_mask(b.shader) == BITFIELD64_RANGE(3, 4));
-   nir_def *set = nir_load_global_constant(&b, 1, 64,
-      nir_iadd_imm(&b, root, hk_root_descriptor_offset(sets)), .align_mul = 8);
-   nir_load_global_constant(&b, 4, 32,
-      nir_iadd_imm(&b, set, hk_root_descriptor_offset(push) + 100), .align_mul = 4);
+   nir_def *set = nir_load_global_constant(
+      &b, 1, 64, nir_iadd_imm(&b, root, hk_root_descriptor_offset(sets)),
+      .align_mul = 8);
+   nir_load_global_constant(
+      &b, 4, 32, nir_iadd_imm(&b, set, hk_root_descriptor_offset(push) + 100),
+      .align_mul = 4);
    CHECK(hk_nir_push_constant_mask(b.shader) == BITFIELD64_RANGE(3, 4));
-   nir_load_global_constant_offset(&b, 1, 32, root,
-      nir_imm_int(&b, hk_root_descriptor_offset(push) + 252), .align_mul = 4);
+   nir_load_global_constant_offset(
+      &b, 1, 32, root, nir_imm_int(&b, hk_root_descriptor_offset(push) + 252),
+      .align_mul = 4);
    CHECK(hk_nir_push_constant_mask(b.shader) ==
          (BITFIELD64_RANGE(3, 4) | BITFIELD64_BIT(63)));
-   nir_load_global_constant(&b, 1, 32,
-      nir_iadd(&b, root, nir_u2u64(&b, nir_load_vertex_id(&b))), .align_mul = 4);
+   nir_load_global_constant(
+      &b, 1, 32, nir_iadd(&b, root, nir_u2u64(&b, nir_load_vertex_id(&b))),
+      .align_mul = 4);
    CHECK(hk_nir_push_constant_mask(b.shader) == UINT64_MAX);
    ralloc_free(b.shader);
 }
@@ -102,8 +127,10 @@ check_final_reader(void)
    const unsigned push = offsetof(struct hk_root_descriptor_table, push);
    nir_builder b = nir_builder_init_simple_shader(
       MESA_SHADER_VERTEX, &agx_nir_options, "final root reader");
-   nir_def *root = nir_load_ubo(&b, 1, 64, nir_imm_int(&b, 0),
-      nir_imm_int(&b, offsetof(struct hk_root_descriptor_table, root_desc_addr)),
+   nir_def *root = nir_load_ubo(
+      &b, 1, 64, nir_imm_int(&b, 0),
+      nir_imm_int(&b,
+                  offsetof(struct hk_root_descriptor_table, root_desc_addr)),
       .align_mul = 8, .range = UINT32_MAX);
    nir_load_global_constant(&b, 4, 32, nir_iadd_imm(&b, root, push + 12),
                             .align_mul = 4);
@@ -122,10 +149,12 @@ check_final_reader(void)
 
    b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, &agx_nir_options,
                                       "final loaded descriptor boundary");
-   nir_def *set = nir_load_ubo(&b, 1, 64, nir_imm_int(&b, 0),
+   nir_def *set = nir_load_ubo(
+      &b, 1, 64, nir_imm_int(&b, 0),
       nir_imm_int(&b, offsetof(struct hk_root_descriptor_table, sets)),
       .align_mul = 8, .range = UINT32_MAX);
-   nir_load_global_constant(&b, 4, 32, nir_iadd_imm(&b, set, push), .align_mul = 4);
+   nir_load_global_constant(&b, 4, 32, nir_iadd_imm(&b, set, push),
+                            .align_mul = 4);
    nir_load_ubo(&b, 4, 32, nir_imm_int(&b, 2), nir_imm_int(&b, push),
                 .align_mul = 4, .range = UINT32_MAX);
    CHECK(hk_nir_final_push_constant_mask(b.shader) == 0);
@@ -145,7 +174,8 @@ check_final_reader(void)
 }
 #endif
 
-int main(void)
+int
+main(void)
 {
 #ifndef NDEBUG
    check_final_reader();
@@ -156,7 +186,8 @@ int main(void)
    dev->vk.base.type = VK_OBJECT_TYPE_DEVICE;
    dev->vk.alloc = *vk_default_allocator();
    dev->vk.command_buffer_ops = &hk_cmd_buffer_ops;
-   dev->vk.dispatch_table.AllocateCommandBuffers = vk_common_AllocateCommandBuffers;
+   dev->vk.dispatch_table.AllocateCommandBuffers =
+      vk_common_AllocateCommandBuffers;
    dev->vk.dispatch_table.ResetCommandBuffer = hk_ResetCommandBuffer;
    dev->dev.chip = AGX_CHIP_G16G;
    VkDevice device = hk_device_to_handle(dev);
@@ -169,7 +200,8 @@ int main(void)
    VkCommandBuffer cb;
    const VkCommandBufferAllocateInfo ai = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-      .commandPool = handle, .commandBufferCount = 1,
+      .commandPool = handle,
+      .commandBufferCount = 1,
    };
    CHECK(vk_common_AllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS);
    struct hk_cmd_buffer *cmd = hk_cmd_buffer_from_handle(cb);
@@ -188,7 +220,8 @@ int main(void)
    vs.push_constant_mask = BITFIELD64_RANGE(2, 2);
    fs.push_constant_mask = BITFIELD64_BIT(63);
    uint64_t b = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
-   CHECK(b != a && desc->root_last_size == hk_root_descriptor_offset(push) + 256);
+   CHECK(b != a &&
+         desc->root_last_size == hk_root_descriptor_offset(push) + 256);
    CHECK(mapped(b)->push[0] == 0xa5 && mapped(b)->push[8] == 0x17 &&
          mapped(b)->push[252] == 0x17);
    /* A bind can expose a hole without changing the allocated extent. */
@@ -226,14 +259,16 @@ int main(void)
          desc->root_last_size == old_size);
    fail_alloc = false;
    uint64_t f = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
-   CHECK(f && f != e && !memcmp(mapped(f)->push, desc->root.push, HK_MAX_PUSH_SIZE));
+   CHECK(f && f != e &&
+         !memcmp(mapped(f)->push, desc->root.push, HK_MAX_PUSH_SIZE));
    /* Compute uses its own stage/read mask and root cache. */
    cmd->state.cs.shader = &cs;
    cs.push_constant_mask = BITFIELD64_BIT(4);
    memset(cmd->state.cs.descriptors.root.push, 0x31, HK_MAX_PUSH_SIZE);
    uint64_t g = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
    CHECK(mapped(g)->push[0] == 0xa5 && mapped(g)->push[16] == 0x31);
-   CHECK(cmd->state.cs.descriptors.root_last_size == hk_root_descriptor_offset(push) + 20);
+   CHECK(cmd->state.cs.descriptors.root_last_size ==
+         hk_root_descriptor_offset(push) + 20);
    /* Push descriptors retain only the current layout's extent. */
    struct hk_push_descriptor_set *push = calloc(1, sizeof(*push));
    CHECK(push);
@@ -272,9 +307,11 @@ int main(void)
    hk_cmd_buffer_flush_push_descriptors(cmd, desc);
    CHECK(!desc->push_dirty && !desc->set_sizes[0] && !desc->root.sets[0]);
    cmd->vk.state = MESA_VK_COMMAND_BUFFER_STATE_EXECUTABLE;
-   CHECK(hk_ResetCommandBuffer(cb, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT) == VK_SUCCESS);
+   CHECK(hk_ResetCommandBuffer(
+            cb, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT) == VK_SUCCESS);
    CHECK(!desc->root_last_valid && !live_bos);
    hk_DestroyCommandPool(device, handle, NULL);
    free(dev);
-   puts("PASS push-reader masks, sparse copies, stage unions, exposed holes, immutable roots, tails, failure/retry and reset");
+   puts(
+      "PASS push-reader masks, sparse copies, stage unions, exposed holes, immutable roots, tails, failure/retry and reset");
 }

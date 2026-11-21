@@ -12,8 +12,8 @@
 #include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "util/u_qsort.h"
-#include "agx_builder.h"
 #include "agx_apple9_ir.h"
+#include "agx_builder.h"
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
 
@@ -67,7 +67,8 @@ compute_loop_ends(agx_context *ctx, void *memctx)
          continue;
       agx_foreach_predecessor(block, pred) {
          if ((*pred)->index >= block->index)
-            loop_end[block->index] = MAX2(loop_end[block->index], (*pred)->index);
+            loop_end[block->index] =
+               MAX2(loop_end[block->index], (*pred)->index);
       }
    }
    return loop_end;
@@ -92,7 +93,6 @@ loops_exited(agx_context *ctx, const unsigned *loop_end, agx_block *pred,
    }
    return exits;
 }
-
 
 struct next_uses {
    struct hash_table_u64 *ht;
@@ -425,8 +425,7 @@ find_apple9_remat(agx_context *ctx, agx_instr **remat, void *memctx,
             continue;
          unsigned total = 1, held = 0, demand = 0;
          agx_foreach_src(I, s) {
-            if (I->src[s].type != AGX_INDEX_NORMAL ||
-                !cost[I->src[s].value]) {
+            if (I->src[s].type != AGX_INDEX_NORMAL || !cost[I->src[s].value]) {
                total = 5;
                break;
             }
@@ -1260,7 +1259,7 @@ compute_w_entry(struct spill_ctx *ctx)
        * predecessor still holds; coupling code reloads it on the other edges.
        */
       if (!(ctx->shader->ra_target.spill_partial_phi_sources ? any_found
-                                                              : all_found))
+                                                             : all_found))
          continue;
 
       util_dynarray_append(
@@ -1581,8 +1580,8 @@ hoist_loop_invariant_spills(agx_context *ctx, unsigned n,
                 (!BITSET_TEST(available, v) && !BITSET_TEST(stored, v)))
                continue;
             if (!BITSET_TEST(stored, v)) {
-               agx_builder b = agx_init_builder(
-                  ctx, agx_after_block_logical(preheader));
+               agx_builder b =
+                  agx_init_builder(ctx, agx_after_block_logical(preheader));
                agx_mov_to(&b, I->dest[0], I->src[0]);
                BITSET_SET(stored, v);
             }
@@ -1647,8 +1646,7 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
       }
       minimum = MAX2(minimum, needed);
    }
-   k -= find_apple9_remat(ctx, remat, memctx,
-                          k > minimum ? k - minimum : 0);
+   k -= find_apple9_remat(ctx, remat, memctx, k > minimum ? k - minimum : 0);
 
    struct spill_block *blocks =
       rzalloc_array(memctx, struct spill_block, ctx->num_blocks);
@@ -1735,5 +1733,4 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
 
    /* Remat can introduce dead code */
    agx_dce(ctx, false);
-
 }

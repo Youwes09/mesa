@@ -225,29 +225,28 @@ enum agx_apple9_predicate_extended_condition {
 #define AGX_APPLE9_PREDICATE_BANK_COUNT 6u
 #define AGX_APPLE9_PREDICATE_INVERT     (1u << 8)
 #define AGX_APPLE9_PREDICATE_BANK_SHIFT 16
-#define AGX_APPLE9_PREDICATE_BANK_MASK                                        \
+#define AGX_APPLE9_PREDICATE_BANK_MASK                                         \
    (0x07u << AGX_APPLE9_PREDICATE_BANK_SHIFT)
-#define AGX_APPLE9_PREDICATE_BANK(index)                                      \
+#define AGX_APPLE9_PREDICATE_BANK(index)                                       \
    ((uint32_t)(index) << AGX_APPLE9_PREDICATE_BANK_SHIFT)
 
-#define AGX_APPLE9_EXEC_MASK_INVERT (1u << 8)
-#define AGX_APPLE9_EXEC_MASK_SOURCE(source) (0x01u + 4u * (source))
-#define AGX_APPLE9_EXEC_MASK_PREDICATE(bank)                                  \
-   AGX_APPLE9_EXEC_MASK_SOURCE(bank)
-#define AGX_APPLE9_EXEC_MASK_TRUE  AGX_APPLE9_EXEC_MASK_SOURCE(6)
-#define AGX_APPLE9_EXEC_MASK_FALSE AGX_APPLE9_EXEC_MASK_SOURCE(7)
+#define AGX_APPLE9_EXEC_MASK_INVERT          (1u << 8)
+#define AGX_APPLE9_EXEC_MASK_SOURCE(source)  (0x01u + 4u * (source))
+#define AGX_APPLE9_EXEC_MASK_PREDICATE(bank) AGX_APPLE9_EXEC_MASK_SOURCE(bank)
+#define AGX_APPLE9_EXEC_MASK_TRUE            AGX_APPLE9_EXEC_MASK_SOURCE(6)
+#define AGX_APPLE9_EXEC_MASK_FALSE           AGX_APPLE9_EXEC_MASK_SOURCE(7)
 
 /* The tested LOOP_MASK_UPDATE form selects the same predicate bank with
  * 0x02,0x06,0x0a,... .  Bit 0x20 is consumer polarity: flipping it
  * together with PREDICATE_INVERT preserves exact loop output. */
-#define AGX_APPLE9_LOOP_MASK_INVERT 0x20u
+#define AGX_APPLE9_LOOP_MASK_INVERT          0x20u
 #define AGX_APPLE9_LOOP_MASK_PREDICATE(bank) (0x02u + 4u * (bank))
 
 /* BREAK_MASK_UNWIND packs the number of scopes crossed and the consumed
  * predicate bank into independent bytes. */
-#define AGX_APPLE9_BREAK_SCOPE_TAG(immediate)  (((immediate) >> 8) & 0xffu)
+#define AGX_APPLE9_BREAK_SCOPE_TAG(immediate)      (((immediate) >> 8) & 0xffu)
 #define AGX_APPLE9_BREAK_PREDICATE_BANK(immediate) ((immediate) & 0xffu)
-#define AGX_APPLE9_BREAK_IMMEDIATE(scope_tag, predicate_bank)                      \
+#define AGX_APPLE9_BREAK_IMMEDIATE(scope_tag, predicate_bank)                  \
    (((uint32_t)(scope_tag) << 8) | (uint32_t)(predicate_bank))
 
 enum agx_apple9_select_condition {
@@ -268,8 +267,8 @@ enum agx_apple9_select_condition {
 /*
  * Apple9 asynchronous producers publish through a six-entry scoreboard.
  * Slot 0 is the ordinary/materialized GPR path; slots 1--6 are transient
- * completion groups for outstanding asynchronous work.  AUTO is compiler IR only and must be resolved
- * after final instruction scheduling, before packing.
+ * completion groups for outstanding asynchronous work.  AUTO is compiler IR
+ * only and must be resolved after final instruction scheduling, before packing.
  */
 /* Formats of AGX_APPLE9_VIR_PACK_FORMAT (Metal's encodings of our own render
  * pipelines: one instruction per packed colour). */
@@ -470,7 +469,8 @@ agx_apple9_inline_source_file(const struct agx_apple9_vir_instr *I,
    if (s >= 4)
       return 0;
    return ((I->alu_src_uniform_mask >> s) & 1 ? AGX_APPLE9_FILE_UNIFORM : 0) |
-          ((I->alu_src_immediate_mask >> s) & 1 ? AGX_APPLE9_FILE_IMMEDIATE : 0);
+          ((I->alu_src_immediate_mask >> s) & 1 ? AGX_APPLE9_FILE_IMMEDIATE
+                                                : 0);
 }
 
 /* Instruction storage and block identity survive every insertion/removal.
@@ -490,7 +490,8 @@ struct agx_apple9_block {
    struct agx_apple9_block *successors[2];
    BITSET_WORD *live_in, *live_out;
    unsigned live_words; /* Allocated size of live_in and live_out. */
-   unsigned start_index; /* Derived analysis position, never a branch identity. */
+   unsigned
+      start_index; /* Derived analysis position, never a branch identity. */
    unsigned offset;
 };
 
@@ -550,10 +551,11 @@ struct agx_apple9_vir_program {
 
 void agx_apple9_invalidate_uses(struct agx_apple9_vir_program *program);
 bool agx_apple9_analyze_uses(struct agx_apple9_vir_program *program);
-const struct agx_apple9_vir_instr *agx_apple9_definition(
-   const struct agx_apple9_vir_program *program, uint32_t value);
-const struct agx_apple9_use *agx_apple9_uses(
-   const struct agx_apple9_vir_program *program, uint32_t value);
+const struct agx_apple9_vir_instr *
+agx_apple9_definition(const struct agx_apple9_vir_program *program,
+                      uint32_t value);
+const struct agx_apple9_use *
+agx_apple9_uses(const struct agx_apple9_vir_program *program, uint32_t value);
 void agx_apple9_vir_set_source(struct agx_apple9_vir_program *program,
                                struct agx_apple9_vir_instr *instr,
                                unsigned source, uint32_t value);
@@ -570,25 +572,29 @@ bool agx_apple9_vir_clone(struct agx_apple9_vir_program *dst,
 bool agx_apple9_vir_key(const struct agx_apple9_vir_program *program,
                         struct util_dynarray *key);
 
-struct agx_apple9_block *agx_apple9_block_create(struct agx_apple9_vir_program *program);
+struct agx_apple9_block *
+agx_apple9_block_create(struct agx_apple9_vir_program *program);
 void agx_apple9_block_begin(struct agx_apple9_vir_program *program,
-                          struct agx_apple9_block *block);
+                            struct agx_apple9_block *block);
 /* Layout position, as of the last reindex. */
 unsigned agx_apple9_instr_position(const struct agx_apple9_vir_instr *instr);
-struct agx_apple9_block *agx_apple9_instr_block(const struct agx_apple9_vir_instr *instr);
+struct agx_apple9_block *
+agx_apple9_instr_block(const struct agx_apple9_vir_instr *instr);
 void agx_apple9_vir_move_before(struct agx_apple9_vir_program *program,
-                              struct agx_apple9_vir_instr *instr,
-                              struct agx_apple9_vir_instr *before);
+                                struct agx_apple9_vir_instr *instr,
+                                struct agx_apple9_vir_instr *before);
 void agx_apple9_vir_remove(struct agx_apple9_vir_program *program,
-                          struct agx_apple9_vir_instr *instruction);
+                           struct agx_apple9_vir_instr *instruction);
 void agx_apple9_vir_remove_many(struct agx_apple9_vir_program *program,
                                 struct agx_apple9_vir_instr *const *instrs,
                                 unsigned count);
 void agx_apple9_vir_reindex(struct agx_apple9_vir_program *program);
-bool agx_apple9_instr_is_pure_alu(const struct agx_apple9_vir_instr *instruction);
+bool
+agx_apple9_instr_is_pure_alu(const struct agx_apple9_vir_instr *instruction);
 bool agx_apple9_supports_special_uniform(enum agx_apple9_vir_opcode op);
 
-bool agx_apple9_supports_saturate(const struct agx_apple9_vir_instr *instruction);
+bool
+agx_apple9_supports_saturate(const struct agx_apple9_vir_instr *instruction);
 /* Known literal values stored in a contiguous, immutable main-program
  * uniform window. Preserve their constant semantics until operand selection. */
 struct agx_apple9_uniform_constants {
@@ -603,7 +609,6 @@ bool agx_apple9_encode_float_immediate(uint32_t value, uint8_t *encoded);
 bool agx_apple9_encode_float_immediate_wide(uint32_t value, uint8_t *encoded,
                                             bool *low);
 
-
 /* Integer add/multiply-add, logic and select source descriptors hold an
  * 8-bit zero-extended literal; the float forms hold a packed float. */
 static inline bool
@@ -614,7 +619,6 @@ agx_apple9_integer_immediate_encoding(enum agx_apple9_encoding encoding)
           encoding == AGX_APPLE9_ENC_LOGIC_EXTENDED ||
           encoding == AGX_APPLE9_ENC_SELECT_GPR_WIDE;
 }
-
 
 /* Floating min/max operand B and the FMA addend have a fourth mantissa
  * bit beside the minifloat byte; FMA operand B does not. */
@@ -703,8 +707,9 @@ uint32_t agx_apple9_vir_input(struct agx_apple9_vir_program *program,
                               unsigned phys);
 bool agx_apple9_vir_set_load_address(struct agx_apple9_vir_program *program,
                                      uint32_t value, uint32_t address);
-uint32_t agx_apple9_vir_emit_coefficients(struct agx_apple9_vir_program *program,
-                                         unsigned coefficient);
+uint32_t
+agx_apple9_vir_emit_coefficients(struct agx_apple9_vir_program *program,
+                                 unsigned coefficient);
 uint32_t agx_apple9_vir_emit_iter_flat(struct agx_apple9_vir_program *program,
                                        unsigned coefficient);
 
@@ -714,11 +719,11 @@ uint32_t agx_apple9_vir_emit_device_load(
 /* mode 0 returns magnitude and a face in the low 16 bits of the next GPR.
  * Modes 1/2 return the signed half-coordinate for U/V, respectively. */
 uint32_t agx_apple9_vir_emit_cube(struct agx_apple9_vir_program *program,
-                                 const uint32_t src[3], unsigned mode);
+                                  const uint32_t src[3], unsigned mode);
 uint32_t agx_apple9_vir_emit_unpack_norm(struct agx_apple9_vir_program *program,
-                                        uint32_t src, unsigned mode);
+                                         uint32_t src, unsigned mode);
 uint32_t agx_apple9_vir_emit_mul_wide(struct agx_apple9_vir_program *program,
-                                     const uint32_t src[2], bool is_signed);
+                                      const uint32_t src[2], bool is_signed);
 
 uint32_t agx_apple9_vir_emit_device_load_vector(
    struct agx_apple9_vir_program *program, unsigned binding, uint32_t index,
@@ -733,31 +738,35 @@ agx_apple9_vir_emit_publication_pair(struct agx_apple9_vir_program *program,
 /* Formatless 32-bit write through an ordinary bindless PBE table index, as
  * float or integer data. */
 bool agx_apple9_vir_emit_image_store(struct agx_apple9_vir_program *program,
-                                   const uint32_t xy[2], const uint32_t rgba[4],
-                                   uint32_t index, bool integer);
+                                     const uint32_t xy[2],
+                                     const uint32_t rgba[4], uint32_t index,
+                                     bool integer);
 
 bool agx_apple9_vir_emit_block_image_store(
    struct agx_apple9_vir_program *program, const uint32_t src[4],
    unsigned image, unsigned format, bool multisampled, bool array);
 
-uint32_t agx_apple9_vir_emit_texture_sample(
-   struct agx_apple9_vir_program *program, const uint32_t coords[2],
-   uint32_t one, unsigned texture, unsigned sampler);
+uint32_t
+agx_apple9_vir_emit_texture_sample(struct agx_apple9_vir_program *program,
+                                   const uint32_t coords[2], uint32_t one,
+                                   unsigned texture, unsigned sampler);
 
 uint32_t agx_apple9_vir_emit_texture_min_lod(
    struct agx_apple9_vir_program *program, const uint32_t coords[2],
    uint32_t zero, uint32_t bias_min_lod, unsigned texture, unsigned sampler);
-uint32_t agx_apple9_vir_emit_texture_ms(
-   struct agx_apple9_vir_program *program, const uint32_t coords[4],
-   unsigned texture, unsigned sampler, bool array);
+uint32_t agx_apple9_vir_emit_texture_ms(struct agx_apple9_vir_program *program,
+                                        const uint32_t coords[4],
+                                        unsigned texture, unsigned sampler,
+                                        bool array);
 
 /* Form an adjacent register tuple from independent scalar SSA values before
  * register allocation. The pseudo is coalesced when possible and otherwise
  * lowered to copies after allocation, following the Apple8 AGX IR model. */
 /* FP32 coordinates and signed Q6 LOD packed in bits16..27. */
-uint32_t agx_apple9_vir_emit_texture_lod(
-   struct agx_apple9_vir_program *program, const uint32_t coords[2],
-   uint32_t packed_lod, unsigned texture, unsigned sampler, bool bias);
+uint32_t agx_apple9_vir_emit_texture_lod(struct agx_apple9_vir_program *program,
+                                         const uint32_t coords[2],
+                                         uint32_t packed_lod, unsigned texture,
+                                         unsigned sampler, bool bias);
 
 uint32_t agx_apple9_vir_emit_texture_volume(
    struct agx_apple9_vir_program *program, const uint32_t coords[3],
@@ -768,29 +777,32 @@ uint32_t agx_apple9_vir_emit_texture_volume(
  * forms publish four coordinate words, then four (array/shadow/min LOD) or
  * six (3D) derivatives. Array layers are unsigned integers in the low half
  * of coordinate word 3, and a minimum LOD occupies its high half. */
-uint32_t agx_apple9_vir_emit_texture_grad(struct agx_apple9_vir_program *program,
-                                          const uint32_t *src, unsigned texture,
-                                          unsigned sampler, unsigned dimension,
-                                          bool shadow, bool min_lod);
+uint32_t
+agx_apple9_vir_emit_texture_grad(struct agx_apple9_vir_program *program,
+                                 const uint32_t *src, unsigned texture,
+                                 unsigned sampler, unsigned dimension,
+                                 bool shadow, bool min_lod);
 
 uint32_t agx_apple9_vir_emit_collect(struct agx_apple9_vir_program *program,
                                      const uint32_t *src, unsigned components);
 void agx_apple9_place_phis(struct agx_apple9_vir_program *program);
 /* Reuse the Apple8 physical parallel-copy scheduler. Indices are 32-bit GPRs. */
 bool agx_apple9_resolve_phi_edge(const struct agx_apple9_vir_program *program,
-   const struct agx_apple9_vir_instr *edge,
-   bool (*emit)(void *data, bool swap, unsigned dest, unsigned source), void *data);
+                                 const struct agx_apple9_vir_instr *edge,
+                                 bool (*emit)(void *data, bool swap,
+                                              unsigned dest, unsigned source),
+                                 void *data);
 
 uint32_t agx_apple9_vir_emit_phi(struct agx_apple9_vir_program *program,
-                                  struct agx_apple9_block *block);
+                                 struct agx_apple9_block *block);
 bool agx_apple9_vir_emit_phi_source(struct agx_apple9_vir_program *program,
-                                     uint32_t target, uint32_t source);
+                                    uint32_t target, uint32_t source);
 struct agx_apple9_vir_copy {
    uint32_t target, source;
 };
-bool agx_apple9_vir_emit_phi_edge(
-   struct agx_apple9_vir_program *program,
-   const struct agx_apple9_vir_copy *copies, unsigned count);
+bool agx_apple9_vir_emit_phi_edge(struct agx_apple9_vir_program *program,
+                                  const struct agx_apple9_vir_copy *copies,
+                                  unsigned count);
 
 bool
 agx_apple9_vir_set_device_store_address(struct agx_apple9_vir_program *program,
@@ -801,11 +813,12 @@ bool agx_apple9_vir_emit_device_store(struct agx_apple9_vir_program *program,
                                       unsigned bits);
 bool agx_apple9_vir_emit_device_atomic(
    struct agx_apple9_vir_program *program, unsigned binding, uint32_t index,
-   const uint32_t *data, unsigned data_components,
-   enum agx_apple9_atomic_op op, bool discard_result, uint32_t *result_out);
+   const uint32_t *data, unsigned data_components, enum agx_apple9_atomic_op op,
+   bool discard_result, uint32_t *result_out);
 
-bool agx_apple9_vir_set_device_atomic_address(
-   struct agx_apple9_vir_program *program, uint32_t address);
+bool
+agx_apple9_vir_set_device_atomic_address(struct agx_apple9_vir_program *program,
+                                         uint32_t address);
 bool agx_apple9_vir_set_device_load_contract(
    struct agx_apple9_vir_program *program, uint32_t value, uint8_t flags,
    enum agx_apple9_scoreboard_slot scoreboard_slot);
@@ -829,11 +842,11 @@ bool agx_apple9_vir_add_live_out(struct agx_apple9_vir_program *program,
  */
 struct nir_shader;
 bool agx_apple9_allocate_shared(struct agx_apple9_vir_program *program,
-                                 struct nir_shader *nir, const char **reason);
+                                struct nir_shader *nir, const char **reason);
 /* Assign completion dependencies to canonical physical VIR (GPRs followed
  * by the publication namespace), after register allocation. */
 bool agx_apple9_schedule_physical(struct agx_apple9_vir_program *program,
-                                   const char **reason);
+                                  const char **reason);
 
 bool agx_apple9_allocate_publications(struct agx_apple9_vir_program *program,
                                       const char **reason);
@@ -886,8 +899,8 @@ bool agx_apple9_pack_mov_imm(unsigned dst, unsigned value,
 /* Full active-SIMD unsigned maximum. Operands are half-register indices;
  * 32-bit operands must be even. The normal GPR form preserves other halves. */
 bool agx_apple9_pack_subgroup_reduce_umax(
-   unsigned dst_half, unsigned src_half, unsigned bit_size,
-   bool dst_cache, bool src_cache, bool src_discard,
+   unsigned dst_half, unsigned src_half, unsigned bit_size, bool dst_cache,
+   bool src_cache, bool src_discard,
    struct agx_apple9_packed_instruction *packed);
 bool agx_apple9_pack_mov_imm32(unsigned dst, uint32_t value,
                                struct agx_apple9_packed_instruction *packed);
@@ -922,11 +935,11 @@ bool agx_apple9_pack_device_store_vector_u32(
    unsigned data, unsigned index, unsigned binding, unsigned components,
    enum agx_apple9_scoreboard_slot scoreboard_slot, bool release_index,
    struct agx_apple9_packed_instruction *packed);
-bool agx_apple9_pack_device_atomic(
-   unsigned index, unsigned data, unsigned binding, enum agx_apple9_atomic_op op,
-   bool discard_result,
-   enum agx_apple9_scoreboard_slot input_dependency,
-   struct agx_apple9_packed_instruction *packed);
+bool
+agx_apple9_pack_device_atomic(unsigned index, unsigned data, unsigned binding,
+                              enum agx_apple9_atomic_op op, bool discard_result,
+                              enum agx_apple9_scoreboard_slot input_dependency,
+                              struct agx_apple9_packed_instruction *packed);
 
 #ifdef __cplusplus
 }

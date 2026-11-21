@@ -19,9 +19,9 @@
 #include "agx_uvs.h"
 #include "hk_descriptor_memory.h"
 
-#include "hk_device.h"
 #include "asahi/lib/agx_apple9.h"
 #include "asahi/lib/agx_apple9_launch.h"
+#include "hk_device.h"
 #include "hk_device_memory.h"
 #include "hk_private.h"
 
@@ -32,7 +32,7 @@
 
 #include "vk_shader.h"
 
-#define HK_APPLE9_DRAW_PARAMS_BINDING 65
+#define HK_APPLE9_DRAW_PARAMS_BINDING    65
 #define HK_APPLE9_VERTEX_BUFFERS_BINDING 66
 
 struct hk_physical_device;
@@ -184,7 +184,7 @@ nir_shader *hk_nir_mesh_rast(const nir_shader *mesh,
  * axis point. HK_APPLE9_OUTPUT_COMPONENTS matches the advertised output limit.
  */
 #define HK_APPLE9_STIPPLE_COMPONENTS 5
-#define HK_APPLE9_OUTPUT_COMPONENTS (AGX_APPLE9_MAX_VARYING_COMPONENTS - 2)
+#define HK_APPLE9_OUTPUT_COMPONENTS  (AGX_APPLE9_MAX_VARYING_COMPONENTS - 2)
 
 struct hk_apple9_stipple_slots {
    unsigned start, axis;
@@ -488,8 +488,7 @@ struct vk_graphics_pipeline_state;
 VkResult hk_apple9_resolve_graphics(
    struct hk_device *dev, struct hk_api_shader *const api[HK_APPLE9_GFX_STAGES],
    const struct vk_graphics_pipeline_state *state,
-   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES],
-   bool fs_statistics);
+   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES], bool fs_statistics);
 
 void hk_apple9_precompile_init(struct hk_device *dev);
 void hk_apple9_precompile_finish(struct hk_device *dev);
@@ -504,7 +503,8 @@ void hk_apple9_variants_finish(struct hk_device *dev);
 void hk_apple9_bodies_finish(struct hk_device *dev);
 
 bool hk_apple9_lower_sparse_residency(nir_shader *nir);
-bool hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault, bool apple9);
+bool hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault,
+                                   bool apple9);
 
 bool hk_apple9_native_store_shader(const nir_shader *nir);
 
@@ -656,12 +656,10 @@ hk_buffer_addr_format(VkPipelineRobustnessBufferBehaviorEXT robustness)
 bool hk_lower_uvs_index(nir_shader *s, mesa_shader_stage sw_stage,
                         unsigned nr_vbos);
 
-bool
-hk_nir_lower_descriptors(nir_shader *nir,
-                         const struct vk_pipeline_robustness_state *rs,
-                         uint32_t set_layout_count,
-                         struct vk_descriptor_set_layout *const *set_layouts,
-                         bool root_uniform);
+bool hk_nir_lower_descriptors(
+   nir_shader *nir, const struct vk_pipeline_robustness_state *rs,
+   uint32_t set_layout_count,
+   struct vk_descriptor_set_layout *const *set_layouts, bool root_uniform);
 
 VkResult hk_compile_shader(struct hk_device *dev,
                            struct vk_shader_compile_info *info,
@@ -721,5 +719,5 @@ struct hk_api_shader *hk_meta_shader(struct hk_device *dev,
                                      size_t data_size);
 
 VkResult hk_apple9_create_null_fs(struct hk_device *dev,
-   const VkAllocationCallbacks *alloc, bool sample_mask,
-   struct hk_api_shader **out);
+                                  const VkAllocationCallbacks *alloc,
+                                  bool sample_mask, struct hk_api_shader **out);

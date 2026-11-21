@@ -9,8 +9,8 @@
 #include "agx_abi.h"
 #include "agx_nir_texture.h"
 #include "hk_cmd_buffer.h"
-#include "hk_descriptor_set.h"
 #include "hk_descriptor_buffer.h"
+#include "hk_descriptor_set.h"
 #include "hk_descriptor_set_layout.h"
 #include "hk_shader.h"
 
@@ -80,19 +80,20 @@ lower_load_constant(nir_builder *b, nir_intrinsic_instr *load,
     * The driver always uploads this root word, even when the shader does
     * not enter the branch using its table, so fetching it can speculate.
     */
-   nir_def *addr = ctx->root_uniform
-      ? nir_load_ubo(b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, slot),
-                     .align_mul = 8, .range_base = slot, .range = 8,
-                     .access = ACCESS_CAN_SPECULATE)
-      : load_root(b, 1, 64, nir_imm_int(b, slot), 8);
-   nir_def *offset = nir_iadd_imm(b, load->src[0].ssa,
-                                 nir_intrinsic_base(load));
+   nir_def *addr =
+      ctx->root_uniform
+         ? nir_load_ubo(b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, slot),
+                        .align_mul = 8, .range_base = slot, .range = 8,
+                        .access = ACCESS_CAN_SPECULATE)
+         : load_root(b, 1, 64, nir_imm_int(b, slot), 8);
+   nir_def *offset =
+      nir_iadd_imm(b, load->src[0].ssa, nir_intrinsic_base(load));
 
    unsigned bytes = load->def.num_components * load->def.bit_size / 8;
    assert(bytes <= b->shader->constant_data_size);
    unsigned align = nir_intrinsic_align_mul(load);
-   unsigned align_offset = (nir_intrinsic_align_offset(load) +
-                            nir_intrinsic_base(load)) % align;
+   unsigned align_offset =
+      (nir_intrinsic_align_offset(load) + nir_intrinsic_base(load)) % align;
    unsigned last = b->shader->constant_data_size - bytes;
    assert(last >= align_offset);
    last = align_offset + ((last - align_offset) & ~(align - 1));
@@ -704,12 +705,14 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
    if (g16 && sampler) {
       /* A sampler variable on a combined image sampler binding still reads
        * the binding's sampler part, after the image part. */
-      const VkDescriptorType s_type = get_binding_layout(s_set, s_binding, ctx)->type;
+      const VkDescriptorType s_type =
+         get_binding_layout(s_set, s_binding, ctx)->type;
       sampler_part_B =
          combined ? plane_offset_B + sizeof(struct hk_apple9_image_part)
                   : plane * apple9_record_size(s_type) +
                        (s_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                           ? sizeof(struct hk_apple9_image_part) : 0);
+                           ? sizeof(struct hk_apple9_image_part)
+                           : 0);
    }
 
    /* LOD bias is passed in the descriptor set, rather than embedded into
@@ -720,11 +723,14 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       const bool nudge = tex->backend_flags & HK_TEX_TXL_NUDGE;
       unsigned offs =
          g16 ? sampler_part_B +
-                  (nudge ? offsetof(struct hk_apple9_sampler_part, txl_nudge_fp16)
-                         : offsetof(struct hk_apple9_sampler_part, lod_bias_fp16))
-         : plane_offset_B +
-              (nudge ? offsetof(struct hk_sampled_image_descriptor, txl_nudge_fp16)
-                     : offsetof(struct hk_sampled_image_descriptor, lod_bias_fp16));
+                  (nudge
+                      ? offsetof(struct hk_apple9_sampler_part, txl_nudge_fp16)
+                      : offsetof(struct hk_apple9_sampler_part, lod_bias_fp16))
+             : plane_offset_B +
+                  (nudge ? offsetof(struct hk_sampled_image_descriptor,
+                                    txl_nudge_fp16)
+                         : offsetof(struct hk_sampled_image_descriptor,
+                                    lod_bias_fp16));
 
       nir_def *bias = load_resource_deref_desc(
          b, 1, 16, nir_src_as_deref(nir_src_for_ssa(sampler)), offs, ctx);
@@ -739,10 +745,12 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
 
       const bool fp16 = tex->dest_type == nir_type_float16;
       unsigned offs =
-         g16 ? (fp16 ? offsetof(struct hk_apple9_image_part, min_lod_fp16)
-                     : offsetof(struct hk_apple9_image_part, min_lod_uint16))
-             : (fp16 ? offsetof(struct hk_sampled_image_descriptor, min_lod_fp16)
-                     : offsetof(struct hk_sampled_image_descriptor, min_lod_uint16));
+         g16
+            ? (fp16 ? offsetof(struct hk_apple9_image_part, min_lod_fp16)
+                    : offsetof(struct hk_apple9_image_part, min_lod_uint16))
+            : (fp16 ? offsetof(struct hk_sampled_image_descriptor, min_lod_fp16)
+                    : offsetof(struct hk_sampled_image_descriptor,
+                               min_lod_uint16));
 
       nir_def *min = load_resource_deref_desc(
          b, 1, 16, nir_src_as_deref(nir_src_for_ssa(texture)),
@@ -785,7 +793,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       /* On G16 the handle is the image part's address. */
       unsigned offset_B =
          g16 ? plane_offset_B
-             : plane_offset_B + offsetof(struct hk_sampled_image_descriptor, tex);
+             : plane_offset_B +
+                  offsetof(struct hk_sampled_image_descriptor, tex);
 
       nir_def *handle =
          load_image_handle(b, ctx, nir_src_for_ssa(texture), offset_B);
@@ -814,10 +823,11 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
          get_binding_layout(set, binding, ctx);
       if (ctx->clamp_desc_array_bounds)
          idx = nir_umin(b, idx, nir_imm_int(b, binding_layout->array_size - 1));
-      nir_def *desc_offs_B = nir_iadd_imm(
-         b, nir_amul_imm(b, idx, binding_layout->stride),
-         binding_layout->offset + sampler_part_B);
-      nir_tex_instr_add_src(tex, nir_tex_src_sampler_handle,
+      nir_def *desc_offs_B =
+         nir_iadd_imm(b, nir_amul_imm(b, idx, binding_layout->stride),
+                      binding_layout->offset + sampler_part_B);
+      nir_tex_instr_add_src(
+         tex, nir_tex_src_sampler_handle,
          nir_bindless_sampler_agx(b, desc_offs_B, nir_imm_intN_t(b, 0, 16),
                                   .desc_set = set));
    } else if (sampler != NULL) {

@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_descriptor_set_layout.h"
-#include "hk_descriptor_buffer.h"
 #include "asahi/lib/agx_bo.h"
+#include "hk_descriptor_buffer.h"
 
 #include "hk_descriptor_set.h"
 #include "hk_device.h"
@@ -134,10 +134,9 @@ hk_descriptor_stride_align_for_type(
          assert(type_list->pDescriptorTypes[i] !=
                 VK_DESCRIPTOR_TYPE_MUTABLE_EXT);
          uint32_t desc_stride, desc_align;
-         hk_descriptor_stride_align_for_type(pdev,
-                                             type_list->pDescriptorTypes[i],
-                                             NULL, descriptor_buffer,
-                                             &desc_stride, &desc_align);
+         hk_descriptor_stride_align_for_type(
+            pdev, type_list->pDescriptorTypes[i], NULL, descriptor_buffer,
+            &desc_stride, &desc_align);
          *stride = MAX2(*stride, desc_stride);
          *alignment = MAX2(*alignment, desc_align);
       }
@@ -186,7 +185,8 @@ hk_CreateDescriptorSetLayout(VkDevice device,
    VK_FROM_HANDLE(hk_device, dev, device);
    struct hk_physical_device *pdev = hk_device_physical(dev);
    const bool descriptor_buffer =
-      pCreateInfo->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+      pCreateInfo->flags &
+      VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
 
    uint32_t num_bindings = 0;
    uint32_t immutable_sampler_count = 0;
@@ -277,8 +277,8 @@ hk_CreateDescriptorSetLayout(VkDevice device,
 
       uint32_t stride, alignment;
       hk_descriptor_stride_align_for_type(pdev, binding->descriptorType,
-                                          type_list, descriptor_buffer,
-                                          &stride, &alignment);
+                                          type_list, descriptor_buffer, &stride,
+                                          &alignment);
 
       uint8_t max_plane_count = 1;
 
@@ -381,8 +381,8 @@ hk_CreateDescriptorSetLayout(VkDevice device,
          return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       }
       layout->vk.destroy = hk_descriptor_set_layout_destroy;
-      hk_descriptor_pack_embedded_samplers(dev, layout,
-                                           agx_bo_map(layout->embedded_samplers));
+      hk_descriptor_pack_embedded_samplers(
+         dev, layout, agx_bo_map(layout->embedded_samplers));
    }
 
    *pSetLayout = hk_descriptor_set_layout_to_handle(layout);
@@ -398,7 +398,8 @@ hk_GetDescriptorSetLayoutSupport(
    VK_FROM_HANDLE(hk_device, dev, device);
    struct hk_physical_device *pdev = hk_device_physical(dev);
    const bool descriptor_buffer =
-      pCreateInfo->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+      pCreateInfo->flags &
+      VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
 
    const VkMutableDescriptorTypeCreateInfoEXT *mutable_info =
       vk_find_struct_const(pCreateInfo->pNext,
@@ -419,8 +420,8 @@ hk_GetDescriptorSetLayoutSupport(
 
       uint32_t stride, alignment;
       hk_descriptor_stride_align_for_type(pdev, binding->descriptorType,
-                                          type_list, descriptor_buffer,
-                                          &stride, &alignment);
+                                          type_list, descriptor_buffer, &stride,
+                                          &alignment);
       max_align = MAX2(max_align, alignment);
    }
 
@@ -445,8 +446,8 @@ hk_GetDescriptorSetLayoutSupport(
 
       uint32_t stride, alignment;
       hk_descriptor_stride_align_for_type(pdev, binding->descriptorType,
-                                          type_list, descriptor_buffer,
-                                          &stride, &alignment);
+                                          type_list, descriptor_buffer, &stride,
+                                          &alignment);
 
       if (stride > 0) {
          assert(stride <= UINT16_MAX);

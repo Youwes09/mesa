@@ -110,9 +110,8 @@ agx_nir_lower_line_stipple_gs(nir_shader *gs, bool strip)
    if (!pos_in)
       return false;
 
-   nir_variable *out =
-      nir_variable_create(gs, nir_var_shader_out, glsl_vec4_type(),
-                          "agx_line_stipple");
+   nir_variable *out = nir_variable_create(
+      gs, nir_var_shader_out, glsl_vec4_type(), "agx_line_stipple");
    out->data.location = AGX_LINE_STIPPLE_SLOT;
    out->data.interpolation = INTERP_MODE_FLAT;
    out->data.driver_location = gs->num_outputs++;
@@ -132,7 +131,8 @@ agx_nir_lower_line_stipple_gs(nir_shader *gs, bool strip)
    nir_def *base = nir_imm_float(&b, 0.0);
    if (strip) {
       nir_variable *i = nir_local_variable_create(impl, glsl_uint_type(), NULL);
-      nir_variable *sum = nir_local_variable_create(impl, glsl_float_type(), NULL);
+      nir_variable *sum =
+         nir_local_variable_create(impl, glsl_float_type(), NULL);
       nir_store_var(&b, i, nir_imm_int(&b, 0), 1);
       nir_store_var(&b, sum, nir_imm_float(&b, 0.0), 1);
       nir_def *prim = nir_load_primitive_id(&b);
@@ -199,9 +199,8 @@ agx_nir_lower_line_stipple_fs(nir_shader *fs)
          .io_semantics = (nir_io_semantics){.location = AGX_LINE_STIPPLE_SLOT,
                                             .num_slots = 1});
    } else {
-      nir_variable *in =
-         nir_variable_create(fs, nir_var_shader_in, glsl_vec4_type(),
-                             "agx_line_stipple");
+      nir_variable *in = nir_variable_create(
+         fs, nir_var_shader_in, glsl_vec4_type(), "agx_line_stipple");
       in->data.location = AGX_LINE_STIPPLE_SLOT;
       in->data.interpolation = INTERP_MODE_FLAT;
       in->data.driver_location = fs->num_inputs++;
@@ -214,8 +213,8 @@ agx_nir_lower_line_stipple_fs(nir_shader *fs)
    nir_def *start = agx_nir_line_stipple_snap(
       b, nir_ffma(b, nir_trim_vector(b, line, 2), scale, offset));
 
-   nir_def *pixel = nir_fadd_imm(
-      b, nir_u2f32(b, nir_u2u32(b, nir_load_pixel_coord(b))), 0.5);
+   nir_def *pixel =
+      nir_fadd_imm(b, nir_u2f32(b, nir_u2u32(b, nir_load_pixel_coord(b))), 0.5);
    nir_def *dist = nir_fabs(b, nir_fsub(b, pixel, start));
    nir_def *x_major = nir_fge_imm(b, nir_channel(b, line, 3), 0.5);
    nir_def *along =

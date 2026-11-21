@@ -370,7 +370,8 @@ lower_primitive_id_in(nir_builder *b, nir_intrinsic_instr *intr, void *_)
 {
    if (intr->intrinsic != nir_intrinsic_load_primitive_id &&
        !(intr->intrinsic == nir_intrinsic_load_input &&
-         nir_intrinsic_io_semantics(intr).location == VARYING_SLOT_PRIMITIVE_ID))
+         nir_intrinsic_io_semantics(intr).location ==
+            VARYING_SLOT_PRIMITIVE_ID))
       return false;
 
    b->cursor = nir_before_instr(&intr->instr);
@@ -398,12 +399,11 @@ lower_gs_inputs(nir_builder *b, nir_intrinsic_instr *intr, void *_)
             ? nir_intrinsic_io_semantics(intr).location
             : VARYING_SLOT_POS;
       nir_def *verts = load_vertex_param(b, grid[0]);
-      nir_def *unrolled = nir_iadd(b, nir_imul(b, nir_load_instance_id(b), verts),
-                                   intr->src[0].ssa);
+      nir_def *unrolled = nir_iadd(
+         b, nir_imul(b, nir_load_instance_id(b), verts), intr->src[0].ssa);
       nir_def *vp = nir_load_vertex_param_buffer_poly(b);
-      nir_def *addr =
-         poly_vertex_output_address(b, vp, poly_vertex_outputs(b, vp), unrolled,
-                                    nir_imm_int(b, location));
+      nir_def *addr = poly_vertex_output_address(
+         b, vp, poly_vertex_outputs(b, vp), unrolled, nir_imm_int(b, location));
       nir_def_replace(&intr->def,
                       nir_load_global_constant(b, intr->def.num_components, 32,
                                                addr, .align_mul = 4));
@@ -605,18 +605,22 @@ select_rast_output(nir_builder *b, nir_intrinsic_instr *intr,
             continue;
          nir_def *distance =
             nir_channel(b, nir_load_var(b, output->output_var), c % 4);
-         mask = nir_ior(b, mask, nir_bcsel(b, nir_flt_imm(b, distance, 0.0),
-                                          nir_imm_int(b, BITFIELD_BIT(i)),
-                                          nir_imm_int(b, 0)));
+         mask = nir_ior(
+            b, mask,
+            nir_bcsel(b, nir_flt_imm(b, distance, 0.0),
+                      nir_imm_int(b, BITFIELD_BIT(i)), nir_imm_int(b, 0)));
       }
       for (unsigned v = 0; v < state->vertices_per_primitive; ++v) {
-         nir_def *offset = nir_bcsel(b, nir_i2b(b, state->provoking_last),
-                                      nir_imm_int(b, -(int)v), nir_imm_int(b, v));
+         nir_def *offset =
+            nir_bcsel(b, nir_i2b(b, state->provoking_last),
+                      nir_imm_int(b, -(int)v), nir_imm_int(b, v));
          nir_def *target = nir_iadd(b, state->output_id, offset);
-         nir_def *selected = nir_iand(b, nir_ieq(b, intr->src[0].ssa, target),
+         nir_def *selected = nir_iand(
+            b, nir_ieq(b, intr->src[0].ssa, target),
             nir_ieq_imm(b, state->stream, nir_intrinsic_stream_id(intr)));
          nir_def *orig = nir_load_var(b, state->cull_mask[v]);
-         nir_store_var(b, state->cull_mask[v], nir_bcsel(b, selected, mask, orig), 1);
+         nir_store_var(b, state->cull_mask[v],
+                       nir_bcsel(b, selected, mask, orig), 1);
       }
    }
 
@@ -798,10 +802,12 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
    if (cull_mask && gs->info.cull_distance_array_size) {
       rs.cull_base = gs->info.clip_distance_array_size;
       rs.cull_count = gs->info.cull_distance_array_size;
-      rs.vertices_per_primitive = mesa_vertices_per_prim(gs->info.gs.output_primitive);
+      rs.vertices_per_primitive =
+         mesa_vertices_per_prim(gs->info.gs.output_primitive);
       rs.provoking_last = nir_load_provoking_last(b);
       for (unsigned i = 0; i < rs.vertices_per_primitive; ++i) {
-         rs.cull_mask[i] = nir_local_variable_create(b->impl, glsl_uint_type(), NULL);
+         rs.cull_mask[i] =
+            nir_local_variable_create(b->impl, glsl_uint_type(), NULL);
          nir_store_var(b, rs.cull_mask[i], nir_imm_int(b, 0), 1);
       }
    }
@@ -1004,7 +1010,8 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
    }
 
    if (rs.cull_count)
-      shader->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_CULL_PRIMITIVE);
+      shader->info.outputs_written |=
+         BITFIELD64_BIT(VARYING_SLOT_CULL_PRIMITIVE);
 
    return shader;
 }
@@ -1659,8 +1666,8 @@ poly_nir_lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
  */
 bool
 poly_nir_lower_gs_cull_mask(nir_shader *gs, nir_shader **gs_count,
-                           nir_shader **gs_copy, nir_shader **pre_gs,
-                           struct poly_gs_info *info)
+                            nir_shader **gs_copy, nir_shader **pre_gs,
+                            struct poly_gs_info *info)
 {
    return lower_gs(gs, gs_count, gs_copy, pre_gs, info, true);
 }

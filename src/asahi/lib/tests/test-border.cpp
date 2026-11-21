@@ -2,9 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include "util/format/u_format.h"
 #include "agx_border.h"
 #include "agx_pack.h"
-#include "util/format/u_format.h"
 
 TEST(Border, AstcLdrChannels)
 {
@@ -36,7 +36,10 @@ TEST(Border, FormatChannelOrder)
     * from its inverse. Vulkan B4G4R4A4_PACK16 is pipe A4R4G4B4 (low bits first).
     */
    const uint32_t rgba[] = {
-      fui(1.0f / 15.0f), fui(4.0f / 15.0f), fui(9.0f / 15.0f), fui(14.0f / 15.0f),
+      fui(1.0f / 15.0f),
+      fui(4.0f / 15.0f),
+      fui(9.0f / 15.0f),
+      fui(14.0f / 15.0f),
    };
    const struct {
       enum pipe_format format;
@@ -64,9 +67,8 @@ TEST(Border, StencilReadsRed)
 {
    /* Vulkan passes a stencil border value in R; the S8 swizzle is _X__. */
    const uint32_t rgba[] = {173, 34, 0, 1};
-   const enum pipe_format formats[] = {PIPE_FORMAT_S8_UINT,
-                                       PIPE_FORMAT_X24S8_UINT,
-                                       PIPE_FORMAT_X32_S8X24_UINT};
+   const enum pipe_format formats[] = {
+      PIPE_FORMAT_S8_UINT, PIPE_FORMAT_X24S8_UINT, PIPE_FORMAT_X32_S8X24_UINT};
    for (enum pipe_format format : formats) {
       SCOPED_TRACE(format);
       struct agx_border_packed packed;

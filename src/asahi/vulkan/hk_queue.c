@@ -26,11 +26,11 @@
 #include "hk_image.h"
 #include "hk_physical_device.h"
 
+#include <unistd.h>
 #include <xf86drm.h>
 #include "util/list.h"
 #include "util/macros.h"
 #include "util/u_debug.h"
-#include <unistd.h>
 #include "util/u_dynarray.h"
 #include "vulkan/vulkan_core.h"
 
@@ -59,8 +59,9 @@ queue_submit_empty(struct hk_device *dev, struct hk_queue *queue,
       assert(vk_sync_type_is_drm_syncobj(wait->sync->type));
       const struct vk_drm_syncobj *syncobj = vk_sync_as_drm_syncobj(wait->sync);
 
-      int ret = drmSyncobjTransfer(fd, queue->drm.syncobj, ++queue->drm.timeline_value,
-                                  syncobj->syncobj, wait->wait_value, 0);
+      int ret =
+         drmSyncobjTransfer(fd, queue->drm.syncobj, ++queue->drm.timeline_value,
+                            syncobj->syncobj, wait->wait_value, 0);
       if (ret) {
          result = ret;
          error = errno;
@@ -77,8 +78,9 @@ queue_submit_empty(struct hk_device *dev, struct hk_queue *queue,
       const struct vk_drm_syncobj *syncobj =
          vk_sync_as_drm_syncobj(signal->sync);
 
-      int ret = drmSyncobjTransfer(fd, syncobj->syncobj, signal->signal_value,
-                                  queue->drm.syncobj, queue->drm.timeline_value, 0);
+      int ret =
+         drmSyncobjTransfer(fd, syncobj->syncobj, signal->signal_value,
+                            queue->drm.syncobj, queue->drm.timeline_value, 0);
       if (ret) {
          result = ret;
          error = errno;
@@ -288,9 +290,10 @@ union drm_asahi_cmd {
 static inline unsigned
 max_commands_per_submit(struct hk_device *dev)
 {
-   return HK_PERF(dev, BATCH) ?
-      MAX2(1, MIN2(dev->dev.params.max_commands_per_submission,
-                   DRM_ASAHI_BARRIER_NONE - 1)) : 1;
+   return HK_PERF(dev, BATCH)
+             ? MAX2(1, MIN2(dev->dev.params.max_commands_per_submission,
+                            DRM_ASAHI_BARRIER_NONE - 1))
+             : 1;
 }
 
 /* Virtio external resources of one submission: the implicit-sync (WSI)
@@ -364,9 +367,7 @@ queue_submit_looped(struct hk_device *dev, struct drm_asahi_submit *submit,
       for (unsigned i = 0; i < count; ++i) {
          struct drm_asahi_cmd_header *cmd = (void *)(cmdbuf + offs);
          offs += sizeof(*cmd) + cmd->size;
-
       }
-
 
       bool has_in_syncs = first;
       bool has_out_syncs = last;
@@ -384,8 +385,7 @@ queue_submit_looped(struct hk_device *dev, struct drm_asahi_submit *submit,
 
       /* Each slice lists the external resources: the first waits for the
        * compositor, the last hands its fence to it. */
-      VkResult result =
-         queue_submit_single(dev, &submit_ioctl, queue, extres);
+      VkResult result = queue_submit_single(dev, &submit_ioctl, queue, extres);
       if (result != VK_SUCCESS)
          return result;
    }
@@ -863,8 +863,8 @@ hk_defer_render_wait(struct hk_device *dev, struct hk_queue *queue,
       return false;
    if (s->wait_tiling.engine[HK_SYNC_RENDER] == HK_SYNC_NONE)
       return true;
-   if (cs->pre_raster_reads &
-       (HK_READS_INTERNAL | HK_READS_UNKNOWN | HK_READS_WRITES | HK_READS_IMAGES))
+   if (cs->pre_raster_reads & (HK_READS_INTERNAL | HK_READS_UNKNOWN |
+                               HK_READS_WRITES | HK_READS_IMAGES))
       return false;
    return !((cs->pre_raster_reads & HK_READS_BUFFERS) &&
             queue->render_writer_pending);
@@ -1008,10 +1008,10 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
             last_slice_offset = payload.size;
          }
          const struct hk_sync_dep *wait = &streams[cs->sync_id].wait;
-         struct drm_asahi_cmd_header header =
-            agx_cmd_header(cs->type == HK_CS_CDM,
-                           hk_ioctl_barrier(wait->engine[HK_SYNC_RENDER], slice_vdm),
-                           hk_ioctl_barrier(wait->engine[HK_SYNC_CDM], slice_cdm));
+         struct drm_asahi_cmd_header header = agx_cmd_header(
+            cs->type == HK_CS_CDM,
+            hk_ioctl_barrier(wait->engine[HK_SYNC_RENDER], slice_vdm),
+            hk_ioctl_barrier(wait->engine[HK_SYNC_CDM], slice_cdm));
 
          util_dynarray_append(&payload, header);
 
@@ -1097,8 +1097,8 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
       }
    }
    const struct hk_extres extres = {
-      .count = util_dynarray_num_elements(&extres_list,
-                                          struct asahi_ccmd_submit_res),
+      .count =
+         util_dynarray_num_elements(&extres_list, struct asahi_ccmd_submit_res),
       .res = util_dynarray_begin(&extres_list),
    };
 
@@ -1106,8 +1106,8 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
    if (command_count <= max_commands_per_submit(dev)) {
       result = queue_submit_single(dev, &submit_ioctl, queue, &extres);
    } else {
-      result = queue_submit_looped(dev, &submit_ioctl, command_count,
-                                   queue, &extres);
+      result =
+         queue_submit_looped(dev, &submit_ioctl, command_count, queue, &extres);
    }
 
    util_dynarray_fini(&extres_list);

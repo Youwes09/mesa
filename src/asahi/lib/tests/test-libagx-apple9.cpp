@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <array>
 #include "asahi/compiler/agx_compile_apple9.h"
 #include "compiler/glsl_types.h"
 #include "compiler/nir/nir_serialize.h"
-#include "agx_apple9_libagx.h"
 #include "agx_apple9.h"
-#include <array>
+#include "agx_apple9_libagx.h"
 
 #include <gtest/gtest.h>
 
@@ -23,8 +23,14 @@ unsigned test_libagx_fast_clear_4x(void);
 
 class LibagxApple9 : public testing::TestWithParam<unsigned> {
  protected:
-   static void SetUpTestSuite() { glsl_type_singleton_init_or_ref(); }
-   static void TearDownTestSuite() { glsl_type_singleton_decref(); }
+   static void SetUpTestSuite()
+   {
+      glsl_type_singleton_init_or_ref();
+   }
+   static void TearDownTestSuite()
+   {
+      glsl_type_singleton_decref();
+   }
 };
 
 TEST_P(LibagxApple9, Compiles)
@@ -58,8 +64,14 @@ INSTANTIATE_TEST_SUITE_P(All, LibagxApple9,
 
 class LibagxBlob : public testing::Test {
  protected:
-   static void SetUpTestSuite() { glsl_type_singleton_init_or_ref(); }
-   static void TearDownTestSuite() { glsl_type_singleton_decref(); }
+   static void SetUpTestSuite()
+   {
+      glsl_type_singleton_init_or_ref();
+   }
+   static void TearDownTestSuite()
+   {
+      glsl_type_singleton_decref();
+   }
 };
 
 TEST_F(LibagxBlob, RejectsOldToolBeforeFunctionDecode)
@@ -89,9 +101,9 @@ TEST_F(LibagxBlob, RejectsTrailingFunctionData)
    nir_serialize_function(&serialized,
                           nir_shader_get_entrypoint(nir)->function);
    blob_write_uint32(&serialized, 0xbad);
-   EXPECT_DEATH(agx_apple9_libagx_deserialize(serialized.data, serialized.size,
-                                           NULL),
-                "invalid kernel function stream; rebuild asahi_clc");
+   EXPECT_DEATH(
+      agx_apple9_libagx_deserialize(serialized.data, serialized.size, NULL),
+      "invalid kernel function stream; rebuild asahi_clc");
    blob_finish(&serialized);
    ralloc_free(nir);
 }
@@ -108,17 +120,18 @@ TEST(Apple9Dispatch, PacketFootprints)
    const uint32_t global[] = {3, 5, 7};
    const uint32_t local[] = {1, 1, 1};
    const unsigned sizes[] = {AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE,
-      AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE,
-      AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE};
+                             AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE,
+                             AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE};
    for (unsigned mode = 0; mode < 3; ++mode) {
       std::array<uint8_t, 76> out;
       out.fill(0xa5);
-      bool ok = mode == 0
-         ? agx_apple9_emit_direct_dispatch(out.data() + 16, 0x10000010000ull,
-                                          global, local, &profile, true)
-         : agx_apple9_emit_indirect_dispatch(out.data() + 16, 0x10000010000ull,
-                                            0x200000000ull, local, mode == 2,
-                                            &profile, true);
+      bool ok =
+         mode == 0
+            ? agx_apple9_emit_direct_dispatch(out.data() + 16, 0x10000010000ull,
+                                              global, local, &profile, true)
+            : agx_apple9_emit_indirect_dispatch(
+                 out.data() + 16, 0x10000010000ull, 0x200000000ull, local,
+                 mode == 2, &profile, true);
       ASSERT_TRUE(ok);
       for (unsigned i = 0; i < 16; ++i)
          EXPECT_EQ(out[i], 0xa5);

@@ -174,8 +174,8 @@ libagx_image_texel_address(constant const struct agx_pbe_packed *ptr,
       if (!is_1d)
          offset_B += (uint64_t)coord.y * (d.stride + 4);
       if (is_layered)
-         offset_B += (uint64_t)coord[is_1d ? 1 : 2] *
-                     (d.layer_stride_linear + 0x80);
+         offset_B +=
+            (uint64_t)coord[is_1d ? 1 : 2] * (d.layer_stride_linear + 0x80);
       return return_index ? offset_B / bytes_per_sample_B : d.buffer + offset_B;
    }
 

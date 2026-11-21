@@ -43,9 +43,9 @@ check_pressure(unsigned count, bool banks, bool latency, bool masks)
    }
    if (masks) {
       agx_apple9_block_begin(&p, agx_apple9_block_create(&p));
-      CHECK(agx_apple9_vir_emit_side_effect(
-         &p, AGX_APPLE9_VIR_LOOP_MASK_PUSH, AGX_APPLE9_ENC_LOOP_MASK_PUSH,
-         NULL, 0, 0));
+      CHECK(agx_apple9_vir_emit_side_effect(&p, AGX_APPLE9_VIR_LOOP_MASK_PUSH,
+                                            AGX_APPLE9_ENC_LOOP_MASK_PUSH, NULL,
+                                            0, 0));
    }
    agx_apple9_block_begin(&p, blocks[1]);
    agx_apple9_block_begin(&p, blocks[2]);
@@ -57,9 +57,9 @@ check_pressure(unsigned count, bool banks, bool latency, bool masks)
    }
    if (masks) {
       agx_apple9_block_begin(&p, agx_apple9_block_create(&p));
-      CHECK(agx_apple9_vir_emit_side_effect(
-         &p, AGX_APPLE9_VIR_LOOP_MASK_POP, AGX_APPLE9_ENC_LOOP_MASK_POP,
-         NULL, 0, 0));
+      CHECK(agx_apple9_vir_emit_side_effect(&p, AGX_APPLE9_VIR_LOOP_MASK_POP,
+                                            AGX_APPLE9_ENC_LOOP_MASK_POP, NULL,
+                                            0, 0));
    }
    agx_apple9_block_begin(&p, blocks[3]);
    uint32_t hash = phi[0];

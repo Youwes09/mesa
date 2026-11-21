@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_image.h"
-#include "hk_feedback.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_apple9.h"
 #include "drm-uapi/drm_fourcc.h"
@@ -16,6 +15,7 @@
 #include "util/u_math.h"
 #include "vulkan/vulkan_core.h"
 #include <sys/mman.h>
+#include "hk_feedback.h"
 
 #include "agx_bo.h"
 #include "hk_buffer.h"
@@ -108,7 +108,8 @@ hk_get_image_plane_format_features(struct hk_physical_device *pdev,
 
    if (agx_is_apple9(&pdev->dev)) {
       /* Image atomics address device memory, which has FP32 addition. */
-      if (p_format == PIPE_FORMAT_R32_FLOAT && tiling == VK_IMAGE_TILING_OPTIMAL)
+      if (p_format == PIPE_FORMAT_R32_FLOAT &&
+          tiling == VK_IMAGE_TILING_OPTIMAL)
          features |= VK_FORMAT_FEATURE_2_STORAGE_IMAGE_ATOMIC_BIT;
       /* As in the native GL path, shared-exponent color export is not yet
        * implemented. Sampling, storage and transfer access remain available.
@@ -330,9 +331,9 @@ hk_can_use_compressed_modifier(const struct agx_device *dev, VkFormat format,
                                unsigned samples, VkImageCreateFlags flags,
                                VkImageUsageFlags usage, const void *pNext)
 {
-   return hk_can_compress(dev, format, plane, width, height, samples, flags,
-                          usage & ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT,
-                          pNext);
+   return hk_can_compress(
+      dev, format, plane, width, height, samples, flags,
+      usage & ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT, pNext);
 }
 
 bool
@@ -427,18 +428,17 @@ hk_GetPhysicalDeviceImageFormatProperties2(
     */
    if (pImageFormatInfo->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       const VkPhysicalDeviceImageDrmFormatModifierInfoEXT *mod_info =
-         vk_find_struct_const(pImageFormatInfo->pNext,
-                              PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT);
-      if (mod_info &&
-          mod_info->drmFormatModifier == DRM_FORMAT_MOD_APPLE_GPU_TILED_COMPRESSED) {
+         vk_find_struct_const(
+            pImageFormatInfo->pNext,
+            PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT);
+      if (mod_info && mod_info->drmFormatModifier ==
+                         DRM_FORMAT_MOD_APPLE_GPU_TILED_COMPRESSED) {
          unsigned planes = vk_format_get_plane_count(pImageFormatInfo->format);
          for (unsigned plane = 0; plane < planes; ++plane) {
-            if (!hk_can_use_compressed_modifier(&pdev->dev,
-                                                pImageFormatInfo->format, plane,
-                                                64, 64, 1,
-                                                pImageFormatInfo->flags,
-                                                pImageFormatInfo->usage,
-                                                pImageFormatInfo->pNext))
+            if (!hk_can_use_compressed_modifier(
+                   &pdev->dev, pImageFormatInfo->format, plane, 64, 64, 1,
+                   pImageFormatInfo->flags, pImageFormatInfo->usage,
+                   pImageFormatInfo->pNext))
                return VK_ERROR_FORMAT_NOT_SUPPORTED;
          }
       }
@@ -506,10 +506,10 @@ hk_GetPhysicalDeviceImageFormatProperties2(
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
    }
 
-   const uint32_t max_dim = agx_is_apple9(&pdev->dev) &&
-                                   pImageFormatInfo->type == VK_IMAGE_TYPE_3D
-                              ? AGX_APPLE9_MAX_3D_TEXTURE_DIMENSION
-                              : 16384;
+   const uint32_t max_dim =
+      agx_is_apple9(&pdev->dev) && pImageFormatInfo->type == VK_IMAGE_TYPE_3D
+         ? AGX_APPLE9_MAX_3D_TEXTURE_DIMENSION
+         : 16384;
    VkExtent3D maxExtent;
    uint32_t maxArraySize;
    switch (pImageFormatInfo->type) {
@@ -880,11 +880,10 @@ choose_drm_format_mod(struct hk_device *dev, uint8_t plane_count,
    for (uint8_t plane = 0; plane < plane_count; plane++) {
       if (!hk_can_compress_create_info(dev, plane, info))
          can_compress = false;
-      if (!hk_can_use_compressed_modifier(&dev->dev, info->format, plane,
-                                          info->extent.width,
-                                          info->extent.height, info->samples,
-                                          info->flags, info->usage,
-                                          info->pNext))
+      if (!hk_can_use_compressed_modifier(
+             &dev->dev, info->format, plane, info->extent.width,
+             info->extent.height, info->samples, info->flags, info->usage,
+             info->pNext))
          can_use_compressed = false;
    }
 
@@ -1102,9 +1101,9 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
       plane->va =
          agx_va_alloc(&dev->dev, size, AIL_PAGESIZE, va_flags, replay_va);
       if (!plane->va) {
-         return vk_errorf(dev, replay_va
-                                  ? VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS
-                                  : VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         return vk_errorf(dev,
+                          replay_va ? VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS
+                                    : VK_ERROR_OUT_OF_DEVICE_MEMORY,
                           "Sparse VMA allocation failed");
       }
       plane->addr = plane->va->addr;
@@ -1122,20 +1121,21 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
    if (sparse_resident && agx_is_apple9(&dev->dev)) {
       /* Unbound pages read the scratch page. Every page starts unbound. */
       const struct ail_layout *layout = &plane->layout;
-      size_t size_B = sizeof(struct hk_apple9_residency) +
-                      align(ail_bytes_to_pages(layout->layer_stride_B) *
-                               layout->depth_px, 4);
+      size_t size_B =
+         sizeof(struct hk_apple9_residency) +
+         align(ail_bytes_to_pages(layout->layer_stride_B) * layout->depth_px,
+               4);
       enum agx_va_flags va_flags =
-         capture_replay
-            ? AGX_VA_REPLAY | (replay_residency ? AGX_VA_FIXED : 0)
-            : 0;
+         capture_replay ? AGX_VA_REPLAY | (replay_residency ? AGX_VA_FIXED : 0)
+                        : 0;
       plane->apple9_residency =
          agx_bo_create_va(&dev->dev, size_B, 0, 0, va_flags, replay_residency,
                           "Apple9 residency");
       if (!plane->apple9_residency) {
-         return vk_errorf(dev, replay_residency
-                                  ? VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS
-                                  : VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         return vk_errorf(dev,
+                          replay_residency
+                             ? VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS
+                             : VK_ERROR_OUT_OF_DEVICE_MEMORY,
                           "Residency table allocation failed");
       }
 
@@ -1610,7 +1610,7 @@ hk_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
       } else {
          for (unsigned plane = 0; plane < image->plane_count; plane++) {
             hk_image_plane_bind(dev, &image->planes[plane], mem,
-                             pBindInfos[i].memoryOffset, &offset_B);
+                                pBindInfos[i].memoryOffset, &offset_B);
          }
       }
 

@@ -6,8 +6,8 @@
  */
 #include "hk_cmd_buffer.h"
 #include <inttypes.h>
-#include "util/simple_mtx.h"
 #include "asahi/lib/agx_apple9.h"
+#include "util/simple_mtx.h"
 
 #include "agx_abi.h"
 #include "agx_bo.h"
@@ -33,11 +33,11 @@
 #include "vk_pipeline_layout.h"
 #include "vk_synchronization.h"
 
-#include "util/list.h"
 #include "util/hash_table.h"
-#include "util/u_debug.h"
-#include "util/ralloc.h"
+#include "util/list.h"
 #include "util/macros.h"
+#include "util/ralloc.h"
+#include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "vulkan/vulkan_core.h"
 
@@ -60,9 +60,9 @@ hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd)
 {
    assert(cmd->vk.state == MESA_VK_COMMAND_BUFFER_STATE_INITIAL);
    struct util_dynarray *arrays[] = {
-      &cmd->large_bos, &cmd->implicit_sync_res, &cmd->query_adds,
-      &cmd->query_writes, &cmd->occlusion_accum, &cmd->sync_events,
-      &cmd->sync_remap, &cmd->sync_first_event, &cmd->empty_barriers,
+      &cmd->large_bos,    &cmd->implicit_sync_res, &cmd->query_adds,
+      &cmd->query_writes, &cmd->occlusion_accum,   &cmd->sync_events,
+      &cmd->sync_remap,   &cmd->sync_first_event,  &cmd->empty_barriers,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(arrays); ++i)
       util_dynarray_fini(arrays[i]);
@@ -296,7 +296,7 @@ hk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
 
 VKAPI_ATTR VkResult VKAPI_CALL
 hk_ResetCommandBuffer(VkCommandBuffer commandBuffer,
-                       VkCommandBufferResetFlags flags)
+                      VkCommandBufferResetFlags flags)
 {
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
 
@@ -318,7 +318,8 @@ static VkResult
 hk_cmd_buffer_alloc_bo(struct hk_cmd_buffer *cmd, enum hk_cmd_pool_kind kind,
                        struct hk_cmd_bo **bo_out)
 {
-   VkResult result = hk_cmd_pool_alloc_bo(hk_cmd_buffer_pool(cmd), kind, bo_out);
+   VkResult result =
+      hk_cmd_pool_alloc_bo(hk_cmd_buffer_pool(cmd), kind, bo_out);
    if (result != VK_SUCCESS)
       return result;
 
@@ -338,9 +339,9 @@ hk_pool_alloc_internal(struct hk_cmd_buffer *cmd, uint32_t size,
     * for statically allocated vertex output buffers with geometry shaders.
     */
    if (size > HK_CMD_BO_SIZE) {
-      struct agx_bo *bo =
-         agx_bo_create(&dev->dev, size, alignment,
-                       hk_cmd_pool_bo_flags(dev, kind), "Large pool allocation");
+      struct agx_bo *bo = agx_bo_create(&dev->dev, size, alignment,
+                                        hk_cmd_pool_bo_flags(dev, kind),
+                                        "Large pool allocation");
       if (!bo) {
          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
          return (struct agx_ptr){0};
@@ -376,10 +377,10 @@ hk_pool_alloc_internal(struct hk_cmd_buffer *cmd, uint32_t size,
    }
 
    hk_upload_keep_chunk(uploader->chunks, (struct hk_upload_chunk){
-      .map = bo->map,
-      .base = bo->bo->va->addr,
-      .offset = size,
-   });
+                                             .map = bo->map,
+                                             .base = bo->bo->va->addr,
+                                             .offset = size,
+                                          });
 
    return (struct agx_ptr){
       .gpu = bo->bo->va->addr,
@@ -477,7 +478,6 @@ hk_EndCommandBuffer(VkCommandBuffer commandBuffer)
    if (vk_command_buffer_has_error(&cmd->vk))
       return vk_command_buffer_end(&cmd->vk);
 
-
    hk_cmd_render_merge_flush(cmd);
    assert(cmd->current_cs.gfx == NULL && cmd->current_cs.pre_gfx == NULL &&
           "must end rendering before ending the command buffer");
@@ -536,9 +536,9 @@ hk_cmd_sync_work(struct hk_cmd_buffer *cmd, struct hk_cs *cs, unsigned stages)
    }
 
    struct hk_sync_event event = {.stream = cs->sync_id, .dst = stages};
-   hk_sync_index_event(cmd->sync_first_event.data, cs->sync_id,
-                       util_dynarray_num_elements(&cmd->sync_events,
-                                                   struct hk_sync_event));
+   hk_sync_index_event(
+      cmd->sync_first_event.data, cs->sync_id,
+      util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event));
    util_dynarray_append(&cmd->sync_events, event);
 }
 
@@ -719,7 +719,8 @@ hk_image_overlaps(const struct hk_image *a, const struct hk_image *b)
  * end it first (hk_apple9_prepare_draw). A barrier from R's shader stages
  * also orders R's reads before later writes, so it ends R instead. */
 static bool
-hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
+hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd,
+                              VkPipelineStageFlags2 src,
                               VkAccessFlags2 dst_access)
 {
    const struct hk_image *image = cmd->barrier_image;
@@ -736,7 +737,8 @@ hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 s
       VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
       VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-   const VkAccessFlags2 ds_read_access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+   const VkAccessFlags2 ds_read_access =
+      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
       VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT |
       VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
    bool read_only_ds = false;
@@ -749,7 +751,8 @@ hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 s
    }
    if (read_only_ds && src && !(src & ~ds_read_stages) && dst_access &&
        !(dst_access & ~ds_read_access) &&
-       !(cmd->merge_feedback && (src & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT)))
+       !(cmd->merge_feedback &&
+         (src & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT)))
       return true;
 
    /* The barrier's execution scope covers all earlier work in its source
@@ -792,9 +795,9 @@ hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 s
 }
 
 void
-hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
-                    VkPipelineStageFlags2 src, VkPipelineStageFlags2 dst,
-                    VkAccessFlags2 src_access, VkAccessFlags2 dst_access)
+hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
+                    VkPipelineStageFlags2 dst, VkAccessFlags2 src_access,
+                    VkAccessFlags2 dst_access)
 {
    /* No synchronization may come between a suspended render pass and the
     * one resuming it; if any does, end the render as before. */
@@ -809,20 +812,23 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
        * an in-tile order, for colour as well as depth/stencil.
        */
       bool input_read = hk_reads_input_attachments(dst, dst_access);
-      if (!input_read && ((!cmd->in_meta &&
-           hk_render_merge_barrier(src, dst, src_access, dst_access)) ||
-          (image_barrier = hk_render_merge_image_barrier(cmd, src, dst_access)) ||
-          (unrelated = !cmd->in_meta &&
-                       !(xsrc & cmd->merge_reach)))) {
+      if (!input_read &&
+          ((!cmd->in_meta &&
+            hk_render_merge_barrier(src, dst, src_access, dst_access)) ||
+           (image_barrier =
+               hk_render_merge_image_barrier(cmd, src, dst_access)) ||
+           (unrelated = !cmd->in_meta && !(xsrc & cmd->merge_reach)))) {
          cmd->merge_cs->merge_hoisted |= image_barrier;
          if (!image_barrier && !unrelated) {
             assert(hk_sync_stage_mask(src, true) ==
-                   hk_sync_stage_mask(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, true));
+                   hk_sync_stage_mask(
+                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, true));
             assert(hk_sync_stage_mask(dst, false) == HK_SYNC_FRAGMENT);
             cmd->merge_cs->merge_attachment_barrier = true;
          }
          if (image_barrier)
-            perf_debug(cmd, "Hoisting an image barrier ahead of the open render");
+            perf_debug(cmd,
+                       "Hoisting an image barrier ahead of the open render");
          /* The execution scope of a barrier with colour-output or test
           * sources covers the render's own passes; only when they cannot
           * read their attachments as textures does it order nothing of
@@ -878,8 +884,8 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
    src_access = vk_filter_src_access_flags2(src, src_access);
    dst_access = vk_filter_dst_access_flags2(dst, dst_access);
 
-   unsigned ordered = hk_sync_ordered_stages(src_stages, dst_stages,
-                                             src_access, dst_access);
+   unsigned ordered =
+      hk_sync_ordered_stages(src_stages, dst_stages, src_access, dst_access);
    const unsigned compute = HK_SYNC_COMPUTE | HK_SYNC_DISPATCH_INDIRECT;
    struct hk_cs *cs = cmd->current_cs.cs;
    if (!cmd->sync_fallback && cs && ordered && !(ordered & ~compute) &&
@@ -891,13 +897,13 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
        */
       struct hk_device *dev = hk_cmd_buffer_device(cmd);
       hk_ensure_cs_has_space(cmd, cs, AGX_CDM_BARRIER_LENGTH);
-      if (agx_is_apple9(&dev->dev) &&
-          !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
+      if (agx_is_apple9(&dev->dev) && !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
          hk_cdm_compute_barrier(dev, cs);
       else
          hk_cdm_cache_flush(dev, cs);
    } else if (cmd->sync_fallback ||
-       (cmd->current_cs.cs && (cmd->current_cs.cs->sync_stages & ordered))) {
+              (cmd->current_cs.cs &&
+               (cmd->current_cs.cs->sync_stages & ordered))) {
       hk_cmd_buffer_end_compute(cmd);
    }
 
@@ -907,7 +913,9 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd,
    }
 
    struct hk_sync_event event = {
-      .stream = HK_SYNC_NONE, .src = src_stages, .dst = dst_stages,
+      .stream = HK_SYNC_NONE,
+      .src = src_stages,
+      .dst = dst_stages,
    };
    util_dynarray_append(&cmd->sync_events, event);
 }
@@ -932,11 +940,11 @@ hk_cmd_empty_barriers_flush(struct hk_cmd_buffer *cmd, bool merge)
       cmd->merge_cs = cmd->current_cs.gfx = NULL;
    }
    util_dynarray_foreach(&pending, struct hk_empty_barrier, b) {
-      unsigned first = util_dynarray_num_elements(&cmd->sync_events,
-                                                  struct hk_sync_event);
+      unsigned first =
+         util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event);
       hk_cmd_sync_barrier(cmd, b->src, b->dst, b->src_access, b->dst_access);
-      util_dynarray_top_ptr(&cmd->sync_events,
-                            struct hk_sync_event)->barrier_group = b->group;
+      util_dynarray_top_ptr(&cmd->sync_events, struct hk_sync_event)
+         ->barrier_group = b->group;
       if (merge)
          hk_render_merge_place_events(cmd, first);
    }
@@ -954,7 +962,8 @@ hk_defer_empty_barriers(struct hk_cmd_buffer *cmd, const VkDependencyInfo *info)
 {
    /* The successor would consume the clears in tiles, where an input
     * attachment read (an image read) cannot see them. */
-#define READS_INPUT(b) hk_reads_input_attachments((b).dstStageMask, (b).dstAccessMask)
+#define READS_INPUT(b)                                                         \
+   hk_reads_input_attachments((b).dstStageMask, (b).dstAccessMask)
    for (unsigned i = 0; i < info->memoryBarrierCount; ++i)
       if (READS_INPUT(info->pMemoryBarriers[i]))
          return false;
@@ -966,9 +975,9 @@ hk_defer_empty_barriers(struct hk_cmd_buffer *cmd, const VkDependencyInfo *info)
          return false;
 #undef READS_INPUT
 
-   if (!cmd->merge_cs || !cmd->merge_empty ||
-       cmd->merge_suspended || cmd->merge_feedback || cmd->merge_pre_cs ||
-       cmd->in_meta || cmd->sync_fallback ||
+   if (!cmd->merge_cs || !cmd->merge_empty || cmd->merge_suspended ||
+       cmd->merge_feedback || cmd->merge_pre_cs || cmd->in_meta ||
+       cmd->sync_fallback ||
        (info->dependencyFlags & ~VK_DEPENDENCY_BY_REGION_BIT))
       return false;
    /* The clear must not be visible through a distinct, consistently
@@ -976,10 +985,11 @@ hk_defer_empty_barriers(struct hk_cmd_buffer *cmd, const VkDependencyInfo *info)
     * without ALIAS cannot expose their cleared contents that way. */
    for (unsigned i = 0; i < HK_MAX_RTS + 2; ++i) {
       const struct vk_image *image = cmd->merge_key.image[i];
-      if (image && (image->tiling != VK_IMAGE_TILING_OPTIMAL ||
-                    image->external_handle_types ||
-                    (image->create_flags & (VK_IMAGE_CREATE_ALIAS_BIT |
-                                            VK_IMAGE_CREATE_SPARSE_BINDING_BIT))))
+      if (image &&
+          (image->tiling != VK_IMAGE_TILING_OPTIMAL ||
+           image->external_handle_types ||
+           (image->create_flags &
+            (VK_IMAGE_CREATE_ALIAS_BIT | VK_IMAGE_CREATE_SPARSE_BINDING_BIT))))
          return false;
    }
    for (unsigned i = 0; i < info->bufferMemoryBarrierCount; ++i) {
@@ -994,13 +1004,16 @@ hk_defer_empty_barriers(struct hk_cmd_buffer *cmd, const VkDependencyInfo *info)
    }
    uint32_t group = ++cmd->sync_next_group;
    assert(group != 0);
-#define DEFER(b) do {                                                         \
-      struct hk_empty_barrier pending = {                                    \
-         .src = (b).srcStageMask, .dst = (b).dstStageMask,                      \
-         .src_access = (b).srcAccessMask, .dst_access = (b).dstAccessMask,       \
-         .group = group,                                                     \
-      };                                                                     \
-      util_dynarray_append(&cmd->empty_barriers, pending);                    \
+#define DEFER(b)                                                               \
+   do {                                                                        \
+      struct hk_empty_barrier pending = {                                      \
+         .src = (b).srcStageMask,                                              \
+         .dst = (b).dstStageMask,                                              \
+         .src_access = (b).srcAccessMask,                                      \
+         .dst_access = (b).dstAccessMask,                                      \
+         .group = group,                                                       \
+      };                                                                       \
+      util_dynarray_append(&cmd->empty_barriers, pending);                     \
    } while (0)
    for (unsigned i = 0; i < info->memoryBarrierCount; ++i)
       DEFER(info->pMemoryBarriers[i]);
@@ -1035,18 +1048,20 @@ hk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
     */
    uint32_t group = ++cmd->sync_next_group;
    assert(group != 0);
-#define BARRIER(b) do {                                                        \
-      hk_cmd_sync_barrier(cmd, (b).srcStageMask, (b).dstStageMask,                \
-                           (b).srcAccessMask, (b).dstAccessMask);               \
-      util_dynarray_top_ptr(&cmd->sync_events,                                 \
-                            struct hk_sync_event)->barrier_group = group;      \
+#define BARRIER(b)                                                             \
+   do {                                                                        \
+      hk_cmd_sync_barrier(cmd, (b).srcStageMask, (b).dstStageMask,             \
+                          (b).srcAccessMask, (b).dstAccessMask);               \
+      util_dynarray_top_ptr(&cmd->sync_events, struct hk_sync_event)           \
+         ->barrier_group = group;                                              \
    } while (0)
    for (unsigned i = 0; i < pDependencyInfo->memoryBarrierCount; ++i)
       BARRIER(pDependencyInfo->pMemoryBarriers[i]);
    for (unsigned i = 0; i < pDependencyInfo->bufferMemoryBarrierCount; ++i)
       BARRIER(pDependencyInfo->pBufferMemoryBarriers[i]);
    for (unsigned i = 0; i < pDependencyInfo->imageMemoryBarrierCount; ++i) {
-      const VkImageMemoryBarrier2 *b = &pDependencyInfo->pImageMemoryBarriers[i];
+      const VkImageMemoryBarrier2 *b =
+         &pDependencyInfo->pImageMemoryBarriers[i];
       cmd->barrier_image = hk_image_from_handle(b->image);
       cmd->barrier_qfot = b->srcQueueFamilyIndex != b->dstQueueFamilyIndex;
       BARRIER(*b);
@@ -1071,7 +1086,8 @@ hk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd, uint32_t stage_count,
       } else {
          if (stages[i] < HK_APPLE9_GFX_STAGES)
             cmd->state.gfx.apple9_api[stages[i]] = shaders[i] ? shader : NULL;
-         hk_cmd_bind_graphics_shader(cmd, stages[i], shaders[i] ? shader : NULL);
+         hk_cmd_bind_graphics_shader(cmd, stages[i],
+                                     shaders[i] ? shader : NULL);
       }
    }
 }
@@ -1172,15 +1188,17 @@ hk_CmdBindDescriptorSets2KHR(
 }
 
 VKAPI_ATTR void VKAPI_CALL
-hk_CmdBindDescriptorBuffersEXT(VkCommandBuffer commandBuffer,
-                               uint32_t bufferCount,
-                               const VkDescriptorBufferBindingInfoEXT *pBindingInfos)
+hk_CmdBindDescriptorBuffersEXT(
+   VkCommandBuffer commandBuffer, uint32_t bufferCount,
+   const VkDescriptorBufferBindingInfoEXT *pBindingInfos)
 {
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    assert(bufferCount <= HK_MAX_SETS);
    for (uint32_t i = 0; i < bufferCount; ++i) {
-      cmd->state.gfx.descriptors.descriptor_buffers[i] = pBindingInfos[i].address;
-      cmd->state.cs.descriptors.descriptor_buffers[i] = pBindingInfos[i].address;
+      cmd->state.gfx.descriptors.descriptor_buffers[i] =
+         pBindingInfos[i].address;
+      cmd->state.cs.descriptors.descriptor_buffers[i] =
+         pBindingInfos[i].address;
    }
 }
 
@@ -1333,14 +1351,13 @@ hk_cmd_buffer_flush_push_descriptors(struct hk_cmd_buffer *cmd,
       /* G16 shaders address image descriptors within the USC aperture. */
       uint64_t push_set_addr = 0;
       if (size && agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
-         struct agx_ptr t =
-            hk_pool_usc_alloc(cmd, size, HK_MIN_UBO_ALIGNMENT);
+         struct agx_ptr t = hk_pool_usc_alloc(cmd, size, HK_MIN_UBO_ALIGNMENT);
          if (t.cpu)
             memcpy(t.cpu, push_set->data, size);
          push_set_addr = t.gpu;
       } else if (size) {
-         push_set_addr = hk_pool_upload(
-            cmd, push_set->data, size, HK_MIN_UBO_ALIGNMENT);
+         push_set_addr =
+            hk_pool_upload(cmd, push_set->data, size, HK_MIN_UBO_ALIGNMENT);
       }
       if (size && !push_set_addr)
          return;
@@ -1403,14 +1420,14 @@ hk_cmd_push_constant_mask(const struct hk_cmd_buffer *cmd,
 
 static bool
 hk_root_equal(const struct hk_root_descriptor_table *a,
-               const struct hk_root_descriptor_table *b,
-               size_t size, uint64_t push_mask)
+              const struct hk_root_descriptor_table *b, size_t size,
+              uint64_t push_mask)
 {
    const unsigned prefix = hk_root_descriptor_offset(push);
    const unsigned tail = hk_root_descriptor_offset(set_dynamic_buffer_start);
    if (memcmp(a, b, prefix) ||
-       (size > tail && memcmp((const char *)a + tail,
-                              (const char *)b + tail, size - tail)))
+       (size > tail &&
+        memcmp((const char *)a + tail, (const char *)b + tail, size - tail)))
       return false;
 
    while (push_mask) {
@@ -1424,8 +1441,8 @@ hk_root_equal(const struct hk_root_descriptor_table *a,
 
 static void
 hk_root_copy(struct hk_root_descriptor_table *dst,
-              const struct hk_root_descriptor_table *src,
-              size_t size, uint64_t push_mask)
+             const struct hk_root_descriptor_table *src, size_t size,
+             uint64_t push_mask)
 {
    const unsigned prefix = hk_root_descriptor_offset(push);
    const unsigned tail = hk_root_descriptor_offset(set_dynamic_buffer_start);
@@ -1671,8 +1688,8 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
 
    if (prog->apple9) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
-      hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile, grid, args, NULL,
-                         NULL);
+      hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
+                         grid, args, NULL, NULL);
       return;
    }
 
@@ -1862,7 +1879,8 @@ hk_optimize_empty_vdm(struct hk_cmd_buffer *cmd)
     * replaced by equivalent other operations.
     */
    list_del(&cs->node);
-   *util_dynarray_element(&cmd->sync_remap, uint32_t, cs->sync_id) = HK_SYNC_NONE;
+   *util_dynarray_element(&cmd->sync_remap, uint32_t, cs->sync_id) =
+      HK_SYNC_NONE;
    hk_sync_remap_first_event(cmd->sync_first_event.data, cs->sync_id,
                              HK_SYNC_NONE);
    hk_cs_destroy(cs);

@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "util/u_debug.h"
 #include "util/bitset.h"
 #include "util/macros.h"
 #include "util/sparse_bitset.h"
+#include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
@@ -17,8 +17,6 @@
 #include "agx_debug.h"
 #include "agx_opcodes.h"
 #include "shader_enums.h"
-
-
 
 /* SSA-based register allocator */
 struct phi_web_node {
@@ -182,9 +180,9 @@ struct phi_web_members {
 
 static void
 phi_web_union_noninterfering(struct phi_web_node *web,
-                            struct phi_web_members *members,
-                            struct u_sparse_bitset *interference,
-                            unsigned nr_ssa, unsigned x, unsigned y)
+                             struct phi_web_members *members,
+                             struct u_sparse_bitset *interference,
+                             unsigned nr_ssa, unsigned x, unsigned y)
 {
    x = phi_web_find(web, x);
    y = phi_web_find(web, y);
@@ -329,7 +327,9 @@ reserved_size(agx_context *ctx)
    if (ctx->ra_target.reserved_registers ||
        ctx->ra_target.spill_reserved_registers)
       return MAX2(ctx->ra_target.reserved_registers,
-                  ctx->has_spill_pcopy_reserved ? ctx->ra_target.spill_reserved_registers : 0);
+                  ctx->has_spill_pcopy_reserved
+                     ? ctx->ra_target.spill_reserved_registers
+                     : 0);
    if (ctx->has_spill_pcopy_reserved)
       return 8;
    else if (ctx->any_quad_divergent_shuffle)
@@ -489,16 +489,15 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
           */
          if (I->reg_constraints) {
             for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
-               agx_index index = o < I->nr_dests
-                                    ? I->dest[o]
-                                    : I->src[o - I->nr_dests];
+               agx_index index =
+                  o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
                if (index.type != AGX_INDEX_NORMAL || index.memory)
                   continue;
                struct agx_reg_constraint c = I->reg_constraints[o];
                unsigned width =
                   util_next_power_of_two(agx_index_size_16(index));
                unsigned first = ALIGN_POT(MAX2(c.min, reserved_size(ctx)),
-                                         MAX2(width, c.align));
+                                          MAX2(width, c.align));
                max_demand = MAX2(max_demand, first + width);
             }
          }
@@ -606,7 +605,8 @@ add_reg_preference(struct ra_ctx *rctx, unsigned reg, uint64_t edge,
    rctx->affinity_total += affinity;
    /* Spill-memory locations lie beyond the GPR index; search those. */
    if (reg >= AGX_NUM_REGS) {
-      util_dynarray_foreach(rctx->reg_preferences, struct phi_reg_preference, p) {
+      util_dynarray_foreach(rctx->reg_preferences, struct phi_reg_preference,
+                            p) {
          if (p->reg == reg) {
             p->dead += dead;
             p->edge += edge;
@@ -627,8 +627,8 @@ add_reg_preference(struct ra_ctx *rctx, unsigned reg, uint64_t edge,
       rctx->reg_preference_index[reg] = util_dynarray_num_elements(
          rctx->reg_preferences, struct phi_reg_preference);
    }
-   util_dynarray_append(rctx->reg_preferences,
-                       ((struct phi_reg_preference){reg, dead, edge, affinity}));
+   util_dynarray_append(rctx->reg_preferences, ((struct phi_reg_preference){
+                                                  reg, dead, edge, affinity}));
 }
 
 static void
@@ -661,7 +661,8 @@ cache_phi_preferences(struct ra_ctx *rctx, unsigned ssa)
          if (p && p->other->has_reg)
             add_reg_preference(rctx, p->other->reg, 0, p->weight, 0);
       } else if (v != ssa && rctx->last_reg[v] != ~0u) {
-         add_reg_preference(rctx, rctx->last_reg[v], 0, rctx->phi_weights[v], 0);
+         add_reg_preference(rctx, rctx->last_reg[v], 0, rctx->phi_weights[v],
+                            0);
       }
    }
    for (struct phi_dead_group *g = rctx->dead_groups[ssa]; g; g = g->next) {
@@ -677,8 +678,7 @@ cache_phi_preferences(struct ra_ctx *rctx, unsigned ssa)
          unsigned root = phi_web_find(rctx->phi_web, d->index->value);
          for (unsigned v = rctx->web_members[root].head; v != ~0u;
               v = rctx->web_members[v].next) {
-            if (v < rctx->shader->alloc && v != ssa &&
-                rctx->last_reg[v] != ~0u)
+            if (v < rctx->shader->alloc && v != ssa && rctx->last_reg[v] != ~0u)
                BITSET_SET(locations, rctx->last_reg[v]);
          }
       }
@@ -702,9 +702,10 @@ preferred_phi_register(struct ra_ctx *rctx, unsigned ssa, bool available)
           (available && BITSET_TEST_COUNT(rctx->used_regs[cls], p->reg, count)))
          continue;
       if (best == ~0u || p->edge > edge ||
-          (p->edge == edge && (p->dead > dead ||
-           (p->dead == dead && (p->affinity > affinity ||
-            (p->affinity == affinity && p->reg < best)))))) {
+          (p->edge == edge &&
+           (p->dead > dead || (p->dead == dead && (p->affinity > affinity ||
+                                                   (p->affinity == affinity &&
+                                                    p->reg < best)))))) {
          best = p->reg;
          dead = p->dead;
          edge = p->edge;
@@ -729,7 +730,8 @@ placement_cost(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count)
          pref = util_dynarray_element(rctx->reg_preferences,
                                       struct phi_reg_preference, index);
    } else {
-      util_dynarray_foreach(rctx->reg_preferences, struct phi_reg_preference, p) {
+      util_dynarray_foreach(rctx->reg_preferences, struct phi_reg_preference,
+                            p) {
          if (p->reg == reg) {
             pref = p;
             break;
@@ -794,7 +796,8 @@ placement_floor(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count,
    unsigned limit = MAX2(rctx->demand, *rctx->count[RA_GPR]);
    cost.growth = reg + count > limit ? reg + count - limit : 0;
    unsigned l = util_logbase2(count);
-   if (rctx->scarcity_floor && l < RA_SCARCITY_FLOOR_SIZES && reg <= AGX_NUM_REGS)
+   if (rctx->scarcity_floor && l < RA_SCARCITY_FLOOR_SIZES &&
+       reg <= AGX_NUM_REGS)
       cost.scarcity = rctx->scarcity_floor[l][reg];
    return cost;
 }
@@ -802,16 +805,24 @@ placement_floor(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count,
 static bool
 placement_cheaper(struct placement_cost a, struct placement_cost b)
 {
-   if (a.moves != b.moves) return a.moves < b.moves;
-   if (a.edge != b.edge) return a.edge < b.edge;
-   if (a.dead != b.dead) return a.dead < b.dead;
-   if (a.affinity != b.affinity) return a.affinity < b.affinity;
-   if (a.collect != b.collect) return a.collect < b.collect;
-   if (a.preference != b.preference) return a.preference < b.preference;
+   if (a.moves != b.moves)
+      return a.moves < b.moves;
+   if (a.edge != b.edge)
+      return a.edge < b.edge;
+   if (a.dead != b.dead)
+      return a.dead < b.dead;
+   if (a.affinity != b.affinity)
+      return a.affinity < b.affinity;
+   if (a.collect != b.collect)
+      return a.collect < b.collect;
+   if (a.preference != b.preference)
+      return a.preference < b.preference;
    if (a.materialization != b.materialization)
       return a.materialization < b.materialization;
-   if (a.growth != b.growth) return a.growth < b.growth;
-   if (a.scarcity != b.scarcity) return a.scarcity < b.scarcity;
+   if (a.growth != b.growth)
+      return a.growth < b.growth;
+   if (a.scarcity != b.scarcity)
+      return a.scarcity < b.scarcity;
    return a.reg < b.reg;
 }
 
@@ -1126,7 +1137,8 @@ find_regs(struct ra_ctx *rctx, agx_instr *I, unsigned dest_idx, unsigned count,
 
    enum ra_class cls = ra_class_for_index(I->dest[dest_idx]);
 
-   if (find_regs_simple(rctx, cls, count, align, I->dest[dest_idx].value, &reg)) {
+   if (find_regs_simple(rctx, cls, count, align, I->dest[dest_idx].value,
+                        &reg)) {
       return reg;
    } else {
       assert(!rctx->early_killed && "no live range splits with early kill");
@@ -1171,8 +1183,8 @@ search_ssa_to_reg_out(struct agx_block *blk, unsigned ssa)
          hi = mid;
    }
 
-   assert(lo < blk->nr_ssa_to_reg_out &&
-          blk->ssa_to_reg_out[lo].ssa == ssa && "variable not defined in block");
+   assert(lo < blk->nr_ssa_to_reg_out && blk->ssa_to_reg_out[lo].ssa == ssa &&
+          "variable not defined in block");
    return blk->ssa_to_reg_out[lo].reg;
 }
 
@@ -1234,8 +1246,7 @@ reserve_live_in(struct ra_ctx *rctx)
                assert(rctx->block->loop_header);
             } else {
                /* Otherwise, we can build the phi now */
-               phi->src[pred_idx].reg =
-                  search_ssa_to_reg_out(*pred, i);
+               phi->src[pred_idx].reg = search_ssa_to_reg_out(*pred, i);
                phi->src[pred_idx].has_reg = true;
             }
          }
@@ -1306,8 +1317,8 @@ relocate_unconstrained(struct ra_ctx *rctx, unsigned ssa)
  * source copies into the reserved prefix are checked separately by the caller. */
 static bool
 constraint_window(struct agx_reg_constraint c, unsigned count,
-                  unsigned reserved, unsigned bound,
-                  unsigned *first, unsigned *last)
+                  unsigned reserved, unsigned bound, unsigned *first,
+                  unsigned *last)
 {
    if (!util_is_power_of_two_nonzero(count) ||
        !util_is_power_of_two_nonzero(c.align) || c.min > c.max || count > bound)
@@ -1326,7 +1337,8 @@ validate_constraint_windows(agx_context *ctx, unsigned bound)
       if (!I->reg_constraints)
          continue;
       for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
-         agx_index value = o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
+         agx_index value =
+            o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
          if (value.type != AGX_INDEX_NORMAL || value.memory)
             continue;
          struct agx_reg_constraint c = I->reg_constraints[o];
@@ -1337,7 +1349,8 @@ validate_constraint_windows(agx_context *ctx, unsigned bound)
             if (c.align && util_is_power_of_two_nonzero(c.align) &&
                 !(c.min % MAX2(count, c.align)) && count <= reserved - c.min)
                continue;
-         } else if (constraint_window(c, count, reserved, bound, &first, &last)) {
+         } else if (constraint_window(c, count, reserved, bound, &first,
+                                      &last)) {
             continue;
          }
          ctx->ra_error = "Register operand has no aligned allocatable window";
@@ -1381,7 +1394,8 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
    unsigned first, last;
    if (!constraint_window(c, count, reserved_size(rctx->shader),
                           rctx->bound[RA_GPR], &first, &last)) {
-      rctx->shader->ra_error = "Register operand has no aligned allocatable window";
+      rctx->shader->ra_error =
+         "Register operand has no aligned allocatable window";
       return ~0u;
    }
 
@@ -1461,8 +1475,8 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
    }
    for (unsigned reg = first; reg <= last; reg += align) {
       if (chosen != ~0u &&
-          placement_cheaper(best, placement_floor(rctx, ssa, reg, count, &floors,
-                                                  last_preference)))
+          placement_cheaper(best, placement_floor(rctx, ssa, reg, count,
+                                                  &floors, last_preference)))
          break;
       if (PINNED_WINDOW(reg))
          continue;
@@ -1472,7 +1486,8 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
          continue;
       struct placement_cost cost = placement_cost(rctx, ssa, reg, count);
       if (occupied && rctx->preferred && !have_tuple_base) {
-         for (unsigned h = reserved_size(rctx->shader); h < rctx->bound[RA_GPR];) {
+         for (unsigned h = reserved_size(rctx->shader);
+              h < rctx->bound[RA_GPR];) {
             if (!BITSET_TEST(rctx->used_regs[RA_GPR], h)) {
                ++h;
                continue;
@@ -1507,13 +1522,15 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
       }
    }
    if (chosen == ~0u) {
-      rctx->shader->ra_error = "Instruction register constraints are unsatisfiable";
+      rctx->shader->ra_error =
+         "Instruction register constraints are unsatisfiable";
       return ~0u;
    }
 
    /* A free region has no occupants to move. */
    unsigned victims[16], nr_victims = 0;
-   for (unsigned reg = best.moves ? reserved_size(rctx->shader) : rctx->bound[RA_GPR];
+   for (unsigned reg = best.moves ? reserved_size(rctx->shader)
+                                  : rctx->bound[RA_GPR];
         reg < rctx->bound[RA_GPR];) {
       if (!BITSET_TEST(rctx->used_regs[RA_GPR], reg)) {
          ++reg;
@@ -1612,7 +1629,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    BITSET_DECLARE(reusable, AGX_NUM_REGS) = {0};
    bool reuse = I->nr_dests == 1 && I->reg_constraints[0].reuse_killed;
    unsigned dest_count = reuse ? rctx->ncomps[I->dest[0].value] : 0;
-   unsigned dest_align = MAX2(dest_count, reuse ? I->reg_constraints[0].align : 1);
+   unsigned dest_align =
+      MAX2(dest_count, reuse ? I->reg_constraints[0].align : 1);
    rctx->reused_sources = 0;
    agx_foreach_ssa_src(I, s) {
       struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
@@ -1626,8 +1644,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    }
    rctx->reusable = reuse ? reusable : NULL;
    agx_foreach_ssa_dest(I, d) {
-      unsigned reg =
-         place_constrained_value(rctx, I->dest[d], I->reg_constraints[d], false);
+      unsigned reg = place_constrained_value(rctx, I->dest[d],
+                                             I->reg_constraints[d], false);
       if (reg == ~0u) {
          rctx->moved = NULL;
          return false;
@@ -1683,8 +1701,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
       util_dynarray_append(&copies, copy);
    }
    agx_builder b = agx_init_builder(rctx->shader, agx_before_instr(I));
-   agx_emit_parallel_copies(&b, copies.data,
-                            util_dynarray_num_elements(&copies, struct agx_copy));
+   agx_emit_parallel_copies(
+      &b, copies.data, util_dynarray_num_elements(&copies, struct agx_copy));
    util_dynarray_fini(&copies);
    rctx->pinned = NULL;
    return true;
@@ -2068,8 +2086,8 @@ agx_ra_assign_local(struct ra_ctx *rctx)
 
       /* Free late-killed sources, except those the destination replaced. */
       agx_foreach_ssa_src(I, s) {
-         if (I->src[s].kill &&
-             !(I->reg_constraints && (rctx->reused_sources & BITFIELD64_BIT(s)))) {
+         if (I->src[s].kill && !(I->reg_constraints &&
+                                 (rctx->reused_sources & BITFIELD64_BIT(s)))) {
             kill_source(rctx, I, s);
          }
       }
@@ -2093,8 +2111,8 @@ agx_ra_assign_local(struct ra_ctx *rctx)
    }
 
    /* Keep the visited marker non-NULL even for blocks with no live-out values. */
-   block->ssa_to_reg_out =
-      malloc(MAX2(block->nr_ssa_to_reg_out, 1) * sizeof(*block->ssa_to_reg_out));
+   block->ssa_to_reg_out = malloc(MAX2(block->nr_ssa_to_reg_out, 1) *
+                                  sizeof(*block->ssa_to_reg_out));
    unsigned live_out_index = 0;
    U_SPARSE_BITSET_FOREACH_SET(&block->live_out, i) {
       block->ssa_to_reg_out[live_out_index].ssa = i;
@@ -2247,8 +2265,7 @@ constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
          continue;
       agx_foreach_ssa_src(I, s) {
          struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-         if (I->src[s].memory ||
-             (c.min == c.max && c.max < reserved_size(ctx)))
+         if (I->src[s].memory || (c.min == c.max && c.max < reserved_size(ctx)))
             continue;
          struct agx_reg_constraint *p = &preferred[I->src[s].value];
          p->min = MAX2(p->min, c.min);
@@ -2284,7 +2301,8 @@ agx_ra(agx_context *ctx)
       agx_foreach_ssa_src(I, s) {
          if (!I->reg_constraints[I->nr_dests + s].clobber)
             continue;
-         agx_index copy = agx_vec_temp(ctx, I->src[s].size, agx_channels(I->src[s]));
+         agx_index copy =
+            agx_vec_temp(ctx, I->src[s].size, agx_channels(I->src[s]));
          agx_mov_to(&b, copy, I->src[s]);
          I->src[s] = copy;
       }
@@ -2313,8 +2331,9 @@ agx_ra(agx_context *ctx)
                                  ctx->nir->info.workgroup_size[2];
       }
 
-      max_possible_regs = MIN2(max_possible_regs,
-         agx_max_registers_for_occupancy(threads_per_workgroup));
+      max_possible_regs =
+         MIN2(max_possible_regs,
+              agx_max_registers_for_occupancy(threads_per_workgroup));
    }
 
    if (force_spilling) {
@@ -2353,7 +2372,8 @@ agx_ra(agx_context *ctx)
                                    ctx->ra_target.spill_reserved_registers);
             agx_foreach_ssa_dest(I, v) {
                if (!I->dest[v].memory)
-                  needed += util_next_power_of_two(agx_index_size_16(I->dest[v]));
+                  needed +=
+                     util_next_power_of_two(agx_index_size_16(I->dest[v]));
             }
             agx_foreach_ssa_src(I, s) {
                if (I->src[s].memory)
@@ -2362,7 +2382,8 @@ agx_ra(agx_context *ctx)
                for (unsigned prev = 0; prev < s; ++prev)
                   duplicate |= agx_is_equiv(I->src[prev], I->src[s]);
                if (!duplicate)
-                  needed += util_next_power_of_two(agx_index_size_16(I->src[s]));
+                  needed +=
+                     util_next_power_of_two(agx_index_size_16(I->src[s]));
             }
             d = MAX2(d, needed);
          }
@@ -2428,7 +2449,8 @@ agx_ra(agx_context *ctx)
    }
 
    if (ctx->ra_target.within_spill_budget &&
-       !ctx->ra_target.within_spill_budget(ctx, ctx->ra_target.spill_budget_data)) {
+       !ctx->ra_target.within_spill_budget(ctx,
+                                           ctx->ra_target.spill_budget_data)) {
       ctx->ra_error = "Register allocation candidate exceeds spill budget";
       return false;
    }
@@ -2440,8 +2462,7 @@ agx_ra(agx_context *ctx)
     */
    BITSET_WORD *constants = BITSET_CALLOC(ctx->alloc);
    agx_foreach_instr_global(ctx, I) {
-      if (I->op == AGX_OPCODE_MOV_IMM &&
-          I->dest[0].type == AGX_INDEX_NORMAL)
+      if (I->op == AGX_OPCODE_MOV_IMM && I->dest[0].type == AGX_INDEX_NORMAL)
          BITSET_SET(constants, I->dest[0].value);
    }
 
@@ -2484,7 +2505,8 @@ agx_ra(agx_context *ctx)
                continue;
 
             phi_web_union_noninterfering(phi_web, web_members, interference,
-                                        ctx->alloc, phi->dest[0].value, member);
+                                         ctx->alloc, phi->dest[0].value,
+                                         member);
          }
       }
    }
@@ -2526,10 +2548,11 @@ agx_ra(agx_context *ctx)
             unsigned s = agx_predecessor_index(block, *pred);
             agx_index *src = &phi->src[s], *dst = &phi->dest[0];
             unsigned member = src->type == AGX_INDEX_NORMAL &&
-                              BITSET_TEST(constants, src->value)
-                                 ? next_constant_preference++ : ~0u;
-            if (src->type != AGX_INDEX_NORMAL ||
-                src->size != dst->size || src->memory != dst->memory ||
+                                    BITSET_TEST(constants, src->value)
+                                 ? next_constant_preference++
+                                 : ~0u;
+            if (src->type != AGX_INDEX_NORMAL || src->size != dst->size ||
+                src->memory != dst->memory ||
                 agx_channels(*src) != agx_channels(*dst))
                continue;
             uint64_t weight = 1ull << (3 * MIN2(depth[(*pred)->index], 6));
@@ -2538,8 +2561,8 @@ agx_ra(agx_context *ctx)
             bool redefined = false;
             agx_foreach_phi_in_block(block, other)
                redefined |= other->dest[0].value == src->value;
-            bool dead = redefined ||
-               !u_sparse_bitset_test(&block->live_in, src->value);
+            bool dead =
+               redefined || !u_sparse_bitset_test(&block->live_in, src->value);
             if (dead && !src->memory &&
                 !u_sparse_bitset_test(&interference[src->value], dst->value)) {
                struct phi_dead_group *g = dead_groups[src->value];
@@ -2547,8 +2570,8 @@ agx_ra(agx_context *ctx)
                   g = g->next;
                if (!g) {
                   g = rzalloc(web_memctx, struct phi_dead_group);
-                  *g = (struct phi_dead_group){dead_groups[src->value],
-                                              block, *pred, NULL, weight};
+                  *g = (struct phi_dead_group){dead_groups[src->value], block,
+                                               *pred, NULL, weight};
                   dead_groups[src->value] = g;
                }
                struct phi_dead_destination *d =
@@ -2560,10 +2583,10 @@ agx_ra(agx_context *ctx)
                ralloc(web_memctx, struct phi_preference);
             struct phi_preference *reverse =
                ralloc(web_memctx, struct phi_preference);
-            *forward = (struct phi_preference){
-               phi_preferences[dst->value], src, weight};
-            *reverse = (struct phi_preference){
-               phi_preferences[src->value], dst, weight};
+            *forward = (struct phi_preference){phi_preferences[dst->value], src,
+                                               weight};
+            *reverse = (struct phi_preference){phi_preferences[src->value], dst,
+                                               weight};
             phi_preferences[dst->value] = forward;
             phi_preferences[src->value] = reverse;
             phi_weights[src->value] += weight;
@@ -2654,7 +2677,8 @@ agx_ra(agx_context *ctx)
 
    unsigned (*scarcity_floor)[AGX_NUM_REGS + 1] = NULL;
    if (preferred) {
-      scarcity_floor = malloc(RA_SCARCITY_FLOOR_SIZES * sizeof(*scarcity_floor));
+      scarcity_floor =
+         malloc(RA_SCARCITY_FLOOR_SIZES * sizeof(*scarcity_floor));
       for (unsigned l = 0; scarcity_floor && l < RA_SCARCITY_FLOOR_SIZES; ++l) {
          unsigned width = 1u << l;
          scarcity_floor[l][AGX_NUM_REGS] = UINT_MAX;
@@ -2683,32 +2707,32 @@ agx_ra(agx_context *ctx)
     */
    agx_foreach_block(ctx, block) {
       if (!agx_ra_assign_local(&(struct ra_ctx){
-         .shader = ctx,
-         .block = block,
-         .src_to_collect = src_to_collect,
-         .phi_web = phi_web,
-         .web_members = web_members,
-         .phi_preferences = phi_preferences,
-         .dead_groups = dead_groups,
-         .phi_weights = phi_weights,
-         .last_reg = last_reg,
-         .reg_preferences = &reg_preferences,
-         .reg_preference_index = reg_preference_index,
-         .ncomps = ncomps,
-         .ncomps_unrounded = ncomps_unrounded,
-         .sizes = sizes,
-         .classes = classes,
-         .visited = visited,
-         .bound[RA_GPR] = max_regs,
-         .bound[RA_MEM] = AGX_NUM_MODELED_REGS,
-         .count[RA_GPR] = &reg_count,
-         .count[RA_MEM] = &mem_slot_count,
-         .preferred = preferred,
-         .scarcity = scarcity,
-         .scarcity_floor = scarcity_floor,
-         .demand = demand,
-         .affinity_ssa = ~0u,
-      }))
+             .shader = ctx,
+             .block = block,
+             .src_to_collect = src_to_collect,
+             .phi_web = phi_web,
+             .web_members = web_members,
+             .phi_preferences = phi_preferences,
+             .dead_groups = dead_groups,
+             .phi_weights = phi_weights,
+             .last_reg = last_reg,
+             .reg_preferences = &reg_preferences,
+             .reg_preference_index = reg_preference_index,
+             .ncomps = ncomps,
+             .ncomps_unrounded = ncomps_unrounded,
+             .sizes = sizes,
+             .classes = classes,
+             .visited = visited,
+             .bound[RA_GPR] = max_regs,
+             .bound[RA_MEM] = AGX_NUM_MODELED_REGS,
+             .count[RA_GPR] = &reg_count,
+             .count[RA_MEM] = &mem_slot_count,
+             .preferred = preferred,
+             .scarcity = scarcity,
+             .scarcity_floor = scarcity_floor,
+             .demand = demand,
+             .affinity_ssa = ~0u,
+          }))
          goto cleanup;
    }
 
@@ -2729,7 +2753,6 @@ agx_ra(agx_context *ctx)
 
    assert(ctx->max_reg <= max_regs);
 
-
    /* Validate RA after assigning registers just before lowering SSA */
    agx_validate_ra(ctx);
 
@@ -2746,8 +2769,7 @@ agx_ra(agx_context *ctx)
       if (ctx->ra_target.preserve_source_kills) {
          agx_foreach_ssa_src(ins, s) {
             agx_foreach_ssa_src(ins, t) {
-               if (ins->src[t].kill &&
-                   ins->src[s].value == ins->src[t].value &&
+               if (ins->src[t].kill && ins->src[s].value == ins->src[t].value &&
                    ins->src[s].memory == ins->src[t].memory)
                   source_kills |= BITFIELD_BIT(s);
             }

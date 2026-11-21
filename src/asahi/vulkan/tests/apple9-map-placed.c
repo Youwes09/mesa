@@ -3,8 +3,8 @@
  * allocation leaves its BO, still mapped, in the cache; a smaller allocation
  * may reuse it. Its placed mapping must cover exactly the allocation (the
  * pages after it stay the caller's) and must land at the requested address.
- * Checks VK_EXT_map_memory_placed with and without VK_MEMORY_UNMAP_RESERVE_BIT_EXT,
- * and freeing memory while it is mapped.
+ * Checks VK_EXT_map_memory_placed with and without
+ * VK_MEMORY_UNMAP_RESERVE_BIT_EXT, and freeing memory while it is mapped.
  */
 #define _GNU_SOURCE
 #include <stdbool.h>
@@ -12,8 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <vulkan/vulkan.h>
 
 #define CHECK(x)                                                               \
@@ -75,14 +75,16 @@ check_placed(VkDeviceSize size, bool reserve, const char *what)
    CHECK(map2(dev, &mi, &p));
    bool ok = true;
    if (p != base + page) {
-      printf("%s: mapped at %p, requested %p\n", what, p, (void *)(base + page));
+      printf("%s: mapped at %p, requested %p\n", what, p,
+             (void *)(base + page));
       ok = false;
    } else {
       memset(p, 0xcd, size);
    }
-   VkMemoryUnmapInfoKHR ui = {.sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
-                              .flags = reserve ? VK_MEMORY_UNMAP_RESERVE_BIT_EXT : 0,
-                              .memory = mem};
+   VkMemoryUnmapInfoKHR ui = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
+      .flags = reserve ? VK_MEMORY_UNMAP_RESERVE_BIT_EXT : 0,
+      .memory = mem};
    CHECK(unmap2(dev, &ui));
 
    /* Guard pages must still be the caller's, readable and unchanged. A
@@ -90,8 +92,8 @@ check_placed(VkDeviceSize size, bool reserve, const char *what)
     * faults here, or the device memory's contents. */
    for (size_t i = 0; i < page && ok; ++i) {
       if (base[i] != 0xab || base[page + size + i] != 0xab) {
-         printf("%s: guard byte %zu changed (before %02x, after %02x)\n", what, i,
-                base[i], base[page + size + i]);
+         printf("%s: guard byte %zu changed (before %02x, after %02x)\n", what,
+                i, base[i], base[page + size + i]);
          ok = false;
       }
    }
@@ -118,14 +120,16 @@ main(void)
    VkPhysicalDeviceMemoryProperties mp;
    vkGetPhysicalDeviceMemoryProperties(pdev, &mp);
    host_type = UINT32_MAX;
-   for (uint32_t t = 0; t < mp.memoryTypeCount && host_type == UINT32_MAX; ++t) {
+   for (uint32_t t = 0; t < mp.memoryTypeCount && host_type == UINT32_MAX;
+        ++t) {
       if (mp.memoryTypes[t].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
          host_type = t;
    }
    float prio = 1.0f;
-   VkDeviceQueueCreateInfo qci = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-                                  .queueCount = 1,
-                                  .pQueuePriorities = &prio};
+   VkDeviceQueueCreateInfo qci = {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .queueCount = 1,
+      .pQueuePriorities = &prio};
    VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed_features = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT,
       .memoryMapPlaced = VK_TRUE,
@@ -138,7 +142,8 @@ main(void)
                              .ppEnabledExtensionNames = exts};
    CHECK(vkCreateDevice(pdev, &dci, NULL, &dev));
    map2 = (PFN_vkMapMemory2KHR)vkGetDeviceProcAddr(dev, "vkMapMemory2KHR");
-   unmap2 = (PFN_vkUnmapMemory2KHR)vkGetDeviceProcAddr(dev, "vkUnmapMemory2KHR");
+   unmap2 =
+      (PFN_vkUnmapMemory2KHR)vkGetDeviceProcAddr(dev, "vkUnmapMemory2KHR");
 
    const VkDeviceSize page = sysconf(_SC_PAGESIZE);
    bool ok = true;

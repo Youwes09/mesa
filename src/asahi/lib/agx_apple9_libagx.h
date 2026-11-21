@@ -43,7 +43,7 @@ nir_shader *agx_apple9_libagx_nir(unsigned program, void *mem_ctx);
  * release builds too. data excludes the generated array's byte-count word.
  */
 nir_shader *agx_apple9_libagx_deserialize(const void *data, size_t size,
-                                       void *mem_ctx);
+                                          void *mem_ctx);
 
 #ifdef __cplusplus
 }

@@ -47,7 +47,7 @@ static nir_def *
 is_subnormal(nir_builder *b, nir_def *x)
 {
    return nir_iand(b, nir_ieq_imm(b, exponent_field(b, x), 0),
-                  nir_ine_imm(b, nir_iand_imm(b, x, F32_MAN_MASK), 0));
+                   nir_ine_imm(b, nir_iand_imm(b, x, F32_MAN_MASK), 0));
 }
 
 /* Exponent field all zero: signed zero or subnormal. */
@@ -123,8 +123,10 @@ pack(nir_builder *b, nir_def *m, nir_def *E, nir_def *err)
    nir_def *s = nir_isub(b, nir_imm_int(b, -126), T);
    nir_def *s_clamped = nir_umin(b, s, nir_imm_int(b, 31));
    nir_def *q = nir_ushr(b, sig, s_clamped);
-   nir_def *rem = nir_iand(b, sig, nir_iadd_imm(b, nir_ishl(b, nir_imm_int(b, 1), s_clamped), -1));
-   nir_def *half = nir_ishl(b, nir_imm_int(b, 1), nir_iadd_imm(b, s_clamped, -1));
+   nir_def *rem = nir_iand(
+      b, sig, nir_iadd_imm(b, nir_ishl(b, nir_imm_int(b, 1), s_clamped), -1));
+   nir_def *half =
+      nir_ishl(b, nir_imm_int(b, 1), nir_iadd_imm(b, s_clamped, -1));
 
    /* Sign of (|exact| - |m|): err has the sign of exact - m. */
    nir_def *err_pos = nir_flt(b, nir_imm_float(b, 0.0), err);
@@ -133,15 +135,16 @@ pack(nir_builder *b, nir_def *m, nir_def *E, nir_def *err)
    nir_def *above = nir_bcsel(b, m_neg, err_neg, err_pos);
    nir_def *below = nir_bcsel(b, m_neg, err_pos, err_neg);
 
-   nir_def *up = nir_ior(b, nir_ult(b, half, rem),
-                         nir_iand(b, nir_ieq(b, rem, half),
-                                  nir_ior(b, above,
-                                          nir_iand(b, nir_inot(b, below),
-                                                   nir_ine_imm(b, nir_iand_imm(b, q, 1), 0)))));
+   nir_def *up = nir_ior(
+      b, nir_ult(b, half, rem),
+      nir_iand(b, nir_ieq(b, rem, half),
+               nir_ior(b, above,
+                       nir_iand(b, nir_inot(b, below),
+                                nir_ine_imm(b, nir_iand_imm(b, q, 1), 0)))));
    nir_def *rounded = nir_iadd(b, q, nir_b2i32(b, up));
    /* Beyond 24 bits of shift the value is below half the smallest subnormal. */
-   nir_def *subnormal = nir_bcsel(b, nir_ilt_imm(b, s, 25),
-                                  nir_ior(b, sign, rounded), sign);
+   nir_def *subnormal =
+      nir_bcsel(b, nir_ilt_imm(b, s, 25), nir_ior(b, sign, rounded), sign);
 
    nir_def *result = nir_bcsel(b, nir_ilt_imm(b, T, -126), subnormal, normal);
    result = nir_bcsel(b, nir_ilt(b, nir_imm_int(b, 127), T), inf, result);
@@ -197,8 +200,9 @@ soft_mul(nir_builder *b, nir_def *x, nir_def *y)
    /* Infinity times a subnormal is infinity; the native DAZ product is NaN. */
    nir_def *sign = nir_iand_imm(b, nir_ixor(b, x, y), F32_SIGN);
    nir_def *inf = nir_ior_imm(b, sign, F32_EXP_MASK);
-   nir_def *any_inf = nir_ior(b, nir_ieq_imm(b, nir_iand_imm(b, x, ~F32_SIGN), F32_EXP_MASK),
-                              nir_ieq_imm(b, nir_iand_imm(b, y, ~F32_SIGN), F32_EXP_MASK));
+   nir_def *any_inf =
+      nir_ior(b, nir_ieq_imm(b, nir_iand_imm(b, x, ~F32_SIGN), F32_EXP_MASK),
+              nir_ieq_imm(b, nir_iand_imm(b, y, ~F32_SIGN), F32_EXP_MASK));
    return nir_bcsel(b, any_inf, inf, result);
 }
 
@@ -224,13 +228,17 @@ soft_fma(nir_builder *b, nir_def *x, nir_def *y, nir_def *z)
    /* hi in [1, 4): scale by 2^(ep - E) keeping lo's relation exact. */
    nir_def *dp = nir_isub(b, E, ep);
    nir_def *hf = nir_ushr_imm(b, exponent_field(b, hi), 23);
-   nir_def *hs = nir_bcsel(b, prod_zero, nir_imm_int(b, 0),
-                           with_exponent(b, hi, nir_isub(b, nir_iadd_imm(b, hf, -127),
-                                                         nir_umin(b, dp, nir_imm_int(b, 60)))));
+   nir_def *hs =
+      nir_bcsel(b, prod_zero, nir_imm_int(b, 0),
+                with_exponent(b, hi,
+                              nir_isub(b, nir_iadd_imm(b, hf, -127),
+                                       nir_umin(b, dp, nir_imm_int(b, 60)))));
    nir_def *lf = nir_ushr_imm(b, exponent_field(b, lo), 23);
-   nir_def *ls = nir_bcsel(b, nir_ior(b, prod_zero, is_zero(b, lo)), nir_imm_int(b, 0),
-                           with_exponent(b, lo, nir_imax(b, nir_imm_int(b, -120),
-                                                         nir_isub(b, nir_iadd_imm(b, lf, -127), dp))));
+   nir_def *ls = nir_bcsel(
+      b, nir_ior(b, prod_zero, is_zero(b, lo)), nir_imm_int(b, 0),
+      with_exponent(b, lo,
+                    nir_imax(b, nir_imm_int(b, -120),
+                             nir_isub(b, nir_iadd_imm(b, lf, -127), dp))));
    nir_def *zs = scale_down(b, mz, nir_isub(b, E, ez));
 
    nir_def *e1, *e2, *rt;
@@ -243,8 +251,9 @@ soft_fma(nir_builder *b, nir_def *x, nir_def *y, nir_def *z)
     * add the addend natively, which handles infinite and finite z. */
    nir_def *sign = nir_iand_imm(b, nir_ixor(b, x, y), F32_SIGN);
    nir_def *inf = nir_ior_imm(b, sign, F32_EXP_MASK);
-   nir_def *any_inf = nir_ior(b, nir_ieq_imm(b, nir_iand_imm(b, x, ~F32_SIGN), F32_EXP_MASK),
-                              nir_ieq_imm(b, nir_iand_imm(b, y, ~F32_SIGN), F32_EXP_MASK));
+   nir_def *any_inf =
+      nir_ior(b, nir_ieq_imm(b, nir_iand_imm(b, x, ~F32_SIGN), F32_EXP_MASK),
+              nir_ieq_imm(b, nir_iand_imm(b, y, ~F32_SIGN), F32_EXP_MASK));
    return nir_bcsel(b, any_inf, nir_fadd(b, inf, z), result);
 }
 
@@ -260,7 +269,8 @@ order_key(nir_builder *b, nir_def *x)
 static nir_def *
 is_nan(nir_builder *b, nir_def *x)
 {
-   return nir_ult(b, nir_imm_int(b, F32_EXP_MASK), nir_iand_imm(b, x, ~F32_SIGN));
+   return nir_ult(b, nir_imm_int(b, F32_EXP_MASK),
+                  nir_iand_imm(b, x, ~F32_SIGN));
 }
 
 /* Positive subnormal x as m * 2^(2k) with m in [1, 4). */
@@ -289,7 +299,8 @@ build_slow(nir_builder *b, nir_alu_instr *alu, nir_def **src)
       unpack_even(b, src[0], &m, &k);
       return alu->op == nir_op_fsqrt
                 ? pack(b, nir_fsqrt(b, m), k, nir_imm_float(b, 0.0))
-                : pack(b, nir_frsq(b, m), nir_ineg(b, k), nir_imm_float(b, 0.0));
+                : pack(b, nir_frsq(b, m), nir_ineg(b, k),
+                       nir_imm_float(b, 0.0));
    }
    case nir_op_flog2: {
       nir_def *m, *e;
@@ -314,12 +325,14 @@ build_slow(nir_builder *b, nir_alu_instr *alu, nir_def **src)
       nir_def *lt = alu->op == nir_op_flt
                        ? nir_ilt(b, order_key(b, src[0]), order_key(b, src[1]))
                        : nir_ige(b, order_key(b, src[0]), order_key(b, src[1]));
-      return nir_iand(b, lt, nir_inot(b, nir_ior(b, is_nan(b, src[0]), is_nan(b, src[1]))));
+      return nir_iand(
+         b, lt, nir_inot(b, nir_ior(b, is_nan(b, src[0]), is_nan(b, src[1]))));
    }
    case nir_op_feq:
    case nir_op_fneu: {
-      nir_def *eq = nir_iand(b, nir_ieq(b, order_key(b, src[0]), order_key(b, src[1])),
-                             nir_inot(b, nir_ior(b, is_nan(b, src[0]), is_nan(b, src[1]))));
+      nir_def *eq = nir_iand(
+         b, nir_ieq(b, order_key(b, src[0]), order_key(b, src[1])),
+         nir_inot(b, nir_ior(b, is_nan(b, src[0]), is_nan(b, src[1]))));
       return alu->op == nir_op_feq ? eq : nir_inot(b, eq);
    }
    case nir_op_fmin:
@@ -329,7 +342,8 @@ build_slow(nir_builder *b, nir_alu_instr *alu, nir_def **src)
       /* Equal keys (only +-0 or identical bits): min prefers -0, max +0. */
       nir_def *eq = nir_ieq(b, order_key(b, src[0]), order_key(b, src[1]));
       nir_def *neg0 = nir_ine_imm(b, nir_iand_imm(b, src[0], F32_SIGN), 0);
-      pick0 = nir_bcsel(b, eq, alu->op == nir_op_fmin ? neg0 : nir_inot(b, neg0), pick0);
+      pick0 = nir_bcsel(
+         b, eq, alu->op == nir_op_fmin ? neg0 : nir_inot(b, neg0), pick0);
       return nir_bcsel(b, pick0, src[0], src[1]);
    }
    case nir_op_fsign:
@@ -375,31 +389,35 @@ needs_slow(nir_builder *b, nir_alu_instr *alu, nir_def **src, nir_def *native)
        * legitimate zero from two finite nonzero operands. */
       nir_def *y = alu->op == nir_op_fsub ? flip_sign(b, src[1]) : src[1];
       nir_def *cancel = nir_ieq(b, src[0], flip_sign(b, y));
-      nir_def *flushed = nir_iand(b, is_zero_or_subnormal(b, native),
-                                  nir_inot(b, nir_ior(b, cancel,
-                                                      nir_iand(b, is_zero(b, src[0]),
-                                                               is_zero(b, y)))));
+      nir_def *flushed = nir_iand(
+         b, is_zero_or_subnormal(b, native),
+         nir_inot(b, nir_ior(b, cancel,
+                             nir_iand(b, is_zero(b, src[0]), is_zero(b, y)))));
       /* Infinite or NaN operands already give the right native result. */
       return nir_iand(b, nir_ior(b, any_sub, flushed), nir_inot(b, any_infnan));
    }
    case nir_op_fmul: {
-      nir_def *flushed = nir_iand(b, is_zero_or_subnormal(b, native),
-                                  nir_inot(b, nir_ior(b, is_zero(b, src[0]),
-                                                      is_zero(b, src[1]))));
+      nir_def *flushed = nir_iand(
+         b, is_zero_or_subnormal(b, native),
+         nir_inot(b, nir_ior(b, is_zero(b, src[0]), is_zero(b, src[1]))));
       /* NaN propagates natively; infinity times subnormal is fixed below. */
       return nir_iand(b, nir_ior(b, any_sub, flushed), nir_inot(b, any_nan));
    }
    case nir_op_ffma: {
-      nir_def *nonzero = nir_inot(b, nir_iand(b, nir_ior(b, is_zero(b, src[0]),
-                                                         is_zero(b, src[1])),
-                                              is_zero(b, src[2])));
-      nir_def *finite = nir_inot(b, nir_ior(b, nir_ior(b, is_inf_or_nan(b, src[0]),
-                                                       is_inf_or_nan(b, src[1])),
+      nir_def *nonzero = nir_inot(
+         b, nir_iand(b, nir_ior(b, is_zero(b, src[0]), is_zero(b, src[1])),
+                     is_zero(b, src[2])));
+      nir_def *finite = nir_inot(b, nir_ior(b,
+                                            nir_ior(b, is_inf_or_nan(b, src[0]),
+                                                    is_inf_or_nan(b, src[1])),
                                             is_inf_or_nan(b, src[2])));
-      return nir_iand(b, nir_ior(b, any_sub,
-                                 nir_iand(b, nir_iand(b, is_zero_or_subnormal(b, native),
-                                                      nonzero), finite)),
-                      nir_inot(b, any_nan));
+      return nir_iand(
+         b,
+         nir_ior(
+            b, any_sub,
+            nir_iand(b, nir_iand(b, is_zero_or_subnormal(b, native), nonzero),
+                     finite)),
+         nir_inot(b, any_nan));
    }
    case nir_op_fmin:
    case nir_op_fmax:
@@ -412,7 +430,8 @@ needs_slow(nir_builder *b, nir_alu_instr *alu, nir_def **src, nir_def *native)
    case nir_op_frsq:
    case nir_op_flog2:
       /* Negative inputs have no defined result; keep the native one. */
-      return nir_ult(b, nir_iadd_imm(b, src[0], -1), nir_imm_int(b, F32_MAN_MASK));
+      return nir_ult(b, nir_iadd_imm(b, src[0], -1),
+                     nir_imm_int(b, F32_MAN_MASK));
    case nir_op_fexp2:
       /* Results in the subnormal range; the native result is flushed. A
        * subnormal input natively gives exp2(0) = 1, the correct rounding. */

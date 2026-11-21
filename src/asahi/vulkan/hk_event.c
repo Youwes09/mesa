@@ -4,16 +4,16 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "hk_feedback.h"
 #include "hk_event.h"
 #include "vulkan/vulkan_core.h"
+#include "hk_feedback.h"
 
+#include "util/bitset.h"
 #include "agx_bo.h"
 #include "hk_cmd_buffer.h"
 #include "hk_device.h"
 #include "hk_entrypoints.h"
 #include "vk_alloc.h"
-#include "util/bitset.h"
 
 #define HK_EVENT_PAGE_SIZE 16384
 #define HK_EVENTS_PER_PAGE (HK_EVENT_PAGE_SIZE / sizeof(VkResult))
@@ -56,7 +56,8 @@ hk_event_alloc(struct hk_device *dev, struct hk_event *event)
       BITSET_ONES(page->free);
       list_addtail(&page->link, &dev->events.available);
    } else {
-      page = list_first_entry(&dev->events.available, struct hk_event_page, link);
+      page =
+         list_first_entry(&dev->events.available, struct hk_event_page, link);
    }
 
    unsigned slot = BITSET_FFS(page->free) - 1;
@@ -165,10 +166,10 @@ hk_CmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent _event,
    VK_FROM_HANDLE(hk_event, event, _event);
 
    perf_debug(cmd, "Set event");
-   hk_cmd_sync_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+   hk_cmd_sync_barrier(
+      cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
    hk_queue_write(cmd, event->addr, VK_EVENT_SET, false);
 }
 
@@ -181,10 +182,10 @@ hk_CmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent _event,
    VK_FROM_HANDLE(hk_event, event, _event);
 
    perf_debug(cmd, "Reset event");
-   hk_cmd_sync_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+   hk_cmd_sync_barrier(
+      cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
    hk_queue_write(cmd, event->addr, VK_EVENT_RESET, false);
 }
 
@@ -203,8 +204,8 @@ hk_CmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount,
     *
     * XXX: perf.
     */
-   hk_cmd_sync_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+   hk_cmd_sync_barrier(
+      cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
 }

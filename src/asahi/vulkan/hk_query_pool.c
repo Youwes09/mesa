@@ -96,18 +96,15 @@ hk_query_offset(struct hk_query_pool *pool, uint32_t query)
 }
 
 static uint64_t
-hk_query_report_addr(struct hk_query_pool *pool,
-                     uint32_t query)
+hk_query_report_addr(struct hk_query_pool *pool, uint32_t query)
 {
    return pool->bo->va->addr + hk_query_offset(pool, query);
 }
 
 static struct hk_query_report *
-hk_query_report_map(struct hk_query_pool *pool,
-                    uint32_t query)
+hk_query_report_map(struct hk_query_pool *pool, uint32_t query)
 {
-   return (void *)((char *)agx_bo_map(pool->bo) +
-                   hk_query_offset(pool, query));
+   return (void *)((char *)agx_bo_map(pool->bo) + hk_query_offset(pool, query));
 }
 
 void
@@ -140,7 +137,8 @@ hk_queue_write(struct hk_cmd_buffer *cmd, uint64_t address, uint32_t value,
                bool after_gfx)
 {
    struct hk_cs *cs = hk_cmd_buffer_get_cs_general(
-      cmd, after_gfx ? &cmd->current_cs.post_gfx : &cmd->current_cs.cs, true, HK_SYNC_ALL);
+      cmd, after_gfx ? &cmd->current_cs.post_gfx : &cmd->current_cs.cs, true,
+      HK_SYNC_ALL);
    if (!cs)
       return;
 
@@ -180,8 +178,8 @@ hk_flush_query_writes(struct hk_cmd_buffer *cmd)
    unsigned accums = util_dynarray_num_elements(&cmd->occlusion_accum,
                                                 struct libagx_occlusion_accum);
    if (accums) {
-      struct hk_cs *cs =
-         hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.cs, true, HK_SYNC_ALL);
+      struct hk_cs *cs = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.cs,
+                                                      true, HK_SYNC_ALL);
       if (cs) {
          /* The segments were written by rendering that has to complete. */
          hk_cdm_cache_flush(hk_cmd_buffer_device(cmd), cs);
@@ -198,14 +196,14 @@ hk_flush_query_writes(struct hk_cmd_buffer *cmd)
       util_dynarray_num_elements(&cmd->query_writes, struct libagx_imm_write);
 
    if (adds) {
-      uint64_t params = hk_pool_upload(cmd, cmd->query_adds.data,
-                                       cmd->query_adds.size, 16);
+      uint64_t params =
+         hk_pool_upload(cmd, cmd->query_adds.data, cmd->query_adds.size, 16);
       libagx_add_u32s(cmd, agx_1d(1), AGX_BARRIER_ALL, params, adds);
    }
 
    if (writes) {
-      struct hk_cs *cs =
-         hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.cs, true, HK_SYNC_ALL);
+      struct hk_cs *cs = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.cs,
+                                                      true, HK_SYNC_ALL);
       if (cs) {
          /* Results must be visible system-wide once marked available, as in
           * hk_dispatch_imm_writes. */
@@ -274,9 +272,9 @@ hk_occlusion_prepare_draw(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
       }
    }
 
-   enum agx_visibility_mode mode =
-      gfx->occlusion.paused ? AGX_VISIBILITY_MODE_NONE
-                            : gfx->occlusion.segment_mode;
+   enum agx_visibility_mode mode = gfx->occlusion.paused
+                                      ? AGX_VISIBILITY_MODE_NONE
+                                      : gfx->occlusion.segment_mode;
    if (mode != gfx->occlusion.mode) {
       gfx->occlusion.mode = mode;
       gfx->dirty |= HK_DIRTY_OCCLUSION;
@@ -474,7 +472,8 @@ hk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
    }
 
    struct hk_cs *cs = hk_cmd_buffer_get_cs_general(
-      cmd, after_gfx ? &cmd->current_cs.gfx : &cmd->current_cs.cs, true, HK_SYNC_ALL);
+      cmd, after_gfx ? &cmd->current_cs.gfx : &cmd->current_cs.cs, true,
+      HK_SYNC_ALL);
    if (!cs)
       return;
 
@@ -568,7 +567,8 @@ hk_cmd_begin_end_query(struct hk_cmd_buffer *cmd, struct hk_query_pool *pool,
    }
 
    case VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT:
-      cmd->state.gfx.mesh_pg_query = end ? 0 : hk_query_report_addr(pool, query);
+      cmd->state.gfx.mesh_pg_query =
+         end ? 0 : hk_query_report_addr(pool, query);
       graphics = true;
       break;
 
@@ -663,8 +663,7 @@ hk_query_is_available(struct hk_device *dev, struct hk_query_pool *pool,
       uint32_t *available = hk_query_available_map(pool, query);
       return p_atomic_read(available) != 0;
    } else {
-      const struct hk_query_report *report =
-         hk_query_report_map(pool, query);
+      const struct hk_query_report *report = hk_query_report_map(pool, query);
 
       return report->value != LIBAGX_QUERY_UNAVAILABLE;
    }

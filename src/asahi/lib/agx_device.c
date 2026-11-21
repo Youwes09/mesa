@@ -1,5 +1,5 @@
-#include <sys/ioctl.h>
 #include <linux/sync_file.h>
+#include <sys/ioctl.h>
 /*
  * Copyright 2021 Alyssa Rosenzweig
  * Copyright 2019 Collabora, Ltd.
@@ -7,8 +7,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "agx_device.h"
-#include "agx_apple9_layout.h"
 #include <inttypes.h>
 #include "clc/asahi_clc.h"
 #include "drm-uapi/asahi_drm.h"
@@ -17,8 +15,10 @@
 #include "util/ralloc.h"
 #include "util/timespec.h"
 #include "agx_abi.h"
+#include "agx_apple9_layout.h"
 #include "agx_bo.h"
 #include "agx_compile.h"
+#include "agx_device.h"
 #include "agx_device_virtio.h"
 #include "agx_scratch.h"
 #include "decode.h"
@@ -146,8 +146,8 @@ agx_bind_timestamps(struct agx_device *dev, struct agx_bo *bo, uint32_t *handle)
 
 static struct agx_bo *
 agx_bo_alloc(struct agx_device *dev, size_t size, size_t align,
-             enum agx_bo_flags flags,
-             enum agx_va_flags extra_va_flags, uint64_t fixed_va)
+             enum agx_bo_flags flags, enum agx_va_flags extra_va_flags,
+             uint64_t fixed_va)
 {
    struct agx_bo *bo;
    unsigned handle = 0;
@@ -195,8 +195,8 @@ agx_bo_alloc(struct agx_device *dev, size_t size, size_t align,
    enum agx_va_flags va_flags = flags & AGX_BO_CONTEXT  ? AGX_VA_CONTEXT
                                 : flags & AGX_BO_LOW_VA ? AGX_VA_USC
                                                         : 0;
-   bo->va = agx_va_alloc(dev, size, bo->align, va_flags | extra_va_flags,
-                         fixed_va);
+   bo->va =
+      agx_va_alloc(dev, size, bo->align, va_flags | extra_va_flags, fixed_va);
    if (!bo->va) {
       fprintf(stderr, "Failed to allocate BO VMA\n");
       agx_bo_free(dev, bo);
@@ -252,8 +252,8 @@ agx_bo_mmap(struct agx_device *dev, struct agx_bo *bo, void *fixed_addr,
    }
 
    flags = MAP_SHARED | (fixed_addr ? MAP_FIXED : 0);
-   void *map = os_mmap(fixed_addr, size, PROT_READ | PROT_WRITE, flags,
-                       dev->fd, gem_mmap_offset.offset);
+   void *map = os_mmap(fixed_addr, size, PROT_READ | PROT_WRITE, flags, dev->fd,
+                       gem_mmap_offset.offset);
    if (map == MAP_FAILED) {
       fprintf(stderr, "mmap failed: size=0x%llx fd=%i offset=0x%llx %m\n",
               (long long)size, dev->fd, (long long)gem_mmap_offset.offset);
@@ -534,21 +534,20 @@ agx_open_device(void *memctx, struct agx_device *dev)
    /* Identify the chip before any helpers consume device state. */
    switch (dev->params.gpu_generation) {
    case 13:
-      dev->chip = dev->params.num_clusters_total > 1 ? AGX_CHIP_G13X
-                                                     : AGX_CHIP_G13G;
+      dev->chip =
+         dev->params.num_clusters_total > 1 ? AGX_CHIP_G13X : AGX_CHIP_G13G;
       break;
    case 14:
    case 15:
-      dev->chip = dev->params.num_clusters_total > 1 ? AGX_CHIP_G14X
-                                                     : AGX_CHIP_G14G;
+      dev->chip =
+         dev->params.num_clusters_total > 1 ? AGX_CHIP_G14X : AGX_CHIP_G14G;
       break;
    case 16:
-      assert(dev->params.gpu_variant == 'G' ||
-             dev->params.gpu_variant == 'S' ||
+      assert(dev->params.gpu_variant == 'G' || dev->params.gpu_variant == 'S' ||
              dev->params.gpu_variant == 'C');
       /* Pro shares the multi-cluster Max graphics path and ISA. */
-      dev->chip = dev->params.gpu_variant != 'G' ? AGX_CHIP_G16C
-                                               : AGX_CHIP_G16G;
+      dev->chip =
+         dev->params.gpu_variant != 'G' ? AGX_CHIP_G16C : AGX_CHIP_G16G;
       break;
    case 17:
       assert(dev->params.gpu_variant == 'P');
@@ -601,8 +600,8 @@ agx_open_device(void *memctx, struct agx_device *dev)
    dev->guard_size = AIL_PAGESIZE;
    uint64_t default_shader_base =
       ALIGN_POT(MAX2(dev->params.vm_start, reservation), 0x100000000ull);
-   bool fixed_apple9_usc_base = dev->params.gpu_generation == 16 ||
-                                dev->params.gpu_generation == 17;
+   bool fixed_apple9_usc_base =
+      dev->params.gpu_generation == 16 || dev->params.gpu_generation == 17;
 
    /* Apple9 compact shader references resolve through the fixed native 1-TiB
     * USC aperture on both G16 and G17.  A relocatable G17 base was an early
@@ -632,9 +631,8 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * so this is a Mesa compatibility guard, not a hardware address limit.
     * Executable/AGX_BO_LOW_VA allocations still use usc_heap.
     */
-   uint64_t user_start = fixed_apple9_usc_base
-                            ? default_shader_base
-                            : dev->shader_base + shader_size;
+   uint64_t user_start = fixed_apple9_usc_base ? default_shader_base
+                                               : dev->shader_base + shader_size;
 
    assert(dev->shader_base >= dev->params.vm_start);
    assert(dev->shader_base + shader_size < dev->params.vm_end);
@@ -660,8 +658,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
        (dev->params.gpu_variant == 'G' || dev->params.gpu_variant == 'S' ||
         dev->params.gpu_variant == 'C')) {
       kernel_size = dev->params.vm_kernel_min_size;
-      vm_create.kernel_end =
-         AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32);
+      vm_create.kernel_end = AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32);
       vm_create.kernel_start = vm_create.kernel_end - kernel_size;
       /* PPP and VDM records share the same 4-GiB aperture, between the low
        * 64 MiB of fixed aliases and the kernel heap. Keep at least 1 GiB for
@@ -737,11 +734,11 @@ agx_open_device(void *memctx, struct agx_device *dev)
    /* G17P's source-owned initial tiler-growth tranche occupies offsets
     * [0x02000000, 0x05200000). Keep caller command/PPP state above it;
     * later growth tranches are selected around existing caller mappings. */
-   uint64_t context_start = AGX_APPLE9_RENDER_CONTEXT_BASE +
+   uint64_t context_start =
+      AGX_APPLE9_RENDER_CONTEXT_BASE +
       (dev->params.gpu_generation == 17 ? 0x8000000ull : 0x4000000ull);
-   uint64_t context_end =
-      MIN2(vm_create.kernel_start,
-           AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32));
+   uint64_t context_end = MIN2(vm_create.kernel_start,
+                               AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32));
    util_vma_heap_init(&dev->context_heap, context_start,
                       fixed_apple9_usc_base ? context_end - context_start : 0);
    dev->context_heap.alloc_high = false;
@@ -770,8 +767,9 @@ agx_open_device(void *memctx, struct agx_device *dev)
    if (agx_is_apple9(dev)) {
       simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);
       list_inithead(&dev->apple9_entry_lru);
-      util_vma_heap_init(&dev->apple9_entry_heap, AGX_APPLE9_ENTRY_HEADER_SIZE,
-                        AGX_APPLE9_ENTRY_ARENA_SIZE - AGX_APPLE9_ENTRY_HEADER_SIZE);
+      util_vma_heap_init(
+         &dev->apple9_entry_heap, AGX_APPLE9_ENTRY_HEADER_SIZE,
+         AGX_APPLE9_ENTRY_ARENA_SIZE - AGX_APPLE9_ENTRY_HEADER_SIZE);
       dev->apple9_entry_heap.alloc_high = false;
    }
 
@@ -779,12 +777,10 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * remains installed for every graphics and compute job. Reserve the arena
     * and back its first chunk, which holds the header; later chunks are backed
     * as entries reach them. */
-   if (agx_is_apple9(dev) &&
-       !dev->probe_only) {
-      dev->apple9_entry_va =
-         agx_va_alloc(dev, AGX_APPLE9_ENTRY_ARENA_SIZE,
-                      AGX_APPLE9_ENTRY_ARENA_SIZE, AGX_VA_USC | AGX_VA_FIXED,
-                      dev->shader_base);
+   if (agx_is_apple9(dev) && !dev->probe_only) {
+      dev->apple9_entry_va = agx_va_alloc(
+         dev, AGX_APPLE9_ENTRY_ARENA_SIZE, AGX_APPLE9_ENTRY_ARENA_SIZE,
+         AGX_VA_USC | AGX_VA_FIXED, dev->shader_base);
       if (!dev->apple9_entry_va) {
          fprintf(stderr, "Failed to reserve compact Apple9 shader entries\n");
          return false;
@@ -980,7 +976,8 @@ agx_queue_faulted(struct agx_device *dev, uint32_t queue_id)
    /* Virtio forwards a fixed set of ioctls; there, only failed submissions
     * report device loss.
     */
-   if (dev->is_virtio || !(dev->params.features & DRM_ASAHI_FEATURE_QUEUE_STATE))
+   if (dev->is_virtio ||
+       !(dev->params.features & DRM_ASAHI_FEATURE_QUEUE_STATE))
       return 0;
 
    struct drm_asahi_queue_get_state get_state = {.queue_id = queue_id};
@@ -1179,9 +1176,8 @@ agx_gather_device_key(struct agx_device *dev)
                    dev->params.num_dies > 1;
 
    return (struct agx_device_key){
-      .shader_isa = dev->params.gpu_generation >= 16
-                       ? AGX_SHADER_ISA_APPLE9
-                       : AGX_SHADER_ISA_APPLE8,
+      .shader_isa = dev->params.gpu_generation >= 16 ? AGX_SHADER_ISA_APPLE9
+                                                     : AGX_SHADER_ISA_APPLE8,
       .needs_g13x_coherency = u_tristate_make(g13x_coh),
       .soft_fault = agx_has_soft_fault(dev),
    };

@@ -11,11 +11,11 @@
  * or culled by it are placed outside the clip volume.
  */
 
+#include "asahi/libagx/mesh.h"
 #include "compiler/nir/nir_builder.h"
 #include "compiler/nir/nir_control_flow.h"
 #include "util/bitscan.h"
 #include "agx_nir.h"
-#include "asahi/libagx/mesh.h"
 #include "hk_apple9_polygon_points.h"
 #include "hk_cmd_buffer.h"
 #include "hk_shader.h"
@@ -75,11 +75,11 @@ hk_mesh_params(nir_builder *b)
                        .align_mul = 8, .range_base = offset, .range = 8);
 }
 
-#define hk_mesh_param(b, params, comps, bits, field)                          \
-   nir_load_global(b, comps, bits,                                             \
-                   nir_iadd_imm(b, params,                                     \
-                                offsetof(struct libagx_mesh_params, field)),   \
-                   .align_mul = bits / 8)
+#define hk_mesh_param(b, params, comps, bits, field)                           \
+   nir_load_global(                                                            \
+      b, comps, bits,                                                          \
+      nir_iadd_imm(b, params, offsetof(struct libagx_mesh_params, field)),     \
+      .align_mul = bits / 8)
 
 /* Add to an active 64-bit query counter without requiring shader atomic int64.
  * Each low-word wrap contributes one carry. Queries are observed only after
@@ -91,8 +91,8 @@ hk_mesh_count(nir_builder *b, nir_def *params, unsigned offset, nir_def *value)
    nir_def *counter = nir_load_global(b, 1, 64, nir_iadd_imm(b, params, offset),
                                       .align_mul = 8);
    nir_push_if(b, nir_ine_imm(b, counter, 0));
-   nir_def *old = nir_global_atomic(b, 32, counter, value,
-                                  .atomic_op = nir_atomic_op_iadd);
+   nir_def *old =
+      nir_global_atomic(b, 32, counter, value, .atomic_op = nir_atomic_op_iadd);
    nir_push_if(b, nir_ult(b, nir_iadd(b, old, value), old));
    nir_global_atomic(b, 32, nir_iadd_imm(b, counter, 4), nir_imm_int(b, 1),
                      .atomic_op = nir_atomic_op_iadd);
@@ -110,12 +110,11 @@ hk_workgroup_invocations(const nir_shader *nir)
 static nir_def *
 hk_linear_workgroup(nir_builder *b, nir_def *id, nir_def *count)
 {
-   return nir_iadd(
-      b, nir_channel(b, id, 0),
-      nir_imul(b, nir_channel(b, count, 0),
-               nir_iadd(b, nir_channel(b, id, 1),
-                        nir_imul(b, nir_channel(b, count, 1),
-                                 nir_channel(b, id, 2)))));
+   return nir_iadd(b, nir_channel(b, id, 0),
+                   nir_imul(b, nir_channel(b, count, 0),
+                            nir_iadd(b, nir_channel(b, id, 1),
+                                     nir_imul(b, nir_channel(b, count, 1),
+                                              nir_channel(b, id, 2)))));
 }
 
 /* Byte address of a vec4 slot of a vertex or primitive in a record. */
@@ -127,8 +126,9 @@ hk_mesh_slot(nir_builder *b, const struct hk_mesh_info *info, nir_def *group,
    unsigned stride_B = hk_mesh_slot_offset_B(info, mask, 64);
    unsigned base_B = primitive ? hk_mesh_primitives_offset_B(info) : 16;
 
-   nir_def *byte = nir_iadd_imm(b, nir_imul_imm(b, index, stride_B),
-                                base_B + hk_mesh_slot_offset_B(info, mask, location));
+   nir_def *byte =
+      nir_iadd_imm(b, nir_imul_imm(b, index, stride_B),
+                   base_B + hk_mesh_slot_offset_B(info, mask, location));
    if (offset)
       byte = nir_iadd(b, byte, nir_imul_imm(b, offset, 16));
    return nir_iadd(b, group, nir_u2u64(b, byte));
@@ -166,18 +166,20 @@ hk_lower_task_payload(nir_builder *b, nir_intrinsic_instr *intr,
    case nir_intrinsic_load_task_payload: {
       nir_def *addr = nir_iadd(
          b, state->payload,
-         nir_u2u64(b, nir_iadd_imm(b, intr->src[0].ssa, nir_intrinsic_base(intr))));
-      nir_def_replace(&intr->def,
-                      nir_load_global(b, intr->def.num_components,
-                                      intr->def.bit_size, addr,
-                                      .align_mul = nir_intrinsic_align_mul(intr),
-                                      .align_offset = nir_intrinsic_align_offset(intr)));
+         nir_u2u64(
+            b, nir_iadd_imm(b, intr->src[0].ssa, nir_intrinsic_base(intr))));
+      nir_def_replace(
+         &intr->def,
+         nir_load_global(b, intr->def.num_components, intr->def.bit_size, addr,
+                         .align_mul = nir_intrinsic_align_mul(intr),
+                         .align_offset = nir_intrinsic_align_offset(intr)));
       return true;
    }
    case nir_intrinsic_store_task_payload: {
       nir_def *addr = nir_iadd(
          b, state->payload,
-         nir_u2u64(b, nir_iadd_imm(b, intr->src[1].ssa, nir_intrinsic_base(intr))));
+         nir_u2u64(
+            b, nir_iadd_imm(b, intr->src[1].ssa, nir_intrinsic_base(intr))));
       nir_store_global(b, intr->src[0].ssa, addr,
                        .write_mask = nir_intrinsic_write_mask(intr),
                        .align_mul = nir_intrinsic_align_mul(intr),
@@ -190,11 +192,12 @@ hk_lower_task_payload(nir_builder *b, nir_intrinsic_instr *intr,
       bool swap = intr->intrinsic == nir_intrinsic_task_payload_atomic_swap;
       nir_def *addr = nir_iadd(
          b, state->payload,
-         nir_u2u64(b, nir_iadd_imm(b, intr->src[0].ssa, nir_intrinsic_base(intr))));
+         nir_u2u64(
+            b, nir_iadd_imm(b, intr->src[0].ssa, nir_intrinsic_base(intr))));
       nir_def *value =
-         swap ? nir_global_atomic_swap(b, intr->def.bit_size, addr,
-                                       intr->src[1].ssa, intr->src[2].ssa,
-                                       .atomic_op = nir_intrinsic_atomic_op(intr))
+         swap ? nir_global_atomic_swap(
+                   b, intr->def.bit_size, addr, intr->src[1].ssa,
+                   intr->src[2].ssa, .atomic_op = nir_intrinsic_atomic_op(intr))
               : nir_global_atomic(b, intr->def.bit_size, addr, intr->src[1].ssa,
                                   .atomic_op = nir_intrinsic_atomic_op(intr));
       nir_def_replace(&intr->def, value);
@@ -233,9 +236,9 @@ hk_mesh_to_word(nir_builder *b, nir_def *value, nir_alu_type type)
       return value;
    return nir_alu_type_get_base_type(type) == nir_type_float
              ? nir_f2f32(b, value)
-             : nir_alu_type_get_base_type(type) == nir_type_int
-                  ? nir_i2i32(b, value)
-                  : nir_u2u32(b, value);
+          : nir_alu_type_get_base_type(type) == nir_type_int
+             ? nir_i2i32(b, value)
+             : nir_u2u32(b, value);
 }
 
 static nir_def *
@@ -285,16 +288,15 @@ hk_lower_mesh_intrinsic(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          return true;
       }
       bool primitive = hk_mesh_is_primitive_slot(b->shader, sem.location);
-      nir_def *addr = hk_mesh_slot(b, state->info, state->group, primitive,
-                                   intr->src[1].ssa, sem.location,
-                                   intr->src[2].ssa);
+      nir_def *addr =
+         hk_mesh_slot(b, state->info, state->group, primitive, intr->src[1].ssa,
+                      sem.location, intr->src[2].ssa);
       nir_def *value = intr->src[0].ssa;
       nir_alu_type type = nir_intrinsic_src_type(intr);
       unsigned component = nir_intrinsic_component(intr);
       u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
          nir_def *word = hk_mesh_to_word(b, nir_channel(b, value, c), type);
-         nir_store_global(b, word,
-                          nir_iadd_imm(b, addr, (component + c) * 4),
+         nir_store_global(b, word, nir_iadd_imm(b, addr, (component + c) * 4),
                           .align_mul = 4);
       }
       nir_instr_remove(&intr->instr);
@@ -305,12 +307,12 @@ hk_lower_mesh_intrinsic(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    case nir_intrinsic_load_per_primitive_output: {
       nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
       bool primitive = hk_mesh_is_primitive_slot(b->shader, sem.location);
-      nir_def *addr = hk_mesh_slot(b, state->info, state->group, primitive,
-                                   intr->src[0].ssa, sem.location,
-                                   intr->src[1].ssa);
+      nir_def *addr =
+         hk_mesh_slot(b, state->info, state->group, primitive, intr->src[0].ssa,
+                      sem.location, intr->src[1].ssa);
       addr = nir_iadd_imm(b, addr, nir_intrinsic_component(intr) * 4);
-      nir_def *value = nir_load_global(b, intr->def.num_components, 32, addr,
-                                       .align_mul = 4);
+      nir_def *value =
+         nir_load_global(b, intr->def.num_components, 32, addr, .align_mul = 4);
       nir_def_replace(&intr->def,
                       hk_mesh_from_word(b, value, intr->def.bit_size,
                                         nir_intrinsic_dest_type(intr)));
@@ -328,8 +330,10 @@ hk_lower_mesh_intrinsic(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 static nir_def *
 hk_find_task(nir_builder *b, nir_def *grids, nir_def *tasks, nir_def *g)
 {
-   nir_variable *lo = nir_local_variable_create(b->impl, glsl_uint_type(), "lo");
-   nir_variable *hi = nir_local_variable_create(b->impl, glsl_uint_type(), "hi");
+   nir_variable *lo =
+      nir_local_variable_create(b->impl, glsl_uint_type(), "lo");
+   nir_variable *hi =
+      nir_local_variable_create(b->impl, glsl_uint_type(), "hi");
    nir_store_var(b, lo, nir_imm_int(b, 0), 1);
    nir_store_var(b, hi, tasks, 1);
 
@@ -341,7 +345,8 @@ hk_find_task(nir_builder *b, nir_def *grids, nir_def *tasks, nir_def *g)
       nir_def *mid = nir_ushr_imm(b, nir_iadd(b, l, h), 1);
       nir_def *sum = nir_load_global(
          b, 1, 32,
-         nir_iadd(b, grids, nir_u2u64(b, nir_iadd_imm(b, nir_imul_imm(b, mid, 16), 12))),
+         nir_iadd(b, grids,
+                  nir_u2u64(b, nir_iadd_imm(b, nir_imul_imm(b, mid, 16), 12))),
          .align_mul = 4);
       nir_def *above = nir_ult(b, g, sum);
       nir_store_var(b, hi, nir_bcsel(b, above, mid, h), 1);
@@ -357,8 +362,8 @@ hk_find_task(nir_builder *b, nir_def *grids, nir_def *tasks, nir_def *g)
 uint32_t
 hk_nir_task_mesh_bound(nir_shader *nir)
 {
-   struct hash_table *bounds =
-      _mesa_hash_table_create(NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
+   struct hash_table *bounds = _mesa_hash_table_create(NULL, _mesa_hash_pointer,
+                                                       _mesa_key_pointer_equal);
    if (!bounds)
       return UINT32_MAX;
    uint32_t maximum = 0;
@@ -403,8 +408,8 @@ hk_nir_lower_mesh_main(nir_shader *nir, const struct hk_mesh_info *info)
       .native_count = nir_load_num_workgroups(&b),
    };
 
-   nir_def *g_direct = hk_linear_workgroup(&b, state.native_id,
-                                           state.native_count);
+   nir_def *g_direct =
+      hk_linear_workgroup(&b, state.native_id, state.native_count);
    nir_def *g_task = nir_channel(&b, state.native_id, 0);
 
    nir_push_if(&b, nir_ine_imm(&b, tasks, 0));
@@ -422,9 +427,9 @@ hk_nir_lower_mesh_main(nir_shader *nir, const struct hk_mesh_info *info)
                                nir_umod(&b, nir_udiv(&b, local, mx), my),
                                nir_udiv(&b, local, mxy));
    nir_def *stride = hk_mesh_param(&b, params, 1, 32, payload_stride_B);
-   nir_def *payload = nir_iadd(
-      &b, hk_mesh_param(&b, params, 1, 64, payloads),
-      nir_imul(&b, nir_u2u64(&b, t), nir_u2u64(&b, stride)));
+   nir_def *payload =
+      nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, payloads),
+               nir_imul(&b, nir_u2u64(&b, t), nir_u2u64(&b, stride)));
    nir_def *task_count = nir_trim_vector(&b, grid, 3);
    nir_push_else(&b, NULL);
    nir_def *no_payload = nir_imm_int64(&b, 0);
@@ -434,9 +439,9 @@ hk_nir_lower_mesh_main(nir_shader *nir, const struct hk_mesh_info *info)
    state.num_workgroups = nir_if_phi(&b, task_count, state.native_count);
    state.payload = nir_if_phi(&b, payload, no_payload);
    nir_def *g = nir_if_phi(&b, g_task, g_direct);
-   state.group = nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, outputs),
-                          nir_imul_imm(&b, nir_u2u64(&b, g),
-                                       info->group_stride_B));
+   state.group =
+      nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, outputs),
+               nir_imul_imm(&b, nir_u2u64(&b, g), info->group_stride_B));
 
    /* Without SetMeshOutputsEXT, a workgroup emits nothing. Zero the counts
     * before any invocation can set them.
@@ -444,7 +449,8 @@ hk_nir_lower_mesh_main(nir_shader *nir, const struct hk_mesh_info *info)
    nir_push_if(&b, nir_ieq_imm(&b, nir_load_local_invocation_index(&b), 0));
    nir_store_global(&b, nir_imm_zero(&b, 2, 32), state.group, .align_mul = 16,
                     .write_mask = 0x3);
-   hk_mesh_count(&b, params, offsetof(struct libagx_mesh_params, mesh_invocations),
+   hk_mesh_count(&b, params,
+                 offsetof(struct libagx_mesh_params, mesh_invocations),
                  nir_imm_int(&b, hk_workgroup_invocations(nir)));
    nir_pop_if(&b, NULL);
    nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP,
@@ -471,13 +477,14 @@ hk_lower_task_intrinsic(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    /* The first invocation's grid is launched. */
    nir_def *dims = intr->src[0].ssa;
    nir_push_if(b, nir_ieq_imm(b, nir_load_local_invocation_index(b), 0));
-   nir_def *product = nir_imul(b, nir_imul(b, nir_channel(b, dims, 0),
-                                           nir_channel(b, dims, 1)),
-                               nir_channel(b, dims, 2));
-   nir_store_global(b, nir_vec4(b, nir_channel(b, dims, 0),
-                                nir_channel(b, dims, 1),
-                                nir_channel(b, dims, 2), product),
-                    state->task_grid, .align_mul = 16);
+   nir_def *product =
+      nir_imul(b, nir_imul(b, nir_channel(b, dims, 0), nir_channel(b, dims, 1)),
+               nir_channel(b, dims, 2));
+   nir_store_global(
+      b,
+      nir_vec4(b, nir_channel(b, dims, 0), nir_channel(b, dims, 1),
+               nir_channel(b, dims, 2), product),
+      state->task_grid, .align_mul = 16);
    nir_pop_if(b, NULL);
    nir_instr_remove(&intr->instr);
    return true;
@@ -497,8 +504,9 @@ hk_nir_lower_task_main(nir_shader *nir)
                                     nir_load_num_workgroups(&b));
    nir_def *stride = hk_mesh_param(&b, params, 1, 32, payload_stride_B);
    struct hk_lower_mesh_state state = {
-      .payload = nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, payloads),
-                          nir_imul(&b, nir_u2u64(&b, t), nir_u2u64(&b, stride))),
+      .payload =
+         nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, payloads),
+                  nir_imul(&b, nir_u2u64(&b, t), nir_u2u64(&b, stride))),
       .task_grid = nir_iadd(&b, hk_mesh_param(&b, params, 1, 64, task_grids),
                             nir_imul_imm(&b, nir_u2u64(&b, t), 16)),
    };
@@ -507,7 +515,8 @@ hk_nir_lower_task_main(nir_shader *nir)
    nir_push_if(&b, nir_ieq_imm(&b, nir_load_local_invocation_index(&b), 0));
    nir_store_global(&b, nir_imm_zero(&b, 4, 32), state.task_grid,
                     .align_mul = 16);
-   hk_mesh_count(&b, params, offsetof(struct libagx_mesh_params, task_invocations),
+   hk_mesh_count(&b, params,
+                 offsetof(struct libagx_mesh_params, task_invocations),
                  nir_imm_int(&b, hk_workgroup_invocations(nir)));
    nir_pop_if(&b, NULL);
    nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP,
@@ -534,7 +543,8 @@ hk_mesh_pp_load(nir_builder *b, void *data, unsigned vertex, unsigned location,
    const struct hk_mesh_info *info = pp->info;
    bool primitive = info->primitive_slots & BITFIELD64_BIT(location);
    nir_def *value;
-   if ((info->vertex_slots | info->primitive_slots) & BITFIELD64_BIT(location)) {
+   if ((info->vertex_slots | info->primitive_slots) &
+       BITFIELD64_BIT(location)) {
       value = nir_load_global(
          b, hk_mesh_slot_words(info, location), 32,
          hk_mesh_slot(b, info, pp->group, primitive,
@@ -555,8 +565,8 @@ hk_mesh_pp_load(nir_builder *b, void *data, unsigned vertex, unsigned location,
 
    /* Invisible primitives lie behind the eye, and clip to nothing. */
    if (location == VARYING_SLOT_POS) {
-      value = nir_bcsel(b, pp->visible, value,
-                        nir_imm_vec4(b, 0.0, 0.0, 0.0, -1.0));
+      value =
+         nir_bcsel(b, pp->visible, value, nir_imm_vec4(b, 0.0, 0.0, 0.0, -1.0));
    }
    return nir_channels(b, value, BITFIELD_RANGE(component, comps));
 }
@@ -582,17 +592,17 @@ hk_nir_mesh_rast_pp(const nir_shader *mesh, const struct hk_mesh_info *info,
 
    struct hk_mesh_pp pp = {.info = info, .p = p};
    nir_def *records = hk_mesh_param(&b, hk_mesh_params(&b), 1, 64, outputs);
-   pp.group = nir_iadd(&b, records,
-                       nir_imul_imm(&b, nir_u2u64(&b, g), info->group_stride_B));
+   pp.group = nir_iadd(
+      &b, records, nir_imul_imm(&b, nir_u2u64(&b, g), info->group_stride_B));
    nir_def *prim_count =
       nir_load_global(&b, 1, 32, nir_iadd_imm(&b, pp.group, 4), .align_mul = 4);
    pp.visible = nir_ult(&b, p, prim_count);
    if (info->primitive_slots & VARYING_BIT_CULL_PRIMITIVE) {
-      nir_def *cull = nir_load_global(
-         &b, 1, 32,
-         hk_mesh_slot(&b, info, pp.group, true, p, VARYING_SLOT_CULL_PRIMITIVE,
-                      NULL),
-         .align_mul = 4);
+      nir_def *cull =
+         nir_load_global(&b, 1, 32,
+                         hk_mesh_slot(&b, info, pp.group, true, p,
+                                      VARYING_SLOT_CULL_PRIMITIVE, NULL),
+                         .align_mul = 4);
       pp.visible = nir_iand(&b, pp.visible, nir_ieq_imm(&b, cull, 0));
    }
    for (unsigned i = 0; i < 3; ++i) {
@@ -606,11 +616,11 @@ hk_nir_mesh_rast_pp(const nir_shader *mesh, const struct hk_mesh_info *info,
       pp.index[i] = nir_umin_imm(&b, index, MAX2(info->max_vertices, 1) - 1);
    }
 
-   uint64_t outputs = (info->vertex_slots | info->primitive_slots) &
-                      ~(VARYING_BIT_PRIMITIVE_INDICES |
-                        VARYING_BIT_CULL_PRIMITIVE | VARYING_BIT_CLIP_DIST0 |
-                        VARYING_BIT_CLIP_DIST1 | VARYING_BIT_CULL_DIST0 |
-                        VARYING_BIT_CULL_DIST1);
+   uint64_t outputs =
+      (info->vertex_slots | info->primitive_slots) &
+      ~(VARYING_BIT_PRIMITIVE_INDICES | VARYING_BIT_CULL_PRIMITIVE |
+        VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
+        VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1);
    outputs |= VARYING_BIT_POS | VARYING_BIT_LAYER;
    uint64_t memory = 0;
    u_foreach_bit64(slot, info->primitive_slots) {
@@ -640,7 +650,8 @@ hk_nir_mesh_rast_pp(const nir_shader *mesh, const struct hk_mesh_info *info,
                    .range_base = hk_root_descriptor_offset(draw.provoking),
                    .range = 2),
       2);
-   nir_def *provoking = nir_bcsel(&b, last, nir_imm_int(&b, 2), nir_imm_int(&b, 0));
+   nir_def *provoking =
+      nir_bcsel(&b, last, nir_imm_int(&b, 2), nir_imm_int(&b, 0));
    nir_def *prim_id =
       (info->primitive_slots & VARYING_BIT_PRIMITIVE_ID)
          ? hk_mesh_pp_load(&b, &pp, 0, VARYING_SLOT_PRIMITIVE_ID, 0, 0, 1,
@@ -652,10 +663,10 @@ hk_nir_mesh_rast_pp(const nir_shader *mesh, const struct hk_mesh_info *info,
    if (memory) {
       nir_def *offset = nir_iadd_imm(
          &b,
-         nir_iadd(&b, nir_imul_imm(&b, g, info->group_stride_B),
-                  nir_imul_imm(&b, p,
-                               hk_mesh_slot_offset_B(info, info->primitive_slots,
-                                                     64))),
+         nir_iadd(
+            &b, nir_imul_imm(&b, g, info->group_stride_B),
+            nir_imul_imm(
+               &b, p, hk_mesh_slot_offset_B(info, info->primitive_slots, 64))),
          hk_mesh_primitives_offset_B(info));
       nir_store_output(&b, offset, nir_imm_int(&b, 0), .write_mask = 0x1,
                        .src_type = nir_type_uint32,
@@ -667,7 +678,8 @@ hk_nir_mesh_rast_pp(const nir_shader *mesh, const struct hk_mesh_info *info,
    unsigned clip = mesh->info.clip_distance_array_size;
    unsigned cull = mesh->info.cull_distance_array_size;
    if (clip + cull)
-      outputs |= VARYING_BIT_CLIP_DIST0 | (clip + cull > 4 ? VARYING_BIT_CLIP_DIST1 : 0);
+      outputs |= VARYING_BIT_CLIP_DIST0 |
+                 (clip + cull > 4 ? VARYING_BIT_CLIP_DIST1 : 0);
    if (pp_out.face_slot)
       outputs |= BITFIELD64_BIT(pp_out.face_slot);
    s->info.outputs_written = outputs;
@@ -701,18 +713,17 @@ hk_nir_mesh_rast(const nir_shader *mesh, const struct hk_mesh_info *info,
    nir_def *corner = nir_umod_imm(&b, rem, vpp);
 
    nir_def *records = hk_mesh_param(&b, hk_mesh_params(&b), 1, 64, outputs);
-   nir_def *group = nir_iadd(&b, records,
-                             nir_imul_imm(&b, nir_u2u64(&b, g),
-                                          info->group_stride_B));
+   nir_def *group = nir_iadd(
+      &b, records, nir_imul_imm(&b, nir_u2u64(&b, g), info->group_stride_B));
    nir_def *prim_count =
       nir_load_global(&b, 1, 32, nir_iadd_imm(&b, group, 4), .align_mul = 4);
    nir_def *visible = nir_ult(&b, p, prim_count);
    if (info->primitive_slots & VARYING_BIT_CULL_PRIMITIVE) {
-      nir_def *cull = nir_load_global(
-         &b, 1, 32,
-         hk_mesh_slot(&b, info, group, true, p, VARYING_SLOT_CULL_PRIMITIVE,
-                      NULL),
-         .align_mul = 4);
+      nir_def *cull =
+         nir_load_global(&b, 1, 32,
+                         hk_mesh_slot(&b, info, group, true, p,
+                                      VARYING_SLOT_CULL_PRIMITIVE, NULL),
+                         .align_mul = 4);
       visible = nir_iand(&b, visible, nir_ieq_imm(&b, cull, 0));
    }
 
@@ -725,9 +736,9 @@ hk_nir_mesh_rast(const nir_shader *mesh, const struct hk_mesh_info *info,
       .align_mul = 4);
    index = nir_umin_imm(&b, index, MAX2(info->max_vertices, 1) - 1);
 
-   uint64_t outputs = (info->vertex_slots | info->primitive_slots) &
-                      ~(VARYING_BIT_PRIMITIVE_INDICES |
-                        VARYING_BIT_CULL_PRIMITIVE);
+   uint64_t outputs =
+      (info->vertex_slots | info->primitive_slots) &
+      ~(VARYING_BIT_PRIMITIVE_INDICES | VARYING_BIT_CULL_PRIMITIVE);
    outputs |= VARYING_BIT_POS | VARYING_BIT_LAYER;
 
    /* User per-primitive varyings are read from memory by the primitive's
@@ -743,11 +754,11 @@ hk_nir_mesh_rast(const nir_shader *mesh, const struct hk_mesh_info *info,
       bool primitive = info->primitive_slots & BITFIELD64_BIT(slot);
       nir_def *value;
       if ((info->vertex_slots | info->primitive_slots) & BITFIELD64_BIT(slot)) {
-         value = nir_load_global(
-            &b, hk_mesh_slot_words(info, slot), 32,
-            hk_mesh_slot(&b, info, group, primitive, primitive ? p : index,
-                         slot, NULL),
-            .align_mul = 4);
+         value =
+            nir_load_global(&b, hk_mesh_slot_words(info, slot), 32,
+                            hk_mesh_slot(&b, info, group, primitive,
+                                         primitive ? p : index, slot, NULL),
+                            .align_mul = 4);
          value = nir_pad_vector_imm_int(&b, value, 0, 4);
       } else if (slot == VARYING_SLOT_LAYER) {
          /* Multiview draws each view to its layer. Mesh shaders do not write
@@ -803,8 +814,8 @@ hk_nir_mesh_rast(const nir_shader *mesh, const struct hk_mesh_info *info,
                                          VARYING_SLOT_PRIMITIVE_INDICES, NULL),
                             4 * MIN2(k, vpp - 1)),
                .align_mul = 4);
-            corner_index = nir_umin_imm(&b, corner_index,
-                                        MAX2(info->max_vertices, 1) - 1);
+            corner_index =
+               nir_umin_imm(&b, corner_index, MAX2(info->max_vertices, 1) - 1);
             value = nir_load_global(
                &b, hk_mesh_slot_words(info, slot), 32,
                hk_mesh_slot(&b, info, group, false, corner_index, slot, NULL),
@@ -839,10 +850,10 @@ hk_nir_mesh_rast(const nir_shader *mesh, const struct hk_mesh_info *info,
    if (memory) {
       nir_def *offset = nir_iadd_imm(
          &b,
-         nir_iadd(&b, nir_imul_imm(&b, g, info->group_stride_B),
-                  nir_imul_imm(&b, p,
-                               hk_mesh_slot_offset_B(info, info->primitive_slots,
-                                                     64))),
+         nir_iadd(
+            &b, nir_imul_imm(&b, g, info->group_stride_B),
+            nir_imul_imm(
+               &b, p, hk_mesh_slot_offset_B(info, info->primitive_slots, 64))),
          hk_mesh_primitives_offset_B(info));
       nir_store_output(&b, offset, nir_imm_int(&b, 0), .write_mask = 0x1,
                        .src_type = nir_type_uint32,

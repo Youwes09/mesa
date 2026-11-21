@@ -225,8 +225,7 @@ poly_tess_patch_finish(constant struct poly_tess_params *p, uint patch,
                        enum poly_tess_mode mode)
 {
    if (mode != POLY_TESS_MODE_WITH_COUNTS ||
-       p->coord_allocs[patch] * sizeof(struct poly_tess_point) !=
-          p->heap->size)
+       p->coord_allocs[patch] * sizeof(struct poly_tess_point) != p->heap->size)
       return;
 
    uint start = patch ? p->counts[patch - 1] : 0;

@@ -6,8 +6,8 @@
 #include "gtest/gtest.h"
 
 extern "C" {
-#include "asahi/lib/agx_apple9_launch.h"
 #include "asahi/compiler/agx_apple9_profile.h"
+#include "asahi/lib/agx_apple9_launch.h"
 }
 
 static agx_apple9_launch_parameters
@@ -63,10 +63,11 @@ TEST(Apple9Launcher, EntryTargetsCoverCompactArena)
       for (unsigned offset : {0x40000u, 0x700000u, 0x7f8000u, 0x7fffeau}) {
          p.entry_offset = offset;
          std::array<uint8_t, 1024> out;
-         ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(), stage, &p));
+         ASSERT_TRUE(
+            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
          unsigned call = agx_apple9_launch_call_offset(stage, p.resource_count);
-         unsigned target = out[call] | (out[call + 1] << 8) |
-                           (out[call + 2] << 16);
+         unsigned target =
+            out[call] | (out[call + 1] << 8) | (out[call + 2] << 16);
          EXPECT_EQ(target, 2 * offset + 0x2a);
       }
    }
@@ -119,15 +120,15 @@ TEST(Apple9Launcher, ResourceTablesUseFullAddresses)
              ((bytes[7] & 0xfu) << 21) | ((bytes[3] & 0xfeu) << 24);
    };
    for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
-                     AGX_APPLE9_LAUNCH_COMPUTE}) {
-      for (uint64_t address : {p.shader_base - 0x1000,
-                               p.shader_base + 0x1fffffc0,
-                               p.shader_base + 0x20000000,
-                               p.shader_base + 0x80000000,
-                               p.shader_base + 0xfffff000}) {
+                      AGX_APPLE9_LAUNCH_COMPUTE}) {
+      for (uint64_t address :
+           {p.shader_base - 0x1000, p.shader_base + 0x1fffffc0,
+            p.shader_base + 0x20000000, p.shader_base + 0x80000000,
+            p.shader_base + 0xfffff000}) {
          p.resource_table = address;
          std::array<uint8_t, 1024> out;
-         ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(), stage, &p));
+         ASSERT_TRUE(
+            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
          EXPECT_EQ(literal(out.data()), uint32_t(address));
          EXPECT_EQ(literal(out.data() + 8), uint32_t(address >> 32));
       }
@@ -148,7 +149,8 @@ TEST(Apple9Launcher, InvalidParametersCannotPublishPartialCode)
    };
    reject(p, AGX_APPLE9_LAUNCH_COMPUTE, 1023);
    reject(p, AGX_APPLE9_LAUNCH_VERTEX, 255);
-   reject(p, static_cast<agx_apple9_launch_stage>(AGX_APPLE9_LAUNCH_COMPUTE + 1));
+   reject(p,
+          static_cast<agx_apple9_launch_stage>(AGX_APPLE9_LAUNCH_COMPUTE + 1));
    auto bad = p;
    bad.entry_offset++;
    reject(bad);
@@ -165,8 +167,8 @@ TEST(Apple9Launcher, InvalidParametersCannotPublishPartialCode)
       reject(bad);
    }
    bad = p;
-   for (unsigned bytes : {1u, 64u, 129u, 384u,
-                          2u * AGX_APPLE9_MAX_SHARED_BYTES, UINT32_MAX}) {
+   for (unsigned bytes :
+        {1u, 64u, 129u, 384u, 2u * AGX_APPLE9_MAX_SHARED_BYTES, UINT32_MAX}) {
       bad.threadgroup_memory_bytes = bytes;
       reject(bad);
    }
@@ -231,9 +233,9 @@ TEST(Apple9Launcher, TileModesDoNotChangeEntryOrResources)
                                        AGX_APPLE9_LAUNCH_FRAGMENT, &p));
    struct {
       unsigned samples, bytes, mode, low;
-   } cases[] = {{1, 8, 0x4b, 0x43}, {2, 24, 0x4b, 0x46}, {4, 64, 0x43, 16},
-               {1, 128, 0x4b, 0x61}, {1, 0, 0x4b, 0x41},
-               {2, 0, 0x4b, 0x40}, {4, 0, 0x43, 0}};
+   } cases[] = {{1, 8, 0x4b, 0x43},   {2, 24, 0x4b, 0x46}, {4, 64, 0x43, 16},
+                {1, 128, 0x4b, 0x61}, {1, 0, 0x4b, 0x41},  {2, 0, 0x4b, 0x40},
+                {4, 0, 0x43, 0}};
    for (auto c : cases) {
       p.samples = c.samples;
       p.tile_bytes = c.bytes;
@@ -274,11 +276,13 @@ TEST(Apple9Launcher, PreambleTransferFollowsRootArguments)
       for (uint64_t offset : {0x10000ull, 0xf0000000ull}) {
          p.preamble_address = p.shader_base + offset;
          std::array<uint8_t, 1024> out;
-         ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(), stage, &p));
+         ASSERT_TRUE(
+            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
          unsigned words = stage == AGX_APPLE9_LAUNCH_COMPUTE
-            ? agx_apple9_compute_root_words(p.resource_count)
-            : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
-         unsigned at = agx_apple9_launch_call_offset(stage, p.resource_count) + 18 + 4 * words;
+                             ? agx_apple9_compute_root_words(p.resource_count)
+                             : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
+         unsigned at = agx_apple9_launch_call_offset(stage, p.resource_count) +
+                       18 + 4 * words;
          EXPECT_EQ(read16(out.data() + at), 0x000fu);
          int64_t displacement = 0;
          for (unsigned i = 0; i < 6; ++i)
@@ -302,13 +306,15 @@ TEST(Apple9Launcher, PreambleBoundsRejectWithoutWriting)
       p.preamble_address = address;
       out.fill(0xa5);
       auto before = out;
-      EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(), AGX_APPLE9_LAUNCH_COMPUTE, &p));
+      EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(),
+                                           AGX_APPLE9_LAUNCH_COMPUTE, &p));
       EXPECT_EQ(out, before);
    }
    p.preamble_address = p.shader_base + 0x800000;
    p.launch_address = p.shader_base - 2;
    out.fill(0xa5);
    auto before = out;
-   EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(), AGX_APPLE9_LAUNCH_COMPUTE, &p));
+   EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(),
+                                        AGX_APPLE9_LAUNCH_COMPUTE, &p));
    EXPECT_EQ(out, before);
 }

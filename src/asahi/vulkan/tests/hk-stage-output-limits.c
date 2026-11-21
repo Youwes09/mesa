@@ -4,7 +4,13 @@
 #include "compiler/nir/nir_builder.h"
 #include "poly/nir/poly_nir.h"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 static unsigned
 output_components(nir_shader *nir)
@@ -35,14 +41,15 @@ geometry_outputs(void)
    b.shader->info.gs.invocations = b.shader->info.gs.active_stream_mask = 1;
    b.shader->info.io_lowered = true;
    nir_def *zero = nir_imm_int(&b, 0);
-   nir_store_output(&b, nir_imm_vec4(&b, 0, 0, 0, 1), zero,
-      .write_mask = 15, .src_type = nir_type_float32,
+   nir_store_output(
+      &b, nir_imm_vec4(&b, 0, 0, 0, 1), zero, .write_mask = 15,
+      .src_type = nir_type_float32,
       .io_semantics = {.location = VARYING_SLOT_POS, .num_slots = 1});
    for (unsigned i = 0; i < 124; ++i) {
       nir_store_output(&b, nir_imm_float(&b, i), zero, .write_mask = 1,
-         .component = i % 4, .src_type = nir_type_float32,
-         .io_semantics = {.location = VARYING_SLOT_VAR0 + i / 4,
-                          .num_slots = 1});
+                       .component = i % 4, .src_type = nir_type_float32,
+                       .io_semantics = {.location = VARYING_SLOT_VAR0 + i / 4,
+                                        .num_slots = 1});
    }
    nir_emit_vertex(&b, 0);
    nir_shader_gather_info(b.shader, nir_shader_get_entrypoint(b.shader));
@@ -64,7 +71,8 @@ geometry_outputs(void)
  * lowering needs 129 publications. Keep the native limit until there is an
  * overflow path; compute-based pre-rasterization alone cannot raise it.
  */
-int main(void)
+int
+main(void)
 {
    glsl_type_singleton_init_or_ref();
    CHECK(geometry_outputs() == 0);
@@ -78,16 +86,18 @@ int main(void)
       b.shader->info.io_lowered = true;
       b.shader->info.num_ubos = 1;
       nir_def *zero = nir_imm_int(&b, 0);
-      nir_def *position = nir_load_ubo(&b, 4, 32, zero, zero,
-                                      .align_mul = 16, .range = 16);
-      nir_store_output(&b, position, zero, .write_mask = 15,
-         .src_type = nir_type_float32,
+      nir_def *position =
+         nir_load_ubo(&b, 4, 32, zero, zero, .align_mul = 16, .range = 16);
+      nir_store_output(
+         &b, position, zero, .write_mask = 15, .src_type = nir_type_float32,
          .io_semantics = {.location = VARYING_SLOT_POS, .num_slots = 1});
       for (unsigned i = 0; i < users; ++i) {
-         nir_def *value = nir_load_ubo(&b, 1, 32, zero,
-            nir_imm_int(&b, 16 + i * 4), .align_mul = 4, .range = 4);
-         nir_store_output(&b, value, zero, .write_mask = 1,
-            .component = i % 4, .src_type = nir_type_float32,
+         nir_def *value =
+            nir_load_ubo(&b, 1, 32, zero, nir_imm_int(&b, 16 + i * 4),
+                         .align_mul = 4, .range = 4);
+         nir_store_output(
+            &b, value, zero, .write_mask = 1, .component = i % 4,
+            .src_type = nir_type_float32,
             .io_semantics = {.location = VARYING_SLOT_VAR0 + i / 4,
                              .num_slots = 1});
       }
@@ -98,11 +108,14 @@ int main(void)
       struct agx_apple9_vertex_layout layout = {.rasterize_points = true};
       struct agx_shader_part out = {0};
       const char *reason = NULL;
-      bool ok = agx_compile_apple9_vertex_inputs(b.shader, &layout, &out, &reason);
-      printf("TES API components=%u native components=%u compile=%s reason=%s\n",
-             4 + users, 4 + users + 1, ok ? "yes" : "no", reason ?: "none");
+      bool ok =
+         agx_compile_apple9_vertex_inputs(b.shader, &layout, &out, &reason);
+      printf(
+         "TES API components=%u native components=%u compile=%s reason=%s\n",
+         4 + users, 4 + users + 1, ok ? "yes" : "no", reason ?: "none");
       CHECK(ok == (4 + users + 1 <= AGX_APPLE9_PUBLICATION_COUNT));
-      if (ok) CHECK(out.info.apple9_publication_count <= 128);
+      if (ok)
+         CHECK(out.info.apple9_publication_count <= 128);
       free(out.binary);
       ralloc_free(b.shader);
    }

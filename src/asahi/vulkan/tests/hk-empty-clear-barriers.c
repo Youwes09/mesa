@@ -1,9 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "../hk_cmd_buffer.h"
 #include "hk_entrypoints.h"
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
-int main(void)
+int
+main(void)
 {
    struct hk_device *dev = calloc(1, sizeof(*dev));
    struct hk_cmd_buffer *cmd = calloc(1, sizeof(*cmd));
@@ -37,15 +44,19 @@ int main(void)
        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT},
    };
    for (unsigned i = 0; i < ARRAY_SIZE(barriers); ++i) {
-      hk_CmdPipelineBarrier2(hk_cmd_buffer_to_handle(cmd), &(VkDependencyInfo){
-         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-         .memoryBarrierCount = 1, .pMemoryBarriers = &barriers[i]});
+      hk_CmdPipelineBarrier2(
+         hk_cmd_buffer_to_handle(cmd),
+         &(VkDependencyInfo){.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                             .memoryBarrierCount = 1,
+                             .pMemoryBarriers = &barriers[i]});
    }
    CHECK(cmd->merge_cs == &clear && cmd->empty_barriers.size);
-   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) == 2);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         2);
    hk_cmd_empty_barriers_flush(cmd, true);
    CHECK(!cmd->empty_barriers.size && cmd->merge_cs == &clear);
-   CHECK(cmd->merge_event == 4 && cmd->merge_reach == ~(VkPipelineStageFlags2)0);
+   CHECK(cmd->merge_event == 4 &&
+         cmd->merge_reach == ~(VkPipelineStageFlags2)0);
    CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, 0) == 0);
    CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, 1) == 4);
    struct hk_sync_event *ev = cmd->sync_events.data;
@@ -53,8 +64,10 @@ int main(void)
    for (unsigned i = 0; i < ARRAY_SIZE(barriers); ++i) {
       CHECK(ev[i + 1].stream == HK_SYNC_NONE);
       CHECK(ev[i + 1].barrier_group == i + 1);
-      CHECK(ev[i + 1].src == hk_sync_stage_mask(barriers[i].srcStageMask, true));
-      CHECK(ev[i + 1].dst == hk_sync_stage_mask(barriers[i].dstStageMask, false));
+      CHECK(ev[i + 1].src ==
+            hk_sync_stage_mask(barriers[i].srcStageMask, true));
+      CHECK(ev[i + 1].dst ==
+            hk_sync_stage_mask(barriers[i].dstStageMask, false));
    }
    struct hk_sync_state state;
    hk_sync_init(&state);
@@ -71,13 +84,15 @@ int main(void)
     * execution dependency; it must never become an earlier barrier. */
    util_dynarray_clear(&cmd->sync_events);
    for (unsigned i = 0; i < 2; ++i)
-      *util_dynarray_element(&cmd->sync_first_event, uint32_t, i) = HK_SYNC_NONE;
+      *util_dynarray_element(&cmd->sync_first_event, uint32_t, i) =
+         HK_SYNC_NONE;
    cmd->merge_cs = cmd->current_cs.gfx = NULL;
    cmd->merge_empty = false;
    hk_cmd_sync_work(cmd, &clear, HK_SYNC_GRAPHICS);
    struct hk_empty_barrier pending = {
       .src = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-      .dst = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, .group = 7};
+      .dst = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+      .group = 7};
    util_dynarray_append(&cmd->empty_barriers, pending);
    hk_cmd_empty_barriers_flush(cmd, false);
    struct hk_cs reader = {.cmd = cmd, .type = HK_CS_CDM, .sync_id = 0};
@@ -87,7 +102,9 @@ int main(void)
    CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, 1) == 0);
    CHECK(*util_dynarray_element(&cmd->sync_first_event, uint32_t, 0) == 2);
    hk_sync_init(&state);
-   streams[0] = (struct hk_sync_stream){.engine = HK_SYNC_CDM, .index = 1, .before = {1, 0}};
+   streams[0] = (struct hk_sync_stream){.engine = HK_SYNC_CDM,
+                                        .index = 1,
+                                        .before = {1, 0}};
    streams[1] = (struct hk_sync_stream){.engine = HK_SYNC_RENDER, .index = 1};
    CHECK(hk_sync_resolve(&state, ev, 3, remap, streams, 2, false));
    CHECK(streams[0].wait.engine[HK_SYNC_RENDER] == 1);
@@ -112,19 +129,26 @@ int main(void)
    static uint8_t pool[4096], bytes[4096];
    cmd->uploader[HK_CMD_POOL_MAIN].chunks[0].map = pool;
    for (unsigned i = 0; i < ARRAY_SIZE(input_barriers); ++i) {
-      struct hk_cs kept = {.cmd = cmd, .type = HK_CS_VDM, .sync_id = 1,
-                           .current = bytes, .end = bytes + sizeof(bytes),
-                           .sync_stages = HK_SYNC_GRAPHICS, .stats.cmds = 1};
+      struct hk_cs kept = {.cmd = cmd,
+                           .type = HK_CS_VDM,
+                           .sync_id = 1,
+                           .current = bytes,
+                           .end = bytes + sizeof(bytes),
+                           .sync_stages = HK_SYNC_GRAPHICS,
+                           .stats.cmds = 1};
       util_dynarray_clear(&cmd->sync_events);
       for (unsigned j = 0; j < 2; ++j)
-         *util_dynarray_element(&cmd->sync_first_event, uint32_t, j) = HK_SYNC_NONE;
+         *util_dynarray_element(&cmd->sync_first_event, uint32_t, j) =
+            HK_SYNC_NONE;
       hk_cmd_sync_work(cmd, &kept, HK_SYNC_GRAPHICS);
       cmd->merge_cs = cmd->current_cs.gfx = &kept;
       cmd->merge_empty = true;
       cmd->merge_event = 0;
-      hk_CmdPipelineBarrier2(hk_cmd_buffer_to_handle(cmd), &(VkDependencyInfo){
-         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-         .memoryBarrierCount = 1, .pMemoryBarriers = &input_barriers[i]});
+      hk_CmdPipelineBarrier2(
+         hk_cmd_buffer_to_handle(cmd),
+         &(VkDependencyInfo){.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                             .memoryBarrierCount = 1,
+                             .pMemoryBarriers = &input_barriers[i]});
       CHECK(!cmd->empty_barriers.size);
       CHECK(cmd->merge_cs == NULL);
       cmd->merge_cs = cmd->current_cs.gfx = NULL;
@@ -134,7 +158,9 @@ int main(void)
    util_dynarray_fini(&cmd->sync_first_event);
    util_dynarray_fini(&cmd->empty_barriers);
    vk_object_base_finish(&cmd->vk.base);
-   free(cmd); free(dev);
-   puts("PASS deferred clear barriers: predecessor ordering, grouping, fallback WAR, input attachments");
+   free(cmd);
+   free(dev);
+   puts(
+      "PASS deferred clear barriers: predecessor ordering, grouping, fallback WAR, input attachments");
    return 0;
 }

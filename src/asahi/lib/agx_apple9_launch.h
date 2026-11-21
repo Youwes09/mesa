@@ -90,10 +90,10 @@ struct agx_apple9_launch_template {
  * launch_address are per-launch and ignored. Returns false (and leaves the
  * template invalid) when agx_apple9_launch_build would reject the stage
  * parameters. */
-bool agx_apple9_launch_template_init(struct agx_apple9_launch_template *tmpl,
-                                     size_t capacity,
-                                     enum agx_apple9_launch_stage stage,
-                                     const struct agx_apple9_launch_parameters *params);
+bool agx_apple9_launch_template_init(
+   struct agx_apple9_launch_template *tmpl, size_t capacity,
+   enum agx_apple9_launch_stage stage,
+   const struct agx_apple9_launch_parameters *params);
 
 /* Emit the program for one launch: the same bytes agx_apple9_launch_build
  * produces with the template's parameters and these per-launch fields. */

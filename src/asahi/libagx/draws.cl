@@ -13,15 +13,14 @@
  * Subtract before dividing, saturating instead of wrapping below the offset.
  */
 KERNEL(1)
-libagx_draw_xfb(global VkDrawIndirectCommand *out,
-                constant uint32_t *counter, uint32_t counter_offset,
-                uint32_t vertex_stride, uint32_t instance_count,
-                uint32_t first_instance)
+libagx_draw_xfb(global VkDrawIndirectCommand *out, constant uint32_t *counter,
+                uint32_t counter_offset, uint32_t vertex_stride,
+                uint32_t instance_count, uint32_t first_instance)
 {
    uint32_t bytes = *counter;
    *out = (VkDrawIndirectCommand){
-      .vertexCount = (bytes > counter_offset ? bytes - counter_offset : 0) /
-                     vertex_stride,
+      .vertexCount =
+         (bytes > counter_offset ? bytes - counter_offset : 0) / vertex_stride,
       .instanceCount = instance_count,
       .firstVertex = 0,
       .firstInstance = first_instance,
@@ -128,7 +127,8 @@ libagx_map_from_adj(uint id, enum mesa_prim prim, bool flatshade_first)
  * preserving the vertex offset and instances.
  */
 KERNEL(1)
-libagx_unroll_adjacency(global uint32_t *out_draw, global struct poly_heap *heap,
+libagx_unroll_adjacency(global uint32_t *out_draw,
+                        global struct poly_heap *heap,
                         constant uint32_t *in_draw, uint64_t index_buffer,
                         uint32_t index_buffer_range_el, uint32_t index_size_B,
                         uint32_t prim, uint32_t flatshade_first)
@@ -149,15 +149,15 @@ libagx_unroll_adjacency(global uint32_t *out_draw, global struct poly_heap *heap
    if (indexed) {
       in_indices = poly_index_buffer(index_buffer, index_buffer_range_el,
                                      in_draw[2], index_size_B);
-      in_range_el = poly_index_buffer_range_el(index_buffer_range_el,
-                                               in_draw[2]);
+      in_range_el =
+         poly_index_buffer_range_el(index_buffer_range_el, in_draw[2]);
    }
 
    for (uint i = 0; i < count; ++i) {
       uint raw = libagx_map_from_adj(i, prim, flatshade_first);
-      out[i] = indexed ? poly_load_index(in_indices, in_range_el, raw,
-                                         index_size_B)
-                       : in_draw[2] + raw;
+      out[i] = indexed
+                  ? poly_load_index(in_indices, in_range_el, raw, index_size_B)
+                  : in_draw[2] + raw;
    }
 
    out_draw[0] = count;
@@ -336,8 +336,8 @@ libagx_draw_robust_index(global uint32_t *vdm, global struct poly_heap *heap,
          /* Clone the index buffer. The destination is aligned as a
           * post-condition of poly_heap_try_alloc.
           */
-         libagx_memcpy_to_aligned((global uint *)padded, in_buf, in_size_B,
-                                  tid, 32);
+         libagx_memcpy_to_aligned((global uint *)padded, in_buf, in_size_B, tid,
+                                  32);
 
          /* Extend with up to 32 zeroes with a small memset */
          libagx_memset_small(padded + in_size_B, 0, out_size_B - in_size_B,

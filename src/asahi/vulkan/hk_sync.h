@@ -77,8 +77,9 @@ hk_sync_index_event(uint32_t *first_event, uint32_t stream, uint32_t index)
  * This touches only the range the caller already moved, never older history.
  */
 static inline void
-hk_sync_reindex_events(uint32_t *first_event, const struct hk_sync_event *events,
-                       unsigned first, unsigned end)
+hk_sync_reindex_events(uint32_t *first_event,
+                       const struct hk_sync_event *events, unsigned first,
+                       unsigned end)
 {
    while (end > first) {
       uint32_t stream = events[--end].stream;

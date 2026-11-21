@@ -43,13 +43,12 @@ __wrap_agx_va_alloc(struct agx_device *dev, uint64_t size_B, uint64_t align_B,
 {
    va_allocs++;
    CHECK(size_B == HK_HEAP_VA_MAX_B && flags == AGX_VA_USC && !fixed_va);
-   heap_va = (struct agx_va){.flags = flags, .addr = 1ull << 32,
-                             .size_B = size_B};
+   heap_va =
+      (struct agx_va){.flags = flags, .addr = 1ull << 32, .size_B = size_B};
    return &heap_va;
 }
 
-void __wrap_agx_va_free(struct agx_device *dev, struct agx_va *va,
-                        bool unbind);
+void __wrap_agx_va_free(struct agx_device *dev, struct agx_va *va, bool unbind);
 void
 __wrap_agx_va_free(struct agx_device *dev, struct agx_va *va, bool unbind)
 {

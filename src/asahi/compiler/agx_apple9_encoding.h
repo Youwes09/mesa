@@ -34,22 +34,23 @@ agx_apple9_encode_literal32(uint8_t out[8], unsigned dst, uint32_t value)
  * in eight-byte units, and results remain pending on dependency slot 2.
  * The established widths are one or two consecutive 64-bit pointers. */
 static inline bool
-agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst,
-                              unsigned base, unsigned offset, unsigned count)
+agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
+                               unsigned offset, unsigned count)
 {
    if ((count != 1 && count != 2) || dst >= 64 || dst + 2 * count > 64 ||
        base >= 63 || offset > 255)
       return false;
    const uint8_t bytes[14] = {
-      0x67, 0, 0x54, dst << 1, base, 0, 0, 0,
-      count == 2 ? 0x57 : 0x59, 0, offset, 0x40, 0x26, 0,
+      0x67, 0,      0x54, dst << 1, base, 0, 0, 0, count == 2 ? 0x57 : 0x59,
+      0,    offset, 0x40, 0x26,     0,
    };
    memcpy(out, bytes, sizeof(bytes));
    return true;
 }
 
 /* Signed, instruction-start-relative branch used by shader control flow and
- * persistent shader entries. The low bit is reserved for instruction alignment. */
+ * persistent shader entries. The low bit is reserved for instruction alignment.
+ */
 static inline bool
 agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
 {
@@ -63,19 +64,20 @@ agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
    return true;
 }
 
-
 /* Transfer one pending word to the main's argument window. A first transfer
  * waits for the table-load group on slot 2; subsequent transfers reuse it.
  * Argument word 2*i is the low half of pointer i, word 2*i+1 its high half. */
 static inline bool
-agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst,
-                               unsigned src, bool wait)
+agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
+                                bool wait)
 {
    if (dst >= 64 || src >= 64)
       return false;
    const uint8_t bytes[4] = {
-      ((dst & 15) << 4) | 0x0b, (src << 1) & 0x7f,
-      9 | ((dst >> 4) << 6), 4 | (wait ? 0x40 : 0),
+      ((dst & 15) << 4) | 0x0b,
+      (src << 1) & 0x7f,
+      9 | ((dst >> 4) << 6),
+      4 | (wait ? 0x40 : 0),
    };
    memcpy(out, bytes, sizeof(bytes));
    return true;

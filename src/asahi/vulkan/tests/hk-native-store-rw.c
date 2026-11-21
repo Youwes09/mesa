@@ -2,14 +2,20 @@
  * SPDX-License-Identifier: MIT
  */
 #include <stdio.h>
+#include "compiler/nir/nir_builder.h"
 #include "hk_descriptor_set.h"
 #include "hk_shader.h"
-#include "compiler/nir/nir_builder.h"
 
 /* Stores stay native only when no invocation can read its own native write:
  * every read before every store, no loop holding both, no calls. */
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "failed: %s\n", #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "failed: %s\n", #c);                                  \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 static void
 image_op(nir_builder *b, nir_intrinsic_op op)
@@ -20,15 +26,17 @@ image_op(nir_builder *b, nir_intrinsic_op op)
    nir_intrinsic_set_image_dim(intr, GLSL_SAMPLER_DIM_2D);
    nir_intrinsic_set_format(intr, PIPE_FORMAT_R32_FLOAT);
    for (unsigned j = 0; j < info->num_srcs; ++j) {
-      unsigned components = info->src_components[j] ? info->src_components[j] : 4;
-      intr->src[j] = nir_src_for_ssa(nir_imm_zero(b, components, j == 0 ? 64 : 32));
+      unsigned components =
+         info->src_components[j] ? info->src_components[j] : 4;
+      intr->src[j] =
+         nir_src_for_ssa(nir_imm_zero(b, components, j == 0 ? 64 : 32));
    }
    if (info->has_dest)
       nir_def_init(&intr->instr, &intr->def, 4, 32);
    nir_builder_instr_insert(b, &intr->instr);
 }
 
-#define LOAD nir_intrinsic_bindless_image_load
+#define LOAD  nir_intrinsic_bindless_image_load
 #define STORE nir_intrinsic_bindless_image_store
 
 static nir_builder
@@ -87,7 +95,8 @@ main(void)
    CHECK(hk_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
-   /* Store in the then-branch, read in the else-branch: rejected (block order). */
+   /* Store in the then-branch, read in the else-branch: rejected (block order).
+    */
    b = shader();
    nir_push_if(&b, nir_imm_true(&b));
    image_op(&b, STORE);

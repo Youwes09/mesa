@@ -1,8 +1,18 @@
 /* SPDX-License-Identifier: MIT */
 #include "agx_apple9.h"
 #include "agx_device.h"
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); abort(); } } while (0)
-struct allocation { uint8_t data[512]; uint64_t gpu; size_t size; };
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         abort();                                                              \
+      }                                                                        \
+   } while (0)
+struct allocation {
+   uint8_t data[512];
+   uint64_t gpu;
+   size_t size;
+};
 static struct agx_ptr
 allocate(void *priv, size_t size, size_t alignment)
 {
@@ -11,7 +21,8 @@ allocate(void *priv, size_t size, size_t alignment)
    a->size = size;
    return (struct agx_ptr){a->data, a->gpu};
 }
-int main(void)
+int
+main(void)
 {
    struct agx_device *dev = calloc(1, sizeof(*dev));
    CHECK(dev);
@@ -24,8 +35,10 @@ int main(void)
    bo.apple9_body.entry_offset = 0x400;
    list_add(&bo.apple9_body.entry_link, &dev->apple9_entry_lru);
    struct agx_apple9_render_stage shader = {
-      .bo = &bo, .publication_count_valid = true,
-      .publication_count = 32, .binary_size = 128,
+      .bo = &bo,
+      .publication_count_valid = true,
+      .publication_count = 32,
+      .binary_size = 128,
    };
    for (unsigned cached = 0; cached < 2; ++cached) {
       for (unsigned fragment = 0; fragment < 2; ++fragment) {
@@ -51,14 +64,18 @@ int main(void)
                   .shader_base = dev->shader_base,
                   .entry_offset = bo.apple9_body.entry_offset,
                   .publication_count = shader.publication_count,
-                  .resource_table = a.gpu, .launch_address = a.gpu + 64,
+                  .resource_table = a.gpu,
+                  .launch_address = a.gpu + 64,
                   .tile_bytes = fragment ? 16 : 0,
                   .samples = fragment ? samples : 0,
                   .preamble_address = preamble ? va.addr + 64 : 0,
                };
                uint8_t reference[AGX_APPLE9_GRAPHICS_LAUNCH_SIZE];
                CHECK(agx_apple9_launch_build(reference, sizeof(reference),
-                  fragment ? AGX_APPLE9_LAUNCH_FRAGMENT : AGX_APPLE9_LAUNCH_VERTEX, &p));
+                                             fragment
+                                                ? AGX_APPLE9_LAUNCH_FRAGMENT
+                                                : AGX_APPLE9_LAUNCH_VERTEX,
+                                             &p));
                CHECK(!memcmp(reference, a.data + 64, sizeof(reference)));
                for (unsigned i = a.size; i < sizeof(a.data); ++i)
                   CHECK(a.data[i] == 0xa5);
@@ -69,5 +86,6 @@ int main(void)
    }
    simple_mtx_destroy(&dev->apple9_entry_lock);
    free(dev);
-   puts("PASS 24 graphics allocations: roots, full launch bytes, preambles and bounds");
+   puts(
+      "PASS 24 graphics allocations: roots, full launch bytes, preambles and bounds");
 }

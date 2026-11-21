@@ -100,8 +100,8 @@ hk_apple9_texel_layout(enum pipe_format format,
          if (desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB && c < 3)
             kind = HK_TEXEL_SRGB;
       }
-      m->component[c] = offset | (shift << 8) | ((bits - 1) << 13) |
-                        (kind << 18);
+      m->component[c] =
+         offset | (shift << 8) | ((bits - 1) << 13) | (kind << 18);
    }
 }
 
@@ -255,7 +255,6 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
       hk_apple9_texel_layout(format, m);
       m->residency = residency;
    }
-
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -272,14 +271,12 @@ hk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
    if (!view)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   hk_pack_texel_buffer(device, hk_format_to_pipe_format(view->vk.format),
-                        hk_buffer_address_ro(buffer, view->vk.offset),
-                        hk_buffer_address_rw(buffer, view->vk.offset),
-                        view->vk.elements,
-                        agx_is_apple9(&device->dev)
-                           ? hk_buffer_apple9_residency(buffer) : 0,
-                        &view->tex, &view->pbe, &view->apple9,
-                        view->apple9_texture);
+   hk_pack_texel_buffer(
+      device, hk_format_to_pipe_format(view->vk.format),
+      hk_buffer_address_ro(buffer, view->vk.offset),
+      hk_buffer_address_rw(buffer, view->vk.offset), view->vk.elements,
+      agx_is_apple9(&device->dev) ? hk_buffer_apple9_residency(buffer) : 0,
+      &view->tex, &view->pbe, &view->apple9, view->apple9_texture);
 
    *pBufferView = hk_buffer_view_to_handle(view);
 

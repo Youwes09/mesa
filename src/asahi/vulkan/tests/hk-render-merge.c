@@ -1,9 +1,15 @@
 /* SPDX-License-Identifier: MIT */
 #include "../hk_cmd_buffer.h"
-#include "../hk_image_view.h"
 #include "../hk_image.h"
+#include "../hk_image_view.h"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 static int
 check_depth_barriers(void)
@@ -22,9 +28,13 @@ check_depth_barriers(void)
 
    for (unsigned kind = 0; kind < 7; ++kind) {
       struct hk_cs render = {
-         .cmd = cmd, .type = HK_CS_VDM, .sync_id = 0,
-         .current = bytes, .end = bytes + sizeof(bytes),
-         .sync_stages = HK_SYNC_GRAPHICS, .stats.cmds = 1,
+         .cmd = cmd,
+         .type = HK_CS_VDM,
+         .sync_id = 0,
+         .current = bytes,
+         .end = bytes + sizeof(bytes),
+         .sync_stages = HK_SYNC_GRAPHICS,
+         .stats.cmds = 1,
       };
       cmd->sync_render_continuation = false;
       util_dynarray_clear(&cmd->sync_events);
@@ -38,20 +48,24 @@ check_depth_barriers(void)
       cmd->barrier_image = (kind == 0 || kind >= 3) ? image : NULL;
       cmd->merge_key.ds_read_only = kind >= 3 ? 1 : 0;
       cmd->merge_feedback = kind == 6;
-      hk_cmd_sync_barrier(cmd, kind >= 5 ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT :
-                                              VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-         (kind == 2 || kind >= 5) ? VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT :
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-         kind >= 5 ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT :
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-         (kind == 0 || kind == 3) ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT :
-         kind == 4 ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT :
-         kind == 1 ? VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT :
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+      hk_cmd_sync_barrier(
+         cmd,
+         kind >= 5 ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                   : VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+         (kind == 2 || kind >= 5) ? VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                                  : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+         kind >= 5 ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
+                   : VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+         (kind == 0 || kind == 3) ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
+         : kind == 4              ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT
+         : kind == 1              ? VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT
+                     : VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
       /* Sampling stored depth (including input attachments) ends the render;
        * a depth attachment -> depth attachment barrier stays in-tile. */
-      CHECK((cmd->merge_cs == &render) == (kind == 2 || kind == 3 || kind == 5));
-      CHECK((cmd->current_cs.gfx == &render) == (kind == 2 || kind == 3 || kind == 5));
+      CHECK((cmd->merge_cs == &render) ==
+            (kind == 2 || kind == 3 || kind == 5));
+      CHECK((cmd->current_cs.gfx == &render) ==
+            (kind == 2 || kind == 3 || kind == 5));
       CHECK(render.merge_attachment_barrier == (kind == 2));
       if (kind == 2) {
          /* If the next pass changes its key, closing the kept-open render
@@ -61,7 +75,8 @@ check_depth_barriers(void)
          const struct hk_sync_event *last =
             util_dynarray_top_ptr(&cmd->sync_events, struct hk_sync_event);
          CHECK(last->stream == HK_SYNC_NONE);
-         CHECK(last->src == hk_sync_stage_mask(
+         CHECK(last->src ==
+               hk_sync_stage_mask(
                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, true));
          CHECK(last->dst == HK_SYNC_FRAGMENT);
       }
@@ -72,9 +87,13 @@ check_depth_barriers(void)
     * input attachment barrier ends a colour-only render. */
    {
       struct hk_cs render = {
-         .cmd = cmd, .type = HK_CS_VDM, .sync_id = 0,
-         .current = bytes, .end = bytes + sizeof(bytes),
-         .sync_stages = HK_SYNC_GRAPHICS, .stats.cmds = 1,
+         .cmd = cmd,
+         .type = HK_CS_VDM,
+         .sync_id = 0,
+         .current = bytes,
+         .end = bytes + sizeof(bytes),
+         .sync_stages = HK_SYNC_GRAPHICS,
+         .stats.cmds = 1,
       };
       util_dynarray_clear(&cmd->sync_events);
       util_dynarray_clear(&cmd->sync_first_event);
@@ -115,13 +134,13 @@ main(void)
    depth.vk.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
    struct hk_image_view *colors[] = {&color};
    VkRect2D area = {.extent = {128, 128}};
-   CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 1, colors,
-                                   &depth, &depth, 0, area));
+   CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 1, colors, &depth, &depth, 0,
+                                  area));
 
    /* Distinct views of the same subresource may continue the render. */
    struct hk_image_view alias = depth;
-   CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 1, colors,
-                                   &alias, &alias, 0, area));
+   CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 1, colors, &alias, &alias, 0,
+                                  area));
    CHECK(!memcmp(&first, &next, sizeof(first)));
 
    /* Depth identity, mip, layer, format, aspect and render area all matter. */
@@ -129,22 +148,35 @@ main(void)
       alias = depth;
       VkRect2D altered = area;
       switch (change) {
-      case 0: alias.vk.image = &other_image; break;
-      case 1: alias.vk.base_mip_level = 1; break;
-      case 2: alias.vk.base_array_layer = 1; break;
-      case 3: alias.vk.format = VK_FORMAT_D24_UNORM_S8_UINT; break;
-      case 4: altered.offset.x = 1; break;
-      case 5: altered.extent.height = 64; break;
-      default: break;
+      case 0:
+         alias.vk.image = &other_image;
+         break;
+      case 1:
+         alias.vk.base_mip_level = 1;
+         break;
+      case 2:
+         alias.vk.base_array_layer = 1;
+         break;
+      case 3:
+         alias.vk.format = VK_FORMAT_D24_UNORM_S8_UINT;
+         break;
+      case 4:
+         altered.offset.x = 1;
+         break;
+      case 5:
+         altered.extent.height = 64;
+         break;
+      default:
+         break;
       }
       CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 1, colors, &alias,
-                                      change == 6 ? NULL : &alias, 0, altered));
+                                     change == 6 ? NULL : &alias, 0, altered));
       CHECK(memcmp(&first, &next, sizeof(first)));
    }
-   CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_SUSPENDING_BIT,
-                                    1, 0, 1, colors, &depth, &depth, 0, area));
-   CHECK(!hk_render_merge_key_init(&next, 0, 1, 1, 1, colors,
-                                    &depth, &depth, 0, area));
+   CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_SUSPENDING_BIT, 1, 0, 1,
+                                   colors, &depth, &depth, 0, area));
+   CHECK(!hk_render_merge_key_init(&next, 0, 1, 1, 1, colors, &depth, &depth, 0,
+                                   area));
    /* Depth/stencil-only passes have a complete framebuffer identity, too.
     * Keep the same subresource, read-only and area restrictions as mixed
     * colour/depth rendering. No view array is needed when color_count is 0.
@@ -152,36 +184,35 @@ main(void)
    for (unsigned aspects = 1; aspects < 4; ++aspects) {
       struct hk_image_view *z = (aspects & 1) ? &depth : NULL;
       struct hk_image_view *s = (aspects & 2) ? &depth : NULL;
-      CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 0, NULL,
-                                       z, s, 0, area));
-      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL,
-                                       z, s, 0, area));
+      CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 0, NULL, z, s, 0, area));
+      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL, z, s, 0, area));
       CHECK(!memcmp(&first, &next, sizeof(first)));
       VkRect2D other_area = area;
       other_area.offset.x++;
-      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL,
-                                       z, s, 0, other_area));
+      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL, z, s, 0,
+                                     other_area));
       CHECK(memcmp(&first, &next, sizeof(first)));
-      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL,
-                                       z, s, aspects, area));
+      CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL, z, s, aspects,
+                                     area));
       CHECK(memcmp(&first, &next, sizeof(first)));
-      CHECK(!hk_render_merge_key_init(&next,
-               VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT,
-               1, 0, 0, NULL, z, s, 0, area));
-      CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_SUSPENDING_BIT,
-               1, 0, 0, NULL, z, s, 0, area));
-      CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_RESUMING_BIT,
-               1, 0, 0, NULL, z, s, 0, area));
-      CHECK(!hk_render_merge_key_init(&next, 0, 1, 1, 0, NULL,
-                                       z, s, 0, area));
+      CHECK(!hk_render_merge_key_init(
+         &next, VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT, 1, 0, 0,
+         NULL, z, s, 0, area));
+      CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_SUSPENDING_BIT, 1, 0,
+                                      0, NULL, z, s, 0, area));
+      CHECK(!hk_render_merge_key_init(&next, VK_RENDERING_RESUMING_BIT, 1, 0, 0,
+                                      NULL, z, s, 0, area));
+      CHECK(!hk_render_merge_key_init(&next, 0, 1, 1, 0, NULL, z, s, 0, area));
    }
-   CHECK(!hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL,
-                                    NULL, NULL, 0, area));
+   CHECK(
+      !hk_render_merge_key_init(&next, 0, 1, 0, 0, NULL, NULL, NULL, 0, area));
 
    /* Preserve the existing colour-only render-area freedom. */
-   CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 1, colors, NULL, NULL, 0, area));
+   CHECK(hk_render_merge_key_init(&first, 0, 1, 0, 1, colors, NULL, NULL, 0,
+                                  area));
    area.offset.x = 1;
-   CHECK(hk_render_merge_key_init(&next, 0, 1, 0, 1, colors, NULL, NULL, 0, area));
+   CHECK(
+      hk_render_merge_key_init(&next, 0, 1, 0, 1, colors, NULL, NULL, 0, area));
    CHECK(!memcmp(&first, &next, sizeof(first)));
    CHECK(!check_depth_barriers());
    puts("PASS depth/stencil render merge subresources, areas and exclusions");

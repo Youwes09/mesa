@@ -65,8 +65,8 @@ encode_batch(const float (*rgba)[4], unsigned n, enum pipe_format format,
    nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "encode");
    for (unsigned i = 0; i < n; ++i) {
-      nir_def *value = nir_imm_vec4(&b, rgba[i][0], rgba[i][1], rgba[i][2],
-                                    rgba[i][3]);
+      nir_def *value =
+         nir_imm_vec4(&b, rgba[i][0], rgba[i][1], rgba[i][2], rgba[i][3]);
       nir_def *layout = nir_imm_ivec4(&b, m.component[0], m.component[1],
                                       m.component[2], m.component[3]);
       for (unsigned k = 0; k < 2; ++k) {
@@ -86,7 +86,8 @@ encode_batch(const float (*rgba)[4], unsigned n, enum pipe_format format,
          nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
          if (intr->intrinsic != nir_intrinsic_store_global)
             continue;
-         if (!nir_src_is_const(intr->src[0]) || !nir_src_is_const(intr->src[1])) {
+         if (!nir_src_is_const(intr->src[0]) ||
+             !nir_src_is_const(intr->src[1])) {
             fprintf(stderr, "store did not fold to a constant\n");
             ralloc_free(b.shader);
             return false;
@@ -155,11 +156,11 @@ check_float11(void)
    static float in[1 << 13][4];
    unsigned n = 0;
    const uint32_t specials[] = {
-      0x00000000, 0x80000000, 0x00000001, 0x80000001, 0x007fffff,
-      0x00800000, 0x38800000, 0x38000000, 0x37800000, 0x33800000,
-      0x3f800000, 0xbf800000, 0x477e0000, 0x477f0000, 0x477fe000,
-      0x47800000, 0x7f7fffff, 0x7f800000, 0xff800000, 0x7fc00000,
-      0xffc00000, 0x7f800001, 0xff800001, 0x7f800010, 0xff800010, 0x3f7fffff, 0x3f8007ff, 0x3f801000,
+      0x00000000, 0x80000000, 0x00000001, 0x80000001, 0x007fffff, 0x00800000,
+      0x38800000, 0x38000000, 0x37800000, 0x33800000, 0x3f800000, 0xbf800000,
+      0x477e0000, 0x477f0000, 0x477fe000, 0x47800000, 0x7f7fffff, 0x7f800000,
+      0xff800000, 0x7fc00000, 0xffc00000, 0x7f800001, 0xff800001, 0x7f800010,
+      0xff800010, 0x3f7fffff, 0x3f8007ff, 0x3f801000,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(specials); ++i) {
       float f = bits_to_float(specials[i]);
@@ -199,11 +200,12 @@ check_float11(void)
    for (unsigned i = 0; i < n; ++i) {
       if (memcmp(out[i][0], out[i][1], sizeof(out[i][0]))) {
          if (mismatch++ < 8)
-            fprintf(stderr,
-                    "mismatch (%a %a %a): generic %08x %08x %08x %08x fast %08x %08x %08x %08x\n",
-                    in[i][0], in[i][1], in[i][2], out[i][0][0], out[i][0][1],
-                    out[i][0][2], out[i][0][3], out[i][1][0], out[i][1][1],
-                    out[i][1][2], out[i][1][3]);
+            fprintf(
+               stderr,
+               "mismatch (%a %a %a): generic %08x %08x %08x %08x fast %08x %08x %08x %08x\n",
+               in[i][0], in[i][1], in[i][2], out[i][0][0], out[i][0][1],
+               out[i][0][2], out[i][0][3], out[i][1][0], out[i][1][1],
+               out[i][1][2], out[i][1][3]);
       }
       uint32_t w = out[i][1][0];
       const unsigned shift[3] = {0, 11, 22}, mbits[3] = {6, 6, 5};
@@ -213,7 +215,8 @@ check_float11(void)
          if (isnan(in[i][c])) {
             nan_cases++;
             /* Vulkan maps NaN to a NaN encoding. */
-            nan_bad += !((got >> mbits[c]) == 31 && (got & ((1u << mbits[c]) - 1)));
+            nan_bad +=
+               !((got >> mbits[c]) == 31 && (got & ((1u << mbits[c]) - 1)));
             continue;
          }
          if (ufloat_expected(in[i][c], mbits[c], &want, got) && got != want) {
@@ -240,7 +243,8 @@ path_alu_count(enum pipe_format format, enum hk_apple9_store_encode encode)
    hk_apple9_texel_layout(format, &m);
    nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "path");
-   nir_def *value = nir_load_global(&b, 4, 32, nir_imm_int64(&b, 0), .align_mul = 16);
+   nir_def *value =
+      nir_load_global(&b, 4, 32, nir_imm_int64(&b, 0), .align_mul = 16);
    nir_def *layout = nir_imm_ivec4(&b, m.component[0], m.component[1],
                                    m.component[2], m.component[3]);
    nir_def *words = hk_apple9_encode_texel_fast(&b, value, layout, true,
@@ -260,8 +264,9 @@ path_alu_count(enum pipe_format format, enum hk_apple9_store_encode encode)
 int
 main(void)
 {
-   printf("R11G11B10 store path, NIR ALU instructions: generic %u, float11 arm %u\n",
-          path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_GENERIC),
-          path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_FLOAT11));
+   printf(
+      "R11G11B10 store path, NIR ALU instructions: generic %u, float11 arm %u\n",
+      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_GENERIC),
+      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_FLOAT11));
    return check_float11();
 }

@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <assert.h>
+#include "asahi/lib/agx_apple9.h"
 #include "agx_abi.h"
 #include "agx_bg_eot.h"
 #include "agx_bo.h"
@@ -15,17 +16,16 @@
 #include "agx_linker.h"
 #include "agx_nir_lower_vbo.h"
 #include "agx_ppp.h"
-#include "asahi/lib/agx_apple9.h"
 #include "agx_tilebuffer.h"
 #include "agx_usc.h"
 #include "agx_uvs.h"
+#include "hk_apple9_polygon_points.h"
 #include "hk_buffer.h"
 #include "hk_cmd_buffer.h"
-#include "hk_apple9_polygon_points.h"
 #include "hk_device.h"
 #include "hk_entrypoints.h"
-#include "hk_image.h"
 #include "hk_feedback.h"
+#include "hk_image.h"
 #include "hk_image_view.h"
 #include "hk_physical_device.h"
 #include "hk_private.h"
@@ -38,12 +38,12 @@
 #include "asahi/libagx/query.h"
 #include "asahi/libagx/tessellator.h"
 #include "poly/geometry.h"
-#include "util/u_debug.h"
 #include "util/blend.h"
 #include "util/format/format_utils.h"
 #include "util/format/u_formats.h"
 #include "util/macros.h"
 #include "util/ralloc.h"
+#include "util/u_debug.h"
 #include "util/u_prim.h"
 #include "vulkan/vulkan_core.h"
 #include "layout.h"
@@ -299,7 +299,7 @@ hk_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
 
    if (agx_is_apple9(&dev->dev))
       return hk_apple9_build_bg_eot(cmd, info, store, partial_render,
-                                   incomplete_render_area);
+                                    incomplete_render_area);
 
    /* Construct the key */
    struct agx_bg_eot_key key = {.tib = render->tilebuffer};
@@ -543,7 +543,7 @@ hk_pack_zls_control(struct agx_zls_control_packed *packed,
                     z->resolveMode != VK_RESOLVE_MODE_NONE || !last;
       if (last && z->loadOp != VK_ATTACHMENT_LOAD_OP_CLEAR &&
           vk_image_layout_is_read_only(z->imageLayout,
-                                               VK_IMAGE_ASPECT_DEPTH_BIT))
+                                       VK_IMAGE_ASPECT_DEPTH_BIT))
          zls.z_store = false;
 
       zls.z_load = z->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD || partial_render ||
@@ -555,7 +555,7 @@ hk_pack_zls_control(struct agx_zls_control_packed *packed,
                     s->resolveMode != VK_RESOLVE_MODE_NONE || !last;
       if (last && s->loadOp != VK_ATTACHMENT_LOAD_OP_CLEAR &&
           vk_image_layout_is_read_only(s->imageLayout,
-                                               VK_IMAGE_ASPECT_STENCIL_BIT))
+                                       VK_IMAGE_ASPECT_STENCIL_BIT))
          zls.s_store = false;
 
       zls.s_load = s->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD || partial_render ||
@@ -587,10 +587,10 @@ hk_zls_control_make_raw(struct agx_zls_control_packed *packed)
       packed->opaque[i] &= ~compress.opaque[i];
 }
 
-/* HK_APPLE9_MERGE_RENDERS (default on; =0 disables): continue the hardware render of a
- * render pass in the next render pass when nothing but attachment barriers
- * separates them and both use the same colour attachments. The render covers
- * the whole attachment whatever the render area, and tiles keep their
+/* HK_APPLE9_MERGE_RENDERS (default on; =0 disables): continue the hardware
+ * render of a render pass in the next render pass when nothing but attachment
+ * barriers separates them and both use the same colour attachments. The render
+ * covers the whole attachment whatever the render area, and tiles keep their
  * contents between the passes, which satisfies the second pass's load.
  * Depth/stencil views and render areas must also match. As with suspend/resume,
  * keep the first pass's ZLS loads and the final pass's stores.
@@ -629,11 +629,13 @@ hk_render_merge_enabled(struct hk_cmd_buffer *cmd)
  * The caller checks load and store operations.
  */
 bool
-hk_render_merge_key_init(struct hk_render_merge_key *key, VkRenderingFlags flags,
-                    uint32_t layer_count, uint32_t view_mask,
-                    uint32_t color_count, struct hk_image_view *const *views,
-                    struct hk_image_view *depth, struct hk_image_view *stencil,
-                    uint8_t ds_read_only, VkRect2D area)
+hk_render_merge_key_init(struct hk_render_merge_key *key,
+                         VkRenderingFlags flags, uint32_t layer_count,
+                         uint32_t view_mask, uint32_t color_count,
+                         struct hk_image_view *const *views,
+                         struct hk_image_view *depth,
+                         struct hk_image_view *stencil, uint8_t ds_read_only,
+                         VkRect2D area)
 {
    if ((flags & (VK_RENDERING_SUSPENDING_BIT | VK_RENDERING_RESUMING_BIT |
                  VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT)) ||
@@ -659,8 +661,10 @@ hk_render_merge_key_init(struct hk_render_merge_key *key, VkRenderingFlags flags
    if (depth || stencil)
       key->ds_area = area;
    for (unsigned i = 0; i < HK_MAX_RTS + 2; ++i) {
-      const struct hk_image_view *view = i == HK_MAX_RTS ? depth :
-         i == HK_MAX_RTS + 1 ? stencil : i < color_count ? views[i] : NULL;
+      const struct hk_image_view *view = i == HK_MAX_RTS       ? depth
+                                         : i == HK_MAX_RTS + 1 ? stencil
+                                         : i < color_count     ? views[i]
+                                                               : NULL;
       if (view) {
          key->image[i] = view->vk.image;
          key->level[i] = view->vk.base_mip_level;
@@ -680,8 +684,8 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
    if (empty && memcmp(&info->renderArea, &cmd->merge_empty_render->area,
                        sizeof(info->renderArea)))
       return false;
-   const VkRenderingAttachmentInfo *ds[2] = {
-      info->pDepthAttachment, info->pStencilAttachment};
+   const VkRenderingAttachmentInfo *ds[2] = {info->pDepthAttachment,
+                                             info->pStencilAttachment};
    struct hk_image_view *ds_views[2] = {NULL};
    uint8_t ds_store_mask = 0, ds_read_only = 0;
    for (unsigned i = 0; i < 2; ++i) {
@@ -691,18 +695,21 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
           ds[i]->resolveMode != VK_RESOLVE_MODE_NONE ||
           hk_attachment_may_be_sampled(ds[i]) ||
           (cmd->vk.dynamic_graphics_state.feedback_loops &
-             (i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT)))
+           (i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT)))
          return false;
       if (empty && (ds[i]->loadOp != VK_ATTACHMENT_LOAD_OP_LOAD ||
                     (ds[i]->imageLayout != VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL &&
-                     ds[i]->imageLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
-                     ds[i]->imageLayout != (i ? VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL :
-                                               VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)) ||
+                     ds[i]->imageLayout !=
+                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+                     ds[i]->imageLayout !=
+                        (i ? VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL
+                           : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)) ||
                     hk_attachment_may_be_sampled(ds[i])))
          return false;
       ds_views[i] = hk_image_view_from_handle(ds[i]->imageView);
-      if (vk_image_layout_is_read_only(ds[i]->imageLayout,
-            i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT))
+      if (vk_image_layout_is_read_only(
+             ds[i]->imageLayout,
+             i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT))
          ds_read_only |= BITFIELD_BIT(i);
       if (is_attachment_stored(ds[i]))
          ds_store_mask |= BITFIELD_BIT(i);
@@ -721,10 +728,10 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
            hk_attachment_may_be_sampled(att)))
          return false;
       /* Clears would need an in-pass clear over the render area. */
-      if (att->imageView &&
-          (att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ||
-           hk_attachment_may_be_sampled(att) ||
-           (cmd->vk.dynamic_graphics_state.feedback_loops & VK_IMAGE_ASPECT_COLOR_BIT)))
+      if (att->imageView && (att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ||
+                             hk_attachment_may_be_sampled(att) ||
+                             (cmd->vk.dynamic_graphics_state.feedback_loops &
+                              VK_IMAGE_ASPECT_COLOR_BIT)))
          return false;
       if (att->imageView && is_attachment_stored(att))
          store_mask |= BITFIELD_BIT(i);
@@ -737,11 +744,10 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
    }
 
    return !cmd->merge_feedback && hk_render_merge_enabled(cmd) &&
-          hk_render_merge_key_init(&key,
-                              info->flags & ~(empty ? VK_RENDERING_SUSPENDING_BIT : 0),
-                              info->layerCount,
-                              info->viewMask, info->colorAttachmentCount, views,
-                              ds_views[0], ds_views[1], ds_read_only, info->renderArea) &&
+          hk_render_merge_key_init(
+             &key, info->flags & ~(empty ? VK_RENDERING_SUSPENDING_BIT : 0),
+             info->layerCount, info->viewMask, info->colorAttachmentCount,
+             views, ds_views[0], ds_views[1], ds_read_only, info->renderArea) &&
           !memcmp(&key, &cmd->merge_key, sizeof(key));
 }
 
@@ -754,8 +760,7 @@ hk_render_suspend_keeps_open(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
 {
    const struct hk_rendering_state *render = &cmd->state.gfx.render;
    return cs && !render->feedback && !render->raw_color_mask &&
-          !render->raw_zs &&
-          (render->flags & VK_RENDERING_SUSPENDING_BIT) &&
+          !render->raw_zs && (render->flags & VK_RENDERING_SUSPENDING_BIT) &&
           agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
           cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY && !cmd->in_meta &&
           !cmd->sync_fallback && !cmd->current_cs.pre_gfx &&
@@ -770,10 +775,9 @@ hk_render_merge_end(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    struct hk_image_view *views[HK_MAX_RTS] = {NULL};
 
    if (!cs || render->feedback || render->raw_color_mask || render->raw_zs ||
-       !hk_render_merge_enabled(cmd) ||
-       cmd->sync_fallback || cmd->current_cs.pre_gfx ||
-       cmd->current_cs.post_gfx || cmd->tess_batch.draws ||
-       cmd->state.gfx.occlusion.active_count)
+       !hk_render_merge_enabled(cmd) || cmd->sync_fallback ||
+       cmd->current_cs.pre_gfx || cmd->current_cs.post_gfx ||
+       cmd->tess_batch.draws || cmd->state.gfx.occlusion.active_count)
       return false;
 
    for (unsigned i = 0; i < MIN2(render->color_att_count, HK_MAX_RTS); ++i) {
@@ -790,10 +794,9 @@ hk_render_merge_end(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    return hk_render_merge_key_init(
       &cmd->merge_key,
       render->flags & ~(render->resumed ? VK_RENDERING_RESUMING_BIT : 0),
-      render->layer_count, render->view_mask,
-      render->color_att_count, views,
-      render->depth_att.iview, render->stencil_att.iview,
-      render->ds_read_only, render->area);
+      render->layer_count, render->view_mask, render->color_att_count, views,
+      render->depth_att.iview, render->stencil_att.iview, render->ds_read_only,
+      render->area);
 }
 
 /* A merged empty chain can still end without any draws. Retain the first
@@ -808,10 +811,13 @@ hk_render_inherit_empty_clears(struct hk_cmd_buffer *cmd)
    struct hk_rendering_state *render = &cmd->state.gfx.render;
    const struct hk_rendering_state *first = cmd->merge_empty_render;
    for (unsigned i = 0; i < HK_MAX_RTS + 2; ++i) {
-      struct hk_attachment *att = i == HK_MAX_RTS ? &render->depth_att :
-         i == HK_MAX_RTS + 1 ? &render->stencil_att : &render->color_att[i];
-      const struct hk_attachment *old = i == HK_MAX_RTS ? &first->depth_att :
-         i == HK_MAX_RTS + 1 ? &first->stencil_att : &first->color_att[i];
+      struct hk_attachment *att = i == HK_MAX_RTS       ? &render->depth_att
+                                  : i == HK_MAX_RTS + 1 ? &render->stencil_att
+                                                        : &render->color_att[i];
+      const struct hk_attachment *old = i == HK_MAX_RTS ? &first->depth_att
+                                        : i == HK_MAX_RTS + 1
+                                           ? &first->stencil_att
+                                           : &first->color_att[i];
       att->clear = old->clear;
       memcpy(att->clear_colour, old->clear_colour, sizeof(att->clear_colour));
    }
@@ -830,8 +836,10 @@ hk_feedback_color_mask(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
       const VkRenderingAttachmentInfo *a = &info->pColorAttachments[i];
       if (!a->imageView)
          continue;
-      const struct hk_image_view *view = hk_image_view_from_handle(a->imageView);
-      const struct hk_image *image = container_of(view->vk.image, struct hk_image, vk);
+      const struct hk_image_view *view =
+         hk_image_view_from_handle(a->imageView);
+      const struct hk_image *image =
+         container_of(view->vk.image, struct hk_image, vk);
       /* Decompression copies view depth/stencil planes as colour. */
       const struct ail_layout *layout =
          &image->planes[view->planes[0].image_plane].layout;
@@ -840,7 +848,8 @@ hk_feedback_color_mask(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
           !ail_is_level_logically_compressed(layout, view->vk.base_mip_level))
          continue;
       if (cmd->feedback_decompress || hk_attachment_may_be_sampled(a) ||
-          (cmd->vk.dynamic_graphics_state.feedback_loops & VK_IMAGE_ASPECT_COLOR_BIT))
+          (cmd->vk.dynamic_graphics_state.feedback_loops &
+           VK_IMAGE_ASPECT_COLOR_BIT))
          mask |= BITFIELD_BIT(i);
    }
    return mask;
@@ -870,7 +879,8 @@ hk_feedback_zs_view(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
    }
    if (!view || !sampled)
       return NULL;
-   const struct hk_image *image = container_of(view->vk.image, struct hk_image, vk);
+   const struct hk_image *image =
+      container_of(view->vk.image, struct hk_image, vk);
    if (!hk_feedback_can_compress(&dev->dev, image->vk.image_type,
                                  image->vk.format, image->vk.samples))
       return NULL;
@@ -903,7 +913,7 @@ hk_feedback_decompress_layers(struct hk_cmd_buffer *cmd,
 
 static bool
 hk_feedback_decompress(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
-                         uint8_t mask, const struct hk_image_view *zs)
+                       uint8_t mask, const struct hk_image_view *zs)
 {
    if (cmd->feedback_decompress)
       return true;
@@ -948,15 +958,16 @@ hk_feedback_prepare_draw(struct hk_cmd_buffer *cmd)
          .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
          .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
          .storeOp = render->store_mask & BITFIELD_BIT(i)
-                       ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                       ? VK_ATTACHMENT_STORE_OP_STORE
+                       : VK_ATTACHMENT_STORE_OP_DONT_CARE,
       };
    }
    VkRenderingAttachmentInfo zs[2];
    for (unsigned i = 0; i < 2; i++) {
       zs[i] = (VkRenderingAttachmentInfo){
          .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-         .imageView = hk_image_view_to_handle(
-            i ? render->stencil_att.iview : render->depth_att.iview),
+         .imageView = hk_image_view_to_handle(i ? render->stencil_att.iview
+                                                : render->depth_att.iview),
          .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
          .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
       };
@@ -999,11 +1010,12 @@ hk_feedback_prepare_draw(struct hk_cmd_buffer *cmd)
 
 VKAPI_ATTR void VKAPI_CALL
 hk_CmdSetAttachmentFeedbackLoopEnableEXT(VkCommandBuffer commandBuffer,
-                                          VkImageAspectFlags aspectMask)
+                                         VkImageAspectFlags aspectMask)
 {
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   if (!BITSET_TEST(dyn->set, MESA_VK_DYNAMIC_ATTACHMENT_FEEDBACK_LOOP_ENABLE) ||
+   if (!BITSET_TEST(dyn->set,
+                    MESA_VK_DYNAMIC_ATTACHMENT_FEEDBACK_LOOP_ENABLE) ||
        dyn->feedback_loops != aspectMask) {
       dyn->feedback_loops = aspectMask;
       BITSET_SET(dyn->set, MESA_VK_DYNAMIC_ATTACHMENT_FEEDBACK_LOOP_ENABLE);
@@ -1024,7 +1036,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       return;
 
    uint8_t raw_mask = hk_feedback_color_mask(cmd, pRenderingInfo);
-   const struct hk_image_view *raw_zs = hk_feedback_zs_view(cmd, pRenderingInfo);
+   const struct hk_image_view *raw_zs =
+      hk_feedback_zs_view(cmd, pRenderingInfo);
    if (raw_mask || raw_zs) {
       hk_cmd_render_merge_flush(cmd);
       if (!hk_feedback_decompress(cmd, pRenderingInfo, raw_mask, raw_zs))
@@ -1036,8 +1049,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
    /* The resuming render pass of a suspended one continues its render. */
    bool resume = false;
    if (cmd->merge_cs && cmd->merge_suspended) {
-      resume = (pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT) &&
-               !cmd->in_meta;
+      resume =
+         (pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT) && !cmd->in_meta;
       if (!resume)
          hk_cmd_render_merge_flush(cmd);
    }
@@ -1052,8 +1065,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
    /* A continued render needs no dependency on itself. */
    cmd->sync_render_continuation =
-      (pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT) != 0 && !resume && !raw_mask &&
-      !raw_zs;
+      (pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT) != 0 && !resume &&
+      !raw_mask && !raw_zs;
    cmd->sync_render_stages = cmd->sync_scope ?: HK_SYNC_GRAPHICS;
    cmd->state.gfx.render_gen++;
    struct hk_rendering_state *render = &cmd->state.gfx.render;
@@ -1065,7 +1078,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
    render->flags = pRenderingInfo->flags;
    render->area = pRenderingInfo->renderArea;
-   for (uint32_t i = 0; i < MIN2(pRenderingInfo->colorAttachmentCount, 32); i++) {
+   for (uint32_t i = 0; i < MIN2(pRenderingInfo->colorAttachmentCount, 32);
+        i++) {
       if (pRenderingInfo->pColorAttachments[i].imageView &&
           is_attachment_stored(&pRenderingInfo->pColorAttachments[i]))
          render->store_mask |= BITFIELD_BIT(i);
@@ -1076,14 +1090,16 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       if (ds[i] && ds[i]->imageView) {
          if (is_attachment_stored(ds[i]))
             render->ds_store_mask |= BITFIELD_BIT(i);
-         if (vk_image_layout_is_read_only(ds[i]->imageLayout,
-               i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT))
+         if (vk_image_layout_is_read_only(
+                ds[i]->imageLayout,
+                i ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT))
             render->ds_read_only |= BITFIELD_BIT(i);
       }
    }
    const VkRenderingAttachmentInfo *feedback_att[HK_MAX_RTS + 2] = {
       pRenderingInfo->pDepthAttachment, pRenderingInfo->pStencilAttachment};
-   for (uint32_t i = 0; i < MIN2(pRenderingInfo->colorAttachmentCount, HK_MAX_RTS); i++)
+   for (uint32_t i = 0;
+        i < MIN2(pRenderingInfo->colorAttachmentCount, HK_MAX_RTS); i++)
       feedback_att[2 + i] = &pRenderingInfo->pColorAttachments[i];
    for (unsigned i = 0; i < ARRAY_SIZE(feedback_att); ++i) {
       if (hk_attachment_may_be_sampled(feedback_att[i]))
@@ -1091,13 +1107,15 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
    }
    for (unsigned i = 0; i < pRenderingInfo->colorAttachmentCount; i++) {
       if (!(raw_mask & BITFIELD_BIT(i)))
-         hk_feedback_invalidate_view(cmd,
-            hk_image_view_from_handle(pRenderingInfo->pColorAttachments[i].imageView));
+         hk_feedback_invalidate_view(
+            cmd, hk_image_view_from_handle(
+                    pRenderingInfo->pColorAttachments[i].imageView));
    }
    /* Compressed ZLS stores re-encode the planes' tiles. */
    for (unsigned i = 0; i < 2 && !raw_zs; i++) {
       if (ds[i] && ds[i]->imageView)
-         hk_feedback_invalidate_view(cmd, hk_image_view_from_handle(ds[i]->imageView));
+         hk_feedback_invalidate_view(
+            cmd, hk_image_view_from_handle(ds[i]->imageView));
    }
    render->view_mask = pRenderingInfo->viewMask;
    render->layer_count = pRenderingInfo->layerCount;
@@ -1125,7 +1143,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
    u_foreach_bit(i, render->store_mask) {
       struct hk_image_view *view = render->color_att[i].iview;
-      struct hk_image *image = container_of(view->vk.image, struct hk_image, vk);
+      struct hk_image *image =
+         container_of(view->vk.image, struct hk_image, vk);
       if (image->planes[view->planes[0].image_plane].layout.tiling ==
           AIL_TILING_LINEAR)
          render->linear_store = true;
@@ -1169,8 +1188,8 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       }
       render->tilebuffer.sample_size_B = ALIGN_POT(
          agx_apple9_tile_sample_bytes(bytes, render->tilebuffer.nr_samples), 8);
-      render->tilebuffer.tile_size = render->tilebuffer.nr_samples == 4
-                                       ? 32 * 16 : 32 * 32;
+      render->tilebuffer.tile_size =
+         render->tilebuffer.nr_samples == 4 ? 32 * 16 : 32 * 32;
    }
 
    if (cmd->feedback_decompress) {
@@ -1334,19 +1353,19 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                        attach_z, attach_s, incomplete_render_area, true, false,
                        NULL);
 
-   const bool drop_stores =
-      agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
-      !(render->flags & VK_RENDERING_SUSPENDING_BIT);
+   const bool drop_stores = agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
+                            !(render->flags & VK_RENDERING_SUSPENDING_BIT);
    /* The first render pass of a chain decides its loads. */
    if (!resume && !merge) {
-      render->chain_load[0] =
-         attach_z && attach_z->imageView &&
-         (attach_z->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD || incomplete_render_area);
-      render->chain_load[1] =
-         attach_s && attach_s->imageView &&
-         (attach_s->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD || incomplete_render_area);
+      render->chain_load[0] = attach_z && attach_z->imageView &&
+                              (attach_z->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ||
+                               incomplete_render_area);
+      render->chain_load[1] = attach_s && attach_s->imageView &&
+                              (attach_s->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ||
+                               incomplete_render_area);
    } else {
-      memcpy(render->chain_load, cmd->merge_chain_load, sizeof(render->chain_load));
+      memcpy(render->chain_load, cmd->merge_chain_load,
+             sizeof(render->chain_load));
    }
    hk_pack_zls_control(&render->zls_last, z_layout, s_layout, attach_z,
                        attach_s, incomplete_render_area, false, drop_stores,
@@ -1560,11 +1579,12 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
    struct hk_cs *cs = cmd->current_cs.gfx;
    if (cs) {
       cs->cr.eot.main = (render->flags & VK_RENDERING_SUSPENDING_BIT)
-                           ? render->cr.eot.partial : render->cr.eot.main;
+                           ? render->cr.eot.partial
+                           : render->cr.eot.main;
       /* zls_last already preserves suspended stores. Its first-stream
        * loads must retain CLEAR; the partial control would force a load. */
-      cs->cr.zls_control = cs == render->first_cs ? render->zls_last
-                                                  : render->zls_partial_last;
+      cs->cr.zls_control =
+         cs == render->first_cs ? render->zls_last : render->zls_partial_last;
    }
 
    perf_debug(cmd, "End rendering");
@@ -1597,8 +1617,8 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
          }
       }
       /* Barriers before the next pass go ahead of the stream's first event. */
-      cmd->merge_event = *util_dynarray_element(&cmd->sync_first_event, uint32_t,
-                                                cs->sync_id);
+      cmd->merge_event =
+         *util_dynarray_element(&cmd->sync_first_event, uint32_t, cs->sync_id);
       assert(cmd->merge_event != HK_SYNC_NONE &&
              "a stream with draws has a sync event");
    } else {
@@ -1704,8 +1724,8 @@ static_assert(HK_HEAP_VA_MAX_B / HK_HEAP_MIN_B == 1u << (HK_HEAP_MAX_BOS - 1),
 static int
 hk_heap_bind(struct hk_device *dev, struct agx_bo *bo, uint64_t offset_B)
 {
-   return agx_bo_bind(&dev->dev, bo, dev->heap_va->addr + offset_B, bo->size,
-                      0, DRM_ASAHI_BIND_READ | DRM_ASAHI_BIND_WRITE);
+   return agx_bo_bind(&dev->dev, bo, dev->heap_va->addr + offset_B, bo->size, 0,
+                      DRM_ASAHI_BIND_READ | DRM_ASAHI_BIND_WRITE);
 }
 
 /* Back the geometry heap with one new BO of size_B bytes, replacing its
@@ -1713,8 +1733,7 @@ hk_heap_bind(struct hk_device *dev, struct agx_bo *bo, uint64_t offset_B)
 static bool
 hk_heap_back(struct hk_device *dev, uint64_t size_B)
 {
-   struct agx_bo *bo =
-      agx_bo_create(&dev->dev, size_B, 0, 0, "Geometry heap");
+   struct agx_bo *bo = agx_bo_create(&dev->dev, size_B, 0, 0, "Geometry heap");
    if (!bo)
       return false;
 
@@ -1755,8 +1774,8 @@ hk_heap_extend(struct hk_device *dev, uint64_t size_B)
    if (dev->heap_bos == HK_HEAP_MAX_BOS)
       return false;
 
-   struct agx_bo *bo = agx_bo_create(&dev->dev, size_B - dev->heap_backed_B,
-                                     0, 0, "Geometry heap");
+   struct agx_bo *bo = agx_bo_create(&dev->dev, size_B - dev->heap_backed_B, 0,
+                                     0, "Geometry heap");
    if (!bo)
       return false;
 
@@ -1836,12 +1855,13 @@ hk_heap_decay(struct hk_device *dev, uint64_t min_B, uint64_t needed_B)
        !hk_device_idle(dev))
       return;
 
-   uint64_t target_B =
-      MAX3(min_B, HK_HEAP_MIN_B,
-           util_next_power_of_two64(dev->heap_period_need_B + POLY_HEAP_SINK_B));
+   uint64_t target_B = MAX3(
+      min_B, HK_HEAP_MIN_B,
+      util_next_power_of_two64(dev->heap_period_need_B + POLY_HEAP_SINK_B));
    if (dev->heap_backed_B > 2 * target_B) {
-      perf_debug_dev(&dev->dev, "Shrinking the geometry heap to %" PRIu64
-                     " MiB", target_B >> 20);
+      perf_debug_dev(&dev->dev,
+                     "Shrinking the geometry heap to %" PRIu64 " MiB",
+                     target_B >> 20);
       if (hk_heap_back(dev, target_B))
          dev->heap_reported_B = 0;
    }
@@ -1947,8 +1967,8 @@ hk_heap_indexed_indirect(struct hk_cmd_buffer *cmd, uint64_t ptr,
                          enum agx_index_size index_size, bool restart)
 {
    struct agx_va *va = hk_geometry_heap_va(cmd);
-   return agx_draw_indexed_indirect(ptr, va ? va->addr : 0,
-                                   va ? va->size_B : 0, index_size, restart);
+   return agx_draw_indexed_indirect(ptr, va ? va->addr : 0, va ? va->size_B : 0,
+                                    index_size, restart);
 }
 
 static uint64_t
@@ -1963,7 +1983,7 @@ hk_index_buffer(uint64_t index_buffer, uint size_el, uint offset_el,
 
 static uint64_t
 hk_upload_vertex_params_for_vs(struct hk_cmd_buffer *cmd, struct agx_draw draw,
-                                const struct hk_shader *vs)
+                               const struct hk_shader *vs)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
@@ -2317,13 +2337,14 @@ struct hk_apple9_passthrough_suffix {
  */
 
 static void
-hk_apple9_write_per_vertex_copies(nir_shader *s,
-                                  const struct hk_apple9_passthrough_suffix *suffix)
+hk_apple9_write_per_vertex_copies(
+   nir_shader *s, const struct hk_apple9_passthrough_suffix *suffix)
 {
    enum mesa_prim prim = s->info.gs.input_primitive;
    unsigned start = prim == MESA_PRIM_LINES_ADJACENCY ? 1 : 0;
    unsigned step = prim == MESA_PRIM_TRIANGLES_ADJACENCY ? 2 : 1;
-   unsigned vertices = mesa_vertices_per_prim(u_decomposed_prim(u_reduced_prim(prim)));
+   unsigned vertices =
+      mesa_vertices_per_prim(u_decomposed_prim(u_reduced_prim(prim)));
    nir_function_impl *impl = nir_shader_get_entrypoint(s);
    nir_builder b = nir_builder_create(impl);
    unsigned emitted = 0;
@@ -2331,7 +2352,8 @@ hk_apple9_write_per_vertex_copies(nir_shader *s,
    nir_foreach_block(block, impl) {
       nir_foreach_instr_safe(instr, block) {
          if (instr->type != nir_instr_type_intrinsic ||
-             nir_instr_as_intrinsic(instr)->intrinsic != nir_intrinsic_emit_vertex)
+             nir_instr_as_intrinsic(instr)->intrinsic !=
+                nir_intrinsic_emit_vertex)
             continue;
          b.cursor = nir_before_instr(instr);
          for (unsigned m = 0; m < 2; ++m) {
@@ -2339,11 +2361,12 @@ hk_apple9_write_per_vertex_copies(nir_shader *s,
                continue;
             unsigned slot = VARYING_SLOT_VAR0 + suffix->per_vertex_bary[m] - 1;
             for (unsigned c = 0; c < 3; ++c) {
-               nir_store_output(&b, nir_imm_float(&b, c == emitted ? 1.0 : 0.0),
-                                nir_imm_int(&b, 0),
-                                .io_semantics = {.location = slot, .num_slots = 1},
-                                .component = c, .src_type = nir_type_float32,
-                                .write_mask = 1);
+               nir_store_output(
+                  &b, nir_imm_float(&b, c == emitted ? 1.0 : 0.0),
+                  nir_imm_int(&b, 0),
+                  .io_semantics = {.location = slot, .num_slots = 1},
+                  .component = c, .src_type = nir_type_float32,
+                  .write_mask = 1);
             }
             s->info.outputs_written |= BITFIELD64_BIT(slot);
          }
@@ -2354,17 +2377,21 @@ hk_apple9_write_per_vertex_copies(nir_shader *s,
                nir_def *value = nir_load_per_vertex_input(
                   &b, 4, 32, nir_imm_int(&b, start + api_vertex * step),
                   nir_imm_int(&b, 0),
-                  .io_semantics = {
-                     .location = VARYING_SLOT_VAR0 + suffix->per_vertex_location[j],
-                     .num_slots = 1,
-                  },
+                  .io_semantics =
+                     {
+                        .location =
+                           VARYING_SLOT_VAR0 + suffix->per_vertex_location[j],
+                        .num_slots = 1,
+                     },
                   .dest_type = nir_type_uint32);
-               unsigned copy = VARYING_SLOT_VAR0 + suffix->per_vertex_copy_base[j] + k;
+               unsigned copy =
+                  VARYING_SLOT_VAR0 + suffix->per_vertex_copy_base[j] + k;
                for (unsigned c = 0; c < 4; ++c) {
-                  nir_store_output(&b, nir_channel(&b, value, c), nir_imm_int(&b, 0),
-                                   .io_semantics = {.location = copy, .num_slots = 1},
-                                   .component = c, .src_type = nir_type_uint32,
-                                   .write_mask = 1);
+                  nir_store_output(
+                     &b, nir_channel(&b, value, c), nir_imm_int(&b, 0),
+                     .io_semantics = {.location = copy, .num_slots = 1},
+                     .component = c, .src_type = nir_type_uint32,
+                     .write_mask = 1);
                }
                s->info.outputs_written |= BITFIELD64_BIT(copy);
             }
@@ -2384,8 +2411,8 @@ hk_apple9_write_per_vertex_copies(nir_shader *s,
  * strip's earlier segments. The lengths approximate the earlier segments'
  * fragment counts to within one per segment, as the CTS allows; counting
  * rounded endpoints instead failed its strip cases. Strips longer than the
- * bound restart at each segment. With adjacency, the line is input vertices 1 and 2, and strip
- * vertex j + 1 begins segment j.
+ * bound restart at each segment. With adjacency, the line is input vertices 1
+ * and 2, and strip vertex j + 1 begins segment j.
  */
 static void
 hk_apple9_line_stipple_gs(nir_shader *s,
@@ -2403,13 +2430,14 @@ hk_apple9_line_stipple_gs(nir_shader *s,
 
    if (suffix->line_stipple_strip) {
       nir_variable *i = nir_local_variable_create(impl, glsl_uint_type(), NULL);
-      nir_variable *sum = nir_local_variable_create(impl, glsl_float_type(), NULL);
+      nir_variable *sum =
+         nir_local_variable_create(impl, glsl_float_type(), NULL);
       nir_store_var(&b, i, nir_imm_int(&b, 0), 1);
       nir_store_var(&b, sum, nir_imm_float(&b, 0.0), 1);
       nir_def *prim = nir_load_primitive_id(&b);
-      nir_def *limit =
-         nir_bcsel(&b, nir_ult_imm(&b, prim, AGX_LINE_STIPPLE_MAX_STRIP_SEGMENTS),
-                   prim, nir_imm_int(&b, 0));
+      nir_def *limit = nir_bcsel(
+         &b, nir_ult_imm(&b, prim, AGX_LINE_STIPPLE_MAX_STRIP_SEGMENTS), prim,
+         nir_imm_int(&b, 0));
       nir_push_loop(&b);
       {
          nir_def *j = nir_load_var(&b, i);
@@ -2433,11 +2461,13 @@ hk_apple9_line_stipple_gs(nir_shader *s,
    nir_foreach_block(block, impl) {
       nir_foreach_instr_safe(instr, block) {
          if (instr->type != nir_instr_type_intrinsic ||
-             nir_instr_as_intrinsic(instr)->intrinsic != nir_intrinsic_emit_vertex)
+             nir_instr_as_intrinsic(instr)->intrinsic !=
+                nir_intrinsic_emit_vertex)
             continue;
          b.cursor = nir_before_instr(instr);
-         nir_store_output(&b, nir_vec3(&b, nir_channel(&b, start, 0),
-                                       nir_channel(&b, start, 1), base),
+         nir_store_output(&b,
+                          nir_vec3(&b, nir_channel(&b, start, 0),
+                                   nir_channel(&b, start, 1), base),
                           nir_imm_int(&b, 0), .io_semantics = sem,
                           .write_mask = 0x7, .src_type = nir_type_float32);
       }
@@ -2499,11 +2529,11 @@ hk_apple9_polygon_point_gs(nir_builder *b,
    /* The points keep the vertex stage's varying layout, which the fragment
     * shader is linked against: clip and cull distances stay published, as
     * inside values, and the primitive ID is not published. */
-   uint64_t outputs = key->outputs &
-      ~(VARYING_BIT_BOUNDING_BOX0 | VARYING_BIT_BOUNDING_BOX1 |
-        VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
-        VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1 |
-        VARYING_BIT_PRIMITIVE_ID);
+   uint64_t outputs =
+      key->outputs & ~(VARYING_BIT_BOUNDING_BOX0 | VARYING_BIT_BOUNDING_BOX1 |
+                       VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
+                       VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1 |
+                       VARYING_BIT_PRIMITIVE_ID);
    /* Without polygonModePointSize, polygon points have size 1: the point
     * path's default. */
    if (!suffix->polygon_point_size)
@@ -2511,9 +2541,9 @@ hk_apple9_polygon_point_gs(nir_builder *b,
 
    s->info.stage = MESA_SHADER_GEOMETRY;
    s->info.inputs_read = key->outputs;
-   s->info.outputs_written = key->outputs &
-      ~(VARYING_BIT_BOUNDING_BOX0 | VARYING_BIT_BOUNDING_BOX1 |
-        VARYING_BIT_PRIMITIVE_ID);
+   s->info.outputs_written =
+      key->outputs & ~(VARYING_BIT_BOUNDING_BOX0 | VARYING_BIT_BOUNDING_BOX1 |
+                       VARYING_BIT_PRIMITIVE_ID);
    if (!suffix->polygon_point_size)
       s->info.outputs_written &= ~VARYING_BIT_PSIZ;
    if (suffix->polygon_face_slot)
@@ -2540,7 +2570,8 @@ hk_apple9_polygon_point_gs(nir_builder *b,
       .face_slot = suffix->polygon_face_slot,
    };
    nir_def *last = nir_ine_imm(b, nir_load_provoking_last(b), 0);
-   nir_def *provoking = nir_bcsel(b, last, nir_imm_int(b, 2), nir_imm_int(b, 0));
+   nir_def *provoking =
+      nir_bcsel(b, last, nir_imm_int(b, 2), nir_imm_int(b, 0));
    hk_apple9_pp_emit_triangle(b, &info, hk_pp_gs_load, &l, provoking,
                               nir_load_primitive_id(b), NULL);
 }
@@ -2551,13 +2582,15 @@ hk_apple9_passthrough_gs(struct nir_builder *b, const void *key)
    {
       const struct poly_passthrough_gs_key *common = key;
       struct hk_apple9_passthrough_suffix suffix;
-      memcpy(&suffix, (const uint8_t *)key +
-                         poly_passthrough_gs_key_size(common->xfb_info.output_count),
+      memcpy(&suffix,
+             (const uint8_t *)key +
+                poly_passthrough_gs_key_size(common->xfb_info.output_count),
              sizeof(suffix));
       if (suffix.polygon_points) {
          hk_apple9_polygon_point_gs(b, common, &suffix);
-         nir_shader_intrinsics_pass(b->shader, hk_apple9_trim_passthrough_output,
-                                    nir_metadata_control_flow, suffix.components);
+         nir_shader_intrinsics_pass(
+            b->shader, hk_apple9_trim_passthrough_output,
+            nir_metadata_control_flow, suffix.components);
          return;
       }
    }
@@ -2763,12 +2796,14 @@ hk_apple9_unroll_fan(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       .out_draw = hk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4).gpu,
       .restart_index = draw.restart ? gfx->index.restart : UINT32_MAX,
       .index_buffer_size_el = draw.indexed ? agx_draw_index_range_el(draw) : 0,
-      .in_index_size_B = draw.indexed ? agx_index_size_to_B(draw.index_size) : 0,
+      .in_index_size_B =
+         draw.indexed ? agx_index_size_to_B(draw.index_size) : 0,
       .flatshade_first = false,
    };
 
-   libagx_unroll_geometry_struct(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
-                                 ia, poly_compact_prim(MESA_PRIM_TRIANGLE_FAN));
+   libagx_unroll_geometry_struct(cmd, agx_1d(1024),
+                                 AGX_BARRIER_ALL | AGX_PREGFX, ia,
+                                 poly_compact_prim(MESA_PRIM_TRIANGLE_FAN));
 
    return hk_heap_indexed_indirect(cmd, ia.out_draw, AGX_INDEX_SIZE_U32,
                                    false /* restart */);
@@ -2922,8 +2957,8 @@ hk_apple9_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
        (!grid.count[0] || !grid.count[1] || !grid.count[2]))
       return;
 
-   struct hk_cs *cs =
-      hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL);
+   struct hk_cs *cs = hk_cmd_buffer_get_cs_general(
+      cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL);
    if (!cs)
       return;
 
@@ -3021,8 +3056,7 @@ hk_apple9_robust_index(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    uint64_t out_draw = hk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4).gpu;
    libagx_robust_index_apple9(
       cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw, hk_heap(cmd),
-      in_draw, draw.index_buffer,
-      draw.index_buffer_range_B >> draw.index_size,
+      in_draw, draw.index_buffer, draw.index_buffer_range_B >> draw.index_size,
       agx_index_size_to_B(draw.index_size));
 
    return hk_heap_indexed_indirect(cmd, out_draw, draw.index_size,
@@ -3114,11 +3148,11 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
       /* TCS invocation counter increments once per-patch */
       uint64_t tcs_stat = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT);
+         cmd,
+         VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT);
       if (hk_stat_enabled(tcs_stat)) {
-         libagx_increment_statistic(cmd, agx_1d(1),
-                                    AGX_BARRIER_ALL | AGX_PREGFX, tcs_stat,
-                                    patches);
+         libagx_increment_statistic(
+            cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, tcs_stat, patches);
       }
    }
 
@@ -3144,23 +3178,23 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
     * keeps its passes out of the stream-end lanes.
     */
    unsigned batch_patches =
-      agx_is_indirect(draw.b) ? 0
-                              : (draw.b.count[0] / input_patch_size) *
-                                   draw.b.count[1];
+      agx_is_indirect(draw.b)
+         ? 0
+         : (draw.b.count[0] / input_patch_size) * draw.b.count[1];
    bool batch =
-      !agx_is_indirect(draw.b) &&
-      batch_patches <= max_batch_patches &&
+      !agx_is_indirect(draw.b) && batch_patches <= max_batch_patches &&
       !hk_stat_enabled(hk_pipeline_stat_addr(
          cmd,
          VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT)) &&
       !hk_stat_enabled(c_prims) && !hk_stat_enabled(c_inv) && !gfx->xfb_enabled;
    /* A full fold table starts a new batch. */
-   if (!batch || util_dynarray_num_elements(&cmd->tess_batch.fold,
-                                            struct hk_tess_fold) >=
-                    HK_TESS_FOLD_MAX_DRAWS)
+   if (!batch ||
+       util_dynarray_num_elements(&cmd->tess_batch.fold, struct hk_tess_fold) >=
+          HK_TESS_FOLD_MAX_DRAWS)
       hk_tess_batch_flush(cmd);
 
-#define HK_TESS_LANE(l) cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
+#define HK_TESS_LANE(l)                                                        \
+   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
 
    HK_TESS_LANE(0);
    hk_apple9_dispatch_prerast(cmd, vs, grid_vs, &bindings);
@@ -3191,8 +3225,9 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
     */
    const unsigned block_patches = 8192;
    unsigned nr_patches =
-      agx_is_indirect(draw.b) ? 0
-                              : ((struct poly_tess_params *)tess_args.cpu)->nr_patches;
+      agx_is_indirect(draw.b)
+         ? 0
+         : ((struct poly_tess_params *)tess_args.cpu)->nr_patches;
    if (nr_patches > 2 * block_patches) {
       uint64_t counts = ((struct poly_tess_params *)tess_args.cpu)->counts;
       unsigned nr_blocks = DIV_ROUND_UP(nr_patches, block_patches);
@@ -3200,10 +3235,9 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       libagx_prefix_sum_tess_blocks(cmd, agx_1d(1024 * nr_blocks),
                                     AGX_BARRIER_ALL | AGX_PREGFX, counts,
                                     block_sums, nr_patches, block_patches);
-      libagx_prefix_sum_tess_offsets(cmd, agx_1d(1024),
-                                     AGX_BARRIER_ALL | AGX_PREGFX, state,
-                                     block_sums, nr_blocks, c_prims, c_inv,
-                                     c_prims || c_inv);
+      libagx_prefix_sum_tess_offsets(
+         cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX, state, block_sums,
+         nr_blocks, c_prims, c_inv, c_prims || c_inv);
       libagx_prefix_sum_tess_add(cmd, agx_1d(nr_patches - block_patches),
                                  AGX_BARRIER_ALL | AGX_PREGFX, counts,
                                  block_sums, nr_patches, block_patches);
@@ -3215,8 +3249,8 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
                      gfx->tess.info.mode, POLY_TESS_MODE_WITH_COUNTS, state);
 #undef HK_TESS_LANE
 
-   return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws,
-                                   AGX_INDEX_SIZE_U32, false);
+   return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws, AGX_INDEX_SIZE_U32,
+                                   false);
 }
 
 /* Run the vertex and geometry shaders as compute before the render pass,
@@ -3448,8 +3482,8 @@ hk_launch_tess(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX, info.mode,
                      POLY_TESS_MODE_WITH_COUNTS, state);
 
-   return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws,
-                                   AGX_INDEX_SIZE_U32, false);
+   return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws, AGX_INDEX_SIZE_U32,
+                                   false);
 }
 
 void
@@ -5009,7 +5043,8 @@ hk_sw_vs_outputs_fit(struct hk_cmd_buffer *cmd, struct agx_draw draw)
                                    !gfx->shaders[MESA_SHADER_TESS_EVAL]))
       return true;
 
-   uint64_t vertex_B = util_bitcount64(hk_bound_sw_vs(gfx)->b.info.outputs) * 16;
+   uint64_t vertex_B =
+      util_bitcount64(hk_bound_sw_vs(gfx)->b.info.outputs) * 16;
    uint64_t vertices = (uint64_t)draw.b.count[0] * draw.b.count[1];
 
    if (!vertex_B || vertices <= UINT32_MAX / vertex_B)
@@ -5026,9 +5061,8 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
 
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   bool weights_by_vs =
-      !draw.indexed &&
-      dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+   bool weights_by_vs = !draw.indexed && dyn->ia.primitive_topology ==
+                                            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
    /* Stippled strips continue their counter across segments, and the stipple
     * start must come from each segment's first vertex: both need the
@@ -5081,9 +5115,9 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    polygon_points &= !xfb_outputs;
    /* A per-vertex cull mask is the primitive's only for points. */
    bool cull_mask = last_sw->info.cull_mask;
-   bool needed = xfb_outputs || stipple_gs || polygon_points ||
-                 (cull_mask &&
-                  u_reduced_prim(hk_gs_in_prim(cmd)) != MESA_PRIM_POINTS);
+   bool needed =
+      xfb_outputs || stipple_gs || polygon_points ||
+      (cull_mask && u_reduced_prim(hk_gs_in_prim(cmd)) != MESA_PRIM_POINTS);
    for (unsigned i = 0; i < ARRAY_SIZE(gfx->pg_query); ++i)
       needed |= gfx->pg_query[i] != 0;
 
@@ -5154,17 +5188,20 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       struct hk_api_shader *fs_api = gfx->shaders[MESA_SHADER_FRAGMENT];
       struct hk_shader *fs = fs_api ? hk_only_variant(fs_api) : NULL;
       struct hk_apple9_passthrough_suffix suffix = {
-         .fs_interp = {
-            fs ? fs->info.fs.interp.flat : 0,
-            fs ? fs->info.fs.interp.linear : 0,
-         },
+         .fs_interp =
+            {
+               fs ? fs->info.fs.interp.flat : 0,
+               fs ? fs->info.fs.interp.linear : 0,
+            },
          .per_vertex_copies = fs ? fs->info.fs.per_vertex_copies : 0,
          .line_stipple_start = stipple_gs ? fs->info.fs.line_stipple_start : 0,
          .line_stipple_strip = stipple_gs && stipple_strip,
          .polygon_points = polygon_points,
-         .polygon_face_slot = polygon_points ? fs->info.fs.polygon_face_slot : 0,
-         .polygon_point_size = polygon_points &&
-            hk_cmd_buffer_device(cmd)->vk.physical->properties.polygonModePointSize,
+         .polygon_face_slot =
+            polygon_points ? fs->info.fs.polygon_face_slot : 0,
+         .polygon_point_size =
+            polygon_points && hk_cmd_buffer_device(cmd)
+                                 ->vk.physical->properties.polygonModePointSize,
          .cull_mask = cull_mask,
       };
       if (fs) {
@@ -5402,8 +5439,8 @@ hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw,
 
    if (!agx_is_indirect(draw.b) && !draw.restart) {
       struct hk_ia_stats *s = &cmd->state.gfx.ia_stats;
-      const uint64_t addr[5] = {ia_vertices, ia_prims, vs_invocations,
-                                c_prims, c_inv};
+      const uint64_t addr[5] = {ia_vertices, ia_prims, vs_invocations, c_prims,
+                                c_inv};
       if (memcmp(s->addr, addr, sizeof(addr))) {
          hk_flush_ia_stats(cmd);
          memcpy(s->addr, addr, sizeof(addr));
@@ -5471,14 +5508,15 @@ hk_apple9_draw_late_zs(const struct vk_dynamic_graphics_state *dyn,
                        const struct hk_rendering_state *render,
                        const struct hk_api_shader *fs)
 {
-   const bool dynamic = dyn->feedback_loops &
-      (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+   const bool dynamic = dyn->feedback_loops & (VK_IMAGE_ASPECT_DEPTH_BIT |
+                                               VK_IMAGE_ASPECT_STENCIL_BIT);
    const bool created = hk_apple9_deferred_zs_self_dep(fs);
    if (!dynamic && !created)
       return false;
-   return hk_apple9_zs_writes(&dyn->ds,
+   return hk_apple9_zs_writes(
+      &dyn->ds,
       (render->depth_att.iview ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) |
-      (render->stencil_att.iview ? VK_IMAGE_ASPECT_STENCIL_BIT : 0));
+         (render->stencil_att.iview ? VK_IMAGE_ASPECT_STENCIL_BIT : 0));
 }
 
 static bool
@@ -5524,11 +5562,12 @@ hk_apple9_resolve_shaders(struct hk_cmd_buffer *cmd)
       MESA_VK_DYNAMIC_RS_POLYGON_MODE,
       MESA_VK_DYNAMIC_RS_DEPTH_CLAMP_ENABLE,
    };
-   const bool late_zs = hk_apple9_draw_late_zs(dyn, render,
-      gfx->apple9_api[MESA_SHADER_FRAGMENT]);
+   const bool late_zs = hk_apple9_draw_late_zs(
+      dyn, render, gfx->apple9_api[MESA_SHADER_FRAGMENT]);
    /* Fragment shaders count invocations only while such a query is active;
     * other draws use variants without the counter. */
-   const bool fs_statistics = gfx->descriptors.root.draw.pipeline_stats_flags &
+   const bool fs_statistics =
+      gfx->descriptors.root.draw.pipeline_stats_flags &
       VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
    bool changed = !gfx->apple9_resolved.valid ||
                   gfx->apple9_resolved.fs_statistics != fs_statistics ||
@@ -5547,10 +5586,9 @@ hk_apple9_resolve_shaders(struct hk_cmd_buffer *cmd)
    }
 
    struct vk_multisample_state ms = {
-      .rasterization_samples =
-         dyn->ms.rasterization_samples
-            ? dyn->ms.rasterization_samples
-            : MAX2(render->tilebuffer.nr_samples, 1),
+      .rasterization_samples = dyn->ms.rasterization_samples
+                                  ? dyn->ms.rasterization_samples
+                                  : MAX2(render->tilebuffer.nr_samples, 1),
       .sample_mask = dyn->ms.sample_mask,
       .alpha_to_coverage_enable = dyn->ms.alpha_to_coverage_enable,
       .alpha_to_one_enable = dyn->ms.alpha_to_one_enable,
@@ -5577,8 +5615,9 @@ hk_apple9_resolve_shaders(struct hk_cmd_buffer *cmd)
       .rp = &rp,
       .cal = &dyn->cal,
       .pipeline_flags =
-         late_zs ? VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT
-                 : 0,
+         late_zs
+            ? VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT
+            : 0,
    };
    /* Color write enables are read at draw time from the sysval. */
    BITSET_SET(state.dynamic, MESA_VK_DYNAMIC_CB_COLOR_WRITE_ENABLES);
@@ -5614,7 +5653,8 @@ static struct agx_draw hk_apple9_predicate_draw(struct hk_cmd_buffer *cmd,
  * draw entry points (hk_draw_indexed passes neither). Everything that routes
  * or launches a draw reads both, so G16 completes the draw before any of it. */
 static struct agx_draw
-hk_draw_complete_from_state(const struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_draw_complete_from_state(const struct hk_cmd_buffer *cmd,
+                            struct agx_draw draw)
 {
    draw.restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable &&
                   draw.indexed;
@@ -5638,7 +5678,8 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (!hk_feedback_prepare_draw(cmd))
          return;
       /* Index fetch and indirect arguments are buffer reads of tiling. */
-      if (!hk_apple9_prepare_draw(cmd, agx_is_indirect(draw_.b) || draw_.indexed))
+      if (!hk_apple9_prepare_draw(cmd,
+                                  agx_is_indirect(draw_.b) || draw_.indexed))
          return;
       if (!hk_apple9_resolve_shaders(cmd))
          return;
@@ -5696,10 +5737,10 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
          cmd->state.gfx.descriptors.root.draw.draw_id = draw_id;
          cmd->state.gfx.descriptors.root_dirty = true;
       }
-      bool adjacency =
-         !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
-         !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-         mesa_prim_has_adjacency(vk_topology_to_mesa(dyn->ia.primitive_topology));
+      bool adjacency = !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
+                       !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
+                       mesa_prim_has_adjacency(
+                          vk_topology_to_mesa(dyn->ia.primitive_topology));
       hk_foreach_view(cmd) {
          struct agx_draw draw = draw_;
          if (adjacency)
@@ -5769,8 +5810,8 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       cs->stats.calls++;
 
       if (geom || tess) {
-         ccs =
-            hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL);
+         ccs = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx, true,
+                                            HK_SYNC_ALL);
          if (!ccs)
             return;
       }
@@ -5847,9 +5888,11 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (cs->primitive_count < AGX_PRIMITIVE_COUNT_UNKNOWN) {
          agx_add_primitive_count(
             &cs->primitive_count,
-            agx_is_indirect(draw.b) || draw.restart || geom || tess || needs_idx_robust
+            agx_is_indirect(draw.b) || draw.restart || geom || tess ||
+                  needs_idx_robust
                ? AGX_PRIMITIVE_COUNT_UNKNOWN
-               : agx_count_primitives(topology, draw.b.count[0], draw.b.count[1]));
+               : agx_count_primitives(topology, draw.b.count[0],
+                                      draw.b.count[1]));
       }
       cs->stats.cmds++;
    }
@@ -5885,7 +5928,8 @@ hk_mesh_heap(struct hk_cmd_buffer *cmd)
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 
    if (!cmd->uses_mesh_heap) {
-      hk_queue_write(cmd, dev->rodata.mesh_heap + offsetof(struct poly_heap, bottom),
+      hk_queue_write(cmd,
+                     dev->rodata.mesh_heap + offsetof(struct poly_heap, bottom),
                      0, true /* after gfx */);
       cmd->uses_mesh_heap = true;
    }
@@ -5921,8 +5965,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (direct && (!direct[0] || !direct[1] || !direct[2]))
       return;
 
-   if (vk_command_buffer_has_error(&cmd->vk) ||
-       !hk_apple9_resolve_shaders(cmd))
+   if (vk_command_buffer_has_error(&cmd->vk) || !hk_apple9_resolve_shaders(cmd))
       return;
 
    struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
@@ -5935,9 +5978,10 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_shader *main = &mesh->variants[HK_MESH_VARIANT_MAIN];
    struct hk_shader *task_main = task ? hk_only_variant(task) : NULL;
    const struct hk_mesh_info *info = &main->info.mesh;
-   unsigned vertices = MAX2(info->max_primitives, 1) *
-                       (info->polygon_points ? HK_PP_MAX_VERTICES
-                                             : mesa_vertices_per_prim(info->prim));
+   unsigned vertices =
+      MAX2(info->max_primitives, 1) * (info->polygon_points
+                                          ? HK_PP_MAX_VERTICES
+                                          : mesa_vertices_per_prim(info->prim));
    struct hk_apple9_prerast_bindings bindings = {0};
 
    /* Draws without a task shader and with a known grid are set up here.
@@ -6005,8 +6049,8 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       if (task_main) {
          hk_apple9_dispatch_prerast(
             cmd, task_main,
-            agx_grid_indirect(params.gpu +
-                              offsetof(struct libagx_mesh_params, task_dispatch)),
+            agx_grid_indirect(
+               params.gpu + offsetof(struct libagx_mesh_params, task_dispatch)),
             &bindings);
          libagx_mesh_prefix(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
                             params.gpu, hk_mesh_heap(cmd), info->group_stride_B,
@@ -6025,8 +6069,8 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       } else {
          hk_apple9_dispatch_prerast(
             cmd, main,
-            agx_grid_indirect(params.gpu +
-                              offsetof(struct libagx_mesh_params, mesh_dispatch)),
+            agx_grid_indirect(
+               params.gpu + offsetof(struct libagx_mesh_params, mesh_dispatch)),
             &bindings);
          draw = agx_draw_indirect(params.gpu +
                                   offsetof(struct libagx_mesh_params, draw));
@@ -6325,10 +6369,9 @@ hk_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(hk_buffer, counter, counterBuffer);
 
-   uint64_t indirect =
-      hk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4).gpu;
-   libagx_draw_xfb(cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX,
-                   indirect, hk_buffer_address_ro(counter, counterBufferOffset),
+   uint64_t indirect = hk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4).gpu;
+   libagx_draw_xfb(cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, indirect,
+                   hk_buffer_address_ro(counter, counterBufferOffset),
                    counterOffset, vertexStride, instanceCount, firstInstance);
    hk_draw_indirect_inner(commandBuffer, indirect, 1, 0);
 }
@@ -6446,9 +6489,8 @@ hk_CmdBeginConditionalRenderingEXT(
       hk_buffer_address(buffer, pConditionalRenderingBegin->offset, true);
    cmd->state.cond_render.predicate = predicate;
    cmd->state.cond_render.active = true;
-   cmd->state.cond_render.inverted =
-      pConditionalRenderingBegin->flags &
-      VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT;
+   cmd->state.cond_render.inverted = pConditionalRenderingBegin->flags &
+                                     VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT;
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -6489,10 +6531,10 @@ hk_apple9_predicate_draw(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    unsigned words = draw.indexed ? 5 : 4;
    uint64_t in_draw = draw.b.ptr;
    if (!agx_is_indirect(draw.b)) {
-      uint32_t desc[5] = {draw.b.count[0], draw.b.count[1], draw.start,
-                          draw.indexed ? (uint32_t)draw.index_bias
-                                       : draw.start_instance,
-                          draw.start_instance};
+      uint32_t desc[5] = {
+         draw.b.count[0], draw.b.count[1], draw.start,
+         draw.indexed ? (uint32_t)draw.index_bias : draw.start_instance,
+         draw.start_instance};
       in_draw = hk_pool_upload(cmd, desc, sizeof(desc), 4);
    }
    uint64_t out_draw = hk_predicate_indirect(cmd, in_draw, words, true);

@@ -19,7 +19,7 @@ struct hk_image_plane;
 
 /* Leave most of USC available to shaders, descriptors and command uploads. */
 #define HK_INDEX_ALIAS_ALLOCATION_MAX (256ull << 20)
-#define HK_INDEX_ALIAS_BUDGET (1ull << 30)
+#define HK_INDEX_ALIAS_BUDGET         (1ull << 30)
 
 struct hk_device_memory {
    struct vk_device_memory vk;
@@ -49,6 +49,6 @@ extern const VkExternalMemoryProperties hk_opaque_fd_mem_props;
 extern const VkExternalMemoryProperties hk_dma_buf_mem_props;
 
 uint64_t hk_memory_index_address(struct hk_device *dev,
-                                struct hk_device_memory *mem);
+                                 struct hk_device_memory *mem);
 void hk_memory_free_index_va(struct hk_device *dev,
                              struct hk_device_memory *mem);

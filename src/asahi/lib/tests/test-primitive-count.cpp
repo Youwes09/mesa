@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
-#include "agx_primitive_count.h"
 #include <gtest/gtest.h>
+#include "agx_primitive_count.h"
 
 TEST(PrimitiveCount, TopologiesAndIncompletePrimitives)
 {
@@ -22,14 +22,17 @@ TEST(PrimitiveCount, DrawsInstancesAndMetaTriangles)
 {
    uint8_t count = 0;
    EXPECT_FALSE(agx_has_few_primitives(count));
-   agx_add_primitive_count(&count, agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, 3, 2));
+   agx_add_primitive_count(&count,
+                           agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, 3, 2));
    EXPECT_EQ(count, 2);
    EXPECT_TRUE(agx_has_few_primitives(count));
    /* A rasterized meta rectangle contributes two ordinary triangles. */
-   agx_add_primitive_count(&count, agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, 6, 1));
+   agx_add_primitive_count(&count,
+                           agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, 6, 1));
    EXPECT_EQ(count, 4);
    EXPECT_TRUE(agx_has_few_primitives(count));
-   agx_add_primitive_count(&count, agx_count_primitives(AGX_PRIMITIVE_POINTS, 1, 1));
+   agx_add_primitive_count(&count,
+                           agx_count_primitives(AGX_PRIMITIVE_POINTS, 1, 1));
    EXPECT_EQ(count, 5);
    EXPECT_FALSE(agx_has_few_primitives(count));
 }
@@ -40,8 +43,10 @@ TEST(PrimitiveCount, UnknownAndOverflowStayIneligible)
    agx_add_primitive_count(&count, AGX_PRIMITIVE_COUNT_UNKNOWN);
    agx_add_primitive_count(&count, 0);
    EXPECT_FALSE(agx_has_few_primitives(count));
-   EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_POINTS, UINT32_MAX, UINT32_MAX), 5);
-   EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, UINT32_MAX, UINT32_MAX), 5);
+   EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_POINTS, UINT32_MAX, UINT32_MAX),
+             5);
+   EXPECT_EQ(
+      agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, UINT32_MAX, UINT32_MAX), 5);
    EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_POINTS, 1024, 1), 5);
    EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_TRIANGLES, 3, 5), 5);
    EXPECT_EQ(agx_count_primitives(AGX_PRIMITIVE_POINTS, UINT32_MAX, 0), 0);

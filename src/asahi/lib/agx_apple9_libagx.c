@@ -11,17 +11,17 @@
 
 /* Apple9 compute has no preamble uniforms; kernel inputs come from UBO 0. */
 static bool
-lower_kernel_input(nir_builder *b, nir_intrinsic_instr *intr,
-                   UNUSED void *data)
+lower_kernel_input(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_preamble)
       return false;
    b->cursor = nir_before_instr(&intr->instr);
    unsigned offset = nir_intrinsic_base(intr) * 2;
-   nir_def_replace(&intr->def,
+   nir_def_replace(
+      &intr->def,
       nir_load_ubo(b, intr->def.num_components, intr->def.bit_size,
-                   nir_imm_int(b, 0), nir_imm_int(b, offset),
-                   .align_mul = 2, .range_base = offset,
+                   nir_imm_int(b, 0), nir_imm_int(b, offset), .align_mul = 2,
+                   .range_base = offset,
                    .range = intr->def.num_components * intr->def.bit_size / 8));
    return true;
 }

@@ -5,8 +5,8 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "hk_physical_device.h"
 #include "hk_descriptor_buffer.h"
+#include "hk_physical_device.h"
 
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/lib/agx_device.h"
@@ -229,7 +229,8 @@ hk_get_device_extensions(const struct hk_instance *instance,
       .EXT_ycbcr_image_arrays = false,
       .GOOGLE_decorate_string = true,
 #ifdef HK_USE_WSI_PLATFORM
-      .GOOGLE_display_timing = wsi_instance_supports_google_display_timing(&instance->vk, &instance->drirc.options),
+      .GOOGLE_display_timing = wsi_instance_supports_google_display_timing(
+         &instance->vk, &instance->drirc.options),
 #endif
       .GOOGLE_hlsl_functionality1 = true,
       .GOOGLE_user_type = true,
@@ -243,7 +244,8 @@ hk_get_device_features(
    const struct vk_device_extension_table *supported_extensions,
    struct vk_features *features)
 {
-   bool vertex_stores = instance->drirc.misc.enable_vertex_pipeline_stores_atomics;
+   bool vertex_stores =
+      instance->drirc.misc.enable_vertex_pipeline_stores_atomics;
 
    if (agx_is_apple9(dev)) {
       /* Instance options have no device identity. Re-evaluate this feature
@@ -251,17 +253,18 @@ hk_get_device_features(
        * usual user configuration and environment override precedence.
        */
       driOptionCache options;
-      driParseConfigFiles(&options, &instance->drirc.available_options,
-                         &(driConfigFileParseParams) {
-                            .driverName = "hk",
-                            .deviceName = "G16",
-                            .applicationName = instance->vk.app_info.app_name,
-                            .applicationVersion = instance->vk.app_info.app_version,
-                            .engineName = instance->vk.app_info.engine_name,
-                            .engineVersion = instance->vk.app_info.engine_version,
-                         });
-      vertex_stores = driQueryOptionb(
-         &options, "hk_enable_vertex_pipeline_stores_atomics");
+      driParseConfigFiles(
+         &options, &instance->drirc.available_options,
+         &(driConfigFileParseParams){
+            .driverName = "hk",
+            .deviceName = "G16",
+            .applicationName = instance->vk.app_info.app_name,
+            .applicationVersion = instance->vk.app_info.app_version,
+            .engineName = instance->vk.app_info.engine_name,
+            .engineVersion = instance->vk.app_info.engine_version,
+         });
+      vertex_stores =
+         driQueryOptionb(&options, "hk_enable_vertex_pipeline_stores_atomics");
       driDestroyOptionCache(&options);
    }
 
@@ -936,8 +939,8 @@ hk_get_device_properties(const struct agx_device *dev,
       .maxComputeWorkgroupSubgroups = 1024 / 32,
       /* Apple9 executes fixed 32-lane subgroups, including explicitly
        * required size 32 in compute pipelines. */
-      .requiredSubgroupSizeStages = dev->params.gpu_generation >= 16
-                                      ? VK_SHADER_STAGE_COMPUTE_BIT : 0,
+      .requiredSubgroupSizeStages =
+         dev->params.gpu_generation >= 16 ? VK_SHADER_STAGE_COMPUTE_BIT : 0,
       .maxInlineUniformBlockSize = HK_MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .maxPerStageDescriptorInlineUniformBlocks = 32,
       .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 32,
@@ -1796,11 +1799,11 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * and mesh shaders run as compute kernels on the mesh path, with the same
     * 32-lane subgroups.
     */
-   props->subgroupSupportedStages = VK_SHADER_STAGE_COMPUTE_BIT |
-                                    VK_SHADER_STAGE_ALL_GRAPHICS;
+   props->subgroupSupportedStages =
+      VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_ALL_GRAPHICS;
    if (feat->meshShader)
-      props->subgroupSupportedStages |= VK_SHADER_STAGE_TASK_BIT_EXT |
-                                        VK_SHADER_STAGE_MESH_BIT_EXT;
+      props->subgroupSupportedStages |=
+         VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
    props->subgroupSupportedOperations =
       VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
       VK_SUBGROUP_FEATURE_BALLOT_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT |
@@ -1995,7 +1998,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_pdev_alloc;
    }
 
-
    /* A private install prefix or a DRIRC_CONFIGDIR override loses the
     * application options silently otherwise. */
    if (agx_is_apple9(&pdev->dev) && !instance->drirc.misc.defaults_loaded)
@@ -2048,7 +2050,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       supported_features.descriptorBufferImageLayoutIgnored = false;
    }
 
-
    properties.drmHasRender = true;
    properties.drmRenderMajor = major(render_dev);
    properties.drmRenderMinor = minor(render_dev);
@@ -2060,10 +2061,10 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_agx_device;
 
    /* Set by driconf for vkd3d-proton, see hk_apple9_arrayed_2d_views. */
-   pdev->apple9_layered_2d = agx_is_apple9(&pdev->dev) &&
-      instance->drirc.misc.apple9_arrayed_2d_views;
-   pdev->apple9_d3d_mip_rounding = agx_is_apple9(&pdev->dev) &&
-      instance->drirc.misc.apple9_d3d_mip_rounding;
+   pdev->apple9_layered_2d =
+      agx_is_apple9(&pdev->dev) && instance->drirc.misc.apple9_arrayed_2d_views;
+   pdev->apple9_d3d_mip_rounding =
+      agx_is_apple9(&pdev->dev) && instance->drirc.misc.apple9_d3d_mip_rounding;
 
    hk_physical_device_init_pipeline_cache(pdev);
 
@@ -2121,19 +2122,21 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    pdev->queue_families[pdev->queue_family_count++] = (struct hk_queue_family){
       .queue_flags = agx_is_apple9(&pdev->dev)
                         ? VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT |
-                             VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT :
-                     VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT |
-                     VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT,
+                             VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT
+                        : VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT |
+                             VK_QUEUE_TRANSFER_BIT |
+                             VK_QUEUE_SPARSE_BINDING_BIT,
 
       .queue_count = 1,
    };
    /* Vulkan 1.4 requires a second transfer-capable family without host image
     * copies. Its queues submit through their own kernel command queues. */
    if (agx_is_apple9(&pdev->dev)) {
-      pdev->queue_families[pdev->queue_family_count++] = (struct hk_queue_family){
-         .queue_flags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
-         .queue_count = 1,
-      };
+      pdev->queue_families[pdev->queue_family_count++] =
+         (struct hk_queue_family){
+            .queue_flags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+            .queue_count = 1,
+         };
    }
    assert(pdev->queue_family_count <= ARRAY_SIZE(pdev->queue_families));
 

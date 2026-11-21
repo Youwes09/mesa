@@ -44,9 +44,8 @@ __wrap_agx_bo_unreference(struct agx_device *dev, struct agx_bo *bo)
    free(bo);
 }
 
-int __wrap_agx_bo_bind(struct agx_device *dev, struct agx_bo *bo,
-                       uint64_t addr, size_t size_B, uint64_t offset_B,
-                       uint32_t flags);
+int __wrap_agx_bo_bind(struct agx_device *dev, struct agx_bo *bo, uint64_t addr,
+                       size_t size_B, uint64_t offset_B, uint32_t flags);
 /* The heap stays one bound range from its start: bound_B bytes. */
 int
 __wrap_agx_bo_bind(struct agx_device *dev, struct agx_bo *bo, uint64_t addr,
@@ -73,7 +72,8 @@ int
 main(void)
 {
    struct hk_device *dev = calloc(1, sizeof(*dev));
-   struct agx_va va = {.flags = AGX_VA_USC, .addr = 1ull << 32,
+   struct agx_va va = {.flags = AGX_VA_USC,
+                       .addr = 1ull << 32,
                        .size_B = HK_HEAP_VA_MAX_B};
    struct agx_va rodata_va = {0};
    struct agx_bo rodata = {.va = &rodata_va};

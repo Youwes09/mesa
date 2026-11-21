@@ -370,7 +370,8 @@ main(int argc, char **argv)
                                 nir_shader_get_entrypoint(portable)->function);
          blob_overwrite_uint32(&serialized, 0, serialized.size - 4);
          nir_precomp_print_blob(fp_c, libfunc->name, "nir", v,
-                               (uint32_t *)serialized.data, serialized.size, true);
+                                (uint32_t *)serialized.data, serialized.size,
+                                true);
          blob_finish(&serialized);
          ralloc_free(portable);
 

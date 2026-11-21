@@ -17,8 +17,8 @@
 #include "util/u_printf.h"
 #include "util/u_thread.h"
 #include "util/vma.h"
-#include "agx_bo.h"
 #include "agx_apple9_layout.h"
+#include "agx_bo.h"
 #include "agx_pack.h"
 #include "decode.h"
 #include "layout.h"
@@ -98,7 +98,6 @@ int agx_bo_bind(struct agx_device *dev, struct agx_bo *bo, uint64_t addr,
 
 int agx_bind_timestamps(struct agx_device *dev, struct agx_bo *bo,
                         uint32_t *handle);
-
 
 /* Basis for the native Apple9 context-relative PPP and VDM addresses. */
 #define AGX_APPLE9_RENDER_CONTEXT_BASE UINT64_C(0x1000000000)

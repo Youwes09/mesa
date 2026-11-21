@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_apple9_profile.h"
+#include "asahi/compiler/agx_compile.h"
 #include "util/simple_mtx.h"
 #include "agx_tilebuffer.h"
 #include "libagx_dgc.h"

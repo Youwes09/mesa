@@ -19,7 +19,10 @@
 int
 main(int argc, char **argv)
 {
-   if (argc != 3) { fprintf(stderr, "usage: %s xfb.vert.spv xfb.frag.spv\n", argv[0]); return 2; }
+   if (argc != 3) {
+      fprintf(stderr, "usage: %s xfb.vert.spv xfb.frag.spv\n", argv[0]);
+      return 2;
+   }
    const bool bounds = false, far_vertex = false;
    setbuf(stdout, NULL);
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -44,10 +47,17 @@ main(int argc, char **argv)
    printf("device: %s vendor=%04x device=%04x API=%u.%u\n", prop.deviceName,
           prop.vendorID, prop.deviceID, VK_VERSION_MAJOR(prop.apiVersion),
           VK_VERSION_MINOR(prop.apiVersion));
-   VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT};
-   VkPhysicalDeviceProperties2 p2 = {.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&xfb};
+   VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
+      .sType =
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT};
+   VkPhysicalDeviceProperties2 p2 = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+      .pNext = &xfb};
    vkGetPhysicalDeviceProperties2(phy, &p2);
-   if (!xfb.transformFeedbackDraw) { puts("SKIP transformFeedbackDraw=false"); return 77; }
+   if (!xfb.transformFeedbackDraw) {
+      puts("SKIP transformFeedbackDraw=false");
+      return 77;
+   }
    uint32_t nq = 0;
    vkGetPhysicalDeviceQueueFamilyProperties(phy, &nq, NULL);
    VkQueueFamilyProperties *qp = calloc(nq, sizeof(*qp));
@@ -66,17 +76,25 @@ main(int argc, char **argv)
       .queueCount = 1,
       .pQueuePriorities = &priority};
    VkPhysicalDeviceFeatures features = {.drawIndirectFirstInstance = true};
-   VkPhysicalDeviceTransformFeedbackFeaturesEXT xf = {.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,.transformFeedback=VK_TRUE};
+   VkPhysicalDeviceTransformFeedbackFeaturesEXT xf = {
+      .sType =
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,
+      .transformFeedback = VK_TRUE};
    const char *extension = VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME;
    VkDeviceCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
                              .queueCreateInfoCount = 1,
                              .pQueueCreateInfos = &qci,
-                             .pEnabledFeatures = &features, .pNext=&xf, .enabledExtensionCount=1, .ppEnabledExtensionNames=&extension};
+                             .pEnabledFeatures = &features,
+                             .pNext = &xf,
+                             .enabledExtensionCount = 1,
+                             .ppEnabledExtensionNames = &extension};
    PFN_vkCmdDrawIndirectByteCountEXT draw_xfb;
    VkDevice dev;
    CHECK(vkCreateDevice(phy, &dci, NULL, &dev));
-   draw_xfb=(PFN_vkCmdDrawIndirectByteCountEXT)vkGetDeviceProcAddr(dev,"vkCmdDrawIndirectByteCountEXT");
-   if (!draw_xfb) return 2;
+   draw_xfb = (PFN_vkCmdDrawIndirectByteCountEXT)vkGetDeviceProcAddr(
+      dev, "vkCmdDrawIndirectByteCountEXT");
+   if (!draw_xfb)
+      return 2;
    VkQueue queue;
    vkGetDeviceQueue(dev, qi, 0, &queue);
    enum { W = 37, H = 19, PIXELS = W * H, BYTES = PIXELS * 4, GUARD = 64 };
@@ -127,14 +145,27 @@ main(int argc, char **argv)
    CHECK(vkBindBufferMemory(dev, buffer, memory[1], 0));
    uint8_t *pixels;
    CHECK(vkMapMemory(dev, memory[1], 0, VK_WHOLE_SIZE, 0, (void **)&pixels));
-   VkBuffer counter; VkDeviceMemory counter_memory;
-   VkBufferCreateInfo ci = {.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=64,
-      .usage=VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT};
-   CHECK(vkCreateBuffer(dev,&ci,NULL,&counter));
-   VkMemoryRequirements cr; vkGetBufferMemoryRequirements(dev,counter,&cr);
-   unsigned ct=0; while (!(cr.memoryTypeBits & (1u << ct))) ct++;
-   CHECK(vkAllocateMemory(dev,&(VkMemoryAllocateInfo){.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=cr.size,.memoryTypeIndex=ct},NULL,&counter_memory));
-   CHECK(vkBindBufferMemory(dev,counter,counter_memory,0));
+   VkBuffer counter;
+   VkDeviceMemory counter_memory;
+   VkBufferCreateInfo ci = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .size = 64,
+      .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+               VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+               VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT};
+   CHECK(vkCreateBuffer(dev, &ci, NULL, &counter));
+   VkMemoryRequirements cr;
+   vkGetBufferMemoryRequirements(dev, counter, &cr);
+   unsigned ct = 0;
+   while (!(cr.memoryTypeBits & (1u << ct)))
+      ct++;
+   CHECK(vkAllocateMemory(
+      dev,
+      &(VkMemoryAllocateInfo){.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                              .allocationSize = cr.size,
+                              .memoryTypeIndex = ct},
+      NULL, &counter_memory));
+   CHECK(vkBindBufferMemory(dev, counter, counter_memory, 0));
    VkImageViewCreateInfo vi = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
       .image = image,
@@ -293,14 +324,23 @@ main(int argc, char **argv)
                                       VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
    VkFence fence;
    CHECK(vkCreateFence(dev, &fence_info, NULL, &fence));
-   const struct { uint32_t bytes, offset, stride, instances, first; bool draw; } tests[] = {
-      {0,12,20,1,0,false}, {11,12,20,1,0,false}, {12,12,20,1,0,false},
-      {71,12,20,1,0,false}, {72,12,20,1,0,true}, {79,12,20,1,0,true},
-      {132,12,20,1,0,true}, {79,12,20,0,0,false}, {79,12,20,1,3,true},
-      {UINT32_MAX-1,UINT32_MAX-63,20,1,0,true},
-      {UINT32_MAX-64,UINT32_MAX-63,20,1,0,false},
+   const struct {
+      uint32_t bytes, offset, stride, instances, first;
+      bool draw;
+   } tests[] = {
+      {0, 12, 20, 1, 0, false},
+      {11, 12, 20, 1, 0, false},
+      {12, 12, 20, 1, 0, false},
+      {71, 12, 20, 1, 0, false},
+      {72, 12, 20, 1, 0, true},
+      {79, 12, 20, 1, 0, true},
+      {132, 12, 20, 1, 0, true},
+      {79, 12, 20, 0, 0, false},
+      {79, 12, 20, 1, 3, true},
+      {UINT32_MAX - 1, UINT32_MAX - 63, 20, 1, 0, true},
+      {UINT32_MAX - 64, UINT32_MAX - 63, 20, 1, 0, false},
    };
-   for (unsigned pass = 0; pass < sizeof(tests)/sizeof(tests[0]); ++pass) {
+   for (unsigned pass = 0; pass < sizeof(tests) / sizeof(tests[0]); ++pass) {
       const uint8_t expected[4] = {32, 128, 223, 255};
       memset(pixels, 0xa5, BYTES + GUARD);
       CHECK(vkResetCommandBuffer(cmd, 0));
@@ -308,9 +348,14 @@ main(int argc, char **argv)
       VkCommandBufferBeginInfo begin = {
          .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
       CHECK(vkBeginCommandBuffer(cmd, &begin));
-      vkCmdUpdateBuffer(cmd,counter,12,sizeof(uint32_t),&tests[pass].bytes);
-      VkMemoryBarrier indirect_barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT};
-      vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&indirect_barrier,0,NULL,0,NULL);
+      vkCmdUpdateBuffer(cmd, counter, 12, sizeof(uint32_t), &tests[pass].bytes);
+      VkMemoryBarrier indirect_barrier = {
+         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+         .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT};
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1,
+                           &indirect_barrier, 0, NULL, 0, NULL);
       VkClearValue clear;
       for (unsigned c = 0; c < 4; ++c)
          clear.color.float32[c] = expected[c] / 255.0f;
@@ -323,7 +368,8 @@ main(int argc, char **argv)
          .pClearValues = &clear};
       vkCmdBeginRenderPass(cmd, &rb, VK_SUBPASS_CONTENTS_INLINE);
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-      draw_xfb(cmd,tests[pass].instances,tests[pass].first,counter,12,tests[pass].offset,tests[pass].stride);
+      draw_xfb(cmd, tests[pass].instances, tests[pass].first, counter, 12,
+               tests[pass].offset, tests[pass].stride);
       vkCmdEndRenderPass(cmd);
       VkImageMemoryBarrier barrier = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -357,8 +403,10 @@ main(int argc, char **argv)
       CHECK(vkWaitForFences(dev, 1, &fence, VK_TRUE, 10000000000ull));
       for (unsigned i = 0; i < BYTES; ++i) {
          unsigned x = (i / 4) % W, y = (i / 4) / W;
-         bool inside = tests[pass].draw && x >= 3 && x < W - 4 && y >= 2 && y < H - 3;
-         const uint8_t draw_color[4] = {(tests[pass].first + 1) * 16, 64, 128, 255};
+         bool inside =
+            tests[pass].draw && x >= 3 && x < W - 4 && y >= 2 && y < H - 3;
+         const uint8_t draw_color[4] = {(tests[pass].first + 1) * 16, 64, 128,
+                                        255};
          uint8_t wanted = inside ? draw_color[i % 4] : expected[i % 4];
          if (abs((int)pixels[i] - wanted) > 1) {
             fprintf(stderr, "pixel %u channel %u: got %u expected %u\n", i / 4,
@@ -386,8 +434,8 @@ main(int argc, char **argv)
    vkDestroyImage(dev, image, NULL);
    vkFreeMemory(dev, memory[1], NULL);
    vkFreeMemory(dev, memory[0], NULL);
-   vkDestroyBuffer(dev,counter,NULL);
-   vkFreeMemory(dev,counter_memory,NULL);
+   vkDestroyBuffer(dev, counter, NULL);
+   vkFreeMemory(dev, counter_memory, NULL);
    vkDestroyDevice(dev, NULL);
    vkDestroyInstance(instance, NULL);
    return 0;

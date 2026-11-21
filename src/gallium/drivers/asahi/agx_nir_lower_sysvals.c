@@ -297,7 +297,7 @@ lower_apple9_sysval(nir_builder *b, nir_instr *instr, void *data)
 
 static bool
 lower_apple9_sysval_table(nir_builder *b, nir_intrinsic_instr *intr,
-                         UNUSED void *data)
+                          UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_sysval_agx)
       return false;
@@ -307,11 +307,12 @@ lower_apple9_sysval_table(nir_builder *b, nir_intrinsic_instr *intr,
    assert(table < AGX_NUM_SYSVAL_TABLES);
    unsigned offset = nir_intrinsic_binding(intr);
    b->cursor = nir_before_instr(&intr->instr);
-   nir_def *value = nir_load_ubo(
-      b, intr->def.num_components, intr->def.bit_size,
-      nir_imm_int(b, AGX_APPLE9_SYSVAL_UBO_BASE + table), nir_imm_int(b, offset),
-      .align_mul = intr->def.bit_size / 8, .range_base = offset,
-      .range = intr->def.num_components * intr->def.bit_size / 8);
+   nir_def *value =
+      nir_load_ubo(b, intr->def.num_components, intr->def.bit_size,
+                   nir_imm_int(b, AGX_APPLE9_SYSVAL_UBO_BASE + table),
+                   nir_imm_int(b, offset), .align_mul = intr->def.bit_size / 8,
+                   .range_base = offset,
+                   .range = intr->def.num_components * intr->def.bit_size / 8);
    nir_def_replace(&intr->def, value);
    return true;
 }
@@ -322,11 +323,12 @@ agx_nir_lower_apple9_sysvals(nir_shader *shader, mesa_shader_stage desc_stage)
    mesa_shader_stage physical_stage = shader->info.stage;
    shader->info.stage = desc_stage;
    bool lower_draw_params = true;
-   bool progress = nir_shader_instructions_pass(
-      shader, lower_apple9_sysval, nir_metadata_control_flow, &lower_draw_params);
+   bool progress = nir_shader_instructions_pass(shader, lower_apple9_sysval,
+                                                nir_metadata_control_flow,
+                                                &lower_draw_params);
    shader->info.stage = physical_stage;
-   progress |= nir_shader_intrinsics_pass(
-      shader, lower_apple9_sysval_table, nir_metadata_control_flow, NULL);
+   progress |= nir_shader_intrinsics_pass(shader, lower_apple9_sysval_table,
+                                          nir_metadata_control_flow, NULL);
    return progress;
 }
 

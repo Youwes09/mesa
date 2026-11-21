@@ -40,7 +40,7 @@ enum agx_apple9_compute_abi {
  * preambles run once per workgroup on its critical path, so compute keeps the
  * smaller bound until a larger one is shown to pay for its latency. */
 #define AGX_APPLE9_MAX_GRAPHICS_PREAMBLE_BYTES 16384
-#define AGX_APPLE9_MAX_COMPUTE_PREAMBLE_BYTES 8192
+#define AGX_APPLE9_MAX_COMPUTE_PREAMBLE_BYTES  8192
 
 static inline unsigned
 agx_apple9_max_preamble_bytes(bool compute)
@@ -50,14 +50,15 @@ agx_apple9_max_preamble_bytes(bool compute)
 }
 
 #define AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES 18
-#define AGX_APPLE9_COMPUTE_MAX_RESOURCES 32
-/* Descriptor ABI roots: texture, sampler, buffer, group counts, shared, reserved. */
-#define AGX_APPLE9_COMPUTE_GROUPS_ROOT 3
+#define AGX_APPLE9_COMPUTE_MAX_RESOURCES        32
+/* Descriptor ABI roots: texture, sampler, buffer, group counts, shared,
+ * reserved. */
+#define AGX_APPLE9_COMPUTE_GROUPS_ROOT     3
 #define AGX_APPLE9_COMPUTE_SHARED_ARGUMENT 4
 /* Conservative per-invocation limit exercised on T8132 in all three stages. */
 #define AGX_APPLE9_MAX_SCRATCH_BYTES 32768
 /* Workgroup memory, as Metal's threadgroup memory limit on M4. */
-#define AGX_APPLE9_MAX_SHARED_BYTES 32768
+#define AGX_APPLE9_MAX_SHARED_BYTES              32768
 #define AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE 1
 /* The threadgroup address space is selected by a tagged argument root. */
 #define AGX_APPLE9_COMPUTE_SHARED_ROOT UINT64_C(0x80000000)
@@ -106,13 +107,12 @@ struct agx_apple9_compute_profile {
    /* Storage for returned 32-bit atomics, independently of RA spills. */
    uint16_t atomic_frame_size;
    uint16_t publication_count;
-
 };
 
-#define AGX_APPLE9_DIRECT_BUFFERS_COMPUTE_PROFILE                            \
-   ((struct agx_apple9_compute_profile){                                     \
-      .abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS,                         \
-      .local_size = {16, 1, 1},                                             \
+#define AGX_APPLE9_DIRECT_BUFFERS_COMPUTE_PROFILE                              \
+   ((struct agx_apple9_compute_profile){                                       \
+      .abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS,                            \
+      .local_size = {16, 1, 1},                                                \
    })
 
 #endif

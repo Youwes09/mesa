@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "agx_builder.h"
-#include "agx_apple9_ir.h"
 #include <vector>
+#include "agx_apple9_ir.h"
+#include "agx_builder.h"
 #include "agx_compile.h"
 #include "agx_compiler.h"
 #include "agx_test.h"
@@ -261,8 +261,8 @@ TEST(Apple9Rematerialization, BoundedImmutableExpressions)
                data[I->dest[0].value] = read(I->src[0]);
             else if (I->op == AGX_OPCODE_APPLE9_PURE) {
                if (I->apple9->op == AGX_APPLE9_VIR_IOR_UNIFORM)
-                  data[I->dest[0].value] = read(I->src[0]) |
-                     uniforms[I->apple9->immediate];
+                  data[I->dest[0].value] =
+                     read(I->src[0]) | uniforms[I->apple9->immediate];
                else {
                   uint32_t u = read(I->src[0]);
                   float f;
@@ -352,19 +352,21 @@ TEST(Apple9Rematerialization, HoistOnlyInvariantSpillStores)
                const auto incoming = data;
                agx_foreach_instr_in_block(block, I) {
                   auto read = [&](agx_index x) {
-                     return x.type == AGX_INDEX_IMMEDIATE ? x.value : data[x.value];
+                     return x.type == AGX_INDEX_IMMEDIATE ? x.value
+                                                          : data[x.value];
                   };
                   if (I->op == AGX_OPCODE_PHI) {
                      agx_index x = I->src[edge];
                      data[I->dest[0].value] = x.type == AGX_INDEX_IMMEDIATE
-                        ? x.value : incoming[x.value];
+                                                 ? x.value
+                                                 : incoming[x.value];
                   } else if (I->op == AGX_OPCODE_MOV)
                      data[I->dest[0].value] = read(I->src[0]);
                   else if (I->op == AGX_OPCODE_MOV_IMM)
                      data[I->dest[0].value] = I->imm;
                   else if (I->op == AGX_OPCODE_APPLE9_PURE)
-                     data[I->dest[0].value] = I->nr_srcs
-                        ? read(I->src[0]) + 1 : I->apple9->immediate;
+                     data[I->dest[0].value] =
+                        I->nr_srcs ? read(I->src[0]) + 1 : I->apple9->immediate;
                   else if (I->op == AGX_OPCODE_APPLE9)
                      observed.push_back(read(I->src[0]));
                }
@@ -385,14 +387,18 @@ TEST(Apple9Rematerialization, HoistOnlyInvariantSpillStores)
          agx_foreach_block(ctx, block) {
             agx_foreach_instr_in_block(block, I) {
                if (I->op == AGX_OPCODE_MOV && I->dest[0].memory) {
-                  if (block == entry) ++outside;
-                  else ++inside;
+                  if (block == entry)
+                     ++outside;
+                  else
+                     ++inside;
                }
             }
          }
          EXPECT_GT(outside, 0u);
-         if (hoist && !carried) EXPECT_EQ(inside, 0u);
-         else EXPECT_GT(inside, 0u);
+         if (hoist && !carried)
+            EXPECT_EQ(inside, 0u);
+         else
+            EXPECT_GT(inside, 0u);
          ralloc_free(mem);
       }
    }

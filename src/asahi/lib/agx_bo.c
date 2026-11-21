@@ -7,8 +7,8 @@
 #include "agx_bo.h"
 #include <inttypes.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include "util/hash_table.h"
 #include "util/log.h"
@@ -502,4 +502,3 @@ agx_bo_finish_create(struct agx_device *dev, struct agx_bo *bo,
       pthread_mutex_unlock(&dev->bo_map_lock);
    }
 }
-

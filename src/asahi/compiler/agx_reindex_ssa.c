@@ -12,8 +12,8 @@ void
 agx_reindex_ssa(agx_context *ctx)
 {
    unsigned *remap = calloc(ctx->alloc, sizeof(*remap));
-   unsigned *homes = ctx->spill_home
-      ? rzalloc_array(ctx, unsigned, ctx->alloc) : NULL;
+   unsigned *homes =
+      ctx->spill_home ? rzalloc_array(ctx, unsigned, ctx->alloc) : NULL;
 
    ctx->alloc = 0;
 

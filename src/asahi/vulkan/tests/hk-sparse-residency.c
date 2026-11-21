@@ -26,13 +26,14 @@ check(nir_texop op, bool array)
                           : nir_imm_vec3(&b, 0.125, 0.125, 0.0);
    coord = nir_trim_vector(&b, coord, array ? 3 : 2);
    nir_def *grad = nir_imm_vec2(&b, 0.01, 0.01);
-   nir_def *value = nir_build_tex(
-      &b, op, .coord = coord, .texture_handle = handle,
-      .sampler_handle = nir_imm_int(&b, 0x2000),
-      .lod = op == nir_texop_txl ? nir_imm_float(&b, 0.0)
-             : fetch ? nir_imm_int(&b, 0) : NULL,
-      .dim = GLSL_SAMPLER_DIM_2D, .dest_type = nir_type_float32,
-      .is_array = array, .is_sparse = true);
+   nir_def *value =
+      nir_build_tex(&b, op, .coord = coord, .texture_handle = handle,
+                    .sampler_handle = nir_imm_int(&b, 0x2000),
+                    .lod = op == nir_texop_txl ? nir_imm_float(&b, 0.0)
+                           : fetch             ? nir_imm_int(&b, 0)
+                                               : NULL,
+                    .dim = GLSL_SAMPLER_DIM_2D, .dest_type = nir_type_float32,
+                    .is_array = array, .is_sparse = true);
    nir_tex_instr *sample = nir_def_as_tex(value);
    if (op == nir_texop_txd) {
       nir_tex_instr_add_src(sample, nir_tex_src_ddx, grad);

@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "agx_apple9_launch.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/compiler/agx_apple9_profile.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 #include <string.h>
 
@@ -21,8 +21,8 @@ write16(uint8_t *p, uint16_t value)
 bool
 agx_apple9_launch_threadgroup_memory_supported(uint32_t bytes)
 {
-   return bytes == 0 ||
-          (bytes >= 128 && bytes <= AGX_APPLE9_MAX_SHARED_BYTES && !(bytes & (bytes - 1)));
+   return bytes == 0 || (bytes >= 128 && bytes <= AGX_APPLE9_MAX_SHARED_BYTES &&
+                         !(bytes & (bytes - 1)));
 }
 
 size_t
@@ -115,7 +115,8 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
        (params->threadgroup_memory_bytes &&
         (!compute || !agx_apple9_launch_threadgroup_memory_supported(
                         params->threadgroup_memory_bytes))) ||
-       (compute && !agx_apple9_launch_call_offset(stage, params->resource_count)) ||
+       (compute &&
+        !agx_apple9_launch_call_offset(stage, params->resource_count)) ||
        (stage == AGX_APPLE9_LAUNCH_FRAGMENT &&
         (params->tile_bytes > 128 ||
          (params->samples != 1 && params->samples != 2 &&
@@ -133,7 +134,7 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
    unsigned at = 16;
    unsigned words = compute
                        ? agx_apple9_compute_root_words(params->resource_count)
-                    : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
+                       : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
    unsigned roots = words / 2;
    if (compute) {
       /* The root words are known when the launch is emitted: materialize
@@ -167,7 +168,8 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
    at += 8;
    if (tmpl)
       tmpl->target_at = at;
-   if (!encode_target(program + at, stage, params->shader_base, params->entry_offset))
+   if (!encode_target(program + at, stage, params->shader_base,
+                      params->entry_offset))
       return false;
    at += 10;
    encode_frame(program + at, params);
@@ -219,10 +221,10 @@ agx_apple9_launch_build(uint8_t *out, size_t capacity,
 }
 
 bool
-agx_apple9_launch_template_init(struct agx_apple9_launch_template *tmpl,
-                                size_t capacity,
-                                enum agx_apple9_launch_stage stage,
-                                const struct agx_apple9_launch_parameters *params)
+agx_apple9_launch_template_init(
+   struct agx_apple9_launch_template *tmpl, size_t capacity,
+   enum agx_apple9_launch_stage stage,
+   const struct agx_apple9_launch_parameters *params)
 {
    memset(tmpl, 0, sizeof(*tmpl));
    if (!params || capacity > sizeof(tmpl->program))
@@ -259,9 +261,10 @@ agx_apple9_launch_template_set_roots(
 }
 
 bool
-agx_apple9_launch_template_emit(
-   uint8_t *out, const struct agx_apple9_launch_template *tmpl,
-   uint64_t resource_table, uint32_t entry_offset, uint64_t launch_address)
+agx_apple9_launch_template_emit(uint8_t *out,
+                                const struct agx_apple9_launch_template *tmpl,
+                                uint64_t resource_table, uint32_t entry_offset,
+                                uint64_t launch_address)
 {
    if (!tmpl->valid)
       return false;

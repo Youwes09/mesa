@@ -79,8 +79,7 @@ run(void)
    /* A BO returned by one pool is reused by another, most recent first. */
    struct list_head bos;
    record(a, HK_CMD_POOL_MAIN, &bos, 2);
-   struct hk_cmd_bo *last =
-      list_last_entry(&bos, struct hk_cmd_bo, link);
+   struct hk_cmd_bo *last = list_last_entry(&bos, struct hk_cmd_bo, link);
    hk_cmd_pool_free_bo_list(a, HK_CMD_POOL_MAIN, &bos, false);
    CHECK(list_is_empty(&bos) && live == 2);
    CHECK(dev->cmd_bos.bytes == 2 * HK_CMD_BO_SIZE);

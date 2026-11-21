@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
-#include "agx_apple9.h"
 #include <algorithm>
 #include <iterator>
 #include <gtest/gtest.h>
+#include "agx_apple9.h"
 
 TEST(Apple9CDM, OptionalBarrierKeepsLaunchAndOutputBounds)
 {
@@ -27,12 +27,14 @@ TEST(Apple9CDM, OptionalBarrierKeepsLaunchAndOutputBounds)
          ok_unfenced = agx_apple9_emit_direct_dispatch(
             unfenced, launch, global, profile.local_size, &profile, false);
       } else {
-         size = mode == 1 ? AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE :
-                            AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE;
+         size = mode == 1 ? AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE
+                          : AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE;
          ok_fenced = agx_apple9_emit_indirect_dispatch(
-            fenced, launch, 0x1234000, profile.local_size, mode == 2, &profile, true);
+            fenced, launch, 0x1234000, profile.local_size, mode == 2, &profile,
+            true);
          ok_unfenced = agx_apple9_emit_indirect_dispatch(
-            unfenced, launch, 0x1234000, profile.local_size, mode == 2, &profile, false);
+            unfenced, launch, 0x1234000, profile.local_size, mode == 2,
+            &profile, false);
       }
       ASSERT_TRUE(ok_fenced);
       ASSERT_TRUE(ok_unfenced);
@@ -85,15 +87,17 @@ TEST(Apple9CDM, RejectReasonMatchesEmitters)
    };
    for (const auto &c : cases) {
       const char *reason = agx_apple9_dispatch_reject_reason(
-         c.launch, c.indirect, c.address, c.global, profile.local_size, &profile);
+         c.launch, c.indirect, c.address, c.global, profile.local_size,
+         &profile);
       ASSERT_NE(reason, nullptr) << c.reason;
       EXPECT_STREQ(reason, c.reason);
-      bool ok = c.indirect
-         ? agx_apple9_emit_indirect_dispatch(out, c.launch, c.address,
-                                             profile.local_size, false, &profile,
-                                             false)
-         : agx_apple9_emit_direct_dispatch(out, c.launch, c.global,
-                                           profile.local_size, &profile, false);
+      bool ok =
+         c.indirect
+            ? agx_apple9_emit_indirect_dispatch(out, c.launch, c.address,
+                                                profile.local_size, false,
+                                                &profile, false)
+            : agx_apple9_emit_direct_dispatch(
+                 out, c.launch, c.global, profile.local_size, &profile, false);
       EXPECT_FALSE(ok) << c.reason;
    }
 }

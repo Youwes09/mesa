@@ -26,8 +26,8 @@ mesh_heap_alloc(global struct poly_heap *heap, uint64_t size_B)
 
 static void
 mesh_set_records(global struct libagx_mesh_params *p,
-                 global struct poly_heap *heap, uint count,
-                 uint group_stride_B, uint vertices_per_group)
+                 global struct poly_heap *heap, uint count, uint group_stride_B,
+                 uint vertices_per_group)
 {
    p->outputs = mesh_heap_alloc(heap, (uint64_t)count * group_stride_B);
    if (!p->outputs)
@@ -46,9 +46,9 @@ mesh_set_records(global struct libagx_mesh_params *p,
  */
 KERNEL(1)
 libagx_mesh_setup(global struct libagx_mesh_params *p, constant uint *grid,
-                  constant uint *count, uint draw, global struct poly_heap *heap,
-                  uint has_task, uint payload_B, uint group_stride_B,
-                  uint vertices_per_group)
+                  constant uint *count, uint draw,
+                  global struct poly_heap *heap, uint has_task, uint payload_B,
+                  uint group_stride_B, uint vertices_per_group)
 {
    uint x = grid[0], y = grid[1], z = grid[2];
    if (count && draw >= *count)

@@ -9,11 +9,11 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <xf86drm.h>
-#include "drm-uapi/dma-buf.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/decode.h"
 #include "drm-uapi/asahi_drm.h"
+#include "drm-uapi/dma-buf.h"
 #include "drm-uapi/drm_fourcc.h"
 #include "frontend/winsys_handle.h"
 #include "gallium/auxiliary/renderonly/renderonly.h"
@@ -47,8 +47,8 @@
 #include "util/u_screen.h"
 #include "util/u_upload_mgr.h"
 #include "util/xmlconfig.h"
-#include "agx_bg_eot.h"
 #include "agx_apple9.h"
+#include "agx_bg_eot.h"
 #include "agx_bo.h"
 #include "agx_device.h"
 #include "agx_disk_cache.h"
@@ -169,9 +169,11 @@ agx_resource_setup(struct agx_resource *nresource)
  * BO virtual addresses are page aligned; mip and layer offsets preserve the
  * PBE's 16-byte address granularity. Buffer resources use separate addressing. */
 static bool
-agx_resource_layout_valid(struct agx_device *dev, const struct agx_resource *rsrc)
+agx_resource_layout_valid(struct agx_device *dev,
+                          const struct agx_resource *rsrc)
 {
-   if (!agx_apple9_direct_render_enabled(dev) || rsrc->base.target == PIPE_BUFFER)
+   if (!agx_apple9_direct_render_enabled(dev) ||
+       rsrc->base.target == PIPE_BUFFER)
       return true;
 
    const struct ail_layout *layout = &rsrc->layout;
@@ -984,8 +986,8 @@ agx_alloc_staging(struct pipe_screen *screen, struct agx_resource *rsc,
       const uint64_t modifier = DRM_FORMAT_MOD_APPLE_GPU_TILED;
       tmpl.usage = PIPE_USAGE_DEFAULT;
       tmpl.bind &= ~PIPE_BIND_LINEAR;
-      pstaging = screen->resource_create_with_modifiers(screen, &tmpl,
-                                                         &modifier, 1);
+      pstaging =
+         screen->resource_create_with_modifiers(screen, &tmpl, &modifier, 1);
    } else {
       pstaging = screen->resource_create(screen, &tmpl);
    }
@@ -1053,8 +1055,9 @@ agx_transfer_map_bo(struct agx_transfer *transfer, struct agx_bo *bo,
    /* Tile/detile copies never expose this pointer to GL. Preserve their shim
     * CPU epoch; only mappings that may escape must revoke epoch tracking.
     */
-   transfer->bo_map = escapes ? agx_bo_map_range(bo, NULL, bo->size)
-                              : bo->dev->ops.bo_mmap(bo->dev, bo, NULL, bo->size);
+   transfer->bo_map = escapes
+                         ? agx_bo_map_range(bo, NULL, bo->size)
+                         : bo->dev->ops.bo_mmap(bo->dev, bo, NULL, bo->size);
    return transfer->bo_map;
 }
 
@@ -1205,8 +1208,8 @@ agx_transfer_map(struct pipe_context *pctx, struct pipe_resource *resource,
 
       /* Pixel offsets are relative to the imported plane, not the BO. */
       uint64_t offset = rsrc->layout.level_offsets_B[level] +
-         (uint64_t)ail_get_linear_pixel_B(&rsrc->layout, level, box->x,
-                                         box->y, box->z);
+                        (uint64_t)ail_get_linear_pixel_B(
+                           &rsrc->layout, level, box->x, box->y, box->z);
 
       void *map = agx_transfer_map_bo(transfer, rsrc->bo, true);
       if (!map)
@@ -1246,9 +1249,8 @@ agx_transfer_unmap(struct pipe_context *pctx, struct pipe_transfer *transfer)
          ail_is_level_twiddled_uncompressed(&rsrc->layout, transfer->level));
 
       for (unsigned z = 0; z < transfer->box.depth; ++z) {
-         uint8_t *map =
-            agx_map_texture_cpu(rsrc, transfer->level, transfer->box.z + z,
-                                trans->bo_map);
+         uint8_t *map = agx_map_texture_cpu(rsrc, transfer->level,
+                                            transfer->box.z + z, trans->bo_map);
          uint8_t *src = (uint8_t *)trans->map + transfer->layer_stride * z;
 
          ail_tile(map, src, &rsrc->layout, transfer->level, transfer->stride,
@@ -1337,8 +1339,9 @@ agx_clear(struct pipe_context *pctx, unsigned buffers,
        * viewport. Apple9's [-1, 1] clip-Z lowering would round it (0.3
        * becomes 0.29999995), so draw the clear in [0, W] clip space, where
        * window Z is the value itself. */
-      bool exact_depth = agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
-                         (slowclear & PIPE_CLEAR_DEPTH);
+      bool exact_depth =
+         agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
+         (slowclear & PIPE_CLEAR_DEPTH);
       if (exact_depth) {
          ctx->force_clip_halfz = true;
          ctx->dirty |= AGX_DIRTY_VS_PROG | AGX_DIRTY_RS | AGX_DIRTY_VIEWPORT;
@@ -1586,8 +1589,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    };
 
    struct agx_zls_control_packed packed_zls;
-   agx_pack_zls_control(&packed_zls,
-                        zres ? &zres->layout : NULL,
+   agx_pack_zls_control(&packed_zls, zres ? &zres->layout : NULL,
                         sres ? &sres->layout : NULL, &zls);
    memcpy(&c->zls_ctrl, &packed_zls, sizeof(packed_zls));
 
@@ -1850,12 +1852,11 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
     */
    agx_batch_add_bo(batch, batch->vdm.bo);
 
-   agx_cmdbuf(dev, cmdbuf, &batch->pool, batch, &batch->key,
-              batch->vdm.bo->va->addr, scissor,
-              zbias, agx_get_occlusion_heap(batch), pipeline_background,
-              pipeline_background_partial, pipeline_store,
-              clear_pipeline_textures, batch->clear_depth, batch->clear_stencil,
-              &batch->tilebuffer_layout);
+   agx_cmdbuf(
+      dev, cmdbuf, &batch->pool, batch, &batch->key, batch->vdm.bo->va->addr,
+      scissor, zbias, agx_get_occlusion_heap(batch), pipeline_background,
+      pipeline_background_partial, pipeline_store, clear_pipeline_textures,
+      batch->clear_depth, batch->clear_stencil, &batch->tilebuffer_layout);
 
    if (agx_apple9_direct_render_enabled(dev)) {
       if (batch->key.nr_cbufs > 8) {
@@ -2246,8 +2247,9 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       /* The Apple9 graphics compiler currently consumes FP32 shader I/O
        * and texture results. Keep lowp/mediump GLSL at FP32 instead of
        * advertising a half-precision lowering path it cannot compile. */
-      bool apple9_graphics = agx_apple9_direct_render_enabled(agx_device(pscreen)) &&
-                             (i == MESA_SHADER_VERTEX || i == MESA_SHADER_FRAGMENT);
+      bool apple9_graphics =
+         agx_apple9_direct_render_enabled(agx_device(pscreen)) &&
+         (i == MESA_SHADER_VERTEX || i == MESA_SHADER_FRAGMENT);
       caps->fp16 = caps->glsl_16bit_consts = caps->fp16_derivatives =
          !is_no16 && !apple9_graphics;
       /* GLSL compiler is broken. Flip this on when Panfrost does. */
@@ -2276,9 +2278,11 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       caps->max_shader_images = PIPE_MAX_SHADER_IMAGES;
       if (apple9_graphics) {
          caps->max_outputs = i == MESA_SHADER_FRAGMENT
-                                ? 1 : AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
+                                ? 1
+                                : AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
          caps->max_inputs = i == MESA_SHADER_FRAGMENT
-                               ? AGX_APPLE9_MAX_VARYING_COMPONENTS / 4 : 16;
+                               ? AGX_APPLE9_MAX_VARYING_COMPONENTS / 4
+                               : 16;
          caps->max_shader_buffers = caps->max_shader_images = 0;
          caps->max_texture_samplers = caps->max_sampler_views = 16;
       }
@@ -2475,9 +2479,10 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->generate_mipmap = false;
    /* Apple9 has CPU texture transfers, but its compute image blitter is not
     * implemented yet. Use Mesa's existing CPU format-conversion fallback. */
-   caps->texture_transfer_modes = agx_apple9_direct_render_enabled(agx_device(pscreen))
-                                    ? PIPE_TEXTURE_TRANSFER_DEFAULT
-                                    : PIPE_TEXTURE_TRANSFER_BLIT;
+   caps->texture_transfer_modes =
+      agx_apple9_direct_render_enabled(agx_device(pscreen))
+         ? PIPE_TEXTURE_TRANSFER_DEFAULT
+         : PIPE_TEXTURE_TRANSFER_BLIT;
 
    caps->device_type = PIPE_DEVICE_TYPE_INTEGRATED_GPU;
    caps->endianness = PIPE_ENDIAN_LITTLE;
@@ -2674,13 +2679,14 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
             format != PIPE_FORMAT_R16G16B16A16_FLOAT)))
          return false;
       if ((usage & PIPE_BIND_RENDER_TARGET) &&
-          agx_apple9_block_export_format(agx_apple9_color_tile_format(format)) > 15)
+          agx_apple9_block_export_format(agx_apple9_color_tile_format(format)) >
+             15)
          return false;
       if ((usage & PIPE_BIND_SAMPLER_VIEW) &&
-          ((target != PIPE_BUFFER && target != PIPE_TEXTURE_2D && target != PIPE_TEXTURE_1D &&
-            target != PIPE_TEXTURE_1D_ARRAY && target != PIPE_TEXTURE_RECT &&
-            target != PIPE_TEXTURE_3D && target != PIPE_TEXTURE_CUBE &&
-            target != PIPE_TEXTURE_CUBE_ARRAY &&
+          ((target != PIPE_BUFFER && target != PIPE_TEXTURE_2D &&
+            target != PIPE_TEXTURE_1D && target != PIPE_TEXTURE_1D_ARRAY &&
+            target != PIPE_TEXTURE_RECT && target != PIPE_TEXTURE_3D &&
+            target != PIPE_TEXTURE_CUBE && target != PIPE_TEXTURE_CUBE_ARRAY &&
             target != PIPE_TEXTURE_2D_ARRAY) ||
            !(agx_apple9_texture_format_supported(format) ||
              (target == PIPE_BUFFER && agx_apple9_texture_is_rgb32(format)))))

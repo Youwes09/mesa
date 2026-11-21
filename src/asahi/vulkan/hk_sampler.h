@@ -7,8 +7,8 @@
 
 #pragma once
 
-#include "hk_device.h"
 #include "hk_descriptor_set.h"
+#include "hk_device.h"
 #include "hk_physical_device.h"
 #include "hk_private.h"
 

@@ -91,7 +91,8 @@ create_dag(agx_context *ctx, agx_block *block, void *memctx,
       if (ctx->schedule_resources) {
          /* PHIs/preloads define block-entry values. Their position is an IR
           * invariant even when a target supplies its own resource hazards. */
-         if (agx_opcodes_info[I->op].schedule_class == AGX_SCHEDULE_CLASS_PRELOAD)
+         if (agx_opcodes_info[I->op].schedule_class ==
+             AGX_SCHEDULE_CLASS_PRELOAD)
             serialize(node, &preload);
          else
             add_dep(node, preload);
@@ -106,7 +107,8 @@ create_dag(agx_context *ctx, agx_block *block, void *memctx,
                resource_readers[r] = NULL;
                resource_writer[r] = node;
             } else {
-               struct resource_reader *p = rzalloc(memctx, struct resource_reader);
+               struct resource_reader *p =
+                  rzalloc(memctx, struct resource_reader);
                p->node = node;
                p->next = resource_readers[r];
                resource_readers[r] = p;
@@ -117,8 +119,8 @@ create_dag(agx_context *ctx, agx_block *block, void *memctx,
 
       /* Classify the instruction and add dependencies according to the class */
       enum agx_schedule_class dep = ctx->schedule_class
-                                      ? ctx->schedule_class(I)
-                                      : agx_opcodes_info[I->op].schedule_class;
+                                       ? ctx->schedule_class(I)
+                                       : agx_opcodes_info[I->op].schedule_class;
       assert(dep != AGX_SCHEDULE_CLASS_INVALID && "invalid instruction seen");
 
       bool barrier = dep == AGX_SCHEDULE_CLASS_BARRIER;
@@ -249,8 +251,8 @@ choose_instr(struct sched_ctx *s)
           * producer even reaches the ready list. */
          util_dynarray_foreach(&n->dag.edges, struct dag_edge, edge) {
             struct sched_node *producer = (struct sched_node *)edge->child;
-            dependency = MAX2(dependency,
-                                s->ctx->schedule_delay(producer->instr) - 1);
+            dependency =
+               MAX2(dependency, s->ctx->schedule_delay(producer->instr) - 1);
          }
       }
 
@@ -303,8 +305,9 @@ pressure_schedule_block(agx_context *ctx, agx_block *block, struct sched_ctx *s)
       if (ctx->schedule_delay) {
          util_dynarray_foreach(&node->dag.edges, struct dag_edge, edge) {
             struct sched_node *producer = (struct sched_node *)edge->child;
-            producer->ready = MAX2(producer->ready, s->position +
-                                     ctx->schedule_delay(producer->instr));
+            producer->ready =
+               MAX2(producer->ready,
+                    s->position + ctx->schedule_delay(producer->instr));
          }
          ++s->position;
       }
@@ -315,8 +318,9 @@ pressure_schedule_block(agx_context *ctx, agx_block *block, struct sched_ctx *s)
    }
 
    /* Bail if it looks like it's worse */
-   signed limit = orig_max_pressure +
-                  (ctx->schedule_delay ? (signed)ctx->schedule_pressure_slack : 0);
+   signed limit =
+      orig_max_pressure +
+      (ctx->schedule_delay ? (signed)ctx->schedule_pressure_slack : 0);
    if (ctx->schedule_delay && max_pressure > limit)
       ctx->schedule_rejected_increase =
          MAX2(ctx->schedule_rejected_increase,

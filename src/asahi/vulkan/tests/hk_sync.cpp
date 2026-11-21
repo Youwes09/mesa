@@ -1,18 +1,21 @@
 /* SPDX-License-Identifier: MIT */
 #include "../hk_sync.h"
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <vector>
+#include <gtest/gtest.h>
 
 class Sync : public testing::Test {
-protected:
+ protected:
    hk_sync_state state;
    std::vector<hk_sync_stream> streams;
    std::vector<uint32_t> remap;
    std::vector<hk_sync_event> events;
    uint32_t next[2] = {};
 
-   void SetUp() override { hk_sync_init(&state); }
+   void SetUp() override
+   {
+      hk_sync_init(&state);
+   }
 
    unsigned stream(hk_sync_engine engine)
    {
@@ -348,11 +351,16 @@ TEST(SyncScopes, NoneTopBottomAndAliases)
 {
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_NONE, true), 0u);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, true), 0u);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, false), HK_SYNC_ALL);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, true), HK_SYNC_ALL);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, false), 0u);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, true), HK_SYNC_ALL);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, false), HK_SYNC_TRANSFER);
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, false),
+             HK_SYNC_ALL);
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, true),
+             HK_SYNC_ALL);
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, false),
+             0u);
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, true),
+             HK_SYNC_ALL);
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, false),
+             HK_SYNC_TRANSFER);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, true),
              HK_SYNC_GRAPHICS | HK_SYNC_DRAW_INDIRECT);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, false),
@@ -363,14 +371,16 @@ TEST(SyncScopes, FragmentAndPreRasterScopes)
 {
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, false),
              HK_SYNC_FRAGMENT);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, false),
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                false),
              HK_SYNC_FRAGMENT);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, false),
              HK_SYNC_GRAPHICS);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, true),
              HK_SYNC_PRE_RASTER | HK_SYNC_DRAW_INDIRECT);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT, false),
-             HK_SYNC_GRAPHICS);
+   EXPECT_EQ(
+      hk_sync_stage_mask(VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT, false),
+      HK_SYNC_GRAPHICS);
 }
 
 TEST(SyncScopes, PipelineOrderingAndUnknownStages)
@@ -381,8 +391,10 @@ TEST(SyncScopes, PipelineOrderingAndUnknownStages)
              HK_SYNC_GRAPHICS | HK_SYNC_DRAW_INDIRECT);
    EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, false),
              HK_SYNC_INDIRECT | HK_SYNC_COMPUTE | HK_SYNC_GRAPHICS);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_HOST_BIT, true), HK_SYNC_ALL);
-   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT, true),
+   EXPECT_EQ(hk_sync_stage_mask(VK_PIPELINE_STAGE_2_HOST_BIT, true),
+             HK_SYNC_ALL);
+   EXPECT_EQ(hk_sync_stage_mask(
+                VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT, true),
              HK_SYNC_ALL);
    EXPECT_EQ(hk_sync_stage_mask(UINT64_C(1) << 63, false), HK_SYNC_ALL);
 }
@@ -404,9 +416,11 @@ TEST(SyncScopes, ExecutionOnlyAndOneSidedMemoryScopes)
    EXPECT_EQ(hk_sync_ordered_stages(0, HK_SYNC_COMPUTE, 0, 0), 0u);
    EXPECT_EQ(hk_sync_ordered_stages(HK_SYNC_COMPUTE, 0, 0, 0), 0u);
    EXPECT_EQ(hk_sync_ordered_stages(HK_SYNC_COMPUTE, 0,
-                                   VK_ACCESS_2_SHADER_WRITE_BIT, 0), HK_SYNC_COMPUTE);
+                                    VK_ACCESS_2_SHADER_WRITE_BIT, 0),
+             HK_SYNC_COMPUTE);
    EXPECT_EQ(hk_sync_ordered_stages(0, HK_SYNC_COMPUTE, 0,
-                                   VK_ACCESS_2_SHADER_READ_BIT), HK_SYNC_COMPUTE);
+                                    VK_ACCESS_2_SHADER_READ_BIT),
+             HK_SYNC_COMPUTE);
 }
 
 /* Compare the recording index with an independent linear oracle after every

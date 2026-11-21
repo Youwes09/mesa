@@ -18,8 +18,8 @@ gated_bo_map(struct agx_bo *bo)
       util_barrier_wait(&upload_gate);
    return agx_bo_map(bo);
 }
-#define agx_bo_map gated_bo_map
-#define simple_mtx_lock(m) (locks_held++, simple_mtx_lock(m))
+#define agx_bo_map           gated_bo_map
+#define simple_mtx_lock(m)   (locks_held++, simple_mtx_lock(m))
 #define simple_mtx_unlock(m) (locks_held--, simple_mtx_unlock(m))
 #include "../hk_shader.c"
 #undef agx_bo_map
@@ -341,11 +341,10 @@ static void
 check_boundary(struct hk_device *dev)
 {
    uint8_t code[HK_APPLE9_BODY_SLAB_SIZE + 1] = {1};
-   const unsigned sizes[] = {HK_APPLE9_BODY_SLAB_USABLE - 1,
-                             HK_APPLE9_BODY_SLAB_USABLE,
-                             HK_APPLE9_BODY_SLAB_USABLE + 1,
-                             HK_APPLE9_BODY_SLAB_SIZE,
-                             HK_APPLE9_BODY_SLAB_SIZE + 1};
+   const unsigned sizes[] = {
+      HK_APPLE9_BODY_SLAB_USABLE - 1, HK_APPLE9_BODY_SLAB_USABLE,
+      HK_APPLE9_BODY_SLAB_USABLE + 1, HK_APPLE9_BODY_SLAB_SIZE,
+      HK_APPLE9_BODY_SLAB_SIZE + 1};
    for (unsigned i = 0; i < ARRAY_SIZE(sizes); ++i) {
       unsigned size = sizes[i];
       struct hk_shader shader = {.code_ptr = code, .code_size = size};

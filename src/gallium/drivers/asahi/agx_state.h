@@ -15,8 +15,8 @@
 #include "asahi/lib/agx_device.h"
 #include "asahi/lib/agx_linker.h"
 #include "asahi/lib/agx_nir_lower_vbo.h"
-#include "asahi/lib/agx_scratch.h"
 #include "asahi/lib/agx_primitive_count.h"
+#include "asahi/lib/agx_scratch.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_uvs.h"
 #include "asahi/lib/pool.h"
@@ -33,8 +33,8 @@
 #include "util/hash_table.h"
 #include "util/rwlock.h"
 #include "util/u_range.h"
-#include "agx_bg_eot.h"
 #include "agx_apple9.h"
+#include "agx_bg_eot.h"
 #include "agx_helpers.h"
 #include "agx_nir_texture.h"
 
@@ -916,10 +916,10 @@ uint64_t agx_batch_get_so_address(struct agx_batch *batch, unsigned buffer,
                                   uint32_t *size);
 
 void agx_init_streamout_functions(struct pipe_context *ctx);
-void agx_apple9_capture_streamout(struct pipe_context *pctx,
-                                const struct pipe_draw_info *info,
-                                unsigned drawid,
-                                const struct pipe_draw_start_count_bias *draw);
+void
+agx_apple9_capture_streamout(struct pipe_context *pctx,
+                             const struct pipe_draw_info *info, unsigned drawid,
+                             const struct pipe_draw_start_count_bias *draw);
 void agx_cleanup_streamout(struct pipe_context *pctx);
 
 static inline void
@@ -996,7 +996,6 @@ struct agx_screen {
     * same general instruction set. */
    nir_shader_compiler_options apple9_nir_options;
    nir_shader_compiler_options apple9_graphics_nir_options;
-
 
    struct agx_bo *rodata;
 
@@ -1107,8 +1106,7 @@ agx_map_texture_cpu(struct agx_resource *rsrc, unsigned level, unsigned z,
          bo->_map = bo->dev->ops.bo_mmap(bo->dev, bo, NULL, bo->size);
       map = bo->_map;
    }
-   return ((uint8_t *)map) +
-          ail_get_layer_level_B(&rsrc->layout, z, level);
+   return ((uint8_t *)map) + ail_get_layer_level_B(&rsrc->layout, z, level);
 }
 
 static inline uint64_t
@@ -1164,12 +1162,12 @@ void agx_set_ssbo_uniforms(struct agx_batch *batch, mesa_shader_stage stage);
 bool agx_nir_lower_point_size(nir_shader *nir, bool insert_write);
 
 bool agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
-                          bool lower_draw_params);
+                           bool lower_draw_params);
 
 /* Private bindings for the same sysval tables used by the Gallium ABI. */
 #define AGX_APPLE9_SYSVAL_UBO_BASE 240
 bool agx_nir_lower_apple9_sysvals(nir_shader *shader,
-                                mesa_shader_stage desc_stage);
+                                  mesa_shader_stage desc_stage);
 
 bool agx_nir_layout_uniforms(nir_shader *shader,
                              struct agx_compiled_shader *compiled,
@@ -1261,19 +1259,21 @@ void agx_memory_barrier(struct pipe_context *pctx, unsigned flags);
 /* Use these instead of batch_add_bo for proper resource tracking */
 void agx_batch_reads(struct agx_batch *batch, struct agx_resource *rsrc);
 /* These accesses happen exclusively during fragment execution. */
-void agx_batch_reads_fragment(struct agx_batch *batch, struct agx_resource *rsrc);
+void agx_batch_reads_fragment(struct agx_batch *batch,
+                              struct agx_resource *rsrc);
 void agx_batch_writes_fragment(struct agx_batch *batch,
                                struct agx_resource *rsrc, unsigned level);
 void agx_batch_writes_fragment_range(struct agx_batch *batch,
-                                     struct agx_resource *rsrc,
-                                     unsigned offset, unsigned size);
+                                     struct agx_resource *rsrc, unsigned offset,
+                                     unsigned size);
 void agx_batch_writes_raw(struct agx_batch *batch, struct agx_resource *rsrc);
 void agx_batch_writes(struct agx_batch *batch, struct agx_resource *rsrc,
                       unsigned level);
 void agx_batch_writes_range(struct agx_batch *batch, struct agx_resource *rsrc,
                             unsigned offset, unsigned size);
 void agx_batch_track_image(struct agx_batch *batch,
-                           struct pipe_image_view *image, mesa_shader_stage stage);
+                           struct pipe_image_view *image,
+                           mesa_shader_stage stage);
 
 bool agx_any_batch_uses_resource(struct agx_context *ctx,
                                  struct agx_resource *rsrc);

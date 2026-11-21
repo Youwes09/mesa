@@ -2,11 +2,17 @@
  * SPDX-License-Identifier: MIT
  */
 #include <stdio.h>
-#include "hk_shader.h"
 #include "asahi/compiler/agx_nir.h"
 #include "compiler/nir/nir_builder.h"
+#include "hk_shader.h"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "failed: %s\n", #c); return false; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "failed: %s\n", #c);                                  \
+         return false;                                                         \
+      }                                                                        \
+   } while (0)
 
 /* Test normal task/mesh lowering, including empty output and nontrivial local
  * sizes. Counting is per invocation, not per emitted vertex or workgroup.
@@ -14,8 +20,9 @@
 static bool
 check_stage(bool task, unsigned primitives)
 {
-   nir_builder b = nir_builder_init_simple_shader(
-      task ? MESA_SHADER_TASK : MESA_SHADER_MESH, &agx_nir_options, "mesh queries");
+   nir_builder b =
+      nir_builder_init_simple_shader(task ? MESA_SHADER_TASK : MESA_SHADER_MESH,
+                                     &agx_nir_options, "mesh queries");
    b.shader->info.workgroup_size[0] = 2;
    b.shader->info.workgroup_size[1] = 3;
    b.shader->info.workgroup_size[2] = 4;
@@ -68,10 +75,12 @@ check_stage(bool task, unsigned primitives)
    return true;
 }
 
-int main(void)
+int
+main(void)
 {
    glsl_type_singleton_init_or_ref();
-   bool ok = check_stage(true, 0) && check_stage(false, 7) && check_stage(false, 0);
+   bool ok =
+      check_stage(true, 0) && check_stage(false, 7) && check_stage(false, 0);
    glsl_type_singleton_decref();
    return ok ? 0 : 1;
 }

@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 /* Apple9 uses two independently addressable 16-bit halves per 32-bit GPR. */
-#define AGX_APPLE9_PUBLICATION_COUNT 128
+#define AGX_APPLE9_PUBLICATION_COUNT   128
 #define AGX_APPLE9_GPR_COUNT           96
 #define AGX_APPLE9_UNIFORM_COUNT       256
 #define AGX_APPLE9_HALF_REGISTER_COUNT (2 * AGX_APPLE9_GPR_COUNT)

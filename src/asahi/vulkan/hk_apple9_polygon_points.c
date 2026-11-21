@@ -20,8 +20,9 @@ pp_cross(nir_builder *b, nir_def *x, nir_def *y)
 {
    nir_def *yzx = nir_swizzle(b, x, (unsigned[]){1, 2, 0}, 3);
    nir_def *zxy = nir_swizzle(b, x, (unsigned[]){2, 0, 1}, 3);
-   return nir_fsub(b, nir_fmul(b, yzx, nir_swizzle(b, y, (unsigned[]){2, 0, 1}, 3)),
-                   nir_fmul(b, zxy, nir_swizzle(b, y, (unsigned[]){1, 2, 0}, 3)));
+   return nir_fsub(
+      b, nir_fmul(b, yzx, nir_swizzle(b, y, (unsigned[]){2, 0, 1}, 3)),
+      nir_fmul(b, zxy, nir_swizzle(b, y, (unsigned[]){1, 2, 0}, 3)));
 }
 
 /* One of the three vertices' value of a slot, by dynamic index. */
@@ -76,9 +77,9 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
                       nir_channel(b, pos[i], 3));
    nir_def *det = nir_fdot3(b, r[0], pp_cross(b, r[1], r[2]));
    nir_def *signed_area = nir_fmul(b, det, nir_channel(b, vp, 1));
-   nir_def *front = nir_bcsel(b, FLAG(FRONT_CCW),
-                              nir_fle_imm(b, signed_area, 0.0),
-                              nir_fge_imm(b, signed_area, 0.0));
+   nir_def *front =
+      nir_bcsel(b, FLAG(FRONT_CCW), nir_fle_imm(b, signed_area, 0.0),
+                nir_fge_imm(b, signed_area, 0.0));
    nir_def *culled = nir_bcsel(b, front, FLAG(CULL_FRONT), FLAG(CULL_BACK));
    for (unsigned k = clip; k < clip + cull; ++k) {
       culled = nir_ior(b, culled,
@@ -94,8 +95,10 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
       nir_local_variable_create(impl, list_type, "pp_a"),
       nir_local_variable_create(impl, list_type, "pp_b"),
    };
-   nir_variable *count = nir_local_variable_create(impl, glsl_uint_type(), "pp_n");
-   nir_variable *out_n = nir_local_variable_create(impl, glsl_uint_type(), "pp_m");
+   nir_variable *count =
+      nir_local_variable_create(impl, glsl_uint_type(), "pp_n");
+   nir_variable *out_n =
+      nir_local_variable_create(impl, glsl_uint_type(), "pp_m");
    nir_variable *j = nir_local_variable_create(impl, glsl_uint_type(), "pp_j");
 
    if (!only)
@@ -114,7 +117,8 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
       for (unsigned p = 0; p < planes; ++p) {
          nir_def *d[3];
          for (unsigned i = 0; i < 3; ++i) {
-            nir_def *z = nir_channel(b, pos[i], 2), *w = nir_channel(b, pos[i], 3);
+            nir_def *z = nir_channel(b, pos[i], 2),
+                    *w = nir_channel(b, pos[i], 3);
             if (p == 0)
                d[i] = nir_fadd_imm(b, w, -0x1p-20);
             else if (p == 1)
@@ -134,8 +138,9 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
          {
             nir_def *jj = nir_load_var(b, j);
             nir_break_if(b, nir_uge(b, jj, n));
-            nir_def *next = nir_bcsel(b, nir_ieq(b, nir_iadd_imm(b, jj, 1), n),
-                                      nir_imm_int(b, 0), nir_iadd_imm(b, jj, 1));
+            nir_def *next =
+               nir_bcsel(b, nir_ieq(b, nir_iadd_imm(b, jj, 1), n),
+                         nir_imm_int(b, 0), nir_iadd_imm(b, jj, 1));
             nir_def *a = nir_load_array_var(b, in, jj);
             nir_def *c = nir_load_array_var(b, in, next);
             nir_def *da = nir_fdot3(b, a, dv), *dc = nir_fdot3(b, c, dv);
@@ -172,39 +177,46 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
          nir_def *win[3];
          for (unsigned i = 0; i < 3; ++i) {
             nir_def *rcp = nir_frcp(b, nir_channel(b, pos[i], 3));
-            win[i] = nir_vec3(b,
-               nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 0), rcp),
-                        nir_channel(b, vp, 0)),
-               nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 1), rcp),
-                        nir_channel(b, vp, 1)),
-               nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 2), rcp),
-                        depth_range));
+            win[i] =
+               nir_vec3(b,
+                        nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 0), rcp),
+                                 nir_channel(b, vp, 0)),
+                        nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 1), rcp),
+                                 nir_channel(b, vp, 1)),
+                        nir_fmul(b, nir_fmul(b, nir_channel(b, pos[i], 2), rcp),
+                                 depth_range));
          }
          nir_def *e1 = nir_fsub(b, win[1], win[0]);
          nir_def *e2 = nir_fsub(b, win[2], win[0]);
          nir_def *nrm = pp_cross(b, e1, e2);
          nir_def *nz = nir_channel(b, nrm, 2);
-         nir_def *safe = nir_bcsel(b, nir_feq_imm(b, nz, 0.0),
-                                   nir_imm_float(b, 1.0), nz);
+         nir_def *safe =
+            nir_bcsel(b, nir_feq_imm(b, nz, 0.0), nir_imm_float(b, 1.0), nz);
          nir_def *dzdx = nir_fabs(b, nir_fdiv(b, nir_channel(b, nrm, 0), safe));
          nir_def *dzdy = nir_fabs(b, nir_fdiv(b, nir_channel(b, nrm, 1), safe));
-         nir_def *slope = nir_bcsel(b, nir_feq_imm(b, nz, 0.0),
-                                    nir_imm_float(b, 0.0), nir_fmax(b, dzdx, dzdy));
-         nir_def *maxz = nir_fmax(b, nir_fabs(b, nir_channel(b, win[0], 2)),
-                                  nir_fmax(b, nir_fabs(b, nir_channel(b, win[1], 2)),
-                                           nir_fabs(b, nir_channel(b, win[2], 2))));
+         nir_def *slope =
+            nir_bcsel(b, nir_feq_imm(b, nz, 0.0), nir_imm_float(b, 0.0),
+                      nir_fmax(b, dzdx, dzdy));
+         nir_def *maxz =
+            nir_fmax(b, nir_fabs(b, nir_channel(b, win[0], 2)),
+                     nir_fmax(b, nir_fabs(b, nir_channel(b, win[1], 2)),
+                              nir_fabs(b, nir_channel(b, win[2], 2))));
          /* Float formats: 2^(exponent of the largest depth - 23). */
-         nir_def *float_unit = nir_fexp2(b, nir_fadd_imm(
-            b, nir_ffloor(b, nir_flog2(b, nir_fmax(b, maxz, nir_imm_float(b, 0x1p-126)))),
-            -23.0));
+         nir_def *float_unit = nir_fexp2(
+            b, nir_fadd_imm(
+                  b,
+                  nir_ffloor(
+                     b, nir_flog2(
+                           b, nir_fmax(b, maxz, nir_imm_float(b, 0x1p-126)))),
+                  -23.0));
          nir_def *unit = nir_bcsel(b, FLAG(DEPTH_BIAS_FLOAT), float_unit,
                                    nir_channel(b, params, 3));
          nir_def *o = nir_fadd(b, nir_fmul(b, nir_channel(b, params, 1), slope),
                                nir_fmul(b, nir_channel(b, params, 0), unit));
          nir_def *clamp = nir_channel(b, params, 2);
-         o = nir_bcsel(b, nir_fgt_imm(b, clamp, 0.0), nir_fmin(b, o, clamp),
-                       nir_bcsel(b, nir_flt_imm(b, clamp, 0.0),
-                                 nir_fmax(b, o, clamp), o));
+         o = nir_bcsel(
+            b, nir_fgt_imm(b, clamp, 0.0), nir_fmin(b, o, clamp),
+            nir_bcsel(b, nir_flt_imm(b, clamp, 0.0), nir_fmax(b, o, clamp), o));
          biased = nir_bcsel(b, nir_feq_imm(b, depth_range, 0.0),
                             nir_imm_float(b, 0.0), nir_fdiv(b, o, depth_range));
       }
@@ -236,8 +248,9 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
       nir_def *visible = NULL;
       if (only) {
          visible = nir_iand(b, nir_inot(b, culled), nir_ult(b, only, n));
-         nir_store_var(b, j, nir_umin(b, only, nir_iadd_imm(b, nir_umax_imm(b, n, 1), -1)),
-                       1);
+         nir_store_var(
+            b, j, nir_umin(b, only, nir_iadd_imm(b, nir_umax_imm(b, n, 1), -1)),
+            1);
       } else {
          nir_push_loop(b);
       }
@@ -246,29 +259,35 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
          if (!only)
             nir_break_if(b, nir_uge(b, jj, n));
          nir_def *w = nir_load_array_var(b, final, jj);
-         nir_def *p = nir_fadd(b, nir_fmul(b, pos[0], nir_channel(b, w, 0)),
-                               nir_fadd(b, nir_fmul(b, pos[1], nir_channel(b, w, 1)),
-                                        nir_fmul(b, pos[2], nir_channel(b, w, 2))));
+         nir_def *p =
+            nir_fadd(b, nir_fmul(b, pos[0], nir_channel(b, w, 0)),
+                     nir_fadd(b, nir_fmul(b, pos[1], nir_channel(b, w, 1)),
+                              nir_fmul(b, pos[2], nir_channel(b, w, 2))));
          p = nir_vector_insert_imm(
-            b, p, nir_fadd(b, nir_channel(b, p, 2),
-                           nir_fmul(b, bias, nir_channel(b, p, 3))), 2);
+            b, p,
+            nir_fadd(b, nir_channel(b, p, 2),
+                     nir_fmul(b, bias, nir_channel(b, p, 3))),
+            2);
          if (only)
             p = nir_bcsel(b, visible, p, nir_imm_vec4(b, 0.0, 0.0, 0.0, -1.0));
-         nir_store_output(b, p, nir_imm_int(b, 0), .src_type = nir_type_float32,
-                          .io_semantics = {.location = VARYING_SLOT_POS, .num_slots = 1});
+         nir_store_output(
+            b, p, nir_imm_int(b, 0), .src_type = nir_type_float32,
+            .io_semantics = {.location = VARYING_SLOT_POS, .num_slots = 1});
          for (unsigned s = 0; s < nslots; ++s) {
             unsigned loc = slots[s];
             unsigned comps = info->output_components[loc];
             nir_io_semantics sem = {.location = loc, .num_slots = 1};
             bool flat = (info->flat & BITFIELD64_BIT(loc)) ||
-                        loc == VARYING_SLOT_LAYER || loc == VARYING_SLOT_VIEWPORT;
+                        loc == VARYING_SLOT_LAYER ||
+                        loc == VARYING_SLOT_VIEWPORT;
             nir_def *value;
             if (flat) {
                value = pp_select(b, provoking, vals[s]);
             } else {
-               value = nir_fadd(b, nir_fmul(b, vals[s][0], nir_channel(b, w, 0)),
-                                nir_fadd(b, nir_fmul(b, vals[s][1], nir_channel(b, w, 1)),
-                                         nir_fmul(b, vals[s][2], nir_channel(b, w, 2))));
+               value = nir_fadd(
+                  b, nir_fmul(b, vals[s][0], nir_channel(b, w, 0)),
+                  nir_fadd(b, nir_fmul(b, vals[s][1], nir_channel(b, w, 1)),
+                           nir_fmul(b, vals[s][2], nir_channel(b, w, 2))));
             }
             for (unsigned c = 0; c < comps; ++c) {
                nir_store_output(b, nir_channel(b, value, c), nir_imm_int(b, 0),
@@ -277,19 +296,20 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
             }
          }
          for (unsigned k = 0; k < clip + cull; ++k) {
-            nir_store_output(b, nir_imm_float(b, 1.0), nir_imm_int(b, k / 4),
-                             .component = k % 4, .src_type = nir_type_float32,
-                             .io_semantics = {.location = VARYING_SLOT_CLIP_DIST0,
-                                              .num_slots = clip + cull});
+            nir_store_output(
+               b, nir_imm_float(b, 1.0), nir_imm_int(b, k / 4),
+               .component = k % 4, .src_type = nir_type_float32,
+               .io_semantics = {.location = VARYING_SLOT_CLIP_DIST0,
+                                .num_slots = clip + cull});
          }
          /* The polygon slot: back-facing, and the polygon's primitive ID in
           * place of the point's. */
          if (info->face_slot) {
-            nir_store_output(b, nir_vec2(b, nir_b2i32(b, nir_inot(b, front)), prim),
-                             nir_imm_int(b, 0), .src_type = nir_type_uint32,
-                             .write_mask = 0x3,
-                             .io_semantics = {.location = info->face_slot,
-                                              .num_slots = 1});
+            nir_store_output(
+               b, nir_vec2(b, nir_b2i32(b, nir_inot(b, front)), prim),
+               nir_imm_int(b, 0), .src_type = nir_type_uint32,
+               .write_mask = 0x3,
+               .io_semantics = {.location = info->face_slot, .num_slots = 1});
          }
          if (!only) {
             nir_emit_vertex(b, 0);

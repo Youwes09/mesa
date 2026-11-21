@@ -8,8 +8,8 @@
 #pragma once
 
 #include "asahi/lib/agx_bo.h"
-#include "hk_private.h"
 #include "util/simple_mtx.h"
+#include "hk_private.h"
 
 #include "vk_command_pool.h"
 
@@ -74,5 +74,5 @@ void hk_cmd_bo_cache_finish(struct hk_device *dev);
 void hk_cmd_bo_cache_trim(struct hk_device *dev);
 
 void hk_cmd_pool_free_bo_list(struct hk_cmd_pool *pool,
-                              enum hk_cmd_pool_kind kind,
-                              struct list_head *bos, bool release);
+                              enum hk_cmd_pool_kind kind, struct list_head *bos,
+                              bool release);

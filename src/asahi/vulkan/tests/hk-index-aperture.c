@@ -1,16 +1,23 @@
 /* SPDX-License-Identifier: MIT */
 #include "../hk_cmd_draw.c"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); failures++; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         failures++;                                                           \
+      }                                                                        \
+   } while (0)
 static unsigned failures, copies, resets;
 
 void __wrap_hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
-                               enum agx_barrier barrier,
-                               enum libagx_program idx, void *data, size_t size);
+                                enum agx_barrier barrier,
+                                enum libagx_program idx, void *data,
+                                size_t size);
 void
 __wrap_hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
-                          enum agx_barrier barrier,
-                          enum libagx_program idx, void *data, size_t size)
+                           enum agx_barrier barrier, enum libagx_program idx,
+                           void *data, size_t size)
 {
    CHECK(barrier & AGX_PREGFX);
    if (idx == LIBAGX_HEAP_RESET)
@@ -54,7 +61,8 @@ main(void)
    struct agx_draw copied = hk_apple9_robust_index(cmd, draw);
    CHECK(copies == 1 && copied.indexed && agx_is_indirect(copied.b));
    CHECK(resets == 1);
-   CHECK(copied.index_buffer == va.addr && copied.index_buffer_range_B == bo.size);
+   CHECK(copied.index_buffer == va.addr &&
+         copied.index_buffer_range_B == bo.size);
    CHECK(copied.index_buffer >= base && copied.index_buffer < end);
    puts("high-VA binding: existing robust copy returns a reachable heap draw");
 

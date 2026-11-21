@@ -4,8 +4,13 @@
 /* Exercise real recording and encoders without a DRM device. Streams and pool
  * storage are host-backed; no shaders or submissions are needed for barriers.
  */
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%s:%u: %s\n", \
-                          __FILE__, __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%s:%u: %s\n", __FILE__, __LINE__, #c);               \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 int
 main(void)
@@ -23,14 +28,18 @@ main(void)
 
    uint8_t compute_bytes[4096] = {0}, render_bytes[4096] = {0};
    struct hk_cs compute = {
-      .cmd = cmd, .type = HK_CS_CDM,
-      .current = compute_bytes, .end = compute_bytes + sizeof(compute_bytes),
+      .cmd = cmd,
+      .type = HK_CS_CDM,
+      .current = compute_bytes,
+      .end = compute_bytes + sizeof(compute_bytes),
       .sync_stages = HK_SYNC_COMPUTE | HK_SYNC_DISPATCH_INDIRECT,
       .cdm_dirty = true,
    };
    struct hk_cs render = {
-      .cmd = cmd, .type = HK_CS_VDM,
-      .current = render_bytes, .end = render_bytes + sizeof(render_bytes),
+      .cmd = cmd,
+      .type = HK_CS_VDM,
+      .current = render_bytes,
+      .end = render_bytes + sizeof(render_bytes),
       .sync_stages = HK_SYNC_GRAPHICS | HK_SYNC_DRAW_INDIRECT,
       .stats.cmds = 1,
    };
@@ -91,10 +100,13 @@ main(void)
    struct hk_cs resumed = {.cmd = cmd, .type = HK_CS_VDM, .sync_id = 7};
    for (unsigned i = 0; i <= resumed.sync_id; ++i)
       util_dynarray_append(&cmd->sync_first_event, (uint32_t)HK_SYNC_NONE);
-   size_t before = util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event);
+   size_t before =
+      util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event);
    hk_cmd_sync_work(cmd, &resumed, HK_SYNC_GRAPHICS);
-   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) == before + 2);
-   event = util_dynarray_element(&cmd->sync_events, struct hk_sync_event, before);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         before + 2);
+   event =
+      util_dynarray_element(&cmd->sync_events, struct hk_sync_event, before);
    CHECK(event->stream == HK_SYNC_NONE);
    CHECK(event->src & HK_SYNC_FRAGMENT);
    /* Attachment loads happen in the fragment stage; tiling need not wait. */
@@ -108,10 +120,13 @@ main(void)
     */
    for (unsigned c = 0; c < 2; ++c) {
       uint8_t t_bytes[256] = {0};
-      struct hk_cs t = {.cmd = cmd, .type = HK_CS_CDM, .current = t_bytes,
+      struct hk_cs t = {.cmd = cmd,
+                        .type = HK_CS_CDM,
+                        .current = t_bytes,
                         .end = t_bytes + sizeof(t_bytes)};
       if (c)
-         t.timestamp.end = (struct agx_timestamp_req){.handle = 0x11, .offset_B = 8};
+         t.timestamp.end =
+            (struct agx_timestamp_req){.handle = 0x11, .offset_B = 8};
       cmd->current_cs.cs = &t;
       hk_cmd_buffer_end_compute(cmd);
       CHECK(cmd->current_cs.cs == NULL);
@@ -134,7 +149,10 @@ main(void)
     * Only G17P needs it; G13G and G16 start streams without one.
     */
    const enum agx_chip chips[] = {
-      AGX_CHIP_G13G, AGX_CHIP_G16G, AGX_CHIP_G16C, AGX_CHIP_G17P,
+      AGX_CHIP_G13G,
+      AGX_CHIP_G16G,
+      AGX_CHIP_G16C,
+      AGX_CHIP_G17P,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(chips); ++i) {
       cmd = calloc(1, sizeof(*cmd));
@@ -168,6 +186,7 @@ main(void)
       free(cmd);
    }
    free(dev);
-   puts("PASS actual CDM recording: G17P entry visibility, G13G/G16 unchanged, no duplicate entry barrier");
+   puts(
+      "PASS actual CDM recording: G17P entry visibility, G13G/G16 unchanged, no duplicate entry barrier");
    return 0;
 }

@@ -18,11 +18,11 @@ struct agx_ptr;
 #include "util/format/u_formats.h"
 #include "util/simple_mtx.h"
 
-#include "asahi/lib/agx_apple9_layout.h"
-#include "asahi/lib/agx_apple9_launch.h"
 #include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_compile_apple9.h"
+#include "asahi/lib/agx_apple9_launch.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,8 +57,10 @@ struct agx_apple9_stage_launch_cache {
    } entry[AGX_APPLE9_STAGE_LAUNCH_TEMPLATES];
 };
 
-void agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c);
-void agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c);
+void
+agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c);
+void
+agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c);
 
 struct agx_apple9_render_stage {
    /* Stable compiled-object identity; zero for externally supplied stages. */
@@ -125,8 +127,9 @@ struct agx_apple9_render_pipeline {
    uint8_t samples;
 
    /* The first AGX_APPLE9_PPP_STATIC_SIZE bytes of the PPP record that depend
-    * only on the linked vertex and fragment stages (agx_apple9_build_ppp_static),
-    * built once per link; NULL builds them in every draw. */
+    * only on the linked vertex and fragment stages
+    * (agx_apple9_build_ppp_static), built once per link; NULL builds them in
+    * every draw. */
    const uint8_t *ppp_static;
 
    /* Batch-owned PPP record, relative to the render-context aperture. */
@@ -149,7 +152,6 @@ struct agx_apple9_render_pipeline {
    bool primitive_restart;
    bool flatshade_first;
    uint32_t restart_index;
-
 };
 
 #define AGX_APPLE9_MAX_VIEWPORTS 16
@@ -213,9 +215,9 @@ agx_apple9_uniform_draw_reset(struct agx_apple9_uniform_draw *draw)
    memset(&draw->buffer_count, 0,
           offsetof(struct agx_apple9_uniform_draw, viewports) -
              offsetof(struct agx_apple9_uniform_draw, buffer_count));
-   memset(&draw->scissor_index, 0,
-          sizeof(*draw) -
-             offsetof(struct agx_apple9_uniform_draw, scissor_index));
+   memset(
+      &draw->scissor_index, 0,
+      sizeof(*draw) - offsetof(struct agx_apple9_uniform_draw, scissor_index));
 }
 
 void agx_apple9_initialize_entries(struct agx_device *dev);
@@ -262,8 +264,9 @@ agx_apple9_draw_reuses_launch(const struct agx_apple9_uniform_draw *previous,
 }
 
 static inline bool
-agx_apple9_draw_reuses_coefficients(const struct agx_apple9_uniform_draw *previous,
-                                    const struct agx_apple9_uniform_draw *draw)
+agx_apple9_draw_reuses_coefficients(
+   const struct agx_apple9_uniform_draw *previous,
+   const struct agx_apple9_uniform_draw *draw)
 {
    return previous && draw->program_id[0] && draw->program_id[1] &&
           previous->program_id[0] == draw->program_id[0] &&
@@ -285,8 +288,9 @@ void agx_apple9_init_coefficients(struct agx_device *dev,
                                   struct agx_ptr allocation);
 
 #define AGX_APPLE9_PPP_STATIC_SIZE 0xc0
-void agx_apple9_build_ppp_static(const struct agx_apple9_render_pipeline *pipeline,
-                                 uint8_t out[AGX_APPLE9_PPP_STATIC_SIZE]);
+void
+agx_apple9_build_ppp_static(const struct agx_apple9_render_pipeline *pipeline,
+                            uint8_t out[AGX_APPLE9_PPP_STATIC_SIZE]);
 
 bool agx_apple9_prepare_draw_alloc(
    struct agx_device *dev, void *usc_allocator,
@@ -313,13 +317,13 @@ bool agx_apple9_update_draw_tables_alloc(
    const struct agx_apple9_render_pipeline *pipeline,
    struct agx_apple9_uniform_draw *draw, const uint64_t tables[2]);
 
-#define AGX_APPLE9_COMPUTE_RESOURCE_STRIDE 0x20u
-#define AGX_APPLE9_COMPUTE_SUPERSET_RESOURCE_STRIDE 0x100u
-#define AGX_APPLE9_COMPUTE_GEOMETRY_GROUPS_OFFSET 0xc0u
-#define AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE 0x2cu
-#define AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE 0x28u
+#define AGX_APPLE9_COMPUTE_RESOURCE_STRIDE                0x20u
+#define AGX_APPLE9_COMPUTE_SUPERSET_RESOURCE_STRIDE       0x100u
+#define AGX_APPLE9_COMPUTE_GEOMETRY_GROUPS_OFFSET         0xc0u
+#define AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE                0x2cu
+#define AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE       0x28u
 #define AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE 0x1cu
-#define AGX_APPLE9_RENDER_CONTEXT_BASE UINT64_C(0x1000000000)
+#define AGX_APPLE9_RENDER_CONTEXT_BASE                    UINT64_C(0x1000000000)
 
 bool agx_apple9_compute_enabled(const struct agx_device *dev);
 
@@ -354,7 +358,6 @@ agx_apple9_compute_read_mask(const struct agx_apple9_compute_profile *profile);
 
 uint32_t
 agx_apple9_compute_write_mask(const struct agx_apple9_compute_profile *profile);
-
 
 /*
  * Direct CDM geometry is dispatch state.  Fixed-local-size profiles require
@@ -470,15 +473,17 @@ struct ail_layout;
  * descriptor retains the allocation's mip tree and selects level separately.
  */
 bool agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
-                            enum pipe_format format, const struct ail_layout *layout,
-                            uint64_t layer_base, unsigned level,
-                            unsigned layer_count, bool layered,
-                            unsigned dimension);
+                              enum pipe_format format,
+                              const struct ail_layout *layout,
+                              uint64_t layer_base, unsigned level,
+                              unsigned layer_count, bool layered,
+                              unsigned dimension);
 
 bool agx_apple9_sampler_wrap_supported(unsigned wrap);
 void agx_apple9_pack_sampler(void *out, bool min_linear, bool mag_linear,
-                              unsigned mip_filter, float min_lod, float max_lod,
-                         unsigned wrap_s, unsigned wrap_t, unsigned max_anisotropy);
+                             unsigned mip_filter, float min_lod, float max_lod,
+                             unsigned wrap_s, unsigned wrap_t,
+                             unsigned max_anisotropy);
 void agx_apple9_pack_fetch_sampler(void *out);
 
 /*
@@ -490,10 +495,9 @@ void agx_apple9_pack_fetch_sampler(void *out);
  * direct triangle lists, with optional 16- or 32-bit indices.
  */
 bool
-agx_apple9_link_render_pipeline(
-   struct agx_apple9_render_pipeline *pipeline,
-   const struct agx_apple9_render_stage *vertex,
-   const struct agx_apple9_render_stage *fragment);
+agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
+                                const struct agx_apple9_render_stage *vertex,
+                                const struct agx_apple9_render_stage *fragment);
 
 bool agx_apple9_link_render_pipeline_with_prolog(
    struct agx_apple9_render_pipeline *pipeline,
@@ -508,9 +512,10 @@ uint8_t *agx_apple9_emit_direct_draw(
    uint8_t *out, const struct agx_apple9_render_pipeline *pipeline,
    unsigned vertex_count, unsigned instance_count, unsigned vertex_start);
 
-uint8_t *agx_apple9_emit_indirect_draw(
-   uint8_t *out, const struct agx_apple9_render_pipeline *pipeline,
-   uint64_t indirect);
+uint8_t *
+agx_apple9_emit_indirect_draw(uint8_t *out,
+                              const struct agx_apple9_render_pipeline *pipeline,
+                              uint64_t indirect);
 
 #ifdef __cplusplus
 }

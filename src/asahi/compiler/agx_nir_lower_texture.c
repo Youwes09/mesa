@@ -670,8 +670,9 @@ lower_robustness(nir_builder *b, nir_intrinsic_instr *intr, void *data)
     */
    const bool *software_buffer_bounds = data;
    unsigned c = size_components - 1;
-   unsigned oob_coord =
-      dim == GLSL_SAMPLER_DIM_BUF && *software_buffer_bounds ? 0xFFFFFFFF : 0xFFF0;
+   unsigned oob_coord = dim == GLSL_SAMPLER_DIM_BUF && *software_buffer_bounds
+                           ? 0xFFFFFFFF
+                           : 0xFFF0;
    nir_def *r =
       nir_bcsel(b, oob, nir_imm_int(b, oob_coord), nir_channel(b, coord, c));
 

@@ -5,9 +5,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_cmd_pool.h"
-#include "hk_cmd_buffer.h"
 #include "asahi/lib/agx_bo.h"
 #include "util/u_debug.h"
+#include "hk_cmd_buffer.h"
 
 #include "hk_device.h"
 #include "hk_entrypoints.h"
@@ -21,8 +21,7 @@ hk_cmd_pool_bo_flags(const struct hk_device *dev, enum hk_cmd_pool_kind kind)
    case HK_CMD_POOL_MAIN:
       return 0;
    case HK_CMD_POOL_USC:
-      return AGX_BO_LOW_VA |
-             (agx_is_apple9(&dev->dev) ? AGX_BO_WRITEBACK : 0);
+      return AGX_BO_LOW_VA | (agx_is_apple9(&dev->dev) ? AGX_BO_WRITEBACK : 0);
    case HK_CMD_POOL_CONTEXT:
       assert(agx_is_apple9(&dev->dev));
       return AGX_BO_CONTEXT | AGX_BO_WRITEBACK;

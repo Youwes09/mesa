@@ -9,8 +9,8 @@
 #include "vk_util.h"
 #include "wsi_common_entrypoints.h"
 
-#include "agx_bg_eot.h"
 #include "agx_apple9.h"
+#include "agx_bg_eot.h"
 #include "agx_helpers.h"
 #include "agx_scratch.h"
 #include "hk_cmd_buffer.h"
@@ -21,6 +21,7 @@
 #include "hk_physical_device.h"
 #include "hk_shader.h"
 
+#include <xf86drm.h>
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/lib/agx_bo.h"
 #include "asahi/lib/agx_device.h"
@@ -29,8 +30,10 @@
 #include "util/hash_table.h"
 #include "util/ralloc.h"
 #include "util/simple_mtx.h"
+#include "util/u_debug.h"
 #include "vulkan/vulkan_core.h"
 #include "vulkan/wsi/wsi_common.h"
+#include "hk_queue.h"
 #include "layout.h"
 #include "vk_cmd_enqueue_entrypoints.h"
 #include "vk_common_entrypoints.h"
@@ -38,9 +41,6 @@
 #include "vk_device.h"
 #include "vk_pipeline_cache.h"
 #include "vk_shader.h"
-#include "hk_queue.h"
-#include "util/u_debug.h"
-#include <xf86drm.h>
 
 #include <fcntl.h>
 #include <xf86drm.h>
@@ -166,7 +166,10 @@ hk_usc_slab_create(void *data, uint64_t size, uint64_t reserve,
    if (!bo)
       return false;
    *out = (struct hk_descriptor_backing){
-      .bo = bo, .addr = bo->va->addr, .map = agx_bo_map(bo), .size = bo->size,
+      .bo = bo,
+      .addr = bo->va->addr,
+      .map = agx_bo_map(bo),
+      .size = bo->size,
    };
    return true;
 }
@@ -237,8 +240,8 @@ hk_sampler_heap_add_locked(struct hk_device *dev, struct hk_sampler_heap *h,
       if (index != HK_DESCRIPTOR_TABLE_ANY_INDEX &&
           ((struct hk_rc_sampler *)ent->data)->index != index)
          return vk_errorf(dev, VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS,
-                          "Sampler replayed at index %u, already at %u",
-                          index, ((struct hk_rc_sampler *)ent->data)->index);
+                          "Sampler replayed at index %u, already at %u", index,
+                          ((struct hk_rc_sampler *)ent->data)->index);
 
       *out = ent->data;
 
@@ -553,8 +556,8 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
       if (result != VK_SUCCESS)
          goto fail_null_fs;
    } else {
-      nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT,
-                                                     &agx_nir_options, "empty FS");
+      nir_builder b = nir_builder_init_simple_shader(
+         MESA_SHADER_FRAGMENT, &agx_nir_options, "empty FS");
       struct vk_shader_compile_info info = {
          .nir = b.shader,
          .robustness = &vk_robustness_disabled,
@@ -576,7 +579,6 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    agx_scratch_init(&dev->dev, &dev->scratch.vs);
    agx_scratch_init(&dev->dev, &dev->scratch.fs);
    agx_scratch_init(&dev->dev, &dev->scratch.cs);
-
 
    simple_mtx_init(&dev->events.lock, mtx_plain);
    list_inithead(&dev->events.available);
@@ -683,7 +685,8 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    if (dev->heap_va) {
       if (dev->heap_overflows) {
          mesa_logw("hk: geometry heap overflowed %u times, up to %" PRIu64
-                   " MiB", dev->heap_overflows, dev->heap_reported_B >> 20);
+                   " MiB",
+                   dev->heap_overflows, dev->heap_reported_B >> 20);
       }
       agx_va_free(&dev->dev, dev->heap_va, true);
    }

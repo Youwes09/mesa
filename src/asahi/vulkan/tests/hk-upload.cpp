@@ -1,9 +1,9 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#include "hk_upload.h"
-#include <gtest/gtest.h>
 #include <array>
+#include <gtest/gtest.h>
+#include "hk_upload.h"
 
 TEST(HkUpload, SmallUploadsFinishOldTail)
 {
@@ -26,8 +26,7 @@ TEST(HkUpload, SmallUploadsFinishOldTail)
 TEST(HkUpload, FitIncludesAlignment)
 {
    uint8_t a, b;
-   hk_upload_chunk chunks[HK_UPLOAD_CHUNKS] = {
-      {&a, 0, 99}, {&b, 128, 64}};
+   hk_upload_chunk chunks[HK_UPLOAD_CHUNKS] = {{&a, 0, 99}, {&b, 128, 64}};
    auto *chunk = hk_upload_find_chunk(chunks, 128, 16, 32);
    ASSERT_NE(chunk, nullptr);
    EXPECT_EQ(chunk->map, &b);
@@ -37,8 +36,7 @@ TEST(HkUpload, FitIncludesAlignment)
 TEST(HkUpload, RetainLargestTails)
 {
    uint8_t a, b, c;
-   hk_upload_chunk chunks[HK_UPLOAD_CHUNKS] = {
-      {&a, 0, 64}, {&b, 128, 96}};
+   hk_upload_chunk chunks[HK_UPLOAD_CHUNKS] = {{&a, 0, 64}, {&b, 128, 96}};
    hk_upload_keep_chunk(chunks, {&c, 256, 112});
    EXPECT_EQ(chunks[0].map, &a);
    EXPECT_EQ(chunks[1].map, &b);

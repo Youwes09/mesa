@@ -52,8 +52,8 @@ agx_virtio_simple_ioctl(struct agx_device *dev, unsigned cmd, void *_req)
 
 static struct agx_bo *
 agx_virtio_bo_alloc(struct agx_device *dev, size_t size, size_t align,
-                    enum agx_bo_flags flags,
-                    enum agx_va_flags extra_va_flags, uint64_t fixed_va)
+                    enum agx_bo_flags flags, enum agx_va_flags extra_va_flags,
+                    uint64_t fixed_va)
 {
    struct agx_bo *bo;
    unsigned handle = 0;

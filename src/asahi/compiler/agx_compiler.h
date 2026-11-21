@@ -547,8 +547,8 @@ typedef struct agx_context {
    /* Optional target implicit-resource graph, replacing scheduling classes.
     * Readers may overlap; a writer orders all preceding readers and writers.
     * Resource bit assignments belong to the target. */
-   void (*schedule_resources)(const agx_instr *instruction,
-                              uint32_t *reads, uint32_t *writes);
+   void (*schedule_resources)(const agx_instr *instruction, uint32_t *reads,
+                              uint32_t *writes);
    /* Set when uniform rematerialization marked at least one value. */
    bool uniform_remat_used;
    /* Relative dependency separation in issue positions, not hardware cycles. */

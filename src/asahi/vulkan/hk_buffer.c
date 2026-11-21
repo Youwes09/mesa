@@ -4,9 +4,9 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "util/u_debug.h"
-#include <inttypes.h>
 #include "hk_buffer.h"
+#include <inttypes.h>
+#include "util/u_debug.h"
 
 #include "agx_bo.h"
 #include "agx_device.h"
@@ -175,12 +175,12 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
     */
    const bool sparse =
       buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
-   buffer->apple9_index_va = agx_is_apple9(&dev->dev) && !sparse &&
+   buffer->apple9_index_va =
+      agx_is_apple9(&dev->dev) && !sparse &&
       (buffer->vk.usage & VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
    if (buffer->vk.size > 0 &&
-       (buffer->vk.create_flags &
-        (VK_BUFFER_CREATE_SPARSE_BINDING_BIT |
-         HK_BUFFER_CREATE_CAPTURE_REPLAY_BITS))) {
+       (buffer->vk.create_flags & (VK_BUFFER_CREATE_SPARSE_BINDING_BIT |
+                                   HK_BUFFER_CREATE_CAPTURE_REPLAY_BITS))) {
 
       const bool bda_capture_replay =
          buffer->vk.create_flags & HK_BUFFER_CREATE_CAPTURE_REPLAY_BITS;
@@ -212,7 +212,6 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
       buffer->va =
          agx_va_alloc(&dev->dev, vma_size_B, alignment, flags, bda_fixed_addr);
 
-
       /* The USC aperture is shared with shaders. When it is full, place the
        * buffer like any other and copy its indices at draw time.
        */
@@ -220,8 +219,8 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
          buffer->apple9_index_va = false;
          flags &= ~AGX_VA_USC;
          if (bda_capture_replay)
-            buffer->va = agx_va_alloc(&dev->dev, vma_size_B, alignment, flags,
-                                      0);
+            buffer->va =
+               agx_va_alloc(&dev->dev, vma_size_B, alignment, flags, 0);
          else
             goto done;
       }
@@ -394,22 +393,21 @@ hk_BindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
       VK_FROM_HANDLE(hk_device_memory, mem, pBindInfos[i].memory);
       VK_FROM_HANDLE(hk_buffer, buffer, pBindInfos[i].buffer);
 
-      buffer->implicit_sync_res =
-         mem->implicit_sync ? mem->bo->uapi_handle : 0;
+      buffer->implicit_sync_res = mem->implicit_sync ? mem->bo->uapi_handle : 0;
 
       if (!buffer->va) {
          assert(buffer->vk.device_address == 0);
-         uint64_t addr = buffer->apple9_index_va
-                            ? hk_memory_index_address(dev, mem)
-                            : 0;
+         uint64_t addr =
+            buffer->apple9_index_va ? hk_memory_index_address(dev, mem) : 0;
          if (!addr && buffer->apple9_index_va) {
             /* Large allocations and a full shared-alias budget retain the
              * old buffer-sized mapping, avoiding a copy on every draw.
              */
-            uint64_t alignment = buffer->vk.size >= 65536 ? 65536 : AIL_PAGESIZE;
-            buffer->va = agx_va_alloc(&dev->dev,
-                                      align64(buffer->vk.size, alignment),
-                                      alignment, AGX_VA_USC, 0);
+            uint64_t alignment =
+               buffer->vk.size >= 65536 ? 65536 : AIL_PAGESIZE;
+            buffer->va =
+               agx_va_alloc(&dev->dev, align64(buffer->vk.size, alignment),
+                            alignment, AGX_VA_USC, 0);
          }
          if (buffer->va) {
             buffer->vk.device_address = buffer->va->addr;
@@ -437,10 +435,10 @@ hk_BindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
          if (!buffer->apple9_index_va &&
              hk_va_has_ro_shadow(dev, buffer->vk.device_address)) {
             /* Upper mapping: read-only */
-            ret =
-               agx_bo_bind(&dev->dev, mem->bo,
-                           buffer->vk.device_address + dev->dev.sparse_ro_offset,
-                           size, pBindInfos[i].memoryOffset, DRM_ASAHI_BIND_READ);
+            ret = agx_bo_bind(
+               &dev->dev, mem->bo,
+               buffer->vk.device_address + dev->dev.sparse_ro_offset, size,
+               pBindInfos[i].memoryOffset, DRM_ASAHI_BIND_READ);
             if (ret)
                return VK_ERROR_UNKNOWN;
          }
@@ -495,9 +493,8 @@ hk_GetBufferOpaqueCaptureDescriptorDataEXT(
 {
    VK_FROM_HANDLE(hk_buffer, buffer, pInfo->buffer);
 
-   uint64_t addr = buffer->va && (buffer->va->flags & AGX_VA_REPLAY)
-                      ? buffer->va->addr
-                      : 0;
+   uint64_t addr =
+      buffer->va && (buffer->va->flags & AGX_VA_REPLAY) ? buffer->va->addr : 0;
    memcpy(pData, &addr, sizeof(addr));
    return VK_SUCCESS;
 }

@@ -12,9 +12,9 @@
 #include "hk_physical_device.h"
 
 #include "asahi/lib/agx_bo.h"
-#include "wsi_common.h"
 #include "util/u_atomic.h"
 #include "util/u_debug.h"
+#include "wsi_common.h"
 
 #include <inttypes.h>
 #include <sys/mman.h>
@@ -80,7 +80,8 @@ hk_GetMemoryFdPropertiesKHR(VkDevice device,
          type_bits |= (1 << t);
    }
 
-   pMemoryFdProperties->memoryTypeBits = type_bits & hk_general_memory_types(pdev);
+   pMemoryFdProperties->memoryTypeBits =
+      type_bits & hk_general_memory_types(pdev);
 
    agx_bo_unreference(&dev->dev, bo);
 
@@ -189,8 +190,8 @@ hk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
    if (pdev->vk.supported_features.sparseResidencyBuffer &&
        !(mem->bo->flags & AGX_BO_LOW_VA)) {
       int ret = agx_bo_bind(&dev->dev, mem->bo,
-                         agx_rw_addr_to_ro(&dev->dev, mem->bo->va->addr),
-                         mem->bo->size, 0, DRM_ASAHI_BIND_READ);
+                            agx_rw_addr_to_ro(&dev->dev, mem->bo->va->addr),
+                            mem->bo->size, 0, DRM_ASAHI_BIND_READ);
       if (ret) {
          agx_bo_unreference(&dev->dev, mem->bo);
          result = vk_error(dev, VK_ERROR_UNKNOWN);
@@ -198,12 +199,12 @@ hk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
       }
    }
 
-
    /* Under virtio the host compositor reads WSI images with implicit sync,
     * which virglrenderer derives from a submission's external resources.
     * Other external memory uses explicit sync, as on native.
     */
-   mem->implicit_sync = dev->dev.is_virtio &&
+   mem->implicit_sync =
+      dev->dev.is_virtio &&
       vk_find_struct_const(pAllocateInfo->pNext,
                            WSI_MEMORY_ALLOCATE_INFO_MESA) != NULL;
 
@@ -287,7 +288,7 @@ hk_memory_index_address(struct hk_device *dev, struct hk_device_memory *mem)
             return 0;
          }
          uint64_t previous = p_atomic_cmpxchg(&dev->apple9_index_alias_bytes,
-                                             used, used + charge);
+                                              used, used + charge);
          if (previous == used)
             break;
          used = previous;
@@ -463,8 +464,7 @@ hk_GetMemoryFdKHR(VkDevice device, const VkMemoryGetFdInfoKHR *pGetFdInfo,
 
 VKAPI_ATTR uint64_t VKAPI_CALL
 hk_GetDeviceMemoryOpaqueCaptureAddress(
-   UNUSED VkDevice device,
-   const VkDeviceMemoryOpaqueCaptureAddressInfo *pInfo)
+   UNUSED VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo *pInfo)
 {
    VK_FROM_HANDLE(hk_device_memory, mem, pInfo->memory);
 

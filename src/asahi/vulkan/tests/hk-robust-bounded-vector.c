@@ -4,9 +4,13 @@
 #include "asahi/vulkan/hk_shader.h"
 #include "compiler/nir/nir_builder.h"
 
-#define CHECK(c) do { if (!(c)) { \
-   fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); return false; \
-} } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c);               \
+         return false;                                                         \
+      }                                                                        \
+   } while (0)
 
 static void
 fold(nir_shader *nir)
@@ -26,7 +30,8 @@ is_loaded_channel(nir_scalar s, unsigned c)
    if (!nir_scalar_is_intrinsic(s) || s.comp != c)
       return false;
    nir_intrinsic_op op = nir_scalar_intrinsic_op(s);
-   return op == nir_intrinsic_load_global_constant || op == nir_intrinsic_load_global;
+   return op == nir_intrinsic_load_global_constant ||
+          op == nir_intrinsic_load_global;
 }
 
 /* A robust vector of 32-bit components at `offset` in a buffer of `bound`
@@ -40,12 +45,14 @@ static bool
 check(unsigned components, unsigned offset, unsigned bound, bool dynamic,
       bool soft_fault)
 {
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
-                                                  &agx_nir_options, "robust_vector");
-   nir_def *runtime = nir_load_global(&b, 2, 32, nir_imm_int64(&b, 0x4000),
-                                      .align_mul = 8);
-   nir_def *off = dynamic ? nir_channel(&b, runtime, 0) : nir_imm_int(&b, offset);
-   nir_def *bnd = dynamic ? nir_channel(&b, runtime, 1) : nir_imm_int(&b, bound);
+   nir_builder b = nir_builder_init_simple_shader(
+      MESA_SHADER_COMPUTE, &agx_nir_options, "robust_vector");
+   nir_def *runtime =
+      nir_load_global(&b, 2, 32, nir_imm_int64(&b, 0x4000), .align_mul = 8);
+   nir_def *off =
+      dynamic ? nir_channel(&b, runtime, 0) : nir_imm_int(&b, offset);
+   nir_def *bnd =
+      dynamic ? nir_channel(&b, runtime, 1) : nir_imm_int(&b, bound);
    nir_def *value = nir_load_global_constant_bounded(
       &b, components, 32, nir_imm_int64(&b, 0x10000), off, bnd,
       .align_mul = 4 * util_next_power_of_two(components), .align_offset = 0);
@@ -64,7 +71,8 @@ check(unsigned components, unsigned offset, unsigned bound, bool dynamic,
    nir_foreach_block(block, nir_shader_get_entrypoint(b.shader)) {
       nir_foreach_instr(instr, block) {
          if (instr->type == nir_instr_type_intrinsic &&
-             nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_store_global)
+             nir_instr_as_intrinsic(instr)->intrinsic ==
+                nir_intrinsic_store_global)
             store = nir_instr_as_intrinsic(instr);
       }
    }
@@ -93,13 +101,11 @@ main(void)
    static const struct {
       unsigned components, offset, bound;
    } cases[] = {
-      {4, 0, 12},  /* three of four in bounds: robustness2 len_12 */
-      {2, 8, 12},  /* the upper half of that vec4 merged separately */
-      {4, 0, 16},  /* entirely in bounds */
-      {4, 0, 4},
-      {4, 16, 12}, /* entirely out of bounds */
-      {2, 0, 4},
-      {3, 0, 8},
+      {4, 0, 12}, /* three of four in bounds: robustness2 len_12 */
+      {2, 8, 12}, /* the upper half of that vec4 merged separately */
+      {4, 0, 16}, /* entirely in bounds */
+      {4, 0, 4},  {4, 16, 12}, /* entirely out of bounds */
+      {2, 0, 4},  {3, 0, 8},
    };
    bool ok = true;
    for (unsigned i = 0; i < ARRAY_SIZE(cases); ++i) {
@@ -107,9 +113,11 @@ main(void)
          for (unsigned soft = 0; soft < 2; ++soft) {
             if (!check(cases[i].components, cases[i].offset, cases[i].bound,
                        dynamic, soft)) {
-               fprintf(stderr, "failed: vec%u offset %u bound %u dynamic %u soft_fault %u\n",
-                       cases[i].components, cases[i].offset, cases[i].bound,
-                       dynamic, soft);
+               fprintf(
+                  stderr,
+                  "failed: vec%u offset %u bound %u dynamic %u soft_fault %u\n",
+                  cases[i].components, cases[i].offset, cases[i].bound, dynamic,
+                  soft);
                ok = false;
             }
          }

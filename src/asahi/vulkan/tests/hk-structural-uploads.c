@@ -240,7 +240,8 @@ main(void)
    /* A later render with identical inputs shares both immutable uploads. */
    render->apple9_arguments = render->apple9_sysvals = 0;
    CHECK(hk_apple9_render_inputs(cmd, &info));
-   CHECK(render->apple9_arguments == params && render->apple9_sysvals == sysvals);
+   CHECK(render->apple9_arguments == params &&
+         render->apple9_sysvals == sysvals);
    CHECK(!memcmp(saved, cmd->uploader[HK_CMD_POOL_MAIN].chunks, sizeof(saved)));
    /* A clear-value change only replaces the arguments. */
    render->apple9_arguments = render->apple9_sysvals = 0;
@@ -254,7 +255,8 @@ main(void)
    render->apple9_arguments = render->apple9_sysvals = 0;
    render->tilebuffer.nr_samples = 2;
    CHECK(hk_apple9_render_inputs(cmd, &info));
-   CHECK(render->apple9_arguments == params && render->apple9_sysvals != sysvals);
+   CHECK(render->apple9_arguments == params &&
+         render->apple9_sysvals != sysvals);
    CHECK(((uint32_t *)(metadata + AGX_APPLE9_TEXTURE_INFO_OFFSET))[4] == 4);
    sysvals = render->apple9_sysvals;
    render->apple9_arguments = render->apple9_sysvals = 0;
@@ -264,7 +266,8 @@ main(void)
    metadata = mapped(render->apple9_sysvals);
    uint32_t zero[5] = {0};
    CHECK(!memcmp(metadata + AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                    2 * AGX_APPLE9_TEXTURE_INFO_STRIDE, zero, sizeof(zero)));
+                    2 * AGX_APPLE9_TEXTURE_INFO_STRIDE,
+                 zero, sizeof(zero)));
    /* A failed metadata allocation leaves the old key/address intact. */
    sysvals = cmd->state.gfx.apple9_render_sysvals;
    uint32_t old_dimensions[HK_MAX_RTS][5];
@@ -285,7 +288,8 @@ main(void)
    CHECK(render->apple9_sysvals != sysvals);
    /* Reset releases the pool and invalidates both command-lifetime caches. */
    cmd->vk.state = MESA_VK_COMMAND_BUFFER_STATE_EXECUTABLE;
-   CHECK(hk_ResetCommandBuffer(cb, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT) == VK_SUCCESS);
+   CHECK(hk_ResetCommandBuffer(
+            cb, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT) == VK_SUCCESS);
    CHECK(!cmd->state.gfx.apple9_render_sysvals);
    CHECK(!cmd->upload_last[HK_UPLOAD_LAST_RENDER_PARAMS].gpu);
    hk_DestroyCommandPool(device, pool, NULL);

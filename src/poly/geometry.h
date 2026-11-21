@@ -148,7 +148,8 @@ static inline bool
 poly_heap_try_alloc_offs(global struct poly_heap *heap, uint size_B,
                          uint *offs_B)
 {
-   uint units = (size_B / POLY_HEAP_UNIT_B) + ((size_B % POLY_HEAP_UNIT_B) != 0);
+   uint units =
+      (size_B / POLY_HEAP_UNIT_B) + ((size_B % POLY_HEAP_UNIT_B) != 0);
    uint first =
       atomic_fetch_add((volatile atomic_uint *)(&heap->bottom), units);
 
@@ -805,8 +806,8 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
 
    if (shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
       uint32_t index_offset = 0;
-      fits &= poly_heap_try_alloc_offs(heap, p->draw.index_count * 4,
-                                       &index_offset);
+      fits &=
+         poly_heap_try_alloc_offs(heap, p->draw.index_count * 4, &index_offset);
       p->draw.first_index = index_offset / 4;
       p->output_index_buffer = (global uint *)(heap->base + index_offset);
    }

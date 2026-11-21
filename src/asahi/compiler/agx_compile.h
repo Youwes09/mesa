@@ -115,7 +115,7 @@ agx_apple9_interp_mask_test(struct agx_apple9_interp_mask mask, unsigned index)
 
 static inline bool
 agx_apple9_interp_mask_equal(struct agx_apple9_interp_mask a,
-                            struct agx_apple9_interp_mask b)
+                             struct agx_apple9_interp_mask b)
 {
    return a.lo == b.lo && a.hi == b.hi;
 }
@@ -130,7 +130,8 @@ agx_apple9_varying_supported(unsigned location)
           location == VARYING_SLOT_PRIMITIVE_ID ||
           location == VARYING_SLOT_VIEWPORT ||
           location == VARYING_SLOT_CLIP_VERTEX ||
-          location == VARYING_SLOT_CLIP_DIST0 || location == VARYING_SLOT_CLIP_DIST1 ||
+          location == VARYING_SLOT_CLIP_DIST0 ||
+          location == VARYING_SLOT_CLIP_DIST1 ||
           location == VARYING_SLOT_CULL_PRIMITIVE ||
           location == VARYING_SLOT_CULL_PRIMITIVE + 1 ||
           (location >= VARYING_SLOT_VAR0 && location <= VARYING_SLOT_VAR31);
@@ -149,21 +150,23 @@ struct agx_apple9_varying_layout {
 static inline unsigned
 agx_apple9_varying_group(uint64_t flat, uint64_t linear, unsigned location)
 {
-   return (flat & BITFIELD64_BIT(location)) ? 1 :
-          (linear & BITFIELD64_BIT(location)) ? 2 : 0;
+   return (flat & BITFIELD64_BIT(location))     ? 1
+          : (linear & BITFIELD64_BIT(location)) ? 2
+                                                : 0;
 }
 
 /* Returns the packed user scalar index, excluding the four position words. */
 static inline int
 agx_apple9_varying_index(const struct agx_apple9_varying_layout *layout,
-                     unsigned location, unsigned component)
+                         unsigned location, unsigned component)
 {
    if (!layout || !agx_apple9_varying_supported(location) || component >= 4)
       return -1;
    unsigned semantic = location;
    if (!(layout->mask[semantic] & BITFIELD_BIT(component)))
       return -1;
-   unsigned index = util_bitcount(layout->mask[semantic] & BITFIELD_MASK(component));
+   unsigned index =
+      util_bitcount(layout->mask[semantic] & BITFIELD_MASK(component));
    for (unsigned i = 0; i < ARRAY_SIZE(layout->mask); ++i) {
       if (layout->group[i] < layout->group[semantic] ||
           (layout->group[i] == layout->group[semantic] && i < semantic))
@@ -498,8 +501,10 @@ agx_round_registers(unsigned halfregs)
 
 static const nir_shader_compiler_options agx_nir_options = {
    .lower_fdiv = true,
-   .float_mul_add16 = nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
-   .float_mul_add32 = nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
+   .float_mul_add16 =
+      nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
+   .float_mul_add32 =
+      nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
    .lower_flrp16 = true,
    .lower_flrp32 = true,
    .lower_flrp64 = true,

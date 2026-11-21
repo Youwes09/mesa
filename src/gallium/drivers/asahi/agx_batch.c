@@ -10,8 +10,8 @@
 #include "util/bitset.h"
 #include "util/u_dynarray.h"
 #include "util/u_range.h"
-#include "agx_device.h"
 #include "agx_apple9.h"
+#include "agx_device.h"
 #include "agx_state.h"
 #include "vdrm.h"
 
@@ -278,8 +278,9 @@ agx_batch_cleanup(struct agx_context *ctx, struct agx_batch *batch, bool reset)
       if (ctx->check_fence_errors && !ctx->any_faults) {
          int err = agx_syncobj_error(dev, batch->syncobj);
          if (err < 0) {
-            mesa_loge("asahi: GPU work of this context failed (%s); context lost",
-                      strerror(-err));
+            mesa_loge(
+               "asahi: GPU work of this context failed (%s); context lost",
+               strerror(-err));
             ctx->any_faults = true;
             ctx->reset_status = err == -ECANCELED ? PIPE_INNOCENT_CONTEXT_RESET
                                                   : PIPE_GUILTY_CONTEXT_RESET;
@@ -696,13 +697,15 @@ agx_batch_writes_fragment(struct agx_batch *batch, struct agx_resource *rsrc,
 }
 
 void
-agx_batch_writes_fragment_range(struct agx_batch *batch, struct agx_resource *rsrc,
-                                unsigned offset, unsigned size)
+agx_batch_writes_fragment_range(struct agx_batch *batch,
+                                struct agx_resource *rsrc, unsigned offset,
+                                unsigned size)
 {
    assert(rsrc->base.target == PIPE_BUFFER);
    agx_batch_track_write(batch, rsrc);
    BITSET_SET(rsrc->data_valid, 0);
-   util_range_add(&rsrc->base, &rsrc->valid_buffer_range, offset, offset + size);
+   util_range_add(&rsrc->base, &rsrc->valid_buffer_range, offset,
+                  offset + size);
 }
 
 void
@@ -1058,7 +1061,8 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
        */
       int sret = drmSyncobjSignal(dev->fd, &batch->syncobj, 1);
       uint64_t point = seqid;
-      int tret = drmSyncobjTimelineSignal(dev->fd, &screen->flush_syncobj, &point, 1);
+      int tret =
+         drmSyncobjTimelineSignal(dev->fd, &screen->flush_syncobj, &point, 1);
       if (sret || tret) {
          mesa_loge("asahi: cannot discard failed batch (%d/%d); aborting", sret,
                    tret);
@@ -1235,12 +1239,10 @@ agx_batch_undo_render_writes(struct agx_batch *batch)
       struct agx_resource *rsrc = agx_resource(key->zsbuf.texture);
       unsigned level = key->zsbuf.level;
 
-      if (!(batch->attachments_were_valid &
-            BITFIELD_BIT(PIPE_MAX_COLOR_BUFS)))
+      if (!(batch->attachments_were_valid & BITFIELD_BIT(PIPE_MAX_COLOR_BUFS)))
          BITSET_CLEAR(rsrc->data_valid, level);
-      if (rsrc->separate_stencil &&
-          !(batch->attachments_were_valid &
-            BITFIELD_BIT(PIPE_MAX_COLOR_BUFS + 1)))
+      if (rsrc->separate_stencil && !(batch->attachments_were_valid &
+                                      BITFIELD_BIT(PIPE_MAX_COLOR_BUFS + 1)))
          BITSET_CLEAR(rsrc->separate_stencil->data_valid, level);
    }
 }

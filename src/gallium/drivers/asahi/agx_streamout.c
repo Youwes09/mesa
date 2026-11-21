@@ -337,7 +337,7 @@ apple9_xfb_unroll_restart(struct pipe_context *pctx,
     * Submit an index producer (for example a GPU buffer copy) before the
     * scan consumes it. The resource tracker orders the batches on the GPU. */
    agx_flush_writer(ctx, agx_resource(buffers[0].buffer),
-                     "Transform feedback restart indices");
+                    "Transform feedback restart indices");
    struct agx_stage *stage = &ctx->stage[MESA_SHADER_COMPUTE];
    void *saved_cs = stage->shader;
    struct pipe_shader_buffer saved[3] = {0};
@@ -535,8 +535,8 @@ agx_apple9_capture_streamout(struct pipe_context *pctx,
           * preserve the invocation's API IDs and output ordering. */
          unsigned chunk = MIN2(total - done, 1024u * 1024u);
          struct agx_apple9_xfb_params params = {
-            .first_vertex = info->has_user_indices && info->index_size
-                               ? 0 : draw->start,
+            .first_vertex =
+               info->has_user_indices && info->index_size ? 0 : draw->start,
             .index_bias = draw->index_bias,
             .base_instance = info->start_instance,
             .draw_id = drawid,
@@ -544,9 +544,8 @@ agx_apple9_capture_streamout(struct pipe_context *pctx,
             .vertices_per_instance = prims_per_instance * vertices,
          };
          struct pipe_shader_buffer buffers[6] = {0};
-         u_upload_data_ref(pctx->const_uploader, 0, sizeof(params), 16,
-                           &params, &buffers[0].buffer_offset,
-                           &buffers[0].buffer);
+         u_upload_data_ref(pctx->const_uploader, 0, sizeof(params), 16, &params,
+                           &buffers[0].buffer_offset, &buffers[0].buffer);
          buffers[0].buffer_size = sizeof(params);
          u_foreach_bit(i, vs->xfb_buffers_written) {
             struct pipe_stream_output_target *target = get_target(ctx, i);
@@ -555,8 +554,8 @@ agx_apple9_capture_streamout(struct pipe_context *pctx,
                .buffer_offset = target->buffer_offset + offsets[i] +
                                 done * vs->xfb_strides[i],
                .buffer_size = MIN2((uint64_t)chunk * vs->xfb_strides[i],
-                                  (uint64_t)target->buffer_size - offsets[i] -
-                                     done * vs->xfb_strides[i]),
+                                   (uint64_t)target->buffer_size - offsets[i] -
+                                      done * vs->xfb_strides[i]),
             };
          }
          buffers[5] = index_buffer;

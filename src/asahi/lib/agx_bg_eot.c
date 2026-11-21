@@ -4,9 +4,9 @@
  */
 
 #include "agx_bg_eot.h"
-#include "agx_apple9_libagx.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
+#include "agx_apple9_libagx.h"
 #include "agx_compile.h"
 #include "agx_compile_apple9.h"
 #include "agx_device.h"
@@ -238,7 +238,8 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
  * full); nothing is cached then, so a later call can retry. */
 static bool
 agx_compile_apple9_precompiled(struct agx_bg_eot_cache *cache,
-                             struct agx_precompiled_shader *p, unsigned program)
+                               struct agx_precompiled_shader *p,
+                               unsigned program)
 {
    nir_shader *nir = agx_apple9_libagx_nir(program, NULL);
 
@@ -252,9 +253,9 @@ agx_compile_apple9_precompiled(struct agx_bg_eot_cache *cache,
    }
    ralloc_free(nir);
    p->apple9 = true;
-   p->b.workgroup = agx_workgroup(part.info.workgroup_size[0],
-                                 part.info.workgroup_size[1],
-                                 part.info.workgroup_size[2]);
+   p->b.workgroup =
+      agx_workgroup(part.info.workgroup_size[0], part.info.workgroup_size[1],
+                    part.info.workgroup_size[2]);
    p->bo = agx_bo_create(cache->dev, part.info.binary_size, 0,
                          AGX_BO_EXEC | AGX_BO_LOW_VA | AGX_BO_WRITEBACK,
                          "Apple9 internal shader");

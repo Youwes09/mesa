@@ -77,12 +77,13 @@ libagx_tess_fold_find(constant struct libagx_tess_fold_draw *draws,
         enum poly_tess_mode mode__2)                                           \
    {                                                                           \
       uint d = libagx_tess_fold_find(draws, nr_draws, cl_group_id.x);          \
-      uint patch = (cl_group_id.x - draws[d].first_group) *                    \
-                      LIBAGX_TESS_FOLD_GROUP +                                 \
-                   cl_local_id.x;                                              \
+      uint patch =                                                             \
+         (cl_group_id.x - draws[d].first_group) * LIBAGX_TESS_FOLD_GROUP +     \
+         cl_local_id.x;                                                        \
       constant struct poly_tess_params *p =                                    \
          (constant struct poly_tess_params *)draws[d].p;                       \
-      if (patch < draws[d].nr_patches && !poly_tess_patch_dropped(p, mode__2)) {\
+      if (patch < draws[d].nr_patches &&                                       \
+          !poly_tess_patch_dropped(p, mode__2)) {                              \
          process(p, patch, mode__2);                                           \
          poly_tess_patch_finish(p, patch, mode__2);                            \
       }                                                                        \

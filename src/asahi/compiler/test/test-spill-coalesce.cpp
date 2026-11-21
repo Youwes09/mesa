@@ -12,7 +12,10 @@ class SpillCoalesce : public testing::Test {
    agx_builder *b = agx_test_builder(mem);
    std::vector<std::pair<unsigned, unsigned>> homes;
 
-   ~SpillCoalesce() { ralloc_free(mem); }
+   ~SpillCoalesce()
+   {
+      ralloc_free(mem);
+   }
 
    agx_index value(unsigned reg, bool memory = false, unsigned home = 0,
                    enum agx_size size = AGX_SIZE_32, unsigned channels = 1)

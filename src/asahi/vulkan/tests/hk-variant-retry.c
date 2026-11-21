@@ -2,14 +2,21 @@
 #include <unistd.h>
 #include "../hk_shader.c"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%u: %s\n", __LINE__, #c); failures++; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%u: %s\n", __LINE__, #c);                            \
+         failures++;                                                           \
+      }                                                                        \
+   } while (0)
 static unsigned failures, attempts;
 
 nir_shader *__wrap_nir_deserialize(void *mem_ctx,
-                                  const nir_shader_compiler_options *options,
-                                  struct blob_reader *blob);
+                                   const nir_shader_compiler_options *options,
+                                   struct blob_reader *blob);
 nir_shader *
-__wrap_nir_deserialize(void *mem_ctx, const nir_shader_compiler_options *options,
+__wrap_nir_deserialize(void *mem_ctx,
+                       const nir_shader_compiler_options *options,
                        struct blob_reader *blob)
 {
    p_atomic_inc(&attempts);

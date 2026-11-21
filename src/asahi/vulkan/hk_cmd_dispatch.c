@@ -4,14 +4,13 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "hk_feedback.h"
 #include "libagx/query.h"
+#include "libagx/tessellator_fold.h"
+#include "pipe/p_defines.h"
 #include "util/u_debug.h"
 #include "vulkan/vulkan_core.h"
-#include "agx_helpers.h"
 #include "agx_apple9.h"
-#include "hk_descriptor_set.h"
-#include "pipe/p_defines.h"
+#include "agx_helpers.h"
 #include "agx_linker.h"
 #include "agx_pack.h"
 #include "agx_scratch.h"
@@ -21,11 +20,11 @@
 #include "hk_descriptor_set.h"
 #include "hk_device.h"
 #include "hk_entrypoints.h"
+#include "hk_feedback.h"
 #include "hk_physical_device.h"
 #include "hk_shader.h"
 #include "libagx_dgc.h"
 #include "libagx_shaders.h"
-#include "libagx/tessellator_fold.h"
 #include "pool.h"
 
 void
@@ -49,7 +48,8 @@ hk_cmd_bind_compute_shader(struct hk_cmd_buffer *cmd,
    desc->root.constant_data[MESA_SHADER_COMPUTE] =
       hk_shader_constant_data(shader);
    desc->root_constant_stages = desc->root.constant_data[MESA_SHADER_COMPUTE]
-      ? BITFIELD_BIT(MESA_SHADER_COMPUTE) : 0;
+                                   ? BITFIELD_BIT(MESA_SHADER_COMPUTE)
+                                   : 0;
    desc->root_dirty = true;
 }
 
@@ -137,38 +137,43 @@ hk_apple9_texture_info(uint32_t *data, const struct agx_texture_packed *state)
    data[0] = u_minify(image.width, image.first_level);
    data[1] = u_minify(image.height, image.first_level);
    data[2] = image.dimension == AGX_TEXTURE_DIMENSION_3D
-      ? u_minify(image.depth, image.first_level)
-      : image.layout == AGX_LAYOUT_LINEAR && image.extended
-         ? image.depth_linear : image.depth;
+                ? u_minify(image.depth, image.first_level)
+             : image.layout == AGX_LAYOUT_LINEAR && image.extended
+                ? image.depth_linear
+                : image.depth;
    /* Null images use a dummy zero-page texture for safe hardware sampling.
     * Preserve their logical emptiness for shader-side LOD queries. */
    data[3] = image.address == AGX_ZERO_PAGE_ADDRESS
-                ? 0 : image.last_level - image.first_level + 1;
+                ? 0
+                : image.last_level - image.first_level + 1;
    data[4] = (image.dimension == AGX_TEXTURE_DIMENSION_2D_MULTISAMPLED ||
               image.dimension == AGX_TEXTURE_DIMENSION_2D_ARRAY_MULTISAMPLED)
-      ? (2 << image.samples) : 1;
+                ? (2 << image.samples)
+                : 1;
    const unsigned channels[] = {image.swizzle_r, image.swizzle_g,
                                 image.swizzle_b, image.swizzle_a};
    for (unsigned c = 0; c < 4; ++c) {
-      unsigned swizzle = channels[c] == AGX_CHANNEL_0 ? PIPE_SWIZZLE_0 :
-                         channels[c] == AGX_CHANNEL_1 ? PIPE_SWIZZLE_1 : channels[c];
+      unsigned swizzle = channels[c] == AGX_CHANNEL_0   ? PIPE_SWIZZLE_0
+                         : channels[c] == AGX_CHANNEL_1 ? PIPE_SWIZZLE_1
+                                                        : channels[c];
       data[7] |= swizzle << (3 * c);
    }
 }
 
 /* Sampler state for the software sampling paths. */
 bool
-hk_apple9_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state,
+hk_apple9_runtime_sampler(uint32_t *data,
+                          const struct agx_sampler_packed *state,
                           bool clamp_to_edge)
 {
    static const uint32_t wraps[] = {
       PIPE_TEX_WRAP_CLAMP_TO_EDGE, PIPE_TEX_WRAP_REPEAT,
       PIPE_TEX_WRAP_MIRROR_REPEAT, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
-      PIPE_TEX_WRAP_CLAMP, PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE,
+      PIPE_TEX_WRAP_CLAMP,         PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE,
    };
    static const uint32_t comparisons[] = {
-      PIPE_FUNC_LEQUAL, PIPE_FUNC_GEQUAL, PIPE_FUNC_LESS, PIPE_FUNC_GREATER,
-      PIPE_FUNC_EQUAL, PIPE_FUNC_NOTEQUAL, PIPE_FUNC_ALWAYS, PIPE_FUNC_NEVER,
+      PIPE_FUNC_LEQUAL, PIPE_FUNC_GEQUAL,   PIPE_FUNC_LESS,   PIPE_FUNC_GREATER,
+      PIPE_FUNC_EQUAL,  PIPE_FUNC_NOTEQUAL, PIPE_FUNC_ALWAYS, PIPE_FUNC_NEVER,
    };
 
    memset(data, 0, AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
@@ -179,18 +184,23 @@ hk_apple9_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state
       sampler.wrap_r = AGX_WRAP_CLAMP_TO_EDGE;
    }
    if (sampler.wrap_s >= ARRAY_SIZE(wraps) ||
-       sampler.wrap_t >= ARRAY_SIZE(wraps) || sampler.wrap_r >= ARRAY_SIZE(wraps))
+       sampler.wrap_t >= ARRAY_SIZE(wraps) ||
+       sampler.wrap_r >= ARRAY_SIZE(wraps))
       return false;
    data[AGX_APPLE9_SAMP_WRAP_S] = wraps[sampler.wrap_s];
    data[AGX_APPLE9_SAMP_WRAP_T] = wraps[sampler.wrap_t];
    data[AGX_APPLE9_SAMP_WRAP_R] = wraps[sampler.wrap_r];
    data[AGX_APPLE9_SAMP_MIN] = sampler.minify == AGX_FILTER_LINEAR
-      ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+                                  ? PIPE_TEX_FILTER_LINEAR
+                                  : PIPE_TEX_FILTER_NEAREST;
    data[AGX_APPLE9_SAMP_MAG] = sampler.magnify == AGX_FILTER_LINEAR
-      ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+                                  ? PIPE_TEX_FILTER_LINEAR
+                                  : PIPE_TEX_FILTER_NEAREST;
    data[AGX_APPLE9_SAMP_MIP] = sampler.mip_filter == AGX_MIP_FILTER_NONE
-      ? PIPE_TEX_MIPFILTER_NONE : sampler.mip_filter == AGX_MIP_FILTER_LINEAR
-      ? PIPE_TEX_MIPFILTER_LINEAR : PIPE_TEX_MIPFILTER_NEAREST;
+                                  ? PIPE_TEX_MIPFILTER_NONE
+                               : sampler.mip_filter == AGX_MIP_FILTER_LINEAR
+                                  ? PIPE_TEX_MIPFILTER_LINEAR
+                                  : PIPE_TEX_MIPFILTER_NEAREST;
    data[AGX_APPLE9_SAMP_COMPARE] = comparisons[sampler.compare_func];
    data[AGX_APPLE9_SAMP_MIN_LOD] = fui(sampler.minimum_lod);
    data[AGX_APPLE9_SAMP_MAX_LOD] = fui(sampler.maximum_lod);
@@ -237,10 +247,11 @@ void
 hk_apple9_compute_sysvals(struct hk_device *dev, void *out)
 {
    memset(out, 0, AGX_APPLE9_RUNTIME_SYSVAL_SIZE);
-   uint32_t fetch = (dev->apple9_fetch_sampler->va->addr -
-                     dev->dev.shader_base) / AGX_APPLE9_SAMPLER_TABLE_STRIDE;
-   memcpy((uint8_t *)out + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET,
-          &fetch, sizeof(fetch));
+   uint32_t fetch =
+      (dev->apple9_fetch_sampler->va->addr - dev->dev.shader_base) /
+      AGX_APPLE9_SAMPLER_TABLE_STRIDE;
+   memcpy((uint8_t *)out + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET, &fetch,
+          sizeof(fetch));
 }
 
 /* The line stipple pattern and factor of the draw, packed as the fragment
@@ -258,12 +269,16 @@ hk_apple9_polygon_point_params(const struct hk_cmd_buffer *cmd,
       &cmd->vk.dynamic_graphics_state;
    memset(p, 0, sizeof(*p));
    p->flags =
-      ((dyn->rs.cull_mode & VK_CULL_MODE_FRONT_BIT) ? AGX_APPLE9_PP_CULL_FRONT : 0) |
-      ((dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT) ? AGX_APPLE9_PP_CULL_BACK : 0) |
+      ((dyn->rs.cull_mode & VK_CULL_MODE_FRONT_BIT) ? AGX_APPLE9_PP_CULL_FRONT
+                                                    : 0) |
+      ((dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT) ? AGX_APPLE9_PP_CULL_BACK
+                                                   : 0) |
       (dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE
-          ? AGX_APPLE9_PP_FRONT_CCW : 0) |
+          ? AGX_APPLE9_PP_FRONT_CCW
+          : 0) |
       (vk_rasterization_state_depth_clip_enable(&dyn->rs)
-          ? AGX_APPLE9_PP_DEPTH_CLIP : 0);
+          ? AGX_APPLE9_PP_DEPTH_CLIP
+          : 0);
    if (dyn->rs.depth_bias.enable) {
       VkFormat format = cmd->state.gfx.render.depth_att.vk_format;
       bool force_unorm =
@@ -309,7 +324,8 @@ hk_apple9_viewport_table(const struct vk_dynamic_graphics_state *dyn,
                          float table[AGX_APPLE9_VIEWPORT_TABLE_COUNT][4])
 {
    memset(table, 0, AGX_APPLE9_VIEWPORT_TABLE_COUNT * 4 * sizeof(float));
-   unsigned count = MIN2(dyn->vp.viewport_count, AGX_APPLE9_VIEWPORT_TABLE_COUNT);
+   unsigned count =
+      MIN2(dyn->vp.viewport_count, AGX_APPLE9_VIEWPORT_TABLE_COUNT);
    for (unsigned i = 0; i < count; ++i) {
       const VkViewport *vp = &dyn->vp.viewports[i];
       table[i][0] = vp->width * 0.5f;
@@ -370,8 +386,8 @@ hk_apple9_upload_textures(struct hk_cmd_buffer *cmd,
    hk_apple9_compute_sysvals(dev, info);
    memcpy(info, dyn->cb.blend_constants, 4 * sizeof(float));
    uint32_t enables = dyn->cb.color_write_enables;
-   memcpy((uint8_t *)info + AGX_APPLE9_COLOR_WRITE_ENABLE_OFFSET,
-          &enables, sizeof(enables));
+   memcpy((uint8_t *)info + AGX_APPLE9_COLOR_WRITE_ENABLE_OFFSET, &enables,
+          sizeof(enables));
    memcpy((uint8_t *)info + AGX_APPLE9_SAMPLE_POSITIONS_OFFSET,
           &gfx->apple9_sample_positions, sizeof(uint32_t));
    uint32_t fan = first_fan;
@@ -496,7 +512,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
    struct agx_apple9_compute_geometry geometry = {
       .mode = agx_is_indirect(grid) ? AGX_APPLE9_COMPUTE_GEOMETRY_INDIRECT
-                                   : AGX_APPLE9_COMPUTE_GEOMETRY_DIRECT,
+                                    : AGX_APPLE9_COMPUTE_GEOMETRY_DIRECT,
    };
    for (unsigned d = 0; d < 3; ++d) {
       geometry.local[d] = p->local_size[d];
@@ -510,7 +526,8 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       geometry.group_counts = grid.ptr;
 
    uint64_t launch;
-   if (!root || !agx_apple9_prepare_compute_dispatch_alloc_tmpl(
+   if (!root ||
+       !agx_apple9_prepare_compute_dispatch_alloc_tmpl(
           &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
           p->resource_binding_count, textures, samplers, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
@@ -528,7 +545,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    unsigned record_size =
       indirect_local ? AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE
       : agx_is_indirect(grid) ? AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE
-                             : AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE;
+                              : AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE;
    /* Driver-internal dispatches (helpers and pre-rasterization stages) end
     * with a barrier for whatever runs next in the stream; API dispatches
     * leave it to the next dependency barrier. The compute-only barrier
@@ -543,12 +560,13 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    if (cmd->tess_batch.capture) {
       uint8_t rec[AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE];
       unsigned size = record_size - AGX_CDM_BARRIER_LENGTH;
-      bool ok = agx_is_indirect(grid)
-         ? agx_apple9_emit_indirect_dispatch(rec, launch, grid.ptr,
-                                            geometry.local, indirect_local, p,
-                                            false)
-         : agx_apple9_emit_direct_dispatch(rec, launch, geometry.threads,
-                                          geometry.local, p, false);
+      bool ok =
+         agx_is_indirect(grid)
+            ? agx_apple9_emit_indirect_dispatch(rec, launch, grid.ptr,
+                                                geometry.local, indirect_local,
+                                                p, false)
+            : agx_apple9_emit_direct_dispatch(rec, launch, geometry.threads,
+                                              geometry.local, p, false);
       if (!ok) {
          hk_apple9_report_dispatch_reject("batched", grid, indirect_local,
                                           launch, geometry.threads,
@@ -573,15 +591,17 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    /* Reserve the emitted record and any preceding helper flush together.
     * The space check also adds stream-link and overread padding.
     */
-   hk_ensure_cs_has_space(cmd, cs, record_size +
-                         (flush_before ? AGX_CDM_BARRIER_LENGTH : 0));
+   hk_ensure_cs_has_space(
+      cmd, cs, record_size + (flush_before ? AGX_CDM_BARRIER_LENGTH : 0));
    if (flush_before)
       hk_cdm_cache_flush(dev, cs);
    bool ok = agx_is_indirect(grid)
-      ? agx_apple9_emit_indirect_dispatch(cs->current, launch, grid.ptr,
-                                         geometry.local, indirect_local, p, barrier)
-      : agx_apple9_emit_direct_dispatch(cs->current, launch, geometry.threads,
-                                       geometry.local, p, barrier);
+                ? agx_apple9_emit_indirect_dispatch(cs->current, launch,
+                                                    grid.ptr, geometry.local,
+                                                    indirect_local, p, barrier)
+                : agx_apple9_emit_direct_dispatch(cs->current, launch,
+                                                  geometry.threads,
+                                                  geometry.local, p, barrier);
    if (!ok) {
       hk_apple9_report_dispatch_reject("stream", grid, indirect_local, launch,
                                        geometry.threads, geometry.local, p);
@@ -616,8 +636,10 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
          cmd->merge_move_stage =
             agx_is_indirect(grid) || hk_cond_render_applies(cmd) ||
                   hk_stat_enabled(hk_pipeline_stat_addr(
-                     cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT))
-               ? 0 : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+                     cmd,
+                     VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT))
+               ? 0
+               : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
       struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, true);
       cmd->merge_move_stage = saved_move;
       if (!cs)
@@ -634,9 +656,8 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
       if (hk_cond_render_applies(cmd)) {
          /* Predicated dispatches read zero group counts when skipped. */
          struct hk_descriptor_state *desc = &cmd->state.cs.descriptors;
-         desc->root.cs.group_count_addr =
-            hk_predicate_indirect(cmd, desc->root.cs.group_count_addr, 3,
-                                  false);
+         desc->root.cs.group_count_addr = hk_predicate_indirect(
+            cmd, desc->root.cs.group_count_addr, 3, false);
          if (!desc->root.cs.group_count_addr)
             return;
          grid = agx_grid_indirect(desc->root.cs.group_count_addr);
@@ -648,9 +669,11 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
          for (unsigned d = 0; d < 3; ++d)
             grid.count[d] *= s->info.apple9.local_size[d];
       }
-      uint64_t root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
+      uint64_t root =
+         hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
       cmd->api_dispatch = !cmd->in_meta;
-      hk_apple9_dispatch(cmd, cs, s->apple9_body, &s->info.apple9, grid, root, s, NULL);
+      hk_apple9_dispatch(cmd, cs, s->apple9_body, &s->info.apple9, grid, root,
+                         s, NULL);
       cmd->api_dispatch = false;
       return;
    }
@@ -777,8 +800,8 @@ hk_tess_fold_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 static void
 hk_tess_fold_flush(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
 {
-   unsigned n = util_dynarray_num_elements(&cmd->tess_batch.fold,
-                                           struct hk_tess_fold);
+   unsigned n =
+      util_dynarray_num_elements(&cmd->tess_batch.fold, struct hk_tess_fold);
    if (!n)
       return;
 
@@ -837,7 +860,7 @@ hk_tess_fold_flush(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
          enum libagx_program idx =
             prims[i] == TESS_PRIMITIVE_TRIANGLES ? LIBAGX_TESS_TRI_FOLD(mode)
             : prims[i] == TESS_PRIMITIVE_QUADS   ? LIBAGX_TESS_QUAD_FOLD(mode)
-                                                 : LIBAGX_TESS_ISOLINE_FOLD(mode);
+                                               : LIBAGX_TESS_ISOLINE_FOLD(mode);
          hk_tess_fold_dispatch(cmd, cs, lane, idx, grid, &args, sizeof(args));
       }
    }

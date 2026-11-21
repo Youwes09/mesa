@@ -2,8 +2,8 @@
 #include "hk_sync.h"
 
 unsigned
-hk_sync_ordered_stages(unsigned src, unsigned dst,
-                       VkAccessFlags2 src_access, VkAccessFlags2 dst_access)
+hk_sync_ordered_stages(unsigned src, unsigned dst, VkAccessFlags2 src_access,
+                       VkAccessFlags2 dst_access)
 {
    /* Execution-only dependencies still order both scopes. A one-sided scope
     * has no execution dependency, but may request availability or visibility.
@@ -29,10 +29,10 @@ hk_sync_remap(const uint32_t *remap, unsigned stream_count, uint32_t id)
 }
 
 bool
-hk_sync_resolve(struct hk_sync_state *state,
-                const struct hk_sync_event *events, unsigned event_count,
-                const uint32_t *remap, struct hk_sync_stream *streams,
-                unsigned stream_count, bool fallback)
+hk_sync_resolve(struct hk_sync_state *state, const struct hk_sync_event *events,
+                unsigned event_count, const uint32_t *remap,
+                struct hk_sync_stream *streams, unsigned stream_count,
+                bool fallback)
 {
    struct hk_sync_state incoming = *state;
    struct hk_sync_state group_source = *state;
@@ -80,7 +80,8 @@ hk_sync_resolve(struct hk_sync_state *state,
                          hk_sync_pending(state, ev->dst & HK_SYNC_TILING,
                                          s->engine, s->index));
          }
-         struct hk_sync_dep dep = hk_sync_work(state, ev->dst, s->engine, s->index);
+         struct hk_sync_dep dep =
+            hk_sync_work(state, ev->dst, s->engine, s->index);
          hk_sync_join(&s->wait, dep);
          if (ev->dst == HK_SYNC_ALL)
             hk_sync_barrier(state, HK_SYNC_ALL, HK_SYNC_ALL);
@@ -113,8 +114,8 @@ unsigned
 hk_sync_stage_mask(VkPipelineStageFlags2 stages, bool source)
 {
    if (stages & (VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT |
-                 (source ? VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT :
-                           VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT)))
+                 (source ? VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT
+                         : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT)))
       return HK_SYNC_ALL;
 
    stages &= ~(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT |
@@ -140,9 +141,9 @@ hk_sync_stage_mask(VkPipelineStageFlags2 stages, bool source)
    const VkPipelineStageFlags2 graphics =
       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | pre_raster | fragment;
    const VkPipelineStageFlags2 transfer =
-      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT |
-      VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT |
-      VK_PIPELINE_STAGE_2_RESOLVE_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT;
+      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT |
+      VK_PIPELINE_STAGE_2_BLIT_BIT | VK_PIPELINE_STAGE_2_RESOLVE_BIT |
+      VK_PIPELINE_STAGE_2_CLEAR_BIT;
    const VkPipelineStageFlags2 compute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
    const VkPipelineStageFlags2 indirect = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
 

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "agx_shader_body.h"
-#include "agx_device.h"
 #include "util/u_atomic.h"
+#include "agx_device.h"
 
 void
 agx_shader_body_init_bo(struct agx_bo *bo)
@@ -43,7 +43,8 @@ agx_shader_body_finish(struct agx_device *dev, struct agx_shader_body *body)
 }
 
 void
-agx_shader_body_unreference(struct agx_device *dev, struct agx_shader_body *body)
+agx_shader_body_unreference(struct agx_device *dev,
+                            struct agx_shader_body *body)
 {
    if (!body)
       return;

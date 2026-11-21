@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "agx_border.h"
 #include "util/format/format_utils.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
-#include "agx_border.h"
 #include "agx_pack.h"
 
 /*
@@ -44,7 +44,8 @@ get_channel_info(enum pipe_format format, unsigned channel)
       return (struct channel){
          UTIL_FORMAT_TYPE_UNSIGNED,
          true,
-         channel == 3 && desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB ? 8 : 12,
+         channel == 3 && desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB ? 8
+                                                                         : 12,
       };
    }
 

@@ -10,9 +10,9 @@
 #include "hk_descriptor_memory.h"
 #include "hk_private.h"
 
-#include "hk_device.h"
 #include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/lib/agx_apple9.h"
+#include "hk_device.h"
 #include "vk_descriptor_update_template.h"
 #include "vk_object.h"
 
@@ -74,9 +74,17 @@ static_assert(sizeof(struct hk_storage_image_descriptor) == 48,
  * one [17:13], and conversion kind [21:18]. Swizzles are resolved per component.
  */
 enum hk_apple9_texel_kind {
-   HK_TEXEL_ZERO, HK_TEXEL_ONE, HK_TEXEL_UINT, HK_TEXEL_SINT,
-   HK_TEXEL_UNORM, HK_TEXEL_SNORM, HK_TEXEL_FLOAT16, HK_TEXEL_FLOAT32,
-   HK_TEXEL_FLOAT11, HK_TEXEL_RGB9E5, HK_TEXEL_SRGB,
+   HK_TEXEL_ZERO,
+   HK_TEXEL_ONE,
+   HK_TEXEL_UINT,
+   HK_TEXEL_SINT,
+   HK_TEXEL_UNORM,
+   HK_TEXEL_SNORM,
+   HK_TEXEL_FLOAT16,
+   HK_TEXEL_FLOAT32,
+   HK_TEXEL_FLOAT11,
+   HK_TEXEL_RGB9E5,
+   HK_TEXEL_SRGB,
 };
 
 /* Storage images have no base or element count. They instead record the
@@ -142,7 +150,7 @@ static_assert(offsetof(struct hk_apple9_storage_descriptor, texture) ==
 /* native_ok packs capability flags in bits 0..2 and the USC-relative PBE
  * table index in bits 3..29. All native writes, including 2D, use the table. */
 #define HK_APPLE9_STORAGE_PBE_SHIFT 3
-#define HK_APPLE9_STORAGE_PBE_MASK ((1u << 27) - 1)
+#define HK_APPLE9_STORAGE_PBE_MASK  ((1u << 27) - 1)
 
 void hk_apple9_texel_layout(enum pipe_format format,
                             struct hk_apple9_texel_metadata *metadata);
@@ -212,12 +220,14 @@ static_assert(offsetof(struct hk_apple9_sampler_part, sampler) ==
 
 /* A combined image sampler is an image part followed by a sampler part; a
  * multi-plane descriptor repeats the whole record per plane. */
-#define HK_APPLE9_COMBINED_DESCRIPTOR_SIZE                                    \
+#define HK_APPLE9_COMBINED_DESCRIPTOR_SIZE                                     \
    (sizeof(struct hk_apple9_image_part) + sizeof(struct hk_apple9_sampler_part))
 #define HK_MAX_SAMPLED_DESCRIPTOR_SIZE (3 * HK_APPLE9_COMBINED_DESCRIPTOR_SIZE)
 
-void hk_apple9_texture_info(uint32_t *data, const struct agx_texture_packed *state);
-bool hk_apple9_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state,
+void hk_apple9_texture_info(uint32_t *data,
+                            const struct agx_texture_packed *state);
+bool hk_apple9_runtime_sampler(uint32_t *data,
+                               const struct agx_sampler_packed *state,
                                bool clamp_to_edge);
 /* A custom border sampler takes its packed colour from border. */
 bool hk_apple9_native_sampler(void *out, const struct agx_sampler_packed *state,

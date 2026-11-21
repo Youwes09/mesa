@@ -19,13 +19,14 @@
 int
 main(int argc, char **argv)
 {
-   if ((argc != 3 && argc != 4) || (argc == 4 && strcmp(argv[3], "bounds") &&
-                                    strcmp(argv[3], "bounds-scalar") &&
-                                    strcmp(argv[3], "bounds-wrap") &&
-                                    strcmp(argv[3], "sample-mask"))) {
-      fprintf(stderr,
-              "Usage: %s vertex.spv fragment.spv [bounds|bounds-scalar|bounds-wrap|sample-mask]\n",
-              argv[0]);
+   if ((argc != 3 && argc != 4) ||
+       (argc == 4 && strcmp(argv[3], "bounds") &&
+        strcmp(argv[3], "bounds-scalar") && strcmp(argv[3], "bounds-wrap") &&
+        strcmp(argv[3], "sample-mask"))) {
+      fprintf(
+         stderr,
+         "Usage: %s vertex.spv fragment.spv [bounds|bounds-scalar|bounds-wrap|sample-mask]\n",
+         argv[0]);
       return 1;
    }
    bool sample_mask = argc == 4 && !strcmp(argv[3], "sample-mask");
@@ -237,8 +238,10 @@ main(int argc, char **argv)
                                                          : 8,
                                               VK_VERTEX_INPUT_RATE_VERTEX};
    VkVertexInputAttributeDescription attr = {
-      0, 0, scalar_vertex ? VK_FORMAT_R32_SFLOAT
-            : bounds ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R32G32_SFLOAT,
+      0, 0,
+      scalar_vertex ? VK_FORMAT_R32_SFLOAT
+      : bounds      ? VK_FORMAT_R32G32B32A32_SFLOAT
+                    : VK_FORMAT_R32G32_SFLOAT,
       0};
    VkPipelineVertexInputStateCreateInfo vertex_input = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -388,9 +391,10 @@ main(int argc, char **argv)
       CHECK(vkWaitForFences(dev, 1, &fence, VK_TRUE, 10000000000ull));
       for (unsigned i = 0; i < BYTES; ++i) {
          unsigned x = (i / 4) % W, y = (i / 4) / W;
-         bool inside = !sample_mask && x >= 3 && x < W - 4 && y >= 2 && y < H - 3;
-         const uint8_t draw_color[4] = {bounds && !scalar_vertex ? 0 : 255, bounds ? 0 : 64,
-                                        bounds ? 0 : 128, 255};
+         bool inside =
+            !sample_mask && x >= 3 && x < W - 4 && y >= 2 && y < H - 3;
+         const uint8_t draw_color[4] = {bounds && !scalar_vertex ? 0 : 255,
+                                        bounds ? 0 : 64, bounds ? 0 : 128, 255};
          uint8_t wanted = inside ? draw_color[i % 4] : expected[i % 4];
          if (abs((int)pixels[i] - wanted) > 1) {
             fprintf(stderr, "pixel %u channel %u: got %u expected %u\n", i / 4,

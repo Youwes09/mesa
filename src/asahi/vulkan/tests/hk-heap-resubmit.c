@@ -1,11 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "../hk_cmd_buffer.h"
+#include "poly/geometry.h"
 #include "libagx_shaders.h"
 #include "query.h"
-#include "poly/geometry.h"
 
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "%s:%u: %s\n", \
-                          __FILE__, __LINE__, #c); return 1; } } while (0)
+#define CHECK(c)                                                               \
+   do {                                                                        \
+      if (!(c)) {                                                              \
+         fprintf(stderr, "%s:%u: %s\n", __FILE__, __LINE__, #c);               \
+         return 1;                                                             \
+      }                                                                        \
+   } while (0)
 
 static struct libagx_heap_reset_args reset;
 static unsigned reset_count;
@@ -13,11 +18,12 @@ static bool reset_valid;
 
 void __wrap_hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
                                 enum agx_barrier barrier,
-                                enum libagx_program idx, void *data, size_t size);
+                                enum libagx_program idx, void *data,
+                                size_t size);
 void
 __wrap_hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
-                           enum agx_barrier barrier,
-                           enum libagx_program idx, void *data, size_t size)
+                           enum agx_barrier barrier, enum libagx_program idx,
+                           void *data, size_t size)
 {
    reset_valid = idx == LIBAGX_HEAP_RESET && size == sizeof(reset) &&
                  barrier == (AGX_BARRIER_ALL | AGX_PREGFX) &&
@@ -27,8 +33,8 @@ __wrap_hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
 
    reset = *(struct libagx_heap_reset_args *)data;
    reset_count++;
-   reset_valid = hk_cmd_buffer_get_cs_general(
-      cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL) != NULL;
+   reset_valid = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx,
+                                              true, HK_SYNC_ALL) != NULL;
 }
 
 static int

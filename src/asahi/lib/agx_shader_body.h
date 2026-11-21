@@ -36,7 +36,7 @@ extern "C" {
 void agx_shader_body_init_bo(struct agx_bo *bo);
 void agx_shader_body_reference(struct agx_shader_body *body);
 void agx_shader_body_unreference(struct agx_device *dev,
-                                  struct agx_shader_body *body);
+                                 struct agx_shader_body *body);
 void agx_shader_body_finish(struct agx_device *dev,
                             struct agx_shader_body *body);
 

@@ -83,8 +83,11 @@ main(int argc, char **argv)
    CHECK(vkCreateDevice(phy, &dci, NULL, &dev));
    VkQueue queue;
    vkGetDeviceQueue(dev, qi, 0, &queue);
-   enum { COUNT = APPLE9_PROBE_COUNT, WORDS = (COUNT + 63) & ~63,
-          BYTES = WORDS * 4 };
+   enum {
+      COUNT = APPLE9_PROBE_COUNT,
+      WORDS = (COUNT + 63) & ~63,
+      BYTES = WORDS * 4
+   };
    VkPhysicalDeviceMemoryProperties mp;
    vkGetPhysicalDeviceMemoryProperties(phy, &mp);
    VkBuffer buffers[3];

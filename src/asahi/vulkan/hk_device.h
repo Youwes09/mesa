@@ -7,17 +7,17 @@
 
 #pragma once
 
-#include "util/u_debug.h"
 #include "asahi/lib/agx_device.h"
 #include "util/rwlock.h"
 #include "util/simple_mtx.h"
-#include "util/u_queue.h"
+#include "util/u_debug.h"
 #include "util/u_dynarray.h"
+#include "util/u_queue.h"
 #include "agx_bg_eot.h"
 #include "agx_pack.h"
 #include "agx_scratch.h"
-#include "hk_cmd_pool.h"
 #include "decode.h"
+#include "hk_cmd_pool.h"
 #include "vk_cmd_queue.h"
 #include "vk_dispatch_table.h"
 
@@ -86,7 +86,8 @@ struct hk_device {
    struct agx_bo *apple9_fetch_sampler;
    /* Reload sampler shares the immutable sampler BO, at a 64-byte boundary. */
    uint64_t apple9_reload_sampler;
-   /* Last G16 graphics program id handed out, see hk_shader::apple9_program_id. */
+   /* Last G16 graphics program id handed out, see hk_shader::apple9_program_id.
+    */
    uint64_t apple9_last_program_id;
    /* USC space charged to shared index aliases, including allocator guards. */
    uint64_t apple9_index_alias_bytes;
@@ -143,7 +144,6 @@ struct hk_device {
       uint64_t bytes, backing_bytes;
    } apple9_bodies;
 
-
    /* Apple9 tile load and store programs, keyed by their tile buffer key. */
    struct {
       simple_mtx_t lock;
@@ -187,7 +187,6 @@ struct hk_device {
    struct hk_cmd_bo_cache cmd_bos;
 
    uint32_t perftest;
-
 };
 
 VK_DEFINE_HANDLE_CASTS(hk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)

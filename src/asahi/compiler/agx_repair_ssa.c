@@ -430,8 +430,8 @@ agx_repair_ssa(agx_context *ctx)
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
          if (I->dest[d].memory)
-            ctx->spill_home[I->dest[d].value] = (uintptr_t)
-               _mesa_hash_table_u64_search(homes, I->dest[d].value);
+            ctx->spill_home[I->dest[d].value] =
+               (uintptr_t)_mesa_hash_table_u64_search(homes, I->dest[d].value);
       }
    }
    ralloc_free(blocks);

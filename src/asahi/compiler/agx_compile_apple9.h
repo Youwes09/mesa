@@ -9,11 +9,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "agx_compile.h"
 #include "util/blend.h"
-#include "util/format/u_formats.h"
 #include "util/format/u_format.h"
+#include "util/format/u_formats.h"
 #include "agx_apple9_profile.h"
+#include "agx_compile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,7 +44,8 @@ bool agx_nir_lower_apple9_denorms(nir_shader *shader);
 bool agx_nir_lower_apple9_denorm_preserve(nir_shader *shader);
 bool agx_nir_lower_apple9_subgroup_denorms(nir_shader *shader);
 
-/* Schedule texture operations without increasing estimated scalar-word pressure. */
+/* Schedule texture operations without increasing estimated scalar-word
+ * pressure. */
 bool agx_nir_hoist_apple9_samples(nir_shader *shader);
 /* While set on this thread (compiling a spill probe), register allocation
  * keeps its first candidate. */
@@ -96,26 +97,28 @@ bool agx_compile_apple9_tiny(nir_shader *nir, struct agx_shader_part *out,
  * render-target state. The single-target entry point below retains RGBA8
  * defaults; the MRT entry point takes explicit attachment formats and state.
  */
-bool agx_compile_apple9_fragment(nir_shader *nir,
-                                 struct agx_shader_part *out,
+bool agx_compile_apple9_fragment(nir_shader *nir, struct agx_shader_part *out,
                                  const char **reason);
 
 /* Internal per-draw system values share the ordinary buffer-address table.
  * API UBOs use 0..31; vertex bindings use 32..63. */
 #define AGX_APPLE9_GRAPHICS_SYSVAL_BINDING 64
-#define AGX_APPLE9_SAMPLER_BIAS_OFFSET 16
-#define AGX_APPLE9_SAMPLER_BIAS_COUNT 32
-#define AGX_APPLE9_TEXTURE_INFO_OFFSET (16 + AGX_APPLE9_SAMPLER_BIAS_COUNT * sizeof(float))
+#define AGX_APPLE9_SAMPLER_BIAS_OFFSET     16
+#define AGX_APPLE9_SAMPLER_BIAS_COUNT      32
+#define AGX_APPLE9_TEXTURE_INFO_OFFSET                                         \
+   (16 + AGX_APPLE9_SAMPLER_BIAS_COUNT * sizeof(float))
 #define AGX_APPLE9_TEXTURE_INFO_STRIDE 32
-#define AGX_APPLE9_POINT_SIZE_OFFSET (AGX_APPLE9_TEXTURE_INFO_OFFSET + 32 * AGX_APPLE9_TEXTURE_INFO_STRIDE)
-#define AGX_APPLE9_FIRST_FAN_OFFSET (AGX_APPLE9_POINT_SIZE_OFFSET + 4)
+#define AGX_APPLE9_POINT_SIZE_OFFSET                                           \
+   (AGX_APPLE9_TEXTURE_INFO_OFFSET + 32 * AGX_APPLE9_TEXTURE_INFO_STRIDE)
+#define AGX_APPLE9_FIRST_FAN_OFFSET       (AGX_APPLE9_POINT_SIZE_OFFSET + 4)
 #define AGX_APPLE9_POLYGON_STIPPLE_OFFSET (AGX_APPLE9_POINT_SIZE_OFFSET + 16)
 /* Line stipple: the packed pattern/factor word, then the viewport scale and
  * offset of viewport 0 as vec3s (window = ndc * scale + offset). */
-#define AGX_APPLE9_LINE_STIPPLE_OFFSET (AGX_APPLE9_POLYGON_STIPPLE_OFFSET + 32 * 4)
-#define AGX_APPLE9_VIEWPORT_SCALE_OFFSET (AGX_APPLE9_LINE_STIPPLE_OFFSET + 16)
+#define AGX_APPLE9_LINE_STIPPLE_OFFSET                                         \
+   (AGX_APPLE9_POLYGON_STIPPLE_OFFSET + 32 * 4)
+#define AGX_APPLE9_VIEWPORT_SCALE_OFFSET  (AGX_APPLE9_LINE_STIPPLE_OFFSET + 16)
 #define AGX_APPLE9_VIEWPORT_OFFSET_OFFSET (AGX_APPLE9_LINE_STIPPLE_OFFSET + 32)
-#define AGX_APPLE9_GRAPHICS_SYSVAL_SIZE (AGX_APPLE9_LINE_STIPPLE_OFFSET + 48)
+#define AGX_APPLE9_GRAPHICS_SYSVAL_SIZE   (AGX_APPLE9_LINE_STIPPLE_OFFSET + 48)
 
 /* Optional per-dispatch sampler state for APIs with mutable samplers. */
 #define AGX_APPLE9_RUNTIME_SAMPLER_OFFSET AGX_APPLE9_GRAPHICS_SYSVAL_SIZE
@@ -128,25 +131,29 @@ bool agx_compile_apple9_fragment(nir_shader *nir,
  * runtime sampler record; each holds its native table entry at the slot
  * below.
  */
-#define AGX_APPLE9_USC_BASE (1ull << 40)
-#define AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY 2
-#define AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY 3
-#define AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO 0
+#define AGX_APPLE9_USC_BASE                   (1ull << 40)
+#define AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY   2
+#define AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY   3
+#define AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO    0
 #define AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER 0
 /* Native table index of the private texel-fetch sampler, for stages whose
  * samplers are register indexed. */
-#define AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET (AGX_APPLE9_RUNTIME_SAMPLER_OFFSET + 32 * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE)
+#define AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET                                  \
+   (AGX_APPLE9_RUNTIME_SAMPLER_OFFSET + 32 * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE)
 /* Per-draw color attachment write enables, one bit per attachment. */
-#define AGX_APPLE9_COLOR_WRITE_ENABLE_OFFSET (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 4)
+#define AGX_APPLE9_COLOR_WRITE_ENABLE_OFFSET                                   \
+   (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 4)
 /* Packed sample positions, in the PPP multisample control format. */
-#define AGX_APPLE9_SAMPLE_POSITIONS_OFFSET (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 8)
+#define AGX_APPLE9_SAMPLE_POSITIONS_OFFSET                                     \
+   (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 8)
 /* Per-viewport window transform for vertex-stage line stipple, one vec4
  * (scale.xy, offset.xy) per viewport: window = ndc * scale + offset. */
-#define AGX_APPLE9_VIEWPORT_TABLE_OFFSET (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 16)
+#define AGX_APPLE9_VIEWPORT_TABLE_OFFSET                                       \
+   (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 16)
 #define AGX_APPLE9_VIEWPORT_TABLE_COUNT 16
 /* Rasterization state for software polygon points (struct
  * agx_apple9_polygon_point_params). */
-#define AGX_APPLE9_POLYGON_POINT_OFFSET \
+#define AGX_APPLE9_POLYGON_POINT_OFFSET                                        \
    (AGX_APPLE9_VIEWPORT_TABLE_OFFSET + AGX_APPLE9_VIEWPORT_TABLE_COUNT * 16)
 #define AGX_APPLE9_RUNTIME_SYSVAL_SIZE (AGX_APPLE9_POLYGON_POINT_OFFSET + 32)
 
@@ -170,10 +177,18 @@ struct agx_apple9_polygon_point_params {
    uint32_t pad[2];
 };
 enum agx_apple9_sampler_field {
-   AGX_APPLE9_SAMP_WRAP_S, AGX_APPLE9_SAMP_WRAP_T, AGX_APPLE9_SAMP_WRAP_R,
-   AGX_APPLE9_SAMP_MIN, AGX_APPLE9_SAMP_MAG, AGX_APPLE9_SAMP_MIP,
-   AGX_APPLE9_SAMP_COMPARE, AGX_APPLE9_SAMP_MIN_LOD, AGX_APPLE9_SAMP_MAX_LOD,
-   AGX_APPLE9_SAMP_BIAS, AGX_APPLE9_SAMP_BORDER, AGX_APPLE9_SAMP_PIXEL_COORDS,
+   AGX_APPLE9_SAMP_WRAP_S,
+   AGX_APPLE9_SAMP_WRAP_T,
+   AGX_APPLE9_SAMP_WRAP_R,
+   AGX_APPLE9_SAMP_MIN,
+   AGX_APPLE9_SAMP_MAG,
+   AGX_APPLE9_SAMP_MIP,
+   AGX_APPLE9_SAMP_COMPARE,
+   AGX_APPLE9_SAMP_MIN_LOD,
+   AGX_APPLE9_SAMP_MAX_LOD,
+   AGX_APPLE9_SAMP_BIAS,
+   AGX_APPLE9_SAMP_BORDER,
+   AGX_APPLE9_SAMP_PIXEL_COORDS,
    AGX_APPLE9_SAMP_MAX_ANISOTROPY,
 };
 
@@ -194,13 +209,13 @@ struct agx_apple9_blend {
    enum pipe_format format;
    uint8_t samples; /* Zero retains single-sample compiler callers. */
    uint8_t disabled_samples;
-   uint8_t alpha_to_coverage : 1;
-   uint8_t alpha_to_one : 1;
-   uint8_t multisample_disabled : 1;
+   uint8_t alpha_to_coverage       : 1;
+   uint8_t alpha_to_one            : 1;
+   uint8_t multisample_disabled    : 1;
    uint8_t color_attachment_unused : 1;
    /* Vulkan sample-mask writes also apply to single-sample rendering. */
    uint8_t sample_mask_single_sample : 1;
-   uint8_t logicop_enable : 1;
+   uint8_t logicop_enable            : 1;
    /* Writes are also gated by the attachment's bit in the per-draw color
     * write enable sysval. */
    uint8_t dynamic_enable : 1;
@@ -225,7 +240,10 @@ agx_apple9_blend_uses_src1(const struct agx_apple9_blend *blend)
       return false;
 
    const uint8_t factors[] = {
-      blend->rgb_src, blend->rgb_dst, blend->alpha_src, blend->alpha_dst,
+      blend->rgb_src,
+      blend->rgb_dst,
+      blend->alpha_src,
+      blend->alpha_dst,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(factors); ++i) {
       enum pipe_blendfactor factor =
@@ -240,8 +258,9 @@ agx_apple9_blend_uses_src1(const struct agx_apple9_blend *blend)
 static inline unsigned
 agx_apple9_color_components(enum pipe_format format)
 {
-   return format == PIPE_FORMAT_NONE ? 4 :
-      util_format_description(format)->nr_channels;
+   return format == PIPE_FORMAT_NONE
+             ? 4
+             : util_format_description(format)->nr_channels;
 }
 
 static inline bool
@@ -321,9 +340,10 @@ agx_apple9_color_words(enum pipe_format format)
 static inline enum pipe_format
 agx_apple9_color_raw_format(unsigned words)
 {
-   return words == 4 ? PIPE_FORMAT_R32G32B32A32_UINT :
-          words == 3 ? PIPE_FORMAT_R32G32B32_UINT :
-          words == 2 ? PIPE_FORMAT_R32G32_UINT : PIPE_FORMAT_R32_UINT;
+   return words == 4   ? PIPE_FORMAT_R32G32B32A32_UINT
+          : words == 3 ? PIPE_FORMAT_R32G32B32_UINT
+          : words == 2 ? PIPE_FORMAT_R32G32_UINT
+                       : PIPE_FORMAT_R32_UINT;
 }
 
 static inline bool
@@ -332,7 +352,8 @@ agx_apple9_color_is_normalized(enum pipe_format format)
    const struct util_format_description *desc = util_format_description(format);
    if (desc->layout != UTIL_FORMAT_LAYOUT_PLAIN ||
        desc->colorspace != UTIL_FORMAT_COLORSPACE_RGB ||
-       (desc->nr_channels != 1 && desc->nr_channels != 2 && desc->nr_channels != 4) ||
+       (desc->nr_channels != 1 && desc->nr_channels != 2 &&
+        desc->nr_channels != 4) ||
        !desc->channel[0].normalized ||
        (desc->channel[0].size != 8 && desc->channel[0].size != 16))
       return false;
@@ -353,11 +374,13 @@ agx_apple9_color_is_wide(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
    return desc->layout == UTIL_FORMAT_LAYOUT_PLAIN &&
-          (desc->nr_channels == 1 || desc->nr_channels == 2 || desc->nr_channels == 4) &&
+          (desc->nr_channels == 1 || desc->nr_channels == 2 ||
+           desc->nr_channels == 4) &&
           ((desc->channel[0].pure_integer &&
             (desc->channel[0].size == 8 || desc->channel[0].size == 16 ||
              desc->channel[0].size == 32)) ||
-           (desc->channel[0].type == UTIL_FORMAT_TYPE_FLOAT && desc->channel[0].size == 32));
+           (desc->channel[0].type == UTIL_FORMAT_TYPE_FLOAT &&
+            desc->channel[0].size == 32));
 }
 
 static inline bool
@@ -397,10 +420,14 @@ agx_apple9_block_export_format(enum pipe_format format)
    if (!desc->channel[0].pure_integer && desc->channel[0].size == 8)
       return 7;
    switch (desc->channel[0].size) {
-   case 8: return 5;
-   case 16: return 1;
-   case 32: return 3;
-   default: return ~0u;
+   case 8:
+      return 5;
+   case 16:
+      return 1;
+   case 32:
+      return 3;
+   default:
+      return ~0u;
    }
 }
 
@@ -427,7 +454,8 @@ struct nir_def *agx_apple9_texture_info(struct nir_builder *b,
 struct nir_def *agx_apple9_sampler_field(struct nir_builder *b,
                                          const struct nir_tex_instr *tex,
                                          unsigned field);
-bool agx_nir_lower_apple9_runtime_sampler_state(nir_shader *nir, const char **reason);
+bool agx_nir_lower_apple9_runtime_sampler_state(nir_shader *nir,
+                                                const char **reason);
 /* A NULL key reads the runtime sampler metadata; otherwise specialize to key. */
 
 bool agx_nir_lower_apple9_texture_offsets(
@@ -451,7 +479,7 @@ uint32_t agx_nir_apple9_offset_samplers(const nir_shader *nir);
 /* Apple9 backend texture flags. They share nir_tex_instr::backend_flags with
  * the AGX_TEXTURE_FLAG_* bits in agx_nir_texture.h, so keep them disjoint. */
 #define AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY (1 << 8)
-#define AGX_APPLE9_TEXTURE_LOD_QUERY (1 << 9)
+#define AGX_APPLE9_TEXTURE_LOD_QUERY     (1 << 9)
 /* Texel fetch whose level, layer and sample are already bounded. */
 #define AGX_APPLE9_TEXTURE_FETCH_BOUNDED (1 << 10)
 /* Handle sources hold native table indices rather than descriptor offsets. */
@@ -477,8 +505,8 @@ bool agx_compile_apple9_fragment_mrt(
 
 bool agx_compile_apple9_fragment_blend(
    nir_shader *nir, const struct agx_apple9_varying_layout *varyings,
-   const struct agx_apple9_blend *blend,
-   struct agx_shader_part *out, const char **reason);
+   const struct agx_apple9_blend *blend, struct agx_shader_part *out,
+   const char **reason);
 
 /* Specialize fragment coefficient reads to the producing vertex layout. */
 bool agx_compile_apple9_fragment_inputs(
@@ -530,7 +558,7 @@ struct agx_apple9_vertex_layout {
     * default, keeps robust fetches. Requires dynamic_stride, and the driver
     * must describe a null binding as the zero page with size and stride 0. */
    bool unbounded;
-   bool clip_halfz;      /* Convert GL [-w,w] depth to hardware [0,w]. */
+   bool clip_halfz; /* Convert GL [-w,w] depth to hardware [0,w]. */
    uint8_t clip_distance_enable;
    bool cull_distance_mask; /* Cull signs are combined by software geometry. */
    bool capture_xfb;
@@ -552,12 +580,12 @@ bool agx_compile_apple9_vertex_inputs(
 
 /* The same vertex fetch lowering is used by hardware VS and Poly compute VS. */
 bool agx_nir_lower_apple9_vertex_inputs(
-   nir_shader *nir, const struct agx_apple9_vertex_layout *layout, bool software);
+   nir_shader *nir, const struct agx_apple9_vertex_layout *layout,
+   bool software);
 
 /* Compile the bounded procedural vertex stage described above. */
 bool agx_compile_apple9_vertex(nir_shader *nir, struct agx_shader_part *out,
                                const char **reason);
-
 
 #ifdef __cplusplus
 }

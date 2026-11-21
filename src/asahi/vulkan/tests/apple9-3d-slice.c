@@ -48,7 +48,8 @@ main(int argc, char **argv)
           VK_VERSION_MINOR(prop.apiVersion));
    printf("maxImageDimension3D=%u\n", prop.limits.maxImageDimension3D);
    if (depth > prop.limits.maxImageDimension3D) {
-      puts("SKIP depth exceeds advertised 3D image range"); return 77;
+      puts("SKIP depth exceeds advertised 3D image range");
+      return 77;
    }
    if (0) {
       fprintf(stderr, "Expected native Apple M4 renderer\n");
@@ -71,11 +72,16 @@ main(int argc, char **argv)
       .queueFamilyIndex = qi,
       .queueCount = 1,
       .pQueuePriorities = &priority};
-   VkPhysicalDeviceHostImageCopyFeaturesEXT hf={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT,.hostImageCopy=VK_TRUE};
-   const char *he=VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME;
+   VkPhysicalDeviceHostImageCopyFeaturesEXT hf = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT,
+      .hostImageCopy = VK_TRUE};
+   const char *he = VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME;
    VkDeviceCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
                              .queueCreateInfoCount = 1,
-                             .pQueueCreateInfos = &qci, .pNext=&hf, .enabledExtensionCount=1, .ppEnabledExtensionNames=&he};
+                             .pQueueCreateInfos = &qci,
+                             .pNext = &hf,
+                             .enabledExtensionCount = 1,
+                             .ppEnabledExtensionNames = &he};
    VkDevice dev;
    CHECK(vkCreateDevice(phy, &dci, NULL, &dev));
    VkQueue queue;
@@ -90,7 +96,9 @@ main(int argc, char **argv)
                            .arrayLayers = 1,
                            .samples = VK_SAMPLE_COUNT_1_BIT,
                            .tiling = VK_IMAGE_TILING_OPTIMAL,
-                           .usage = VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                           .usage = VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
    VkImage image;
    CHECK(vkCreateImage(dev, &ii, NULL, &image));
@@ -129,25 +137,62 @@ main(int argc, char **argv)
    CHECK(vkBindBufferMemory(dev, buffer, memory[1], 0));
    uint8_t *pixels;
    CHECK(vkMapMemory(dev, memory[1], 0, VK_WHOLE_SIZE, 0, (void **)&pixels));
-   PFN_vkTransitionImageLayoutEXT transition=(PFN_vkTransitionImageLayoutEXT)vkGetDeviceProcAddr(dev,"vkTransitionImageLayoutEXT");
-   PFN_vkCopyMemoryToImageEXT host_copy=(PFN_vkCopyMemoryToImageEXT)vkGetDeviceProcAddr(dev,"vkCopyMemoryToImageEXT");
-   if (!transition || !host_copy) return 2;
-   CHECK(transition(dev,1,&(VkHostImageLayoutTransitionInfoEXT){.sType=VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,.image=image,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}}));
-   uint8_t *source=malloc(16*depth);
-   for(unsigned z=0;z<depth;z++)for(unsigned pixel=0;pixel<4;pixel++) {
-      source[z*16+pixel*4+0]=z&255; source[z*16+pixel*4+1]=z>>8;
-      source[z*16+pixel*4+2]=90; source[z*16+pixel*4+3]=255;
-   }
-   VkMemoryToImageCopyEXT region={.sType=VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,.pHostPointer=source,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},.imageExtent={W,H,depth}};
-   CHECK(host_copy(dev,&(VkCopyMemoryToImageInfoEXT){.sType=VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,.dstImage=image,.dstImageLayout=VK_IMAGE_LAYOUT_GENERAL,.regionCount=1,.pRegions=&region}));
+   PFN_vkTransitionImageLayoutEXT transition =
+      (PFN_vkTransitionImageLayoutEXT)vkGetDeviceProcAddr(
+         dev, "vkTransitionImageLayoutEXT");
+   PFN_vkCopyMemoryToImageEXT host_copy =
+      (PFN_vkCopyMemoryToImageEXT)vkGetDeviceProcAddr(dev,
+                                                      "vkCopyMemoryToImageEXT");
+   if (!transition || !host_copy)
+      return 2;
+   CHECK(transition(
+      dev, 1,
+      &(VkHostImageLayoutTransitionInfoEXT){
+         .sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
+         .image = image,
+         .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+         .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}}));
+   uint8_t *source = malloc(16 * depth);
+   for (unsigned z = 0; z < depth; z++)
+      for (unsigned pixel = 0; pixel < 4; pixel++) {
+         source[z * 16 + pixel * 4 + 0] = z & 255;
+         source[z * 16 + pixel * 4 + 1] = z >> 8;
+         source[z * 16 + pixel * 4 + 2] = 90;
+         source[z * 16 + pixel * 4 + 3] = 255;
+      }
+   VkMemoryToImageCopyEXT region = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
+      .pHostPointer = source,
+      .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+      .imageExtent = {W, H, depth}};
+   CHECK(host_copy(dev,
+                   &(VkCopyMemoryToImageInfoEXT){
+                      .sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
+                      .dstImage = image,
+                      .dstImageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                      .regionCount = 1,
+                      .pRegions = &region}));
    free(source);
-   VkImage staging_image; VkDeviceMemory staging_memory;
-   VkImageCreateInfo si = ii; si.flags = 0; si.imageType = VK_IMAGE_TYPE_2D;
-   si.extent.depth = 1; si.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+   VkImage staging_image;
+   VkDeviceMemory staging_memory;
+   VkImageCreateInfo si = ii;
+   si.flags = 0;
+   si.imageType = VK_IMAGE_TYPE_2D;
+   si.extent.depth = 1;
+   si.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
    CHECK(vkCreateImage(dev, &si, NULL, &staging_image));
-   VkMemoryRequirements sr; vkGetImageMemoryRequirements(dev, staging_image, &sr);
-   unsigned st = 0; while (!(sr.memoryTypeBits & (1u << st))) st++;
-   CHECK(vkAllocateMemory(dev, &(VkMemoryAllocateInfo){.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=sr.size,.memoryTypeIndex=st},NULL,&staging_memory));
+   VkMemoryRequirements sr;
+   vkGetImageMemoryRequirements(dev, staging_image, &sr);
+   unsigned st = 0;
+   while (!(sr.memoryTypeBits & (1u << st)))
+      st++;
+   CHECK(vkAllocateMemory(
+      dev,
+      &(VkMemoryAllocateInfo){.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                              .allocationSize = sr.size,
+                              .memoryTypeIndex = st},
+      NULL, &staging_memory));
    CHECK(vkBindImageMemory(dev, staging_image, staging_memory, 0));
    VkImageViewCreateInfo vi = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -237,23 +282,37 @@ main(int argc, char **argv)
       vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
                            1, &barrier);
-      VkImageMemoryBarrier sb = barrier; sb.image = staging_image;
-      sb.srcAccessMask=0; sb.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
-      sb.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED; sb.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-      vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&sb);
-      VkImageBlit blit = {.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
-        .srcOffsets={{0,0,slice},{W,H,slice+1}}, .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
-        .dstOffsets={{0,0,0},{W,H,1}}};
-      vkCmdBlitImage(cmd,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,staging_image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_NEAREST);
-      sb.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; sb.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
-      sb.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; sb.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-      vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&sb);
+      VkImageMemoryBarrier sb = barrier;
+      sb.image = staging_image;
+      sb.srcAccessMask = 0;
+      sb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      sb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      sb.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
+                           1, &sb);
+      VkImageBlit blit = {
+         .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+         .srcOffsets = {{0, 0, slice}, {W, H, slice + 1}},
+         .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+         .dstOffsets = {{0, 0, 0}, {W, H, 1}}};
+      vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     staging_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                     &blit, VK_FILTER_NEAREST);
+      sb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      sb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+      sb.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      sb.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
+                           1, &sb);
       VkBufferImageCopy copy = {
          .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
          .imageOffset = {0, 0, 0},
          .imageExtent = {W, H, 1}};
-      vkCmdCopyImageToBuffer(cmd, staging_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                             buffer, 1, &copy);
+      vkCmdCopyImageToBuffer(cmd, staging_image,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1,
+                             &copy);
       VkMemoryBarrier host = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                               .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
                               .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
@@ -266,7 +325,9 @@ main(int argc, char **argv)
                              .pCommandBuffers = &cmd};
       CHECK(vkQueueSubmit(queue, 1, &submit, fence));
       CHECK(vkWaitForFences(dev, 1, &fence, VK_TRUE, 10000000000ull));
-      printf("SAMPLE rgba=%u,%u,%u,%u requested_slice=%u sampled_slice=%u\n",pixels[0],pixels[1],pixels[2],pixels[3],slice,pixels[0]+256u*pixels[1]);
+      printf("SAMPLE rgba=%u,%u,%u,%u requested_slice=%u sampled_slice=%u\n",
+             pixels[0], pixels[1], pixels[2], pixels[3], slice,
+             pixels[0] + 256u * pixels[1]);
       for (unsigned i = 0; i < BYTES; ++i) {
          if (abs((int)pixels[i] - expected[i % 4]) > 1) {
             fprintf(stderr, "pixel %u channel %u: got %u expected %u\n", i / 4,

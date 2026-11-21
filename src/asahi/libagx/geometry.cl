@@ -9,9 +9,9 @@
 #include "poly/geometry.h"
 #include "poly/prim.h"
 #include "poly/tessellator.h"
-#include "tessellator_fold.h"
 #include "util/macros.h"
 #include "util/u_math.h"
+#include "tessellator_fold.h"
 
 KERNEL(1)
 libagx_increment_ia(global uint32_t *ia_vertices,
@@ -116,8 +116,8 @@ libagx_unroll_geometry(global struct poly_heap *heap, uint64_t index_buffer,
 
    POLY_DECL_UNROLL_RESTART_SCRATCH(scratch, 1024);
    poly_unroll_geometry(out_draw, heap, in_draw, index_buffer,
-                        index_buffer_size_el, in_index_size_B, 4,
-                        restart_index, flatshade_first, false, mode, scratch);
+                        index_buffer_size_el, in_index_size_B, 4, restart_index,
+                        flatshade_first, false, mode, scratch);
 }
 
 KERNEL(1)
@@ -227,8 +227,7 @@ libagx_prefix_sum_tess(global struct poly_tess_params *p, global uint *c_prims,
                        global uint *c_invs, uint increment_stats__2)
 {
    local uint scratch[32];
-   libagx_prefix_sum_tess_draw(scratch, p, c_prims, c_invs,
-                               increment_stats__2);
+   libagx_prefix_sum_tess_draw(scratch, p, c_prims, c_invs, increment_stats__2);
 }
 
 /* libagx_prefix_sum_tess of each draw of a folded dispatch, one workgroup
