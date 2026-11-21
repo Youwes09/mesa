@@ -922,13 +922,8 @@ zink_init_screen_caps(struct zink_screen *screen)
    caps->depth_unorm_emulated = !screen->have_X8_D24_UNORM_PACK32 ||
                                 !screen->have_D24_UNORM_S8_UINT;
 
-   /* Most Vulkan compilers move immutable local arrays to shader constant
-    * data. Honeykrisp does not implement that path yet, so large lookup
-    * tables otherwise become per-invocation scratch stores. Let mesa/st
-    * place them in the default uniform buffer, as native Asahi GL does.
-    */
-   caps->prefer_imm_arrays_as_constbuf =
-      zink_driverid(screen) == VK_DRIVER_ID_MESA_HONEYKRISP;
+   /* Assume that the vk driver is capable of moving imm arrays to some sort of constant storage on its own. */
+   caps->prefer_imm_arrays_as_constbuf = false;
    {
       enum pipe_quirk_texture_border_color_swizzle quirk =
          PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_ALPHA_NOT_W;
