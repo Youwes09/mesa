@@ -7643,10 +7643,9 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
    struct agx_device *dev = agx_device(pipe->screen);
    const bool is_indirect = info->indirect != NULL;
 
-   /* A direct dispatch with an empty grid is an API no-op.  Validate this
-    * before allocating a batch: subtracting one from a zero grid dimension
-    * below used to wrap, while release builds could publish a zero-sized G16
-    * hardware launch after the builder's assertions disappeared. */
+   /* A direct dispatch with an empty grid is an API no-op. Return before
+    * allocating a batch: the launch encoding below subtracts one from each
+    * grid dimension. */
    if (!is_indirect) {
       for (unsigned d = 0; d < 3; ++d) {
          if (!info->grid[d])

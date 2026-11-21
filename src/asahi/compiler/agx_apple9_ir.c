@@ -4493,10 +4493,9 @@ pack_i2f32(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
     * This is the canonical 32-bit integer to float form, including byte 7 bit 6
     * as the signed-source selector.
     *
-    * Earlier code treated byte 1's high nibble as source lifetime because
-    * Metal's retained-source cases used 0x17. The shared dependency model
-    * identifies those bits as the one-hot slot field instead. Source lifetime
-    * is carried independently by byte 6 (0x8c retained, 0xac last use).
+    * Byte 1's high nibble is the one-hot dependency slot field, not source
+    * lifetime, although Metal's retained-source cases happen to use 0x17.
+    * Source lifetime is in byte 6 (0x8c retained, 0xac last use).
     */
    uint8_t bytes[] = {
       0xa7,
