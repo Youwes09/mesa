@@ -83,7 +83,6 @@ check(unsigned gen, const char *before, const char *after, bool qualified, bool 
    CHECK(pdev->dev.native_mesh_qualified == qualified);
    CHECK(hk_apple9_native_index_enabled(pdev) == (qualified && !kill));
    uint64_t flags = hk_physical_device_compiler_flags(pdev);
-   CHECK(!pdev->dev.bo_cache.started);
    agx_bo_cache_finish(&pdev->dev);
    agxdecode_destroy_context(pdev->dev.agxdecode);
    util_sparse_array_finish(&pdev->dev.bo_map);

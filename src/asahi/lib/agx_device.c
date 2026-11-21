@@ -274,8 +274,8 @@ agx_bo_import(struct agx_device *dev, int fd)
    ASSERTED int ret;
    unsigned gem_handle;
 
-   /* Validate before importing a handle, so invalid sizes cannot leak a GEM
-    * reference (or leave a half-initialized entry for the reaper/importer). */
+   /* Validate before importing a handle, so an invalid size cannot leak a
+    * GEM reference. */
    off_t size = lseek(fd, 0, SEEK_END);
    if (size <= 0 || (size & (AIL_PAGESIZE - 1))) {
       fprintf(stderr, "import failed: invalid BO size 0x%llx\n",
@@ -285,7 +285,6 @@ agx_bo_import(struct agx_device *dev, int fd)
 
    pthread_mutex_lock(&dev->bo_map_lock);
 
-retry:
    ret = drmPrimeFDToHandle(dev->fd, fd, &gem_handle);
    if (ret) {
       fprintf(stderr, "import failed: Could not map fd %d to handle\n", fd);
@@ -295,16 +294,6 @@ retry:
 
    bo = agx_lookup_bo(dev, gem_handle);
    dev->max_handle = MAX2(dev->max_handle, gem_handle);
-
-   if (!bo->size && dev->bo_closing_handle == gem_handle) {
-      /* The kernel may still return the old handle before the reaper's
-       * close removes it. Wait without blocking allocation or other imports,
-       * then import again. If allocation has already reused the handle, its
-       * nonempty slot describes the new object and needs no such wait.
-       */
-      pthread_cond_wait(&dev->bo_map_cond, &dev->bo_map_lock);
-      goto retry;
-   }
 
    if (!bo->size) {
       bo->dev = dev;
@@ -342,12 +331,9 @@ retry:
          abort();
       }
    } else {
-      /* Final unreference, resurrection and reaper removal all serialize
-       * on bo_map_lock. A queued shared BO still owns its handle and VA. */
-      if (p_atomic_read(&bo->refcnt) == 0)
-         agx_bo_reclaim(dev, bo);
-      else
-         agx_bo_reference(bo);
+      /* The final unreference also holds bo_map_lock and frees a shared BO
+       * at once, so a BO still in the table is referenced. */
+      agx_bo_reference(bo);
 
       /* If this bo came back to us via import, it had better
        * been marked shared to begin with.
@@ -889,12 +875,6 @@ agx_open_device(void *memctx, struct agx_device *dev)
    }
 
    u_printf_init(&dev->printf, bo, agx_bo_map(bo));
-   /* Start only after initialization succeeds: no worker may outlive a
-    * failed device open. All allocations made above are still idle. */
-   if (!agx_bo_cache_start(dev)) {
-      agx_finish_device(dev);
-      return false;
-   }
    return true;
 }
 
