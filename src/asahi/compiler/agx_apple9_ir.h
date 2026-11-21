@@ -218,7 +218,7 @@ enum agx_apple9_predicate_extended_condition {
    AGX_APPLE9_PREDICATE_EXT_IEQ = 0x07,
 };
 
-/* EXP-M4-53 separates the six-entry predicate scratch bank from the implicit
+/* The six-entry predicate scratch bank is separate from the implicit
  * execution-mask stack.  PREDICATE_INVERT complements a comparison result;
  * EXEC_MASK_INVERT complements the selected predicate when a push consumes
  * it.  Ordinary nested ifs may therefore reuse bank zero at every depth. */
@@ -238,8 +238,8 @@ enum agx_apple9_predicate_extended_condition {
 #define AGX_APPLE9_EXEC_MASK_FALSE AGX_APPLE9_EXEC_MASK_SOURCE(7)
 
 /* The tested LOOP_MASK_UPDATE form selects the same predicate bank with
- * 0x02,0x06,0x0a,... .  Bit 0x20 is consumer polarity: EXP-M4-53 proves that
- * flipping it together with PREDICATE_INVERT preserves exact loop output. */
+ * 0x02,0x06,0x0a,... .  Bit 0x20 is consumer polarity: flipping it
+ * together with PREDICATE_INVERT preserves exact loop output. */
 #define AGX_APPLE9_LOOP_MASK_INVERT 0x20u
 #define AGX_APPLE9_LOOP_MASK_PREDICATE(bank) (0x02u + 4u * (bank))
 

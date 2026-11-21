@@ -1585,7 +1585,7 @@ unop("fcos_mdg", tfloat, "cosf(3.141592653589793 * src0)")
 # additional ALU that NIR may be able to optimize.
 unop("fsin_agx", tfloat, "sinf(src0 * (6.2831853/4.0))")
 
-# Apple9's reduced-angle sine factor (EXP-M4-55). A separate multiply by
+# Apple9's reduced-angle sine factor. A separate multiply by
 # src0 yields sin(pi*src0/2). Unlike fsin_agx, this does not fold quadrants.
 # Hardware approximates the factor; the expression supplies constant folding.
 unop("fsin_factor_agx", tfloat32,

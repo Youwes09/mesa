@@ -4138,8 +4138,8 @@ agx_apple9_assign_vir_scoreboard_slots(struct agx_apple9_vir_program *program,
       struct agx_apple9_vir_instr *producer = program->instructions[i];
 
       /* Consume an input handoff before allocating a result produced by the
-       * same instruction. EXP-M4-51 proves that a returning atomic may reuse
-       * its pending input's slot, including under full six-slot pressure. */
+       * same instruction. A returning atomic may reuse its pending input's
+       * slot, including under full six-slot pressure. */
       if (handoff_slot[i] != AGX_APPLE9_SCOREBOARD_SLOT_NONE) {
          struct agx_apple9_vir_instr *consumer = program->instructions[i];
          const uint8_t slot = handoff_slot[i];
@@ -4287,7 +4287,7 @@ agx_apple9_pack_get_sr_zext16(unsigned dst, uint8_t selector,
       return false;
 
    /*
-    * EXP-M4-29's local-position, local-index, SIMD-lane, SIMD-group and
+    * The local-position, local-index, SIMD-lane, SIMD-group and
     * total-thread-count controls all use this pair.  The form-0 GET_SR
     * publishes a narrow result, and the immediately following X3 companion
     * zero-extends that result in place.  Selector-only hardware recodes
@@ -4308,8 +4308,7 @@ agx_apple9_pack_get_global_id(unsigned dst, unsigned component,
    if (component >= 3)
       return false;
 
-   /* EXP-0092 and the Apple9 SR isolation corpus independently identify
-    * thread_position_in_grid.{x,y,z} as selectors 0xa0/0xa1/0xa2. */
+   /* thread_position_in_grid.{x,y,z} are selectors 0xa0/0xa1/0xa2. */
    return agx_apple9_pack_get_sr(dst, 0xa0 + component, 0x10, packed);
 }
 
@@ -4339,8 +4338,7 @@ pack_i2f32(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
    const bool retain_source = live & 1u;
 
    /*
-    * EXP-0013 and EXP-0144 hardware-validate the canonical 32-bit integer to
-    * float form, including byte 7 bit 6 as the signed-source selector.
+    * This is the canonical 32-bit integer to float form, including byte 7 bit 6 as the signed-source selector.
     *
     * Earlier code treated byte 1's high nibble as source lifetime because
     * Metal's retained-source cases used 0x17. The shared dependency model
@@ -4379,8 +4377,8 @@ pack_f2i32(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
         instruction->op != AGX_APPLE9_VIR_F2U32))
       return false;
 
-   /* EXP-0013 proves truncation toward zero and the signed/unsigned selector;
-    * EXP-0144 independently locates dst=byte3>>1 and src=byte5>>2. The
+   /* The conversion truncates toward zero. Byte 7 holds the
+    * signed/unsigned selector, dst is byte3>>1 and src is byte5>>2. The
     * continuation's format bit must also match signedness: the signed format
     * with an unsigned operation saturates at 65535, not UINT32_MAX. */
    uint8_t bytes[] = {
@@ -4428,8 +4426,7 @@ pack_fspecial(const struct agx_apple9_vir_instr *instruction, const uint8_t *phy
    /* The function class and datapath jointly select the operation. In
     * particular, class 0 on the ordinary SFU datapath is not reciprocal.
     * Source lifetime and pending dependencies are independent of selection.
-    * EXP-M4-41/42 establish reciprocal and the mask; EXP-0026/0165/0237
-    * document the other datapaths and direct-round selector family. */
+    */
    unsigned family = 0, function = 0;
    unsigned precision = 0x40, rounding = 0;
    switch (instruction->op) {
@@ -4487,8 +4484,7 @@ pack_fspecial(const struct agx_apple9_vir_instr *instruction, const uint8_t *phy
    if (half && reciprocal && !wide_factor)
       rounding |= 0x10;
 
-   /* EXP-M4-54 T8132 matched Metal and destructive source-reuse tests:
-    * ordinary SFU uses bit 5 for source release (0x90 -> 0xb0), whereas
+   /* Ordinary SFU uses bit 5 for source release (0x90 -> 0xb0), whereas
     * reciprocal's distinct datapath uses bit 4 (0x00 -> 0x10).
     * Ordinary SFU bits [4:3] select BF16/FP16/FP32 as 0/1/2. Clearing bit 4
     * changes FP32 to BF16, reading the low 16 bits (often zero), not retaining
@@ -4571,8 +4567,8 @@ pack_shift(const struct agx_apple9_vir_instr *I, const uint8_t *phys,
       set_bits(bytes, 51, 7, source[1] & 127);
    else
       set_bits(bytes, 50, 5, I->immediate & 31);
-   /* Bitfield extract width, as in Metal's extract_bits (EXP-0013,
-    * EXP-M4-13 R6); 0 extends to bit 31. */
+   /* Bitfield extract width, as in Metal's extract_bits; 0 extends to
+    * bit 31. */
    if (!variable && !arithmetic)
       set_bits(bytes, 84, 6, I->immediate >> AGX_APPLE9_SHIFT_WIDTH_SHIFT);
 
@@ -4597,7 +4593,7 @@ bool
 agx_apple9_pack_mov_imm(unsigned dst, unsigned value,
                         struct agx_apple9_packed_instruction *packed)
 {
-   /* EXP-0128/EXP-0140 prove that bit 7 is not an immediate bit: values
+   /* Bit 7 is not an immediate bit: values
     * 0x80..0xff do not write the destination. */
    if (dst >= 16 || value > 0x7f)
       return false;
@@ -4709,7 +4705,7 @@ agx_apple9_pack_device_load_vector_u32_raw(
 
    /* Input completion, linear load sequencing, and the result slot are
     * independent. Bits 12..17 form the common six-bit input mask, for both
-    * dependent indices and pointer pairs (EXP-M4-63). */
+    * dependent indices and pointer pairs. */
    uint8_t bytes[14] = {
       0x67, 0x00, 0x44, 0x00, 0x00, 0x00, 0x20,
       0x00, 0x11, 0x00, 0x00, 0x40, 0x46, 0x00,
@@ -4782,9 +4778,8 @@ agx_apple9_pack_device_store_vector_u32(
    static const uint8_t width_token_bits[] = {0x00, 0x08, 0x0c, 0x06};
    static const uint8_t width_tail[] = {0x11, 0x12, 0x10, 0x10};
 
-   /* EXP-M4-27 supplies the width-2/4 stores and the width-3 load fields.
-    * The symmetric width-3 store composition was then validated by the
-    * exact-output T8132 vector-suite hardware gate. */
+   /* The width-3 store composition mirrors the width-3 load fields and
+    * was validated on hardware with exact output. */
 
    uint8_t bytes[14] = {
       0xe7,
@@ -4838,9 +4833,8 @@ agx_apple9_pack_device_atomic(
     * the destination; byte 9 bits 1..3 carry the tag that record repeats.
     * Pointing both at a word past the spills (with a frame covering it) also
     * passed on hardware; changing the word in only one of them lost every
-    * result. Bits 12..17 are an input scoreboard dependency, independently
-    * established by EXP-M4-50. EXP-M4-47 gives direct witnesses for r0
-    * data/r4 index, r2 data/r1 index, and r3:r4 data/r5 index. Our
+    * result. Bits 12..17 are an input scoreboard dependency, verified
+    * with r0 data/r4 index, r2 data/r1 index, and r3:r4 data/r5 index. Our
     * materialized GPR inputs use the native zero-mask 0x01/0x54 form. A
     * pending scalar load instead names its allocated slot in this same
     * field. */
@@ -5098,7 +5092,7 @@ pack_compact_binary_gprs(uint8_t *bytes, unsigned dst, unsigned a, unsigned b,
        b >= AGX_APPLE9_GPR_COUNT)
       return false;
 
-   /* EXP-M4-38: FALU2, integer min/max, native half ALU, and integer
+   /* FALU2, integer min/max, native half ALU, and integer
     * logic use the same scattered physical-register map.  The descriptor
     * top bits at 15 and 31 are auxiliaries; the actual source bit 6 values
     * live at 40 and 42. */
@@ -5230,8 +5224,8 @@ pack_float2(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
 
    /*
     * Publish the compiler-native compact-float destination state and consume
-    * direct ALU producers through native consumer state 0.  EXP-M4-17 proved
-    * that the source release bits, not their adjacent descriptor auxiliaries,
+    * direct ALU producers through native consumer state 0.  The source release
+    * bits, not their adjacent descriptor auxiliaries,
     * control whether a source remains available to a later instruction.
     *
     * Keep the auxiliary bits at their measured compiler values.  They are
@@ -5706,7 +5700,7 @@ pack_logic(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
    /*
     * The extended logic form carries source lifetime state in and beside its
     * two register descriptors.  These transitions are exact across the
-    * caller-owned EXP-M4-16 pressure kernels (source A survives) and the
+    * caller-owned pressure kernels (source A survives) and the
     * non-coalesced rings (both sources survive):
     *
     *    source A live: bit 15 = 1, bit 19 = 0
@@ -6019,8 +6013,8 @@ pack_select(const struct agx_apple9_vir_instr *instruction, const uint8_t *phys,
    {
       /*
        * This baseline already carries native destination state 1 and
-       * consumer state 0 for four ALU-produced operands.  Load-fed EXP-M4-17
-       * probes found every adjacent source bit output-inert, but caller-owned
+       * consumer state 0 for four ALU-produced operands.  Load-fed probes
+       * found every adjacent source bit output-inert, but caller-owned
        * ALU-fed select programs correlate each pair with source last use.
        * Preserve those native source-state pairs without transplanting the
        * producer bit at instruction bit 21 from another ALU family.  Both
@@ -6160,13 +6154,13 @@ pack_predicate_compare(const struct agx_apple9_vir_instr *instruction,
 
    /* Byte 0 bits 5--7 select one of six predicate scratch banks.  Bit 4 is
     * independently validated producer polarity.  These are not execution-
-    * mask-stack depths: EXP-M4-53 relocates producer/consumer pairs between
-    * banks while preserving exact output. */
+    * mask-stack depths: producer/consumer pairs relocated between banks
+    * keep exact output. */
    const uint8_t opcode =
       0x0a | (predicate_bank << 5) |
       ((instruction->immediate & AGX_APPLE9_PREDICATE_INVERT) ? 0x10 : 0);
    uint8_t control = 0x22 | ((extended_form || loop_form) ? 0x01 : 0);
-   /* EXP-M4-46's native loop latches use control 0x23 even when the compare
+   /* Native loop latches use control 0x23 even when the compare
     * operands are dead at the latch.  The 0x08/0x10 source-release controls
     * are hardware-proven only for the ordinary predicate forms; do not
     * extrapolate them to the loop form. */
@@ -7422,7 +7416,7 @@ pack_vir_instruction_body(const struct agx_apple9_vir_instr *instruction,
       /* The dynamic sample mask addresses a 16-bit register half. Our
        * word-allocated masks occupy the low half; the operand low bit selects
        * the other half, not last use. Bit 69 independently releases the mask
-       * after this read (native Metal lifetime probes, EXP-M4-75). */
+       * after this read. */
       unsigned mask = coords    ? instruction->tile_sample_mask
                       : dynamic ? (phys[instruction->src[0]] << 1)
                                 : 1;

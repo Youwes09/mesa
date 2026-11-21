@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 
-/* EXP-M4-37: native mode 2 materializes an arbitrary 32-bit value into
+/* Native mode 2 materializes an arbitrary 32-bit value into
  * r0..r63. Shared by ordinary compiler lowering and stage ABI setup.
  * Destination bits 0..3 occupy byte 0's high nibble; bits 4..5 occupy
  * byte 2 bits 6..7. Byte 2 bit 5 is a separate native modifier, not a

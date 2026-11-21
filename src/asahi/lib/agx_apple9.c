@@ -431,7 +431,7 @@ agx_apple9_compute_grid_supported(
    if (!abi || !global || !local)
       return false;
 
-   /* CMD-8 and EXP-0092 establish that direct CDM geometry is dispatch state,
+   /* Direct CDM geometry is dispatch state,
     * not part of either launch/archive ABI.  Keep the hardware's public M4
     * threadgroup limit explicit and reject zero axes before encoding. */
    uint64_t threads_per_group = 1;
@@ -859,8 +859,7 @@ agx_apple9_sampler_wrap_supported(unsigned wrap)
 static unsigned
 apple9_sampler_address(unsigned wrap)
 {
-   /* EXP-M4-08: native descriptor address codes, independently captured for
-    * each axis. Wrapping in hardware preserves filtering across seams. */
+   /* Native descriptor address codes, captured for each axis. Wrapping in hardware preserves filtering across seams. */
    switch (wrap) {
    case PIPE_TEX_WRAP_CLAMP_TO_EDGE: return 0;
    case PIPE_TEX_WRAP_REPEAT: return 1;
@@ -1243,7 +1242,7 @@ apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
    assert(varying_components <= AGX_APPLE9_MAX_VARYING_COMPONENTS);
    page[0x2c] = 4 + varying_components;
    /* G16's fragment-state layout moves the coefficient pointer ahead of
-    * the pipeline words. EXP-M4-59 confirms the public binding descriptors. */
+    * the pipeline words. */
    apple9_put_u32(page + 0x04,
                   0x100 | (apple9_cf_binding_count(varying_components) << 16));
    apple9_put_u32(page + 0x08, APPLE9_CF_BINDINGS);

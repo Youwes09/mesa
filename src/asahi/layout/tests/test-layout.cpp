@@ -144,7 +144,7 @@ TEST(Miptree, SmallPartialMiptree3D)
    EXPECT_EQ(layout.sparse_table_size_B, 0x20000);
 }
 
-/* Native EXP-M4-07 byte offsets, reproduced by the shared AGX layout. */
+/* Native byte offsets, reproduced by the shared AGX layout. */
 TEST(Apple9Miptree, CapturedSquareOffsets)
 {
    ail_layout layout = {

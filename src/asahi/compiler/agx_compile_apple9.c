@@ -142,7 +142,7 @@ struct apple9_system_source {
 };
 
 /*
- * EXP-M4-29 establishes two regular compute system-register forms.  Global
+ * There are two regular compute system-register forms.  Global
  * and workgroup positions are direct 32-bit values.  Local position/index,
  * SIMD indices, and workgroup-size components use the same narrow GET_SR plus
  * zero-extension pair and differ only in the selector.  Native asymmetric-3D
@@ -1152,8 +1152,8 @@ apple9_dag_imm(struct apple9_dag_lower *lower, uint32_t value)
 {
    /* Metal normally folds a scalar literal into the consuming ALU operand
     * descriptor.  Until those immediate forms are selected generally, use
-    * the independently executed mode-2 raw write.  EXP-M4-37 validates its
-    * complete six-bit destination field, so the allocator may place the
+    * the independently executed mode-2 raw write.  Its six-bit destination
+    * field is complete, so the allocator may place the
     * result anywhere in r0..r63. */
    if (value > 0x7f)
       return apple9_dag_emit(lower, AGX_APPLE9_VIR_IMM,
@@ -9942,7 +9942,7 @@ agx_nir_lower_apple9_vertex_inputs(
    return lower.valid;
 }
 
-/* EXP-0111 FS-01: fragment SR 0xa0/0xa1 are integer pixel coordinates.
+/* Fragment SR 0xa0/0xa1 are integer pixel coordinates.
  * Gallium advertises upper-left, integer centers; mesa/st performs the API
  * center/origin adjustment. Keep this separate from user interpolation slots.
  * Z/W need their own interpolation model and must not be fabricated. */

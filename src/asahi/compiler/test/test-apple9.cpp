@@ -2371,7 +2371,7 @@ TEST(Apple9Packer, RegisterFormsMatchValidatedProbeTemplates)
       << reason;
    ASSERT_EQ(packed.length, 10u);
 
-   /* Same all-sources-dead envelope as EXP-M4-16's hardware probe. */
+   /* The all-sources-dead envelope, as seen on hardware. */
    uint8_t expected[] = {0x9f, 0x01, 0x54, 0x00, 0x02,
                          0x00, 0x00, 0xa8, 0x17, 0x05};
    uint64_t word = 0;
@@ -8395,7 +8395,7 @@ TEST(Apple9Compiler, VaryingPublicationCapacityIsCheckedBeforeAllocation)
 
 TEST(Apple9Encoding, TileReadMaskUsesDedicatedLastUseBit)
 {
-   /* EXP-M4-75: the mask addresses a 16-bit register half. Its last use is
+   /* The mask addresses a 16-bit register half. Its last use is
     * instruction bit 69, separate from both the address and result slot. */
    agx_apple9_vir_instr load = {};
    load.op = AGX_APPLE9_VIR_TILE_LOAD;

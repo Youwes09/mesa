@@ -542,7 +542,7 @@ apple9_shared_dataflow(struct apple9_shared_ra *ra, nir_shader *nir,
              * may be a longer tuple's leading components, such as a loaded
              * descriptor's address; its split components share those
              * registers and may outlive the tuple, so the load retains them
-             * (EXP-M4-63 validates retained pointer pairs). */
+             * (verified for retained pointer pairs). */
             const struct agx_apple9_operand_constraint *operand =
                apple9_source_constraint(ins, s);
             const bool load = ins->encoding == AGX_APPLE9_ENC_DEVICE_LOAD_INDIRECT ||
@@ -1137,7 +1137,7 @@ apple9_can_fold_wait(const struct agx_apple9_vir_instr *ins,
    /* An instruction that only orders against the producer (it overwrites
     * the result or a borrowed source, or accesses the same memory) waits in
     * its own dependency field before it executes, as a standalone WAIT
-    * would. Atomics' dependency field gates their inputs (EXP-M4-50). */
+    * would. Atomics' dependency field gates their inputs. */
    if (!reads)
       return ins->op != AGX_APPLE9_VIR_DEVICE_ATOMIC;
    if (ins->op == AGX_APPLE9_VIR_DEVICE_ATOMIC &&
@@ -1151,7 +1151,7 @@ apple9_can_fold_wait(const struct agx_apple9_vir_instr *ins,
       return true;
    /* Completion makes the whole producer tuple available. Keeping operands
     * live is independent of releasing its slot, but needs a source release
-    * flag the consumer can clear: EXP-M4-34/35/63 for device loads, system
+    * flag the consumer can clear: hardware tests for device loads, system
     * values and textures; CTS probes for atomic, private, shared and
     * interpolation results, including texture results in integer consumers.
     * Scratch fills keep their materialized form. */

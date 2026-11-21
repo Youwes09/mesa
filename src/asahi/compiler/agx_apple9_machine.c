@@ -241,7 +241,7 @@ static const struct agx_apple9_encoding_info encodings[] = {
              AGX_APPLE9_EVIDENCE_BYTE_DIFF),
       },
    },
-   /* EXP-M4-60: ordinary 32-bit GPRs and a separate word-indexed scratch file.
+   /* Ordinary 32-bit GPRs and a separate word-indexed scratch file.
     * SAVE/FILL each produce a completion tag and accept an incoming wait. */
    [AGX_APPLE9_ENC_SPILL_STORE] =
       {
@@ -293,8 +293,7 @@ static const struct agx_apple9_encoding_info encodings[] = {
          .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
          .operands =
             {
-               /* EXP-M4-37 hardware-validates the complete split six-bit
-                * destination map.  Mode 2 reaches r0..r63; r64+ cannot be
+               /* The split six-bit destination map is complete.  Mode 2 reaches r0..r63; r64+ cannot be
                 * represented by this form. */
                GPR(AGX_APPLE9_OPERAND_DEST, AGX_APPLE9_WIDTH_32, 63, 2,
                    AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_SCATTERED,
