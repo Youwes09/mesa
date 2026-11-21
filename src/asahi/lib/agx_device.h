@@ -355,6 +355,9 @@ uint32_t agx_create_command_queue(struct agx_device *dev,
                                   enum drm_asahi_priority priority);
 int agx_destroy_command_queue(struct agx_device *dev, uint32_t queue_id);
 
+/* 1 if work on the queue failed, 0 if not or unknown, or a negative errno. */
+int agx_queue_faulted(struct agx_device *dev, uint32_t queue_id);
+
 int agx_import_sync_file(struct agx_device *dev, struct agx_bo *bo, int fd);
 int agx_syncobj_error(struct agx_device *dev, uint32_t syncobj);
 int agx_export_sync_file(struct agx_device *dev, struct agx_bo *bo);

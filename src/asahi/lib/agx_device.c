@@ -1031,6 +1031,22 @@ agx_destroy_command_queue(struct agx_device *dev, uint32_t queue_id)
 }
 
 int
+agx_queue_faulted(struct agx_device *dev, uint32_t queue_id)
+{
+   /* Virtio forwards a fixed set of ioctls; there, only failed submissions
+    * report device loss.
+    */
+   if (dev->is_virtio || !(dev->params.features & DRM_ASAHI_FEATURE_QUEUE_STATE))
+      return 0;
+
+   struct drm_asahi_queue_get_state get_state = {.queue_id = queue_id};
+   if (drmIoctl(dev->fd, DRM_IOCTL_ASAHI_QUEUE_GET_STATE, &get_state))
+      return -errno;
+
+   return !!(get_state.state & DRM_ASAHI_QUEUE_STATE_FAULTED);
+}
+
+int
 agx_import_sync_file(struct agx_device *dev, struct agx_bo *bo, int fd)
 {
    struct dma_buf_import_sync_file import_sync_file_ioctl = {

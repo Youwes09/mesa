@@ -317,17 +317,16 @@ hk_check_status(struct vk_device *device)
 
    /* A GPU fault or timeout completes the affected fences with an error, so
     * waits succeed. Without this check the application would read garbage
-    * instead of seeing VK_ERROR_DEVICE_LOST. Guest fences under virtio carry
-    * no error; there only failed submissions report device loss.
+    * instead of seeing VK_ERROR_DEVICE_LOST.
     */
    vk_foreach_queue(vk_queue, &dev->vk) {
       struct hk_queue *queue = container_of(vk_queue, struct hk_queue, vk);
-      int status = queue->completion_initialized
-                      ? hk_queue_completion_status(&queue->completion) : 1;
-      if (status < 0) {
-         return vk_device_set_lost(&dev->vk, "GPU work failed: %s",
-                                   strerror(-status));
-      }
+      int faulted = agx_queue_faulted(&dev->dev, queue->drm.id);
+      if (faulted > 0)
+         return vk_device_set_lost(&dev->vk, "GPU work failed");
+      else if (faulted < 0)
+         return vk_device_set_lost(&dev->vk, "Queue state query failed: %s",
+                                   strerror(-faulted));
    }
 
    return vk_check_printf_status(&dev->vk, &dev->dev.printf);
