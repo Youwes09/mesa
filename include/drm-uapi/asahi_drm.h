@@ -93,6 +93,15 @@ enum drm_asahi_ioctl_id {
 
 	/** @DRM_ASAHI_SUBMIT: Submit commands to a queue. */
 	DRM_ASAHI_SUBMIT,
+
+	/*
+	 * Downstream (G16) extension. The ioctl table cannot have gaps, so
+	 * it takes the next number; userspace must check
+	 * @DRM_ASAHI_FEATURE_QUEUE_STATE before using it.
+	 */
+
+	/** @DRM_ASAHI_QUEUE_GET_STATE: Query the state of a queue. */
+	DRM_ASAHI_QUEUE_GET_STATE,
 };
 
 #define DRM_ASAHI_MAX_CLUSTERS	64
@@ -233,6 +242,12 @@ enum drm_asahi_feature {
 	 * until the fragment stage.
 	 */
 	DRM_ASAHI_FEATURE_FRAGMENT_BARRIER = (1UL) << 29,
+
+	/**
+	 * @DRM_ASAHI_FEATURE_QUEUE_STATE: DRM_IOCTL_ASAHI_QUEUE_GET_STATE is
+	 * available.
+	 */
+	DRM_ASAHI_FEATURE_QUEUE_STATE = (1UL) << 28,
 };
 
 /**
@@ -614,6 +629,35 @@ struct drm_asahi_queue_destroy {
 
 	/** @pad: MBZ */
 	__u32 pad;
+};
+
+/**
+ * enum drm_asahi_queue_state_flags - Queue state flags
+ */
+enum drm_asahi_queue_state_flags {
+	/**
+	 * @DRM_ASAHI_QUEUE_STATE_FAULTED: Work on the queue failed: a command
+	 * faulted, timed out or could not be run. Its fences signalled with an
+	 * error, later commands on the queue were cancelled, and the queue
+	 * refuses new submissions. A queue does not recover from this.
+	 */
+	DRM_ASAHI_QUEUE_STATE_FAULTED = (1U << 0),
+};
+
+/**
+ * struct drm_asahi_queue_get_state - Arguments passed to
+ * DRM_IOCTL_ASAHI_QUEUE_GET_STATE
+ *
+ * Downstream (G16) extension. Requires @DRM_ASAHI_FEATURE_QUEUE_STATE.
+ */
+struct drm_asahi_queue_get_state {
+	/** @queue_id: The queue to query */
+	__u32 queue_id;
+
+	/**
+	 * @state: On return, a combination of &enum drm_asahi_queue_state_flags
+	 */
+	__u32 state;
 };
 
 /**
@@ -1235,6 +1279,7 @@ enum {
 	DRM_IOCTL_ASAHI_QUEUE_CREATE     = DRM_IOCTL_ASAHI(WR, QUEUE_CREATE, queue_create),
 	DRM_IOCTL_ASAHI_QUEUE_DESTROY    = DRM_IOCTL_ASAHI(W, QUEUE_DESTROY, queue_destroy),
 	DRM_IOCTL_ASAHI_SUBMIT           = DRM_IOCTL_ASAHI(W, SUBMIT, submit),
+	DRM_IOCTL_ASAHI_QUEUE_GET_STATE  = DRM_IOCTL_ASAHI(WR, QUEUE_GET_STATE, queue_get_state),
 };
 
 #if defined(__cplusplus)
