@@ -92,7 +92,6 @@ pre_args = [
   '-D__STDC_LIMIT_MACROS',
   '-DPACKAGE_VERSION="@0@"'.format(project_version),
 ]
-
 # Arguments for c or cpp compiler, can be compiler options
 c_cpp_args = []
 
