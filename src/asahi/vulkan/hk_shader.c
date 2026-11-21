@@ -5521,8 +5521,8 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
          shader->b.info.stats.instrs = 1;
       } else {
          if (agx_get_compiler_debug())
-            fprintf(stderr, "Apple9 compute compilation failed: %s\n",
-                    reason ?: "unsupported stage");
+            mesa_loge("hk: Apple9 compute compilation failed: %s",
+                      reason ?: "unsupported stage");
          if (lock)
             simple_mtx_unlock(lock);
          ralloc_free(nir);
@@ -7779,8 +7779,8 @@ hk_apple9_compile_graphics_path(struct hk_device *dev, uint32_t count,
 
 done:
    if (result != VK_SUCCESS && agx_get_compiler_debug())
-      fprintf(stderr, "Apple9 graphics compilation failed: %s\n",
-              reason ?: vk_Result_to_str(result));
+      mesa_loge("hk: Apple9 graphics compilation failed: %s",
+                reason ?: vk_Result_to_str(result));
    if (lock)
       simple_mtx_unlock(lock);
    for (unsigned i = 0; i < count; ++i) {
@@ -8335,7 +8335,7 @@ hk_apple9_eager_variant(struct hk_device *dev, uint32_t count,
    if (hk_apple9_resolve_graphics(dev, api, &state, variant, true, false) !=
           VK_SUCCESS &&
        !precompile)
-      fprintf(stderr, "HK_APPLE9_EAGER_VARIANTS: variant compile failed\n");
+      mesa_loge("hk: compiling a graphics variant ahead of use failed");
    hk_apple9_precompile = false;
    hk_apple9_eager_compile = false;
    if (stub)

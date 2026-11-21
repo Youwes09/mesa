@@ -71,8 +71,7 @@ hk_apple9_tile_helper(struct hk_device *dev,
    nir = agx_nir_apple9_tilebuffer(&agx_nir_options, key);
    if (!agx_compile_apple9_fragment_mrt(nir, NULL, blend, key->count, &part,
                                         &reason)) {
-      fprintf(stderr, "Apple9 tile helper: %s\n",
-              reason ?: "unsupported shader");
+      mesa_loge("hk: Apple9 tile helper: %s", reason ?: "unsupported shader");
       goto done;
    }
    created = calloc(1, sizeof(*created));
@@ -206,8 +205,8 @@ hk_apple9_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    }
    blend[0].samples = key.samples;
    if (tile_bytes > 128) {
-      fprintf(stderr, "Apple9 tile helper: %u tile bytes at %u samples\n",
-              tile_bytes, key.samples);
+      mesa_loge("hk: Apple9 tile helper: %u tile bytes at %u samples",
+                tile_bytes, key.samples);
       goto fail;
    }
    struct hk_apple9_tile_helper *helper =
@@ -241,7 +240,7 @@ hk_apple9_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
        * the compressed one. */
       if (view && (render->raw_color_mask & BITFIELD_BIT(rt))) {
          if (!hk_apple9_image_view_eot(view, key.layered, true, store)) {
-            fprintf(stderr, "Apple9 tile helper: unsupported store image %u\n", rt);
+            mesa_loge("hk: Apple9 tile helper: unsupported store image %u", rt);
             goto fail;
          }
          continue;
@@ -954,13 +953,16 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (hk_apple9_try_cached_draw(cmd, draw_id, draw, native_grid))
       return;
    cmd->apple9_draw_state.valid = false;
-   unsigned failure_line = 0;
+   const char *failure = NULL;
+   VkResult failure_result = VK_ERROR_FEATURE_NOT_PRESENT;
    struct hk_shader *shaders[2] = {NULL, NULL};
-#define UNSUPPORTED()                                                          \
+#define FAIL(result, why)                                                      \
    do {                                                                        \
-      failure_line = __LINE__;                                                 \
-      goto unsupported;                                                        \
+      failure_result = result;                                                 \
+      failure = why;                                                           \
+      goto fail;                                                               \
    } while (0)
+#define UNSUPPORTED(why) FAIL(VK_ERROR_FEATURE_NOT_PRESENT, why)
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
@@ -985,7 +987,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                              dev, MESA_SHADER_GEOMETRY)) ||
           (tes && !hk_apple9_native_stage_available_device(
                              dev, MESA_SHADER_TESS_EVAL)))
-         UNSUPPORTED();
+         UNSUPPORTED("no native shader for the geometry stages");
    }
    /* Without an API fragment shader, the null program only applies the API
     * sample mask. A full mask needs no fragment work at all. */
@@ -1001,7 +1003,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (native_grid && !null_fs) {
       fragment_api = hk_api_shader_native(fragment_api);
       if (!fragment_api)
-         UNSUPPORTED();
+         UNSUPPORTED("no native fragment shader");
    }
    shaders[0] =
       native_grid ? hk_native_producer_main(mesh)
@@ -1019,7 +1021,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
           !shaders[0]->info.mesh.native_task_bridge)) || (tes && gs) ||
         shaders[0]->info.apple9_native_stage != HK_APPLE9_NATIVE_MESH ||
         dyn->rs.polygon_mode != VK_POLYGON_MODE_FILL || gfx->render.view_mask))
-      UNSUPPORTED();
+      UNSUPPORTED("the pipeline cannot run as native mesh");
    /* Geometry and tessellation have already run as compute, and draw their
     * own output topology. Adjacency primitives without a geometry shader
     * draw a generated list without the adjacent vertices.
@@ -1036,23 +1038,22 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
        (!emulated && dyn->ia.primitive_topology > VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
         dyn->ia.primitive_topology !=
            VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA))
-      UNSUPPORTED();
-   enum mesa_prim gs_prim = mesh  ? (shaders[0]->info.mesh.polygon_points
-                                        ? MESA_PRIM_POINTS
-                                        : shaders[0]->info.mesh.prim)
-                            : gs  ? shaders[0]->info.gs.mode
-                            : tes ? gfx->tess.prim
-                            : adjacency ? u_reduced_prim(api_prim)
-                                  : MESA_PRIM_COUNT;
-   bool points = emulated ? gs_prim == MESA_PRIM_POINTS
-                          : dyn->ia.primitive_topology ==
-                               VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-   bool lines = emulated ? (gs_prim == MESA_PRIM_LINES ||
-                            gs_prim == MESA_PRIM_LINE_STRIP)
-                   : (dyn->ia.primitive_topology >=
-                         VK_PRIMITIVE_TOPOLOGY_LINE_LIST &&
-                      dyn->ia.primitive_topology <=
-                         VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
+      UNSUPPORTED("unsupported viewport, scissor or topology state");
+   enum mesa_prim gs_prim =
+      mesh        ? (shaders[0]->info.mesh.polygon_points ? MESA_PRIM_POINTS
+                                                          : shaders[0]->info.mesh.prim)
+      : gs        ? shaders[0]->info.gs.mode
+      : tes       ? gfx->tess.prim
+      : adjacency ? u_reduced_prim(api_prim)
+                  : MESA_PRIM_COUNT;
+   bool points =
+      emulated ? gs_prim == MESA_PRIM_POINTS
+               : dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+   bool lines =
+      emulated
+         ? (gs_prim == MESA_PRIM_LINES || gs_prim == MESA_PRIM_LINE_STRIP)
+         : (dyn->ia.primitive_topology >= VK_PRIMITIVE_TOPOLOGY_LINE_LIST &&
+            dyn->ia.primitive_topology <= VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
    const struct agx_apple9_render_stage *vertex = &shaders[0]->apple9_stage;
    const struct agx_apple9_render_stage *fragment = &shaders[1]->apple9_stage;
    if (null_fs) {
@@ -1070,7 +1071,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          struct agx_ptr cf = hk_pool_usc_alloc(
             cmd, agx_apple9_coefficients_size(&cmd->apple9_null_fs), 64);
          if (!cf.cpu)
-            UNSUPPORTED();
+            FAIL(VK_ERROR_OUT_OF_DEVICE_MEMORY, "out of memory");
          agx_apple9_init_coefficients(&dev->dev, &cmd->apple9_null_fs, cf);
          cmd->apple9_null_fs_vertex_id = vertex->program_id;
       }
@@ -1084,7 +1085,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       if (!agx_apple9_link_render_pipeline(&cmd->apple9_linked, vertex,
                                            fragment)) {
          cmd->apple9_linked_id[0] = cmd->apple9_linked_id[1] = 0;
-         UNSUPPORTED();
+         UNSUPPORTED("the vertex and fragment programs cannot be linked");
       }
       cmd->apple9_linked_id[0] = vertex->program_id;
       cmd->apple9_linked_id[1] = fragment->program_id;
@@ -1161,8 +1162,9 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       pipeline.index_buffer = index_buffer + offset;
       if (pipeline.index_buffer < dev->dev.shader_base ||
           pipeline.index_buffer >= dev->dev.shader_base + (1ull << 32))
-         UNSUPPORTED();
-      hk_apple9_set_index_fetch(&pipeline, draw, index_buffer, index_range, offset);
+         UNSUPPORTED("the index buffer is outside the shader window");
+      hk_apple9_set_index_fetch(&pipeline, draw, index_buffer, index_range,
+                                offset);
       pipeline.primitive_restart =
          emulated ? draw.restart : dyn->ia.primitive_restart_enable;
       pipeline.restart_index =
@@ -1181,7 +1183,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if ((cs->apple9_native_mesh && !append) ||
        (native_grid && ((!append && cs->current != cs->start) ||
                         pipeline.samples != 1 || gfx->render.layer_count != 1)))
-      UNSUPPORTED();
+      UNSUPPORTED("the native mesh stream cannot be appended");
    cs->tib = gfx->render.tilebuffer;
    const struct vk_dynamic_graphics_state *ms_dyn = &cmd->vk.dynamic_graphics_state;
    gfx->apple9_sample_positions =
@@ -1444,7 +1446,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          &record->texture_table[stage], &record->sampler_table[stage], &sysvals);
       hk_cpu_sub_end(t_sub, HK_CPU_SUB_TEXTURES);
       if (!textures_ok)
-         UNSUPPORTED();
+         UNSUPPORTED("texture or sampler state cannot be uploaded");
       t_sub = hk_cpu_sub_begin();
       for (unsigned slot = 0; slot < s->resource_count; ++slot) {
          unsigned binding = s->resource_binding[slot];
@@ -1460,7 +1462,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          else if (binding >= 32 && binding < 32 + ARRAY_SIZE(gfx->vb))
             address = gfx->vb[binding - 32].addr;
          else
-            UNSUPPORTED();
+            UNSUPPORTED("unknown uniform buffer binding");
          record->buffers[stage][slot] = address;
       }
       uint64_t table = hk_pool_upload_last(
@@ -1481,7 +1483,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       &pipeline, record, previous);
    hk_cpu_sub_end(t_sub, HK_CPU_SUB_PREPARE_ALLOC);
    if (!prepared)
-      UNSUPPORTED();
+      UNSUPPORTED("the draw state cannot be prepared");
    cmd->apple9_draw_current = !cmd->apple9_draw_current;
    cmd->apple9_prev_cs = cs;
    pipeline.ppp = record->ppp;
@@ -1492,7 +1494,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    hk_ensure_cs_has_space(cmd, cs, 256);
    if (!hk_apple9_record_draw(cmd, cs, &pipeline, draw, native_grid,
                                mesh, shaders[0], record))
-      UNSUPPORTED();
+      UNSUPPORTED("the draw record cannot be encoded");
    hk_apple9_account_draw(cs, &pipeline, draw, gs || tes || mesh, shaders[1]);
    /* Only ordinary single-view draws reuse prepared state. Other paths
     * still consume dynamic state in their software-stage lowering. */
@@ -1514,16 +1516,11 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       gfx->descriptors.root_dirty = false;
    }
    return;
-unsupported:
-   fprintf(
-      stderr,
-      "Apple9 draw unsupported at %u: native=%d shaders=%d/%d indirect=%d vp=%u sc=%u stencil=%d bias=%d topology=%u\n",
-      failure_line, !!native_grid, !!shaders[0], !!shaders[1], agx_is_indirect(draw.b),
-      dyn->vp.viewport_count, dyn->vp.scissor_count,
-      dyn->ds.stencil.test_enable, dyn->rs.depth_bias.enable,
-      dyn->ia.primitive_topology);
+fail:
+   mesa_loge("hk: Apple9 draw failed: %s", failure);
 #undef UNSUPPORTED
-   vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
+#undef FAIL
+   vk_command_buffer_set_error(&cmd->vk, failure_result);
 }
 
 void

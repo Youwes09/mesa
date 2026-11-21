@@ -417,17 +417,17 @@ hk_apple9_report_dispatch_reject(const char *where, struct agx_grid grid,
    const char *reason = agx_apple9_dispatch_reject_reason(
       launch, indirect, indirect ? grid.ptr : 0, indirect ? NULL : threads,
       local, p);
-   fprintf(stderr,
-           "Apple9 dispatch failed (6): %s %s record rejected: %s; "
-           "grid %u,%u,%u ptr 0x%" PRIx64 " local %u,%u,%u launch 0x%" PRIx64
-           " profile local %u,%u,%u variable %u resources %u\n",
-           where,
-           indirect_local ? "indirect-local" : indirect ? "indirect" : "direct",
-           reason ? reason : "(no check failed)",
-           threads[0], threads[1], threads[2], indirect ? grid.ptr : 0,
-           local[0], local[1], local[2], launch,
-           p->local_size[0], p->local_size[1], p->local_size[2],
-           p->variable_local_size, p->resource_binding_count);
+   mesa_loge("hk: Apple9 %s %s dispatch record rejected: %s; "
+             "grid %u,%u,%u ptr 0x%" PRIx64 " local %u,%u,%u launch 0x%" PRIx64
+             " profile local %u,%u,%u variable %u resources %u\n",
+             where,
+             indirect_local ? "indirect-local"
+             : indirect     ? "indirect"
+                            : "direct",
+             reason ? reason : "(no check failed)", threads[0], threads[1],
+             threads[2], indirect ? grid.ptr : 0, local[0], local[1], local[2],
+             launch, p->local_size[0], p->local_size[1], p->local_size[2],
+             p->variable_local_size, p->resource_binding_count);
 }
 
 void
@@ -448,7 +448,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       return;
 
    if (!body) {
-      fprintf(stderr, "Apple9 dispatch failed (1)\n");
+      mesa_loge("hk: Apple9 dispatch failed: the shader has no body");
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
       return;
    }
@@ -460,7 +460,8 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    if (shader &&
        !hk_apple9_upload_textures(cmd, shader, prerast != NULL, false, false,
                                   &textures, &samplers, &sysvals)) {
-      fprintf(stderr, "Apple9 dispatch failed (2)\n");
+      mesa_loge("hk: Apple9 dispatch failed: texture or sampler state cannot "
+                "be uploaded");
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
       return;
    }
@@ -473,7 +474,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       }
       unsigned binding = p->resource_binding[i];
       if (p->resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_UBO) {
-         fprintf(stderr, "Apple9 dispatch failed (3)\n");
+         mesa_loge("hk: Apple9 dispatch failed: unsupported resource kind");
          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
          return;
       }
@@ -486,7 +487,8 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       } else if (prerast && binding == HK_APPLE9_VERTEX_BUFFERS_BINDING) {
          resources[i] = prerast->vertex_buffers;
       } else {
-         fprintf(stderr, "Apple9 dispatch failed (4)\n");
+         mesa_loge(
+            "hk: Apple9 dispatch failed: unknown uniform buffer binding");
          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
          return;
       }
@@ -512,8 +514,9 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
           &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
           p->resource_binding_count, textures, samplers, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
-          shader && shader->apple9_body == body ? shader->apple9_launch : NULL, &launch)) {
-      fprintf(stderr, "Apple9 dispatch failed (5)\n");
+          shader && shader->apple9_body == body ? shader->apple9_launch : NULL,
+          &launch)) {
+      mesa_loge("hk: Apple9 dispatch failed: out of memory");
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       return;
    }
