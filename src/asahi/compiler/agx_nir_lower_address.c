@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include "compiler/nir/nir_builder.h"
+#include "agx_compile.h"
 #include "agx_nir.h"
 #include "nir.h"
 #include "nir_intrinsics.h"
@@ -52,14 +53,17 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    nir_src *orig_offset = nir_get_io_offset_src(intr);
    nir_scalar base = nir_scalar_resolved(orig_offset->ssa, 0);
    struct match match = {.base = base};
-   bool shift_must_match =
-      (intr->intrinsic == nir_intrinsic_global_atomic) ||
-      (intr->intrinsic == nir_intrinsic_global_atomic_swap);
-   unsigned max_shift = format_shift + (shift_must_match ? 0 : 2);
+   bool atomic = (intr->intrinsic == nir_intrinsic_global_atomic) ||
+                 (intr->intrinsic == nir_intrinsic_global_atomic_swap);
+   unsigned max_shift = format_shift + (atomic ? 0 : 2);
 
-   if (nir_scalar_is_alu(base)) {
+   /* Apple9 indices are unsigned, and atomics take the whole address */
+   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+
+   if (nir_scalar_is_alu(base) && !(apple9 && atomic)) {
       nir_op op = nir_scalar_alu_op(base);
-      if (op == nir_op_ulea_agx || op == nir_op_ilea_agx) {
+      if ((op == nir_op_ulea_agx || op == nir_op_ilea_agx) &&
+          !(apple9 && op == nir_op_ilea_agx)) {
          unsigned shift = nir_scalar_as_uint(nir_scalar_chase_alu_src(base, 2));
          if (shift >= format_shift && shift <= max_shift) {
             match = (struct match){
@@ -87,7 +91,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
             /* See if the reduced scalar is from a sign extension. We must have
              * at least the format shift to avoid underflowing.
              */
-            if (k > INT32_MAX || k < INT32_MIN || shift < format_shift)
+            if (k > INT32_MAX || k < (apple9 ? 0 : INT32_MIN) ||
+                shift < format_shift)
                break;
 
             /* Match the constant */
@@ -95,7 +100,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
                .base = nir_scalar_chase_alu_src(base, 1 - i),
                .offset = nir_get_scalar(nir_imm_int(b, k), 0),
                .shift = shift - format_shift,
-               .sign_extend = true,
+               .sign_extend = !apple9,
             };
 
             break;
