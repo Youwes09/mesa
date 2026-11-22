@@ -83,6 +83,10 @@ writes_reg(const agx_instr *I, unsigned reg)
    agx_foreach_reg_dest(I, d) {
       unsigned count = agx_index_size_16(I->dest[d]);
 
+      /* Export registers are another file */
+      if (I->dest[d].reg_class != RA_GPR)
+         continue;
+
       if (reg >= I->dest[d].value && (reg - I->dest[d].value) < count)
          return true;
    }

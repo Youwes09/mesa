@@ -338,3 +338,17 @@ TEST_F(RegisterAllocate, SpillingLeavesExportsAlone)
       }
    }
 }
+
+/* Writing e0 does not release a source in r0 that is read again */
+TEST_F(RegisterAllocate, ExportWriteKeepsSameNumberedSource)
+{
+   agx_index r0 = agx_register(0, AGX_SIZE_32);
+   agx_instr *I = agx_mov_to(&b, agx_export_register(0, AGX_SIZE_32), r0);
+   I->op = AGX_OPCODE_BITOP;
+   I->truth_table = 0xa;
+   I->src[1] = r0;
+   agx_iadd_to(&b, agx_register(2, AGX_SIZE_32), r0, agx_immediate(1), 0);
+
+   agx_opt_register_cache(ctx);
+   EXPECT_FALSE(I->src[0].discard);
+}
