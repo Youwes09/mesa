@@ -2821,6 +2821,14 @@ agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, UNUSED void *_)
 {
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    nir_def *x = nir_mov_alu(b, alu->src[0], 1);
+
+   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+      /* There is no FP16 arithmetic, so reduce in FP32 */
+      nir_def *res =
+         agx_nir_sincos_apple9(b, nir_f2f32(b, x), alu->op == nir_op_fcos);
+      return nir_f2fN(b, res, alu->def.bit_size);
+   }
+
    nir_def *turns = nir_fmul_imm(b, x, M_1_PI * 0.5f);
 
    if (alu->op == nir_op_fcos)
@@ -3707,6 +3715,11 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, agx_lower_sincos);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, agx_lower_front_face,
             nir_metadata_control_flow, NULL);
+
+   /* Apple9 has no quad derivatives in compute. They use shuffles. */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+      NIR_PASS(_, nir, agx_nir_lower_apple9_compute_derivatives);
+
    NIR_PASS(_, nir, agx_nir_lower_subgroups);
    NIR_PASS(_, nir, nir_lower_all_phis_to_scalar);
 

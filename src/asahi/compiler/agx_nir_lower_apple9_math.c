@@ -9,6 +9,7 @@
 #include "util/set.h"
 #include "agx_apple9_machine.h"
 #include "agx_compile_apple9.h"
+#include "agx_nir.h"
 
 static bool
 apple9_const_operand(nir_scalar s, nir_op op, nir_scalar *value, uint32_t *c)
@@ -501,8 +502,8 @@ agx_nir_lower_apple9_denorms(nir_shader *shader)
  * quarter-turn units, so fold four quadrants into [-1, 1] before evaluating
  * sin(pi*p/2)/p. Work on the magnitude to avoid cancellation for small
  * negative sine inputs. */
-static nir_def *
-lower_sincos(nir_builder *b, nir_def *x, bool cosine)
+nir_def *
+agx_nir_sincos_apple9(nir_builder *b, nir_def *x, bool cosine)
 {
    nir_def *turns = nir_fmul_imm(b, nir_fabs(b, x), 0x1.45f306p-3f);
    nir_def *q = nir_fmul_imm(b, nir_fsub(b, turns, nir_ffloor(b, turns)), 4.0f);
@@ -582,12 +583,12 @@ lower_math(nir_builder *b, nir_instr *instr, UNUSED void *data)
       } else if (alu->def.bit_size == 16) {
          /* Binary16 sine and cosine use the FP32 reduction. */
          nir_def *wide = nir_f2f32(b, x);
-         wide = lower_sincos(b, wide, alu->op == nir_op_fcos);
+         wide = agx_nir_sincos_apple9(b, wide, alu->op == nir_op_fcos);
          components[i] = nir_f2f16(b, wide);
       } else if (alu->op == nir_op_iabs) {
          components[i] = nir_imax(b, x, nir_ineg(b, x));
       } else {
-         components[i] = lower_sincos(b, x, alu->op == nir_op_fcos);
+         components[i] = agx_nir_sincos_apple9(b, x, alu->op == nir_op_fcos);
       }
    }
    return nir_vec(b, components, alu->def.num_components);

@@ -14,6 +14,7 @@
 #include "util/format/u_formats.h"
 #include "agx_apple9_profile.h"
 #include "agx_compile.h"
+#include "agx_nir.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,12 +38,6 @@ bool agx_apple9_texture_offset_mode(uint16_t mode, uint16_t *offset_mode);
 void agx_apple9_set_parallel_ra(bool enable);
 
 bool agx_nir_hoist_apple9_uniform_reads(nir_shader *shader);
-bool agx_nir_lower_apple9_math(nir_shader *shader);
-bool agx_nir_opt_apple9_bounds(nir_shader *shader);
-bool agx_nir_lower_apple9_compute_derivatives(nir_shader *shader);
-bool agx_nir_lower_apple9_denorms(nir_shader *shader);
-bool agx_nir_lower_apple9_denorm_preserve(nir_shader *shader);
-bool agx_nir_lower_apple9_subgroup_denorms(nir_shader *shader);
 
 /* Schedule texture operations without increasing estimated scalar-word
  * pressure. */

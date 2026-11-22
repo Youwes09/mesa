@@ -24,6 +24,7 @@
 
 #include "compiler/nir/nir_builder.h"
 #include "agx_compile_apple9.h"
+#include "agx_nir.h"
 
 #define F32_SIGN     0x80000000u
 #define F32_EXP_MASK 0x7f800000u

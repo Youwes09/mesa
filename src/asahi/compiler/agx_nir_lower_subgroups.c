@@ -6,6 +6,7 @@
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/list.h"
+#include "agx_compile.h"
 #include "agx_nir.h"
 #include "nir_builder_opcodes.h"
 #include "nir_intrinsics.h"
@@ -208,12 +209,72 @@ lower_subgroup_filter(const nir_intrinsic_instr *intr, UNUSED const void *data)
    }
 }
 
+/* Apple9 only has the exclusive iadd scan and full umax reduction, 32-bit */
+static bool
+lower_subgroup_filter_apple9(const nir_intrinsic_instr *intr,
+                             UNUSED const void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_exclusive_scan &&
+       intr->intrinsic != nir_intrinsic_inclusive_scan &&
+       intr->intrinsic != nir_intrinsic_reduce)
+      return true;
+
+   if (intr->def.num_components > 1 || intr->def.bit_size != 32)
+      return true;
+
+   if (intr->intrinsic == nir_intrinsic_reduce) {
+      return nir_intrinsic_reduction_op(intr) != nir_op_umax ||
+             nir_intrinsic_cluster_size(intr) != 0;
+   }
+
+   return nir_intrinsic_reduction_op(intr) != nir_op_iadd;
+}
+
+/* Apple9 lacks quad ballots and active-lane registers, so use a full ballot */
+static bool
+lower_apple9(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
+{
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def *repl;
+
+   switch (intr->intrinsic) {
+   case nir_intrinsic_quad_ballot_agx: {
+      nir_def *ballot = nir_ballot(b, 1, 32, intr->src[0].ssa);
+      nir_def *quad = nir_iand_imm(b, nir_load_subgroup_invocation(b), ~3);
+      repl = nir_iand_imm(b, nir_ushr(b, ballot, quad), 0xf);
+      break;
+   }
+
+   case nir_intrinsic_load_active_subgroup_count_agx:
+      repl = nir_bit_count(b, nir_ballot(b, 1, 32, nir_imm_true(b)));
+      break;
+
+   case nir_intrinsic_load_active_subgroup_invocation_agx: {
+      /* Count the active lanes below this one */
+      nir_def *active = nir_ballot(b, 1, 32, nir_imm_true(b));
+      nir_def *below = nir_iadd_imm(
+         b, nir_ishl(b, nir_imm_int(b, 1), nir_load_subgroup_invocation(b)),
+         -1);
+      repl = nir_bit_count(b, nir_iand(b, active, below));
+      break;
+   }
+
+   default:
+      return false;
+   }
+
+   nir_def_replace(&intr->def, nir_u2uN(b, repl, intr->def.bit_size));
+   return true;
+}
+
 bool
 agx_nir_lower_subgroups(nir_shader *s)
 {
+   bool apple9 = agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9;
+
    /* First, do as much common lowering as we can */
    nir_lower_subgroups_options opts = {
-      .filter = lower_subgroup_filter,
+      .filter = apple9 ? lower_subgroup_filter_apple9 : lower_subgroup_filter,
       .lower_read_first_invocation = true,
       .lower_inverse_ballot = true,
       .lower_to_scalar = true,
@@ -222,6 +283,8 @@ agx_nir_lower_subgroups(nir_shader *s)
       .lower_subgroup_masks = true,
       .lower_reduce = true,
       .lower_vote = true,
+      .lower_quad = apple9,
+      .lower_quad_vote = apple9,
       .ballot_components = 1,
       .ballot_bit_size = 32,
       .subgroup_size = 32,
@@ -232,6 +295,11 @@ agx_nir_lower_subgroups(nir_shader *s)
    /* Then do AGX-only lowerings on top */
    progress |=
       nir_shader_intrinsics_pass(s, lower, nir_metadata_control_flow, NULL);
+
+   if (apple9) {
+      progress |= nir_shader_intrinsics_pass(s, lower_apple9,
+                                             nir_metadata_control_flow, NULL);
+   }
 
    return progress;
 }
