@@ -330,8 +330,8 @@ reserved_size(agx_context *ctx)
       size = ctx->target.spill_reserved_halves;
    else if (ctx->any_quad_divergent_shuffle)
       size = 2;
-   else if (ctx->any_cf)
-      size = 1;
+   else if (ctx->any_cf && ctx->target.isa != AGX_SHADER_ISA_APPLE9)
+      size = 1; /* Apple8 nesting counter in r0l */
    else
       size = 0;
 
