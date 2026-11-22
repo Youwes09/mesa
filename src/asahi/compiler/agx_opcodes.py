@@ -574,6 +574,9 @@ op("f16_to_f32", _, srcs = 1, isa = APPLE9)
 # Two FP32 values to FP16 halves. The destination must not overlap the sources
 op("pack_half", _, srcs = 2, isa = APPLE9)
 
+# Cube face selection: mode 0 major axis and face, modes 1 and 2 face coords
+op("cube", _, srcs = 3, imms = [IMM], isa = APPLE9)
+
 # Packs float channels into one RGB10A2 or RG11B10F word (fourth source null)
 op("pack_format", _, srcs = 4, imms = [FORMAT], isa = APPLE9)
 

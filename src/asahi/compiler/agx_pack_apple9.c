@@ -2771,6 +2771,29 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
    a9_init(p, form, bytes, 20);
 }
 
+/* Cube face selection: major axis, then the face in the next low half */
+static void
+pack_cube(const agx_instr *I, struct a9_packed *p)
+{
+   pack_assert(I, I->imm <= 2);
+   pack_assert(I, agx_channels(I->dest[0]) == (I->imm == 0 ? 2 : 1));
+
+   uint8_t bytes[12] = {0x17, 1, 0x54, 0, 3, 0, 0, 0, 0x50, 0x2f, 0x92, 0};
+   set_bits(bytes, 24, 7, gpr(I, I->dest[0]));
+   set_bits(bytes, 90, 2, I->imm);
+
+   for (unsigned i = 0; i < 3; ++i) {
+      set_bits(bytes, 41 + 9 * i, 7, gpr(I, I->src[i]));
+
+      if (retain(I->src[i])) {
+         set_bits(bytes, 48 + 9 * i, 1, 1);
+         set_bits(bytes, 73 + i, 1, 0);
+      }
+   }
+
+   a9_init(p, AGX_APPLE9_ENC_CUBE, bytes, 12);
+}
+
 /* Fragment outputs and tile access */
 static void
 pack_fragment(const agx_instr *I, struct a9_packed *p)
@@ -3015,6 +3038,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    case AGX_OPCODE_TEXTURE_SAMPLE:
    case AGX_OPCODE_TEXTURE_LOAD:
       pack_texture(I, p);
+      return;
+
+   case AGX_OPCODE_CUBE:
+      pack_cube(I, p);
       return;
 
    case AGX_OPCODE_HADD:

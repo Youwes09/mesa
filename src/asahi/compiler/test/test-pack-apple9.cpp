@@ -1580,3 +1580,23 @@ TEST_F(Apple9Pack, TextureForms)
    I->lod_mode = AGX_LOD_MODE_LOD_GRAD_MIN;
    EXPECT_FALSE(agx_apple9_texture_encodable(I));
 }
+
+/* Cube face selection of r5, r70 and r33: kept sources, then released ones */
+TEST_F(Apple9Pack, Cube)
+{
+   agx_index major = r(40);
+   major.channels_m1 = 1;
+
+   agx_instr *I = agx_cube_to(b, major, r(5), r(70), r(33), 0);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_CUBE);
+   check(I, {0x17, 0x01, 0x54, 0x28, 0x03, 0x0a, 0x19, 0x0b, 0x55, 0x21, 0x92,
+             0x00});
+
+   check(
+      agx_cube_to(b, r(40), k(r(5)), k(r(70)), k(r(33)), 1),
+      {0x17, 0x01, 0x54, 0x28, 0x03, 0x0a, 0x18, 0x09, 0x51, 0x2f, 0x92, 0x04});
+
+   check(
+      agx_cube_to(b, r(40), r(5), r(70), r(33), 2),
+      {0x17, 0x01, 0x54, 0x28, 0x03, 0x0a, 0x19, 0x0b, 0x55, 0x21, 0x92, 0x08});
+}

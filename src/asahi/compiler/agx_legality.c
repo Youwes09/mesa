@@ -788,6 +788,13 @@ apple9_instr_is_legal(const agx_instr *I)
       return reg32(I->dest[0]) && reg32(I->src[0]) && plain(I->src[0]) &&
              reg32(I->src[1]) && plain(I->src[1]);
 
+   case AGX_OPCODE_CUBE:
+      return is_reg(I->dest[0]) && I->dest[0].size == AGX_SIZE_32 &&
+             agx_channels(I->dest[0]) == (I->imm == 0 ? 2 : 1) &&
+             reg32(I->src[0]) && plain(I->src[0]) && reg32(I->src[1]) &&
+             plain(I->src[1]) && reg32(I->src[2]) && plain(I->src[2]) &&
+             I->imm <= 2;
+
    case AGX_OPCODE_PACK_FORMAT:
       for (unsigned s = 0; s < 3; ++s) {
          if (!reg32(I->src[s]) || !plain(I->src[s]))
