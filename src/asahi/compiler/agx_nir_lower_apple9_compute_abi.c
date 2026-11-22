@@ -282,9 +282,9 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
                                  struct agx_apple9_compute_profile *profile)
 {
    struct abi abi = {.profile = profile};
-   *profile = (struct agx_apple9_compute_profile){
-      .abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS,
-   };
+   /* Precompiled profiles are copied byte for byte, padding included */
+   memset(profile, 0, sizeof(*profile));
+   profile->abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
 
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_kernel_input,
             nir_metadata_control_flow, NULL);

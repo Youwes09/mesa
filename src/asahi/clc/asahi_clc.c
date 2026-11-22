@@ -26,6 +26,15 @@
 #include "util/macros.h"
 #include <sys/mman.h>
 
+static nir_def *
+load_kernel_input(nir_builder *b, unsigned num_components, unsigned bit_size,
+                  unsigned offset_B)
+{
+   assert((offset_B & 1) == 0 && "half-aligned");
+   return nir_load_preamble(b, num_components, bit_size, .base = offset_B / 2);
+}
+
+/* Apple8 targets. Apple9 (G16 and G17) is compiled separately */
 const char *targets[] = {"g13g", "g13x"};
 
 #define foreach_target(target)                                                 \
@@ -201,6 +210,95 @@ print_shader(FILE *fp, const char *name, const char *suffix, uint32_t variant,
    free(mem);
 }
 
+static void
+print_apple9_shader(FILE *fp, const char *name, uint32_t variant,
+                    struct agx_shader_part *p)
+{
+   struct agx_precompiled_apple9_kernel_info info;
+   memset(&info, 0, sizeof(info));
+   info.binary_size = p->info.binary_size;
+   info.profile = p->info.apple9_compute;
+
+   size_t sz_B = sizeof(info) + p->info.binary_size;
+   uint32_t *mem = calloc(DIV_ROUND_UP(sz_B, 4), 4);
+
+   memcpy(mem, &info, sizeof(info));
+   memcpy((uint8_t *)mem + sizeof(info), p->binary, p->info.binary_size);
+   nir_precomp_print_blob(fp, name, "g16", variant, mem, sz_B, true);
+   free(mem);
+}
+
+/* Programs not on Apple9: G13 metadata decompression and the scratch helper */
+static bool
+unreachable_on_apple9(nir_function *func)
+{
+   return !strcmp(func->name, "libagx_decompress") ||
+          !strcmp(func->name, "libagx_helper");
+}
+
+static void
+print_apple9_binary_map(FILE *fp_c, FILE *fp_h, const nir_shader *nir)
+{
+   nir_precomp_print_extern_binary_map(fp_h, "libagx", "g16");
+
+   fprintf(fp_c, "const uint32_t *libagx_g16[LIBAGX_NUM_PROGRAMS] = {\n");
+
+   nir_foreach_entrypoint(func, nir) {
+      for (unsigned v = 0; v < nir_precomp_nr_variants(func); ++v) {
+         fprintf(fp_c, "    [");
+         nir_precomp_print_enum_variant_value(fp_c, func, v);
+
+         if (unreachable_on_apple9(func))
+            fprintf(fp_c, "] = NULL,\n");
+         else
+            fprintf(fp_c, "] = %s_%u_g16,\n", func->name, v);
+      }
+   }
+
+   fprintf(fp_c, "};\n\n");
+}
+
+/* Lowering shared by every target, before agx_preprocess_nir */
+static nir_shader *
+build_variant(nir_function *libfunc, unsigned v,
+              const nir_shader_compiler_options *options, nir_shader *lib,
+              const struct nir_precomp_opts *opt)
+{
+   nir_shader *s = nir_precompiled_build_variant(
+      libfunc, MESA_SHADER_COMPUTE, v, options, opt, load_kernel_input);
+
+   nir_link_shader_functions(s, lib);
+   NIR_PASS(_, s, nir_inline_functions);
+   nir_remove_non_entrypoints(s);
+   NIR_PASS(_, s, nir_opt_deref);
+   NIR_PASS(_, s, nir_lower_vars_to_ssa);
+   NIR_PASS(_, s, nir_remove_dead_derefs);
+   NIR_PASS(_, s, nir_remove_dead_variables,
+            nir_var_function_temp | nir_var_shader_temp, NULL);
+   NIR_PASS(_, s, nir_lower_vars_to_explicit_types,
+            nir_var_shader_temp | nir_var_function_temp,
+            glsl_get_cl_type_size_align);
+
+   NIR_PASS(_, s, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
+            glsl_get_cl_type_size_align);
+
+   NIR_PASS(_, s, nir_lower_explicit_io, nir_var_mem_shared,
+            nir_address_format_62bit_generic);
+   return s;
+}
+
+/* After agx_preprocess_nir */
+static void
+lower_variant_io(nir_shader *s)
+{
+   NIR_PASS(_, s, nir_opt_deref);
+   NIR_PASS(_, s, nir_lower_vars_to_ssa);
+   NIR_PASS(_, s, nir_lower_explicit_io,
+            nir_var_shader_temp | nir_var_function_temp | nir_var_mem_shared |
+               nir_var_mem_global,
+            nir_address_format_62bit_generic);
+}
+
 static bool
 gather_atomic_info(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
@@ -233,14 +331,6 @@ remap_variant(nir_function *func, unsigned variant, const char *target)
       return "g13g";
    else
       return target;
-}
-
-static nir_def *
-load_kernel_input(nir_builder *b, unsigned num_components, unsigned bit_size,
-                  unsigned offset_B)
-{
-   assert((offset_B & 1) == 0 && "half-aligned");
-   return nir_load_preamble(b, num_components, bit_size, .base = offset_B / 2);
 }
 
 int
@@ -296,27 +386,7 @@ main(int argc, char **argv)
       nir_precomp_print_layout_struct(fp_h, &opt, libfunc);
 
       for (unsigned v = 0; v < nr_vars; ++v) {
-         nir_shader *s = nir_precompiled_build_variant(
-            libfunc, MESA_SHADER_COMPUTE, v, &agx_nir_options, &opt,
-            load_kernel_input);
-
-         nir_link_shader_functions(s, nir);
-         NIR_PASS(_, s, nir_inline_functions);
-         nir_remove_non_entrypoints(s);
-         NIR_PASS(_, s, nir_opt_deref);
-         NIR_PASS(_, s, nir_lower_vars_to_ssa);
-         NIR_PASS(_, s, nir_remove_dead_derefs);
-         NIR_PASS(_, s, nir_remove_dead_variables,
-                  nir_var_function_temp | nir_var_shader_temp, NULL);
-         NIR_PASS(_, s, nir_lower_vars_to_explicit_types,
-                  nir_var_shader_temp | nir_var_function_temp,
-                  glsl_get_cl_type_size_align);
-
-         NIR_PASS(_, s, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
-                  glsl_get_cl_type_size_align);
-
-         NIR_PASS(_, s, nir_lower_explicit_io, nir_var_mem_shared,
-                  nir_address_format_62bit_generic);
+         nir_shader *s = build_variant(libfunc, v, &agx_nir_options, nir, &opt);
 
          /* Preserve a target-independent helper for ISAs with a separate
           * backend. In particular Apple9 must never execute the Apple8 blob
@@ -377,13 +447,7 @@ main(int argc, char **argv)
          ralloc_free(portable);
 
          agx_preprocess_nir(s);
-
-         NIR_PASS(_, s, nir_opt_deref);
-         NIR_PASS(_, s, nir_lower_vars_to_ssa);
-         NIR_PASS(_, s, nir_lower_explicit_io,
-                  nir_var_shader_temp | nir_var_function_temp |
-                     nir_var_mem_shared | nir_var_mem_global,
-                  nir_address_format_62bit_generic);
+         lower_variant_io(s);
 
          bool has_atomic = false;
          nir_shader_intrinsics_pass(s, gather_atomic_info, nir_metadata_all,
@@ -432,6 +496,24 @@ main(int argc, char **argv)
          }
 
          ralloc_free(s);
+
+         /* Apple9 kernels load their inputs from memory, at the same offsets */
+         if (!unreachable_on_apple9(libfunc)) {
+            nir_shader *s9 =
+               build_variant(libfunc, v, &agx_nir_options_apple9, nir, &opt);
+            agx_preprocess_nir(s9);
+            lower_variant_io(s9);
+
+            struct agx_shader_part compiled;
+            struct agx_shader_key key = {
+               .dev.shader_isa = AGX_SHADER_ISA_APPLE9,
+            };
+
+            agx_compile_shader_nir(s9, &key, &compiled);
+            print_apple9_shader(fp_c, libfunc->name, v, &compiled);
+            free(compiled.binary);
+            ralloc_free(s9);
+         }
       }
    }
 
@@ -444,6 +526,8 @@ main(int argc, char **argv)
       nir_precomp_print_extern_binary_map(fp_h, "libagx", *target);
       nir_precomp_print_binary_map(fp_c, nir, "libagx", *target, remap_variant);
    }
+
+   print_apple9_binary_map(fp_c, fp_h, nir);
 
    nir_precomp_print_extern_binary_map(fp_h, "libagx", "nir");
    nir_precomp_print_binary_map(fp_c, nir, "libagx", "nir", remap_variant);
