@@ -575,6 +575,10 @@ agx_validate(agx_context *ctx, const char *after)
                  after);
          agx_print_instr(I, stderr);
          fail = true;
+      } else if (!agx_instr_is_legal(ctx, I)) {
+         fprintf(stderr, "Operands not encodable on the ISA after %s\n", after);
+         agx_print_instr(I, stderr);
+         fail = true;
       }
 
       if (!agx_validate_sources(I)) {

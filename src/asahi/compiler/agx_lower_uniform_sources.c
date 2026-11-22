@@ -13,9 +13,18 @@
  * This pass lowers invalid uniforms.
  */
 bool
-agx_instr_accepts_uniform(enum agx_opcode op, unsigned src_index,
-                          unsigned value, enum agx_size size)
+agx_instr_accepts_uniform(const agx_context *ctx, agx_instr *I,
+                          unsigned src_index, unsigned value,
+                          enum agx_size size)
 {
+   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+      agx_index uniform =
+         agx_replace_index(I->src[src_index], agx_uniform(value, size));
+      return agx_src_is_legal(ctx, I, src_index, uniform);
+   }
+
+   enum agx_opcode op = I->op;
+
    /* Some instructions only seem able to access uniforms in the low half */
    bool high = value >= 256;
 
@@ -82,7 +91,7 @@ agx_lower_uniform_sources(agx_context *ctx)
 
       agx_foreach_src(I, s) {
          if (I->src[s].type == AGX_INDEX_UNIFORM &&
-             !agx_instr_accepts_uniform(I->op, s, I->src[s].value,
+             !agx_instr_accepts_uniform(ctx, I, s, I->src[s].value,
                                         I->src[s].size)) {
 
             agx_index idx = I->src[s];

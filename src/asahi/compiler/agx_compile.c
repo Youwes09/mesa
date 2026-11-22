@@ -3420,6 +3420,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       agx_print_shader(ctx, stdout);
 
+   agx_set_reg_constraints(ctx);
    AGX_PASS(ctx, agx_ra);
    agx_lower_64bit_postra(ctx);
 

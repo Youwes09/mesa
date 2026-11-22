@@ -95,7 +95,7 @@ pass(agx_context *ctx, void *memctx)
       } else {
          agx_foreach_ssa_src(I, s) {
             if (BITSET_TEST(is_immediate, I->src[s].value) &&
-                agx_instr_accepts_uniform(I->op, s, ctx->out->push_count,
+                agx_instr_accepts_uniform(ctx, I, s, ctx->out->push_count,
                                           I->src[s].size)) {
 
                record_use(memctx, constants, values[I->src[s].value],
@@ -165,7 +165,7 @@ pass(agx_context *ctx, void *memctx)
             _mesa_hash_table_u64_search(constants, values[I->src[s].value]);
 
          if (info && info->promoted &&
-             agx_instr_accepts_uniform(I->op, s, info->uniform,
+             agx_instr_accepts_uniform(ctx, I, s, info->uniform,
                                        I->src[s].size)) {
 
             agx_replace_src(I, s, agx_uniform(info->uniform, I->src[s].size));

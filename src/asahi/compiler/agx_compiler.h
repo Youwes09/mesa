@@ -1160,8 +1160,15 @@ agx_builder_insert(agx_cursor *cursor, agx_instr *I)
    UNREACHABLE("Invalid cursor option");
 }
 
-bool agx_instr_accepts_uniform(enum agx_opcode op, unsigned src_index,
-                               unsigned value, enum agx_size size);
+bool agx_instr_accepts_uniform(const agx_context *ctx, agx_instr *I,
+                               unsigned src_index, unsigned value,
+                               enum agx_size size);
+
+/* ISA operand legality, see agx_legality.c */
+bool agx_instr_is_legal(const agx_context *ctx, const agx_instr *I);
+bool agx_src_is_legal(const agx_context *ctx, agx_instr *I, unsigned s,
+                      agx_index src);
+void agx_set_reg_constraints(agx_context *ctx);
 
 /* Routines defined for AIR */
 void agx_print_index(agx_index index, bool is_float, FILE *fp);
