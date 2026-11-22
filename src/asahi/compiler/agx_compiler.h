@@ -26,8 +26,7 @@ extern "C" {
 /* u0-u255 inclusive, as pairs of 16-bits */
 #define AGX_NUM_UNIFORMS (512)
 
-/* Model up to 32 KiB of spills, in 16-bit slots. This also covers the full
- * Apple9 private frame rather than imposing a smaller allocator-only limit. */
+/* Largest register file of any target: the spill slots of a 32 KiB frame */
 #define AGX_NUM_MODELED_REGS_LOG2 (14)
 #define AGX_NUM_MODELED_REGS      (1 << AGX_NUM_MODELED_REGS_LOG2)
 
@@ -516,6 +515,9 @@ struct agx_isa_target {
 
    /* Uniform registers */
    unsigned uniform_halves;
+
+   /* Spill slots, modeled as the memory register class */
+   unsigned memory_halves;
 
    /* Registers from r0 up that mov_imm can write directly */
    unsigned mov_imm_halves;

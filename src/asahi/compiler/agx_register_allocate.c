@@ -2298,6 +2298,7 @@ agx_ra(agx_context *ctx)
    /* Determine maximum possible registers. We won't exceed this! */
    unsigned max_possible_regs = ctx->target.gpr_halves;
    assert(max_possible_regs > 0 && max_possible_regs <= AGX_NUM_REGS);
+   assert(ctx->target.memory_halves <= AGX_NUM_MODELED_REGS);
 
    /* Compute shaders need to have their entire workgroup together, so our
     * register usage is bounded by the workgroup size.
@@ -2704,7 +2705,7 @@ agx_ra(agx_context *ctx)
              .classes = classes,
              .visited = visited,
              .bound[RA_GPR] = max_regs,
-             .bound[RA_MEM] = AGX_NUM_MODELED_REGS,
+             .bound[RA_MEM] = ctx->target.memory_halves,
              .count[RA_GPR] = &reg_count,
              .count[RA_MEM] = &mem_slot_count,
              .preferred = preferred,
