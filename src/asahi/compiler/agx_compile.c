@@ -2034,6 +2034,18 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_store_local_pixel_agx:
       return agx_emit_local_store_pixel(b, instr);
 
+   case nir_intrinsic_pack_format_agx: {
+      /* RGB10A2 from four channels, RG11B10F from three */
+      assert(agx_is_apple9(b->shader));
+      agx_index c[4] = {agx_null(), agx_null(), agx_null(), agx_null()};
+      for (unsigned i = 0; i < nir_src_num_components(instr->src[0]); ++i)
+         c[i] = agx_extract_nir_src(b, instr->src[0], i);
+
+      return agx_pack_format_to(
+         b, dst, c[0], c[1], c[2], c[3],
+         agx_format_for_pipe(nir_intrinsic_format(instr)));
+   }
+
    case nir_intrinsic_load_tile_pixel_agx:
    case nir_intrinsic_load_local_pixel_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
