@@ -1212,7 +1212,7 @@ void agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission);
 unsigned agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
                                bool alu_reads_result, uint8_t *bytes);
 
-/* Encoding form an allocated instruction packs to, given its wait */
+/* Encoding form of an allocated instruction, or AGX_APPLE9_ENC_PSEUDO */
 enum agx_apple9_encoding agx_apple9_encoding_for(const agx_instr *I);
 
 bool agx_apple9_float_immediate_ok(agx_index idx, bool wide);

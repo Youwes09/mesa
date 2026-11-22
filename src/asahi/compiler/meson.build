@@ -133,6 +133,7 @@ if with_tests
          'test/test-pressure-schedule.cpp',
          'test/test-register-allocate.cpp',
          'test/test-minifloat.cpp',
+         'test/test-insert-waits.cpp',
          'test/test-legality.cpp',
          'test/test-optimizer.cpp',
          'test/test-pack-apple9.cpp',

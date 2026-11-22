@@ -2729,7 +2729,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
       return;
 
    default:
-      pack_assert(I, !"no Apple9 encoding");
+      /* Pseudo-instructions and unencoded operations */
+      p->form = AGX_APPLE9_ENC_PSEUDO;
+      p->length = p->dependency_length = 0;
+      return;
    }
 }
 
@@ -2809,6 +2812,7 @@ agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
    struct a9_packed p;
 
    pack_body(I, &st, &p);
+   pack_assert(I, p.form != AGX_APPLE9_ENC_PSEUDO && "no Apple9 encoding");
    pack_dependency(I, &p);
    memcpy(bytes, p.bytes, p.length);
    return p.length;
