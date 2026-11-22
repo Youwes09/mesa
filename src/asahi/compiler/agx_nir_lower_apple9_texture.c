@@ -591,10 +591,11 @@ agx_apple9_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
    return true;
 }
 
-bool
-agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
-                                     const struct agx_apple9_sampler_key key[32],
-                                     const char **reason)
+/* With bias_applied, the sampler LOD bias is already in the LOD or bias */
+static bool
+lower_texture_offsets(nir_shader *nir,
+                      const struct agx_apple9_sampler_key key[32],
+                      bool bias_applied, const char **reason)
 {
    agx_nir_legalize_apple9_texture_sources(nir);
    nir_function_impl *impl = nir_shader_get_entrypoint(nir);
@@ -654,7 +655,7 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
                s.wrap[c] = nir_imm_int(&b, s.state->wrap[c]);
             s.min_lod = nir_imm_float(&b, s.state->min_lod);
             s.max_lod = nir_imm_float(&b, s.state->max_lod);
-            s.bias = nir_imm_float(&b, s.state->lod_bias);
+            s.bias = nir_imm_float(&b, bias_applied ? 0 : s.state->lod_bias);
             s.border = nir_imm_ivec4(&b, 0, 0, 0, 0);
          } else {
             for (unsigned c = 0; c < s.dims; ++c)
@@ -669,7 +670,9 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIN_LOD);
             s.max_lod =
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MAX_LOD);
-            s.bias = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BIAS);
+            s.bias = bias_applied ? nir_imm_float(&b, 0)
+                                  : agx_apple9_sampler_field(
+                                       &b, tex, AGX_APPLE9_SAMP_BIAS);
             nir_def *preset =
                agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BORDER);
             bool floating =
@@ -819,6 +822,27 @@ agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
    nir->info.flrp_lowered = false;
    nir_progress(progress, impl, nir_metadata_none);
    return true;
+}
+
+bool
+agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
+                                     const struct agx_apple9_sampler_key key[32],
+                                     const char **reason)
+{
+   return lower_texture_offsets(nir, key, false, reason);
+}
+
+/* Runs after agx_nir_lower_texture, which applied the sampler LOD bias */
+bool
+agx_nir_lower_apple9_sampler_state_runtime(nir_shader *nir)
+{
+   const char *reason = NULL;
+   agx_nir_legalize_apple9_texture_sources(nir);
+   bool progress = nir_shader_tex_pass(nir, normalize_runtime_coordinates,
+                                       nir_metadata_control_flow, NULL);
+   progress |= lower_texture_offsets(nir, NULL, true, &reason);
+   assert(reason == NULL && "offsets on cube maps or buffers are invalid");
+   return progress;
 }
 
 /* Vulkan samplers are mutable descriptor contents, available at recording time.

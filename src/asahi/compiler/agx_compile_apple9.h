@@ -453,6 +453,8 @@ bool agx_nir_lower_apple9_runtime_sampler_state(nir_shader *nir,
                                                 const char **reason);
 /* A NULL key reads the runtime sampler metadata; otherwise specialize to key. */
 
+bool agx_nir_lower_apple9_sampler_state_runtime(nir_shader *nir);
+
 bool agx_nir_lower_apple9_texture_offsets(
    nir_shader *nir, const struct agx_apple9_sampler_key key[32],
    const char **reason);
