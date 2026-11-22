@@ -185,7 +185,7 @@ hk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
 
    /* Sparse buffers use a read-only shadow of their backing memory. Devices
     * without sparse residency never access it; in particular, rebinding a
-    * cached BO's shadow is rejected by the experimental Apple9 kernel.
+    * cached BO's shadow is rejected by the G16 kernel driver.
     */
    if (pdev->vk.supported_features.sparseResidencyBuffer &&
        !(mem->bo->flags & AGX_BO_LOW_VA)) {

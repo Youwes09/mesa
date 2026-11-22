@@ -55,7 +55,7 @@ agx_spill_coalesce_prepare(agx_context *ctx)
          n += I->dest[d].memory;
    }
 
-   /* Keep the experimental dense graph bounded; large shaders fall back. */
+   /* Keep the dense graph bounded; large shaders fall back. */
    if (!ctx->spill_home || !n || n > 4096)
       return NULL;
 
