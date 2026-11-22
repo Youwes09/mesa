@@ -1600,3 +1600,27 @@ TEST_F(Apple9Pack, Cube)
       agx_cube_to(b, r(40), r(5), r(70), r(33), 2),
       {0x17, 0x01, 0x54, 0x28, 0x03, 0x0a, 0x19, 0x0b, 0x55, 0x21, 0x92, 0x08});
 }
+
+/* PBE image writes of float and integer data, with their export join */
+TEST_F(Apple9Pack, ImageWrite)
+{
+   agx_index params = e(0);
+   params.channels_m1 = 7;
+   agx_index image = k(r(2));
+   image.channels_m1 = 1;
+
+   agx_instr *I = agx_image_write(b, params, agx_null(), agx_null(), agx_null(),
+                                  image, AGX_DIM_2D, false, false);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_IMAGE_WRITE);
+   check(I, {0xd7, 0x10, 0x54, 0x00, 0x00, 0x40, 0x00, 0x04, 0x21, 0x04, 0x00,
+             0x00, 0x88, 0x3a, 0x89, 0x00, 0x07, 0x12, 0x54, 0x00, 0x03, 0x00});
+
+   params = e(8);
+   params.channels_m1 = 7;
+   image = r(6);
+   image.channels_m1 = 1;
+   check(agx_image_write(b, params, agx_null(), agx_null(), agx_null(), image,
+                         AGX_DIM_2D, false, true),
+         {0xd7, 0x10, 0x54, 0x10, 0x00, 0x40, 0x00, 0x0c, 0x20, 0x04, 0x00,
+          0x00, 0x88, 0x1a, 0x89, 0x00, 0x07, 0x12, 0x54, 0x00, 0x03, 0x00});
+}

@@ -846,8 +846,15 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_TEXTURE_LOAD:
       return texture_ok(I);
 
-   case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_IMAGE_WRITE:
+      /* 2D only, the image index in the low register of an aligned pair */
+      return is_export(I->src[0]) && agx_channels(I->src[0]) == 8 &&
+             agx_is_null(I->src[1]) && agx_is_null(I->src[2]) &&
+             agx_is_null(I->src[3]) && is_reg(I->src[4]) &&
+             I->src[4].size == AGX_SIZE_32 && agx_channels(I->src[4]) == 2 &&
+             I->dim == AGX_DIM_2D && !I->coherent;
+
+   case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_BLOCK_IMAGE_STORE:
       /* No known Apple9 encoding */
       return false;
@@ -966,6 +973,13 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
    case AGX_OPCODE_PACK_HALF:
       /* The first conversion writes the destination before the second reads */
       c[0].early_clobber = true;
+      break;
+
+   case AGX_OPCODE_IMAGE_WRITE:
+      /* Eight exports at 0, 8, 16 or 24, the image in an aligned pair */
+      c[D].max = 2 * 24;
+      c[D].align = 16;
+      c[D + 4].align = 4;
       break;
 
    case AGX_OPCODE_TEXTURE_SAMPLE:

@@ -2794,6 +2794,45 @@ pack_cube(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_CUBE, bytes, 12);
 }
 
+/* PBE write of 32-bit data, then the join of its parameter export */
+static void
+pack_image_write(const agx_instr *I, struct a9_packed *p)
+{
+   agx_index params = I->src[0], image = I->src[4];
+   unsigned base = export_word(I, params);
+   unsigned index = gpr(I, image);
+
+   pack_assert(I, agx_channels(params) == 8 && base <= 24 && !(base & 7));
+   pack_assert(I, agx_channels(image) == 2 && !(index & 1));
+   pack_assert(I, I->dim == AGX_DIM_2D);
+
+   const uint8_t bytes[22] = {
+      0xd7,
+      0x10,
+      0x54,
+      base << 1,
+      0,
+      0x40,
+      0,
+      index << 1,
+      0x20 | (retain(image) ? 0 : 1),
+      0x04,
+      0,
+      0,
+      0x88,
+      I->integer ? 0x1a : 0x3a,
+      0x89,
+      0,
+      0x07,
+      0x12,
+      0x54,
+      0,
+      3,
+      0,
+   };
+   a9_init(p, AGX_APPLE9_ENC_IMAGE_WRITE, bytes, 22);
+}
+
 /* Fragment outputs and tile access */
 static void
 pack_fragment(const agx_instr *I, struct a9_packed *p)
@@ -3042,6 +3081,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_CUBE:
       pack_cube(I, p);
+      return;
+
+   case AGX_OPCODE_IMAGE_WRITE:
+      pack_image_write(I, p);
       return;
 
    case AGX_OPCODE_HADD:

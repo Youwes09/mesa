@@ -467,6 +467,9 @@ typedef struct {
    /* Final st_vary op */
    bool last : 1;
 
+   /* Apple9 image write of integer data */
+   bool integer : 1;
+
    /* Shift for a bitwise or memory op (conflicts with format for memory ops) */
    unsigned shift : 4;
 
@@ -481,7 +484,7 @@ typedef struct {
    bool saturate : 1;
    unsigned mask : 4;
 
-   unsigned padding : 2;
+   unsigned padding : 1;
 } agx_instr;
 
 static inline void

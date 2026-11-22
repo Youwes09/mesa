@@ -949,6 +949,7 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups,
    }
 
    case AGX_OPCODE_IMAGE_WRITE: {
+      assert(!I->integer && "Apple9 only");
       bool Ct, Dt, Rt, Cs;
       unsigned Tt;
       unsigned U;

@@ -302,7 +302,9 @@ agx_read_registers(const agx_instr *I, unsigned s)
       }
 
    case AGX_OPCODE_IMAGE_WRITE:
-      if (s == 0)
+      if (I->src[0].reg_class == RA_EXPORT)
+         return agx_index_size_16(I->src[s]);
+      else if (s == 0)
          return 4 * size /* data */;
       else if (s == 1)
          return agx_coordinate_registers(I, I->src[1].size);

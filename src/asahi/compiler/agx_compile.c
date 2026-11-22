@@ -1553,7 +1553,38 @@ agx_emit_image_store(agx_builder *b, nir_intrinsic_instr *instr)
    b->shader->out->tag_write_disable = false;
 
    return agx_image_write(b, data, coords, lod, base, index, dim,
-                          nir_is_coherent(instr));
+                          nir_is_coherent(instr), false);
+}
+
+/* Coordinates and four data words are exported. The PBE gives the format */
+static agx_instr *
+agx_emit_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   nir_alu_type type = nir_intrinsic_src_type(instr);
+   assert(nir_alu_type_get_type_size(type) == 32 && "lowered to 32-bit data");
+
+   agx_index zero = agx_mov_imm(b, 32, 0);
+   agx_index words[8] = {
+      agx_extract_nir_src(b, instr->src[1], 0),
+      agx_extract_nir_src(b, instr->src[1], 1),
+      agx_extract_nir_src(b, instr->src[2], 0),
+      agx_extract_nir_src(b, instr->src[2], 1),
+      zero,
+      zero,
+      agx_extract_nir_src(b, instr->src[2], 2),
+      agx_extract_nir_src(b, instr->src[2], 3),
+   };
+
+   agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, 8);
+   params.reg_class = RA_EXPORT;
+   agx_emit_collect_to(b, params, 8, words);
+
+   agx_index image = agx_emit_collect(
+      b, 2, (agx_index[]){agx_src_index(b->shader, &instr->src[0]), zero});
+
+   bool integer = nir_alu_type_get_base_type(type) != nir_type_float;
+   return agx_image_write(b, params, agx_null(), agx_null(), agx_null(), image,
+                          AGX_DIM_2D, false, integer);
 }
 
 static enum agx_simd_op
@@ -1756,6 +1787,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_image_store_block_agx:
    case nir_intrinsic_bindless_image_store_block_agx:
       return agx_emit_block_image_store(b, instr);
+
+   case nir_intrinsic_image_store_apple9_agx:
+      return agx_emit_image_store_apple9(b, instr);
 
    case nir_intrinsic_load_workgroup_id:
       return agx_load_compute_dimension(b, dst, instr,

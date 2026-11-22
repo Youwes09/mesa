@@ -323,11 +323,16 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
 
    nir_shader_intrinsics_pass(nir, gather_resource, nir_metadata_all, &abi);
 
-   /* Textures and samplers are in tables pointed to by the first roots */
+   /* Textures, samplers and PBE images are in tables pointed to by the first
+    * roots
+    */
    nir_foreach_function_impl(impl, nir) {
       nir_foreach_block(block, impl) {
          nir_foreach_instr(instr, block) {
-            if (instr->type == nir_instr_type_tex)
+            if (instr->type == nir_instr_type_tex ||
+                (instr->type == nir_instr_type_intrinsic &&
+                 nir_instr_as_intrinsic(instr)->intrinsic ==
+                    nir_intrinsic_image_store_apple9_agx))
                profile->abi = AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
          }
       }

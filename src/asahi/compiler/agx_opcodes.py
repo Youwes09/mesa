@@ -86,6 +86,7 @@ PIXEL_OFFSET = immediate("pixel_offset")
 STACK_SIZE = immediate("stack_size", 'int16_t')
 BYTE_OFFSET = immediate("byte_offset", 'int16_t')
 EXPLICIT_COORDS = immediate("explicit_coords", "bool")
+INTEGER = immediate("integer", "bool")
 
 DIM = enum("dim", {
     0: '1d',
@@ -412,8 +413,10 @@ op("signal_pix", (0x58, 4, _), dests = 0, imms = [WRITEOUT],
 
 # Sources are the data vector, the coordinate vector, the LOD, the bindless
 # table if present (zero for texture state registers), and texture index.
+#
+# On Apple9, source 0 is an export bundle and source 4 the PBE descriptor index
 op("image_write", (0xF1 | (1 << 23), 6, 8), dests = 0, srcs = 5, imms
-   = [DIM, COHERENT], can_eliminate = False, schedule_class = "store")
+   = [DIM, COHERENT, INTEGER], can_eliminate = False, schedule_class = "store")
 
 # Sources are the image base, image index, the offset within shared memory, and
 # the coordinates (or just the layer if implicit).
