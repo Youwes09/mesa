@@ -324,20 +324,18 @@ struct ra_ctx {
 static unsigned
 reserved_size(agx_context *ctx)
 {
-   if (ctx->ra_target.reserved_registers ||
-       ctx->ra_target.spill_reserved_registers)
-      return MAX2(ctx->ra_target.reserved_registers,
-                  ctx->has_spill_pcopy_reserved
-                     ? ctx->ra_target.spill_reserved_registers
-                     : 0);
+   unsigned size;
+
    if (ctx->has_spill_pcopy_reserved)
-      return 8;
+      size = ctx->target.spill_reserved_halves;
    else if (ctx->any_quad_divergent_shuffle)
-      return 2;
+      size = 2;
    else if (ctx->any_cf)
-      return 1;
+      size = 1;
    else
-      return 0;
+      size = 0;
+
+   return MAX2(size, ctx->ra_target.reserved_registers);
 }
 
 static unsigned preferred_phi_register(struct ra_ctx *rctx, unsigned ssa,
@@ -754,8 +752,8 @@ placement_cost(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count)
    /* A constant outside the immediate destination bank needs a staging
     * move. Prefer a directly encodable free register after honouring phi,
     * tuple and operand preferences, but before conserving scarce banks. */
-   unsigned immediate_regs = rctx->shader->ra_target.mov_imm_registers;
-   if (immediate_regs && rctx->instr->op == AGX_OPCODE_MOV_IMM &&
+   unsigned immediate_regs = rctx->shader->target.mov_imm_halves;
+   if (rctx->instr->op == AGX_OPCODE_MOV_IMM &&
        rctx->instr->dest[0].value == ssa)
       cost.materialization = reg + count > immediate_regs;
 
@@ -789,8 +787,8 @@ placement_floor(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count,
       return cost;
    struct agx_reg_constraint c = rctx->preferred[ssa];
    cost.preference = c.min <= c.max && reg > c.max;
-   unsigned immediate_regs = rctx->shader->ra_target.mov_imm_registers;
-   if (immediate_regs && rctx->instr->op == AGX_OPCODE_MOV_IMM &&
+   unsigned immediate_regs = rctx->shader->target.mov_imm_halves;
+   if (rctx->instr->op == AGX_OPCODE_MOV_IMM &&
        rctx->instr->dest[0].value == ssa)
       cost.materialization = reg + count > immediate_regs;
    unsigned limit = MAX2(rctx->demand, *rctx->count[RA_GPR]);
@@ -1966,26 +1964,13 @@ agx_ra_assign_local(struct ra_ctx *rctx)
 
    reserve_live_in(rctx);
 
-   if (rctx->shader->ra_target.reserved_registers ||
-       rctx->shader->ra_target.spill_reserved_registers)
-      BITSET_SET_COUNT(used_regs_gpr, 0, reserved_size(rctx->shader));
-
-   /* Force the nesting counter r0l live throughout shaders using control flow.
-    * This could be optimized (sync with agx_calc_register_demand).
+   /* Keep the reserved registers live throughout: the nesting counter r0l in
+    * shaders using control flow, the zero r0h in shaders using divergent
+    * shuffles, and the parallel copy temporaries when spilling. This could be
+    * optimized (sync with agx_calc_register_demand).
     */
-   if (rctx->shader->any_cf)
-      BITSET_SET(used_regs_gpr, 0);
-
-   /* Force the zero r0h live throughout shaders using divergent shuffles. */
-   if (rctx->shader->any_quad_divergent_shuffle) {
-      assert(rctx->shader->any_cf);
-      BITSET_SET(used_regs_gpr, 1);
-   }
-
-   /* Reserve bottom registers as temporaries for parallel copy lowering */
-   if (rctx->shader->has_spill_pcopy_reserved) {
-      BITSET_SET_COUNT(used_regs_gpr, 0, 8);
-   }
+   assert(!rctx->shader->any_quad_divergent_shuffle || rctx->shader->any_cf);
+   BITSET_SET_COUNT(used_regs_gpr, 0, reserved_size(rctx->shader));
 
    agx_foreach_instr_in_block(block, I) {
       rctx->instr = I;
@@ -2311,13 +2296,14 @@ agx_ra(agx_context *ctx)
       (agx_compiler_debug & AGX_DBG_SPILL) && ctx->key->has_scratch;
 
    /* Determine maximum possible registers. We won't exceed this! */
-   unsigned max_possible_regs = ctx->ra_target.max_registers ?: AGX_NUM_REGS;
+   unsigned max_possible_regs = ctx->target.gpr_halves;
+   assert(max_possible_regs > 0 && max_possible_regs <= AGX_NUM_REGS);
 
    /* Compute shaders need to have their entire workgroup together, so our
     * register usage is bounded by the workgroup size.
     */
    if (mesa_shader_stage_is_compute(ctx->stage) &&
-       !ctx->ra_target.max_registers) {
+       ctx->target.occupancy_table) {
       unsigned threads_per_workgroup;
 
       /* If we don't know the workgroup size, worst case it. TODO: Optimize
@@ -2364,29 +2350,23 @@ agx_ra(agx_context *ctx)
             max_ncomps = MAX2(max_ncomps, agx_index_size_16(I->dest[v]));
          }
 
-         /* Target instructions may need a tuple and all of its split results
-          * live together. Forced spilling must still fit one instruction plus
-          * the target's spill temporaries; no eviction can shrink that set. */
-         if (ctx->ra_target.max_registers) {
-            unsigned needed = MAX2(ctx->ra_target.reserved_registers,
-                                   ctx->ra_target.spill_reserved_registers);
-            agx_foreach_ssa_dest(I, v) {
-               if (!I->dest[v].memory)
-                  needed +=
-                     util_next_power_of_two(agx_index_size_16(I->dest[v]));
-            }
-            agx_foreach_ssa_src(I, s) {
-               if (I->src[s].memory)
-                  continue;
-               bool duplicate = false;
-               for (unsigned prev = 0; prev < s; ++prev)
-                  duplicate |= agx_is_equiv(I->src[prev], I->src[s]);
-               if (!duplicate)
-                  needed +=
-                     util_next_power_of_two(agx_index_size_16(I->src[s]));
-            }
-            d = MAX2(d, needed);
+         /* Spilling must still fit one instruction and the temporaries */
+         unsigned needed = MAX2(ctx->ra_target.reserved_registers,
+                                ctx->target.spill_reserved_halves);
+         agx_foreach_ssa_dest(I, v) {
+            if (!I->dest[v].memory)
+               needed += util_next_power_of_two(agx_index_size_16(I->dest[v]));
          }
+         agx_foreach_ssa_src(I, s) {
+            if (I->src[s].memory)
+               continue;
+            bool duplicate = false;
+            for (unsigned prev = 0; prev < s; ++prev)
+               duplicate |= agx_is_equiv(I->src[prev], I->src[s]);
+            if (!duplicate)
+               needed += util_next_power_of_two(agx_index_size_16(I->src[s]));
+         }
+         d = MAX2(d, needed);
       }
 
       max_possible_regs = ALIGN_POT(d, util_next_power_of_two(max_ncomps));
@@ -2652,7 +2632,7 @@ agx_ra(agx_context *ctx)
     * affecting occupancy. This reduces live range splitting.
     */
    unsigned max_regs =
-      (ctx->key->is_helper || force_spilling || ctx->ra_target.max_registers)
+      (ctx->key->is_helper || force_spilling || !ctx->target.occupancy_table)
          ? max_possible_regs
          : agx_occupancy_for_register_count(demand).max_registers;
 

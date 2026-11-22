@@ -3337,6 +3337,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    ctx->is_preamble = impl->function->is_preamble;
    ctx->out = out;
    ctx->key = key;
+   ctx->target = *agx_get_isa_target(key->dev.shader_isa);
    ctx->stage = nir->info.stage;
    ctx->allocated_vec = _mesa_hash_table_u64_create(ctx);
    ctx->indexed_nir_blocks = rzalloc_array(ctx, agx_block *, impl->num_blocks);

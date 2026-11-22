@@ -132,7 +132,7 @@ pass(agx_context *ctx, void *memctx)
       /* Try to assign a uniform */
       unsigned uniform = ALIGN_POT(ctx->out->push_count, info->align_16);
       unsigned new_count = uniform + info->align_16;
-      if (new_count > AGX_NUM_UNIFORMS)
+      if (new_count > ctx->target.uniform_halves)
          break;
 
       /* Set the base for the first constant. This avoids uploading an extra

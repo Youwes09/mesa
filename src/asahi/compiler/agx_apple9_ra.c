@@ -339,20 +339,16 @@ apple9_shared_dataflow(struct apple9_shared_ra *ra, nir_shader *nir,
    ctx->key = &ra->key;
    ctx->schedule_class = apple9_schedule_class;
    ra->key.has_scratch = true;
+   ra->key.dev.shader_isa = AGX_SHADER_ISA_APPLE9;
+   ctx->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE9);
    ctx->ra_target = (struct agx_ra_target){
-      .max_registers = AGX_APPLE9_HALF_REGISTER_COUNT,
-      /* No permanent reservation: spilling reserves r0..r4 for its copy,
-       * index and memory-swap temporaries. */
+      /* No permanent reservation; spilling reserves its temporaries. */
       .reserved_registers = 0,
-      .spill_reserved_registers = 10,
-      .spill_copy_register = 2,
-      .spill_swap_registers = {6, 8},
       .late_kill_sources = true,
       .preserve_source_kills = true,
       .defer_spill_lowering = true,
       .disable_occupancy_rematerialization = true,
       .spill_partial_phi_sources = true,
-      .mov_imm_registers = 2 * 64,
    };
    list_inithead(&ctx->blocks);
    unsigned block_count = p->last_block->index + 1;

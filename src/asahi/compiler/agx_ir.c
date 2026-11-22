@@ -30,3 +30,42 @@ agx_negate_src_index(agx_instr *I)
       UNREACHABLE("not allowed");
    }
 }
+
+static const struct agx_isa_target agx_apple8_target = {
+   .isa = AGX_SHADER_ISA_APPLE8,
+   .gpr_halves = 256,
+   .uniform_halves = 512,
+   .mov_imm_halves = 256,
+   .spill_reserved_halves = 8,
+   .spill_copy_reg = 2,
+   .spill_swap_regs = {4, 6},
+   .occupancy_table = true,
+};
+
+/* 96 GPRs and 256 uniform words. mov_imm reaches r0-r63 only. Spilling
+ * reserves r0-r4 for its copy, index and memory swap temporaries.
+ */
+static const struct agx_isa_target agx_apple9_target = {
+   .isa = AGX_SHADER_ISA_APPLE9,
+   .gpr_halves = 192,
+   .uniform_halves = 512,
+   .mov_imm_halves = 128,
+   .spill_reserved_halves = 10,
+   .spill_copy_reg = 2,
+   .spill_swap_regs = {6, 8},
+   .occupancy_table = false,
+};
+
+const struct agx_isa_target *
+agx_get_isa_target(enum agx_shader_isa isa)
+{
+   switch (isa) {
+   case AGX_SHADER_ISA_DEFAULT:
+   case AGX_SHADER_ISA_APPLE8:
+      return &agx_apple8_target;
+   case AGX_SHADER_ISA_APPLE9:
+      return &agx_apple9_target;
+   }
+
+   UNREACHABLE("Invalid shader ISA");
+}

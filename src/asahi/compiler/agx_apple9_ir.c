@@ -1437,6 +1437,7 @@ agx_apple9_resolve_phi_edge(const struct agx_apple9_vir_program *program,
    agx_context *ctx = rzalloc(NULL, agx_context);
    if (!ctx)
       return false;
+   ctx->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE9);
    agx_block block = {0};
    list_inithead(&block.instructions);
    agx_builder builder = {.shader = ctx, .cursor = agx_after_block(&block)};

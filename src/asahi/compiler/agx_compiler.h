@@ -504,17 +504,39 @@ typedef struct agx_block {
    uint8_t pass_flags;
 } agx_block;
 
-/* Target allocation limits, in the IR's 16-bit register units. Zero selects
- * the established Apple7/8 defaults. Instruction selection and spill lowering
- * remain target-specific; SSA spilling and register assignment are shared. */
+/* Register files of a shader ISA, in 16-bit units like register numbers */
+struct agx_isa_target {
+   enum agx_shader_isa isa;
+
+   /* General purpose registers */
+   unsigned gpr_halves;
+
+   /* Uniform registers */
+   unsigned uniform_halves;
+
+   /* Registers from r0 up that mov_imm can write directly */
+   unsigned mov_imm_halves;
+
+   /* Low GPRs reserved for spill copies: one copy and two swap registers */
+   unsigned spill_reserved_halves;
+   unsigned spill_copy_reg;
+   unsigned spill_swap_regs[2];
+
+   /* Whether agx_occupancy_for_register_count describes this ISA */
+   bool occupancy_table;
+};
+
+const struct agx_isa_target *agx_get_isa_target(enum agx_shader_isa isa);
+
+/* Allocation policy beyond the register files. Instruction selection and
+ * spill lowering remain target-specific; SSA spilling and register assignment
+ * are shared.
+ */
 struct agx_context;
 
 struct agx_ra_target {
-   unsigned max_registers;
+   /* GPRs from r0 up that are never allocated */
    unsigned reserved_registers;
-   unsigned spill_reserved_registers;
-   unsigned spill_copy_register;
-   unsigned spill_swap_registers[2];
    bool late_kill_sources;
    bool preserve_source_kills;
    bool defer_spill_lowering;
@@ -528,9 +550,6 @@ struct agx_ra_target {
    bool spill_partial_phi_sources;
    bool cost_register_constraints;
    bool disable_uniform_rematerialization;
-   /* Number of half-registers directly addressable by MOV_IMM, or zero when
-    * its destination range does not add a materialization cost. */
-   uint16_t mov_imm_registers;
    /* Optional candidate-search bound, after spilling/SSA repair and before
     * register assignment. False rejects this candidate without allocating it.
     * A caller must retain a completed allocation when using this callback. */
@@ -539,6 +558,7 @@ struct agx_ra_target {
 };
 
 typedef struct agx_context {
+   struct agx_isa_target target;
    struct agx_ra_target ra_target;
    /* Static diagnostic set when constrained register allocation fails. */
    const char *ra_error;

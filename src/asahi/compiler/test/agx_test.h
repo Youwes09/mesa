@@ -17,6 +17,7 @@ agx_test_builder(void *memctx)
 {
    agx_context *ctx = rzalloc(memctx, agx_context);
    list_inithead(&ctx->blocks);
+   ctx->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE8);
 
    agx_block *blk = rzalloc(ctx, agx_block);
    blk->predecessors = UTIL_DYNARRAY_INIT;

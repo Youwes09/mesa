@@ -8,6 +8,16 @@
 #include <gtest/gtest.h>
 #include "agx_test.h"
 
+/* A register file of the given size, used whole rather than in occupancy
+ * steps. */
+static void
+set_register_file(agx_context *ctx, unsigned gpr_halves)
+{
+   ctx->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE8);
+   ctx->target.gpr_halves = gpr_halves;
+   ctx->target.occupancy_table = false;
+}
+
 static void
 test_shared_loop_initializers(bool computed, bool live_source = false)
 {
@@ -22,7 +32,7 @@ test_shared_loop_initializers(bool computed, bool live_source = false)
       ctx->nir = nir.shader;
       ctx->stage = MESA_SHADER_COMPUTE;
       ctx->key = &key;
-      ctx->ra_target.max_registers = 32;
+      set_register_file(ctx, 32);
       ctx->ra_target.cost_register_constraints = true;
       ctx->ra_target.disable_occupancy_rematerialization = true;
       auto entry = agx_test_block(ctx);
@@ -133,7 +143,7 @@ TEST(Apple9SharedRa, PlacementCostsLeaveSpaceForRestrictedDefinitions)
       ctx->nir = nir.shader;
       ctx->stage = MESA_SHADER_COMPUTE;
       ctx->key = &key;
-      ctx->ra_target.max_registers = 32;
+      set_register_file(ctx, 32);
       ctx->ra_target.reserved_registers = 4;
       ctx->ra_target.late_kill_sources = true;
       ctx->ra_target.cost_register_constraints = policy;
@@ -203,10 +213,10 @@ TEST(Apple9SharedRa, ConstantMaterializationRespectsOperandPreferences)
       ctx->nir = nir.shader;
       ctx->stage = MESA_SHADER_COMPUTE;
       ctx->key = &key;
-      ctx->ra_target.max_registers = 192;
+      set_register_file(ctx, 192);
       ctx->ra_target.cost_register_constraints = true;
       ctx->ra_target.disable_occupancy_rematerialization = true;
-      ctx->ra_target.mov_imm_registers = 128;
+      ctx->target.mov_imm_halves = 128;
       auto block = agx_test_block(ctx);
       auto b = agx_init_builder(ctx, agx_after_block(block));
       auto constant =
@@ -241,10 +251,10 @@ TEST(Apple9SharedRa, ConstantMaterializationKeepsPhiEdgePreference)
    ctx->nir = nir.shader;
    ctx->stage = MESA_SHADER_COMPUTE;
    ctx->key = &key;
-   ctx->ra_target.max_registers = 192;
+   set_register_file(ctx, 192);
    ctx->ra_target.cost_register_constraints = true;
    ctx->ra_target.disable_occupancy_rematerialization = true;
-   ctx->ra_target.mov_imm_registers = 128;
+   ctx->target.mov_imm_halves = 128;
    auto entry = agx_test_block(ctx), header = agx_test_block(ctx);
    auto body = agx_test_block(ctx), exit = agx_test_block(ctx);
    header->loop_header = true;
@@ -285,7 +295,7 @@ TEST(Apple9SharedRa, InstructionConstraintsRelocateLiveValuesOutOfFullBanks)
    ctx->nir = nir.shader;
    ctx->stage = MESA_SHADER_COMPUTE;
    ctx->key = &key;
-   ctx->ra_target.max_registers = 128;
+   set_register_file(ctx, 128);
    ctx->ra_target.reserved_registers = 8;
    ctx->ra_target.late_kill_sources = true;
    ctx->ra_target.defer_spill_lowering = true;
@@ -381,11 +391,11 @@ TEST(Apple9SharedRa, SpilledLoopPhisPreserveParallelAssignments)
    ctx->nir = nir.shader;
    ctx->stage = MESA_SHADER_COMPUTE;
    ctx->key = &key;
-   ctx->ra_target.max_registers = 128;
+   set_register_file(ctx, 128);
    ctx->ra_target.reserved_registers = 32;
-   ctx->ra_target.spill_copy_register = 24;
-   ctx->ra_target.spill_swap_registers[0] = 26;
-   ctx->ra_target.spill_swap_registers[1] = 28;
+   ctx->target.spill_copy_reg = 24;
+   ctx->target.spill_swap_regs[0] = 26;
+   ctx->target.spill_swap_regs[1] = 28;
    ctx->ra_target.late_kill_sources = true;
    ctx->ra_target.defer_spill_lowering = true;
    agx_block *entry = agx_test_block(ctx);
@@ -934,7 +944,7 @@ TEST(Apple9SharedRa, RematerializationPreservesHighOperandConstraints)
    ctx->nir = nir.shader;
    ctx->stage = MESA_SHADER_COMPUTE;
    ctx->key = &key;
-   ctx->ra_target.max_registers = 192;
+   set_register_file(ctx, 192);
    ctx->ra_target.reserved_registers = 8;
    ctx->ra_target.late_kill_sources = true;
    ctx->ra_target.defer_spill_lowering = true;
@@ -1014,7 +1024,7 @@ TEST(Apple9SharedRa, RejectsImpossibleConstraintWindows)
       ctx->nir = nir.shader;
       ctx->stage = MESA_SHADER_COMPUTE;
       ctx->key = &key;
-      ctx->ra_target.max_registers = 32;
+      set_register_file(ctx, 32);
       ctx->ra_target.reserved_registers = 10;
       ctx->ra_target.disable_occupancy_rematerialization = true;
       auto block = agx_test_block(ctx);
