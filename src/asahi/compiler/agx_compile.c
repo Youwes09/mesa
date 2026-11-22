@@ -4233,8 +4233,11 @@ agx_preprocess_nir(nir_shader *nir)
 
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
-   /* Lower large arrays to scratch and small arrays to csel */
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 256,
+   /* Lower large arrays to scratch and small to csel. Apple9 has fewer GPRs */
+   unsigned scratch_threshold =
+      agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9 ? 128 : 256;
+
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_threshold,
             glsl_get_natural_size_align_bytes, glsl_get_word_size_align_bytes);
    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
             nir_var_function_temp, ~0);
