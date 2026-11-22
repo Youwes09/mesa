@@ -364,12 +364,11 @@ lower_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex)
          b, 1, 16, address, .align_mul = 2,
          .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
    } else {
-      bias = nir_f2f16(
-         b, nir_load_ubo(b, 1, 32,
-                         nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-                         nir_imm_int(b, AGX_APPLE9_SAMPLER_BIAS_OFFSET +
-                                           tex->sampler_index * 4),
-                         .align_mul = 4, .range = ~0));
+      bias = nir_load_ubo(b, 1, 32,
+                          nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
+                          nir_imm_int(b, AGX_APPLE9_SAMPLER_BIAS_OFFSET +
+                                            tex->sampler_index * 4),
+                          .align_mul = 4, .range = ~0);
    }
 
    nir_def_replace(&tex->def, nir_f2fN(b, bias, tex->def.bit_size));
@@ -1056,11 +1055,55 @@ lower_robustness(nir_builder *b, nir_intrinsic_instr *intr, void *data)
  * can accurately lower descriptors after this pass but before calling
  * the full agx_nir_lower_texture.
  */
+/* lower_sampler_lod_bias in FP32, which the fixed-point LOD word needs */
+static bool
+lower_sampler_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex,
+                              UNUSED void *data)
+{
+   if (!nir_tex_instr_need_sampler(tex) || tex->op == nir_texop_tg4 ||
+       tex->op == nir_texop_lod_bias)
+      return false;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *bias = nir_build_texture_query(b, tex, nir_texop_lod_bias, 1,
+                                           nir_type_float32, false, false);
+
+   if (tex->op == nir_texop_txd) {
+      /* Scale the derivatives by exp2(bias) */
+      nir_def *ddx = nir_f2f32(b, nir_steal_tex_src(tex, nir_tex_src_ddx));
+      nir_def *ddy = nir_f2f32(b, nir_steal_tex_src(tex, nir_tex_src_ddy));
+      nir_def *scale = nir_fexp2(b, bias);
+
+      nir_tex_instr_add_src(tex, nir_tex_src_ddx, nir_fmul(b, ddx, scale));
+      nir_tex_instr_add_src(tex, nir_tex_src_ddy, nir_fmul(b, ddy, scale));
+   } else if (tex->op == nir_texop_tex) {
+      tex->op = nir_texop_txb;
+      nir_tex_instr_add_src(tex, nir_tex_src_bias, bias);
+   } else {
+      nir_tex_src_type src =
+         tex->op == nir_texop_txl ? nir_tex_src_lod : nir_tex_src_bias;
+
+      nir_def *orig = nir_steal_tex_src(tex, src);
+      if (orig)
+         bias = nir_fadd(b, bias, nir_f2f32(b, orig));
+
+      nir_tex_instr_add_src(tex, src, bias);
+   }
+
+   return true;
+}
+
 bool
 agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
                             bool software_buffer_bounds)
 {
    bool progress = false;
+   bool apple9 = agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9;
+
+   if (apple9 && support_lod_bias) {
+      NIR_PASS(progress, s, nir_shader_tex_pass, lower_sampler_lod_bias_apple9,
+               nir_metadata_control_flow, NULL);
+   }
 
    NIR_PASS(progress, s, nir_shader_intrinsics_pass, lower_robustness,
             nir_metadata_control_flow, &software_buffer_bounds);
@@ -1070,7 +1113,7 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
       .lower_invalid_implicit_lod = true,
       .lower_tg4_offsets = true,
       .lower_index_to_offset = true,
-      .lower_sampler_lod_bias = support_lod_bias,
+      .lower_sampler_lod_bias = support_lod_bias && !apple9,
 
       /* Unclear if/how mipmapped 1D textures work in the hardware. */
       .lower_1d = true,
