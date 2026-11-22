@@ -5,6 +5,7 @@
 
 #include "agx_tilebuffer.h"
 #include <assert.h>
+#include "asahi/compiler/agx_compile_apple9.h"
 #include "util/format/u_format.h"
 #include "layout.h"
 
@@ -108,6 +109,43 @@ agx_build_tilebuffer_layout(const enum pipe_format *formats, uint8_t nr_cbufs,
    return tib;
 }
 
+/* Apple9 render targets are whole tile-format words, at most 128 B a sample */
+#define APPLE9_MAX_BYTES_PER_SAMPLE (128)
+
+struct agx_tilebuffer_layout
+agx_build_tilebuffer_layout_apple9(const enum pipe_format *formats,
+                                   uint8_t nr_cbufs, uint8_t nr_samples,
+                                   bool layered)
+{
+   struct agx_tilebuffer_layout tib = {
+      .nr_samples = nr_samples,
+      .layered = layered,
+      .apple9 = true,
+   };
+
+   unsigned offset_B = 0;
+
+   for (unsigned rt = 0; rt < nr_cbufs; ++rt) {
+      tib.logical_format[rt] = formats[rt];
+
+      if (formats[rt] == PIPE_FORMAT_NONE)
+         continue;
+
+      unsigned size_B = 4 * agx_apple9_color_words(formats[rt]);
+
+      if (offset_B + size_B <= APPLE9_MAX_BYTES_PER_SAMPLE) {
+         tib._offset_B[rt] = offset_B;
+         offset_B += size_B;
+      } else {
+         tib.spilled[rt] = true;
+      }
+   }
+
+   tib.sample_size_B = offset_B;
+   tib.tile_size = nr_samples == 4 ? 32 * 16 : 32 * 32;
+   return tib;
+}
+
 /*
  * With attachmentless rendering in Vulkan, the sample count may not known until
  * draw-time. It's convenient to construct an agx_tilebuffer_layout anyway when
@@ -122,9 +160,10 @@ agx_tilebuffer_set_samples(struct agx_tilebuffer_layout *tib,
 {
    assert(tib->nr_samples == 0 && "must not be initialized");
 
-   *tib = agx_build_tilebuffer_layout(tib->logical_format,
-                                      ARRAY_SIZE(tib->logical_format),
-                                      nr_samples, tib->layered);
+   *tib = (tib->apple9 ? agx_build_tilebuffer_layout_apple9
+                       : agx_build_tilebuffer_layout)(
+      tib->logical_format, ARRAY_SIZE(tib->logical_format), nr_samples,
+      tib->layered);
 }
 
 enum pipe_format
@@ -141,6 +180,11 @@ agx_tilebuffer_supports_mask(struct agx_tilebuffer_layout *tib, unsigned rt)
     */
    if (tib->spilled[rt])
       return false;
+
+   /* Apple9 masks whole words, so only formats with a word per channel */
+   if (tib->apple9)
+      return agx_apple9_color_words(tib->logical_format[rt]) ==
+             util_format_get_nr_components(tib->logical_format[rt]);
 
    enum pipe_format fmt = agx_tilebuffer_physical_format(tib, rt);
    return ail_isa_format_supports_mask((enum ail_isa_format)fmt);

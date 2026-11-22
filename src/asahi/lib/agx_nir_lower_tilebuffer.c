@@ -4,7 +4,9 @@
  */
 
 #include <stdint.h>
+#include "asahi/compiler/agx_compile_apple9.h"
 #include "compiler/glsl_types.h"
+#include "compiler/nir/nir_format_convert.h"
 #include "util/format/u_format.h"
 #include "util/macros.h"
 #include "agx_nir_format_helpers.h"
@@ -25,6 +27,91 @@ struct ctx {
    uint8_t outputs_written;
    nir_def *write_samples;
 };
+
+/* Apple9 tile access sample mask, the iteration's sample in a sample loop */
+static nir_def *
+apple9_samples(nir_builder *b, struct agx_tilebuffer_layout *tib)
+{
+   if (tib->nr_samples == 1)
+      return nir_imm_intN_t(b, 1, 16);
+   else
+      return nir_u2u16(b, nir_load_sample_mask_in(b));
+}
+
+static void
+store_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
+                        enum pipe_format logical_format, unsigned rt,
+                        nir_def *value, nir_def *samples, unsigned write_mask)
+{
+   enum pipe_format tile = agx_apple9_color_tile_format(logical_format);
+   unsigned words = agx_apple9_color_words(logical_format);
+
+   if (util_format_is_pure_integer(logical_format)) {
+      value = util_format_is_pure_sint(logical_format) ? nir_i2i32(b, value)
+                                                       : nir_u2u32(b, value);
+   } else {
+      value = nir_f2f32(b, value);
+
+      if (util_format_is_srgb(logical_format)) {
+         nir_def *rgb = nir_format_linear_to_srgb(b, value);
+         value = nir_vector_insert_imm(b, rgb, nir_channel(b, value, 3), 3);
+      }
+   }
+
+   value = nir_pad_vector(b, value, 4);
+   nir_def *packed =
+      nir_u2u32(b, nir_format_pack_rgba(b, util_format_linear(tile), value));
+
+   /* With a word per component, the write mask selects words */
+   if (!agx_tilebuffer_supports_mask(tib, rt))
+      write_mask = BITFIELD_MASK(words);
+
+   nir_store_local_pixel_agx(
+      b, nir_trim_vector(b, packed, words),
+      samples ? samples : apple9_samples(b, tib), nir_undef(b, 2, 16),
+      .base = agx_tilebuffer_offset_B(tib, rt), .write_mask = write_mask,
+      .format = agx_apple9_color_raw_format(words));
+}
+
+static nir_def *
+load_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
+                       uint8_t load_comps, uint8_t bit_size, unsigned rt,
+                       enum pipe_format logical_format)
+{
+   enum pipe_format tile = agx_apple9_color_tile_format(logical_format);
+   unsigned words = agx_apple9_color_words(logical_format);
+   unsigned bits = util_format_get_blocksizebits(tile);
+
+   /* In a sample loop, the mask is narrowed to the iteration's sample */
+   if (tib->nr_samples > 1)
+      b->shader->info.fs.uses_sample_shading = true;
+
+   nir_def *raw = nir_load_local_pixel_agx(
+      b, words, 32,
+      nir_imm_intN_t(b, tib->nr_samples == 1 ? 1 : ALL_SAMPLES, 16),
+      .base = agx_tilebuffer_offset_B(tib, rt),
+      .format = agx_apple9_color_raw_format(words));
+
+   if (bits < 32)
+      raw = nir_u2uN(b, raw, bits);
+
+   nir_def *value = nir_format_unpack_rgba(b, raw, util_format_linear(tile));
+
+   if (util_format_is_srgb(logical_format)) {
+      nir_def *rgb = nir_format_srgb_to_linear(b, value);
+      value = nir_vector_insert_imm(b, rgb, nir_channel(b, value, 3), 3);
+   }
+
+   unsigned comps = util_format_get_nr_components(logical_format);
+   value = nir_trim_vector(b, value, MIN2(load_comps, comps));
+
+   if (util_format_is_pure_integer(logical_format))
+      value = nir_u2uN(b, value, bit_size);
+   else
+      value = nir_f2fN(b, value, bit_size);
+
+   return nir_pad_vector(b, value, load_comps);
+}
 
 static void
 store_tilebuffer(nir_builder *b, struct agx_tilebuffer_layout *tib,
@@ -318,6 +405,9 @@ pass(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          store_memory(b, ctx->bindless_base, tib->nr_samples, logical_format,
                       rt, value, ctx->write_samples);
          ctx->any_memory_stores = true;
+      } else if (tib->apple9) {
+         store_tilebuffer_apple9(b, tib, logical_format, rt, value,
+                                 ctx->write_samples, write_mask);
       } else {
          store_tilebuffer(b, tib, format, logical_format, rt, value,
                           ctx->write_samples, write_mask);
@@ -336,6 +426,9 @@ pass(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
          def = load_memory(b, ctx->bindless_base, tib->nr_samples,
                            intr->num_components, bit_size, rt, logical_format);
+      } else if (tib->apple9) {
+         def = load_tilebuffer_apple9(b, tib, intr->num_components, bit_size,
+                                      rt, logical_format);
       } else {
          def = load_tilebuffer(b, tib, intr->num_components, bit_size, rt,
                                format, logical_format);
