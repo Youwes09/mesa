@@ -1257,6 +1257,10 @@ enum agx_apple9_encoding agx_apple9_encoding_for(const agx_instr *I);
 bool agx_apple9_float_immediate_ok(agx_index idx, bool wide);
 bool agx_apple9_sr_supported(enum agx_sr sr);
 
+/* Export words an Apple9 texture operation reads, and whether it encodes */
+unsigned agx_apple9_texture_params(const agx_instr *I);
+bool agx_apple9_texture_encodable(const agx_instr *I);
+
 #ifndef NDEBUG
 void agx_validate(agx_context *ctx, const char *after_str);
 void agx_validate_ra(agx_context *ctx);

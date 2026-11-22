@@ -249,3 +249,39 @@ TEST_F(InsertWaits, Apple9WaitsAtTheEndOfABlock)
 
    EXPECT_EQ(waits(b->shader).size(), 1u);
 }
+
+/* Texture parameters stay in use until the result, so the next bundle waits */
+TEST_F(InsertWaits, Apple9TextureParameters)
+{
+   agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
+   agx_index params = agx_export_register(0, AGX_SIZE_32);
+   params.channels_m1 = 1;
+
+   agx_instr *x = agx_mov_to(b, agx_export_register(0, AGX_SIZE_32), r(1));
+   agx_instr *y = agx_mov_to(b, agx_export_register(2, AGX_SIZE_32), r(2));
+   x->op = y->op = AGX_OPCODE_BITOP;
+   x->truth_table = y->truth_table = 0xa;
+
+   agx_index dst = r(4);
+   dst.channels_m1 = 3;
+   agx_instr *tex = agx_texture_sample_to(
+      b, dst, params, agx_null(), agx_null(), agx_immediate(0),
+      agx_immediate(0), agx_null(), AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, 0xf,
+      false, false, false, AGX_GATHER_NONE, false);
+
+   /* The next bundle reuses the parameters' registers */
+   agx_instr *z = agx_mov_to(b, agx_export_register(0, AGX_SIZE_32), r(3));
+   z->op = AGX_OPCODE_BITOP;
+   z->truth_table = 0xa;
+   agx_insert_waits(b->shader);
+
+   EXPECT_EQ(x->scoreboard, 0u);
+   EXPECT_EQ(y->scoreboard, 0u);
+   EXPECT_NE(tex->scoreboard, 0u);
+   EXPECT_FALSE(tex->wait);
+   EXPECT_TRUE(waits(b->shader).empty());
+
+   /* The export move waits for the texture in its own dependency field */
+   EXPECT_TRUE(z->wait);
+   EXPECT_EQ(z->wait_slot, tex->scoreboard);
+}

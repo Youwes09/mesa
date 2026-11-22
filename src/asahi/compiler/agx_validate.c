@@ -168,6 +168,10 @@ agx_write_registers(const agx_instr *I, unsigned d)
    case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_TEXTURE_LOAD:
    case AGX_OPCODE_TEXTURE_SAMPLE:
+      /* Apple9 parameters are in export registers, gathers write all four */
+      if (I->src[0].reg_class == RA_EXPORT)
+         return (I->gather ? 4 : util_bitcount(I->mask)) * size;
+
       /* Even when masked out, these clobber 4 registers.
        *
        * TODO: Figure out the sparse interaction.
@@ -306,7 +310,10 @@ agx_read_registers(const agx_instr *I, unsigned s)
    case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_TEXTURE_LOAD:
    case AGX_OPCODE_TEXTURE_SAMPLE:
-      if (s == 0) {
+      if (I->src[0].reg_class == RA_EXPORT) {
+         /* Apple9: a parameter bundle, table indices and an offset */
+         return s == 0 ? agx_apple9_texture_params(I) * 2 : size;
+      } else if (s == 0) {
          return agx_coordinate_registers(I, I->src[0].size);
       } else if (s == 1) {
          /* LOD */

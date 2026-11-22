@@ -1464,3 +1464,119 @@ TEST_F(Apple9Pack, ThreadgroupIndexRegister)
       {0x67, 0x02, 0x54, 0x0a, 0x0c, 0x1c, 0x80, 0, 0x44, 0x0d, 0, 0xc0, 0x08,
        0});
 }
+
+/* Texture operations. Register textures are r40, register samplers r41 */
+struct texture_case {
+   enum agx_opcode op;
+   enum agx_dim dim;
+   enum agx_lod_mode lod;
+   bool shadow, query;
+   enum agx_gather gather;
+   unsigned mask, slot, dst, coord, tex, smp;
+   bool reg_tex, reg_smp;
+   int offset;
+   std::vector<uint8_t> bytes;
+};
+
+TEST_F(Apple9Pack, Texture)
+{
+   const enum agx_opcode S = AGX_OPCODE_TEXTURE_SAMPLE;
+   const enum agx_opcode L = AGX_OPCODE_TEXTURE_LOAD;
+
+   /* clang-format off */
+   static const texture_case cases[] = {
+      /* Implicit LOD, gather, partial result */
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x00, 0x00, 0x80, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, false, false, AGX_GATHER_A, 0xf, 3, 59, 16, 31, 1, false, false, -1,
+       {0xdd, 0xf8, 0x4c, 0xbe, 0x90, 0x6c, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, false, false, AGX_GATHER_NONE, 0x9, 4, 20, 24, 6, 3, false, false, -1,
+       {0xa5, 0x98, 0x0c, 0xa3, 0xb1, 0x90, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      /* Explicit LOD, bias with a minimum, LOD query */
+      {S, AGX_DIM_2D, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x00, 0x01, 0x80, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD_BIAS_MIN, false, false, AGX_GATHER_NONE, 0xf, 2, 40, 8, 17, 16, false, false, -1,
+       {0x45, 0xc0, 0x4c, 0xb9, 0xb8, 0x48, 0x04, 0x08, 0x80, 0x00, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD_BIAS, false, true, AGX_GATHER_NONE, 0x3, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xa8, 0xb2, 0x24, 0x04, 0x00, 0x80, 0x01, 0x20, 0x00, 0x01, 0x00}},
+      /* Cubes, arrays, 3D */
+      {S, AGX_DIM_CUBE, AGX_LOD_MODE_LOD_MIN, true, false, AGX_GATHER_NONE, 0x1, 5, 3, 28, 9, 15, false, false, -1,
+       {0x1d, 0xa4, 0x0c, 0xa3, 0x97, 0xb4, 0x20, 0x03, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_CUBE_ARRAY, AGX_LOD_MODE_AUTO_LOD_BIAS, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x1c, 0x00, 0x80, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D_ARRAY, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_G, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xac, 0x92, 0x24, 0x08, 0x05, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      /* Texel fetches */
+      {L, AGX_DIM_3D, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x98, 0x01, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      {L, AGX_DIM_2D_MS_ARRAY, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0xa0, 0x14, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      /* Offsets (1, -1, 0) */
+      {S, AGX_DIM_3D, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, 0x0f1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x19, 0x02, 0x80, 0x89, 0x10, 0x00, 0x01, 0x0e}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD_BIAS, false, false, AGX_GATHER_NONE, 0xf, 2, 40, 8, 17, 16, false, false, 0x0f1,
+       {0x45, 0xc0, 0x4c, 0xb9, 0xb8, 0x48, 0x81, 0x02, 0x80, 0x88, 0x10, 0x00, 0x01, 0x0e}},
+      /* Gradients */
+      {S, AGX_DIM_2D, AGX_LOD_MODE_LOD_GRAD, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x04, 0x01, 0x80, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D_ARRAY, AGX_LOD_MODE_LOD_GRAD, true, false, AGX_GATHER_NONE, 0x1, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xa0, 0x92, 0x24, 0x2c, 0x05, 0x80, 0x01, 0x00, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_2D, AGX_LOD_MODE_LOD_GRAD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 1, 5, false, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x14, 0x01, 0x80, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      {S, AGX_DIM_3D, AGX_LOD_MODE_LOD_GRAD, false, false, AGX_GATHER_NONE, 0xf, 4, 20, 16, 6, 3, false, false, -1,
+       {0xa5, 0x98, 0x0c, 0xba, 0xb1, 0x90, 0x9c, 0x01, 0x00, 0x01, 0x10, 0x00, 0x01, 0x00}},
+      /* Register texture, then register texture and sampler */
+      {L, AGX_DIM_2D, AGX_LOD_MODE_LOD_MIN, false, false, AGX_GATHER_NONE, 0xf, 1, 13, 4, 0, 5, true, false, -1,
+       {0x6d, 0x84, 0x0c, 0xb8, 0xb2, 0x24, 0x80, 0x24, 0x50, 0x03, 0x80, 0x00, 0x01, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40, 0x00}},
+      {S, AGX_DIM_2D_ARRAY, AGX_LOD_MODE_AUTO_LOD_BIAS, false, false, AGX_GATHER_NONE, 0xf, 3, 59, 16, 0, 0, true, true, -1,
+       {0xdd, 0x80, 0x4c, 0xba, 0xb2, 0x6c, 0x0c, 0x04, 0x5a, 0x02, 0x90, 0x01, 0x01, 0x00, 0xa0, 0x28, 0x00, 0x00, 0x40, 0x00}},
+   };
+   /* clang-format on */
+
+   for (const texture_case &c : cases) {
+      unsigned comps = c.gather != AGX_GATHER_NONE ? 4 : util_bitcount(c.mask);
+      agx_index dst = r(c.dst);
+      dst.channels_m1 = comps - 1;
+
+      agx_instr *I = agx_texture_sample_to(
+         b, dst, e(c.coord), agx_null(), agx_null(),
+         c.reg_tex ? (c.reg_smp ? k(r(40)) : r(40)) : agx_immediate(c.tex),
+         c.reg_smp ? k(r(41)) : agx_immediate(c.smp),
+         c.offset >= 0 ? agx_immediate(c.offset) : agx_null(), c.dim, c.lod,
+         c.mask, c.offset >= 0, c.shadow, c.query, c.gather, false);
+      I->op = c.op;
+      I->scoreboard = c.slot;
+      I->src[0].channels_m1 = agx_apple9_texture_params(I) - 1;
+
+      EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
+                            ? AGX_APPLE9_ENC_TEXTURE_SAMPLE
+                         : c.lod == AGX_LOD_MODE_LOD_GRAD ||
+                               c.lod == AGX_LOD_MODE_LOD_GRAD_MIN
+                            ? AGX_APPLE9_ENC_TEXTURE_GRAD
+                            : AGX_APPLE9_ENC_TEXTURE_LOD);
+      check(I, c.bytes);
+   }
+}
+
+/* Forms without a measured mode are not encodable */
+TEST_F(Apple9Pack, TextureForms)
+{
+   agx_instr *I = agx_texture_sample_to(
+      b, r(0), e(0), agx_null(), agx_null(), agx_immediate(0), agx_immediate(0),
+      agx_null(), AGX_DIM_CUBE, AGX_LOD_MODE_LOD_MIN, 1, false, false, false,
+      AGX_GATHER_NONE, false);
+   EXPECT_TRUE(agx_apple9_texture_encodable(I));
+
+   /* Cubes have no texel fetch, 3D no minimum LOD, cubes no offsets */
+   I->op = AGX_OPCODE_TEXTURE_LOAD;
+   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+
+   I->op = AGX_OPCODE_TEXTURE_SAMPLE;
+   I->offset = true;
+   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+
+   I->offset = false;
+   I->dim = AGX_DIM_3D;
+   I->lod_mode = AGX_LOD_MODE_LOD_GRAD_MIN;
+   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+}

@@ -2452,6 +2452,325 @@ pack_pack_format(const agx_instr *I, struct a9_packed *p)
            bytes, 14);
 }
 
+/* Textures read parameter bundles from exports, waiting on export group 0 */
+
+/* Texture dimension classes of the sample modes */
+enum a9_tex_dim {
+   A9_TEX_2D = 0,
+   A9_TEX_CUBE = 1,
+   A9_TEX_2D_ARRAY = 2,
+   A9_TEX_3D = 3,
+   A9_TEX_CUBE_ARRAY = 4,
+};
+
+static enum a9_tex_dim
+a9_tex_dim(const agx_instr *I)
+{
+   switch (I->dim) {
+   case AGX_DIM_2D:
+   case AGX_DIM_2D_MS:
+      return A9_TEX_2D;
+   case AGX_DIM_2D_ARRAY:
+   case AGX_DIM_2D_MS_ARRAY:
+      return A9_TEX_2D_ARRAY;
+   case AGX_DIM_3D:
+      return A9_TEX_3D;
+   case AGX_DIM_CUBE:
+      return A9_TEX_CUBE;
+   case AGX_DIM_CUBE_ARRAY:
+      return A9_TEX_CUBE_ARRAY;
+   default:
+      UNREACHABLE("1D textures are lowered to 2D");
+   }
+}
+
+/* The offset variant of a sample mode */
+static bool
+texture_offset_mode(uint16_t mode, uint16_t *offset_mode)
+{
+   static const uint16_t modes[][2] = {
+      {0x0000, 0x0201}, /* implicit LOD, gather */
+      {0x0004, 0x0281}, /* bias */
+      {0x0100, 0x0211}, /* explicit LOD */
+      {0x0508, 0x0651}, /* 2D array, explicit LOD */
+      {0x0104, 0x0209}, /* gradient */
+      {0x0114, 0x0249}, /* gradient, minimum LOD */
+      {0x0020, 0x0221}, /* compare, implicit LOD */
+      {0x0024, 0x02a1}, /* compare, bias */
+      {0x0120, 0x0231}, /* compare, explicit LOD */
+      {0x0124, 0x0229}, /* compare, gradient */
+      {0x0180, 0x0291}, /* 3D, implicit LOD */
+      {0x0190, 0x0299}, /* 3D, bias */
+      {0x2188, 0x0219}, /* 3D, explicit LOD */
+      {0x019c, 0x0319}, /* 3D, gradient */
+   };
+
+   for (unsigned m = 0; m < ARRAY_SIZE(modes); ++m) {
+      if (modes[m][0] == mode) {
+         *offset_mode = modes[m][1];
+         return true;
+      }
+   }
+
+   return false;
+}
+
+static bool
+texture_gradient(const agx_instr *I)
+{
+   return I->lod_mode == AGX_LOD_MODE_LOD_GRAD ||
+          I->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN;
+}
+
+/* Words of the parameter bundle a texture operation reads */
+unsigned
+agx_apple9_texture_params(const agx_instr *I)
+{
+   if (texture_gradient(I))
+      return I->dim == AGX_DIM_3D ? 16 : 8;
+   else if (I->op == AGX_OPCODE_TEXTURE_SAMPLE &&
+            I->lod_mode == AGX_LOD_MODE_AUTO_LOD && (I->dim == AGX_DIM_2D) &&
+            !I->shadow)
+      return 2;
+   else
+      return 4;
+}
+
+/* Properties of a texture operation that select its mode */
+struct a9_texture {
+   bool gradient, lod, fetch, bias, min_lod, ms, gather;
+   enum a9_tex_dim dim;
+   unsigned words;
+};
+
+static struct a9_texture
+a9_texture(const agx_instr *I)
+{
+   struct a9_texture t = {
+      .gradient = texture_gradient(I),
+      .words = agx_apple9_texture_params(I),
+      .ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY,
+      .bias = I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS ||
+              I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN,
+      .min_lod = I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN ||
+                 I->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN,
+      .gather = I->gather != AGX_GATHER_NONE,
+      .dim = a9_tex_dim(I),
+   };
+
+   t.lod = !t.gradient && t.words == 4;
+   t.fetch = I->op == AGX_OPCODE_TEXTURE_LOAD && !t.ms;
+   return t;
+}
+
+/* Sample mode in bytes 6 and 7 without an offset, if measured */
+static bool
+texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
+{
+   uint16_t mode = 0;
+
+   if (t->gradient)
+      mode = 0x0104;
+   else if (t->lod)
+      mode = t->bias ? 0x0004 : 0x0100;
+
+   /* Arrays share word 3 between the layer and the LOD */
+   if (!t->gradient && t->dim == A9_TEX_2D_ARRAY)
+      mode = t->bias ? 0x040c : 0x0508;
+
+   if (!t->gradient && t->dim == A9_TEX_3D)
+      mode = t->bias ? 0x0190 : 0x2188;
+   else if (!t->gradient && t->dim == A9_TEX_CUBE)
+      mode = t->bias ? 0x0014 : 0x0300;
+   else if (!t->gradient && t->dim == A9_TEX_CUBE_ARRAY)
+      mode = t->bias ? 0x001c : 0x0308;
+
+   if (t->fetch) {
+      if (!t->lod || I->shadow || t->bias || t->dim == A9_TEX_CUBE)
+         return false;
+
+      mode = t->dim == A9_TEX_2D_ARRAY ? 0x24a0
+             : t->dim == A9_TEX_3D     ? 0x0198
+                                       : 0x2480;
+   }
+
+   if (t->gradient && t->dim == A9_TEX_2D_ARRAY)
+      mode = 0x050c;
+   else if (t->gradient && t->dim == A9_TEX_3D)
+      mode = 0x019c;
+
+   if (t->min_lod) {
+      if (t->dim == A9_TEX_3D)
+         return false;
+
+      if (t->gradient) {
+         mode |= 0x10;
+      } else {
+         /* Bias with a minimum LOD, both in parameter word 3 */
+         if (!t->bias || t->dim != A9_TEX_2D)
+            return false;
+
+         mode = 0x0804;
+      }
+   }
+
+   if (I->shadow)
+      mode |= 0x20;
+
+   if (t->ms) {
+      /* Integer X and Y, then a packed layer and sample word */
+      if (I->op != AGX_OPCODE_TEXTURE_LOAD || !t->lod || t->bias)
+         return false;
+
+      mode = t->dim == A9_TEX_2D_ARRAY ? 0x14a0 : 0x1480;
+   }
+
+   if (I->offset && !texture_offset_mode(mode, &mode))
+      return false;
+
+   *out = mode;
+   return true;
+}
+
+/* Whether the texture operation has a measured encoding */
+bool
+agx_apple9_texture_encodable(const agx_instr *I)
+{
+   struct a9_texture t = a9_texture(I);
+   uint16_t mode;
+
+   if (I->query_lod && (t.gradient || t.ms || I->shadow || t.fetch ||
+                        (I->mask & ~3u) || I->offset))
+      return false;
+
+   if (t.gather && (t.gradient || t.ms || t.fetch || I->query_lod))
+      return false;
+
+   if (I->offset && (t.fetch || t.ms))
+      return false;
+
+   return texture_mode(I, &t, &mode);
+}
+
+static void
+pack_texture(const agx_instr *I, struct a9_packed *p)
+{
+   agx_index params = I->src[0], texture = I->src[3], sampler = I->src[4];
+   struct a9_texture t = a9_texture(I);
+   bool register_texture = is_gpr(texture);
+   bool register_sampler = is_gpr(sampler);
+   unsigned mask = t.gather ? 0xf : I->mask;
+   unsigned comps = util_bitcount(mask);
+   uint16_t mode;
+
+   pack_assert(I, agx_apple9_texture_encodable(I));
+   pack_assert(I, texture_mode(I, &t, &mode));
+   pack_assert(I, is_export(params) && agx_channels(params) == t.words);
+   pack_assert(I, !I->sparse && mask != 0);
+   pack_assert(I, agx_channels(I->dest[0]) == comps);
+   pack_assert(I, register_texture || (is_imm(texture) && texture.value < 256));
+   pack_assert(I, register_sampler || (is_imm(sampler) && sampler.value < 32));
+   pack_assert(I, !register_sampler || register_texture);
+   pack_assert(I, t.bias || !t.lod || I->lod_mode == AGX_LOD_MODE_LOD_MIN ||
+                     I->lod_mode == AGX_LOD_MODE_AUTO_LOD);
+
+   unsigned dst = gpr(I, I->dest[0]);
+   unsigned coord = export_word(I, params);
+   pack_assert(I,
+               dst + comps <= (register_texture ? AGX_APPLE9_GPR_COUNT : 64));
+   pack_assert(I, coord <= (t.gradient ? 32 - t.words : t.lod ? 28 : 30));
+   pack_assert(I, (coord & (t.words == 2 ? 1 : 3)) == 0);
+
+   unsigned tex = register_texture ? 0 : texture.value;
+   unsigned smp = register_sampler ? 0 : sampler.value;
+
+   /* Texture index: bit 0 at 71, bits 1-4 at 11-14, bits 5-7 at 68-70 */
+   const uint8_t texture_hi = ((tex & 1) << 7) | ((tex >> 5) << 4);
+   uint8_t bytes[20] = {
+      5 | ((dst & 31) << 3),
+      0x80 | (coord & 7) | (((tex >> 1) & 0xf) << 3),
+      0x0c | (((dst >> 5) & 1) << 6),
+      0xb8 | (coord >> 3),
+      0xb0 | (smp >> 1),
+      (I->scoreboard << 2) | (I->scoreboard << 5),
+      mode & 0xff,
+      mode >> 8,
+      texture_hi,
+      smp & 1,
+      /* Filtered samples */
+      t.fetch || t.ms || I->shadow || t.gather ? 0 : 0x10,
+      0,
+      1,
+      0,
+   };
+
+   if (I->query_lod)
+      bytes[10] = 0x20;
+
+   /* Gather names its component as a one-component mask would */
+   if (t.gather) {
+      mask = 1u << (I->gather >> 1);
+      bytes[3] |= 4;
+   }
+
+   /* Texel offsets are signed 4-bit constants */
+   if (I->offset) {
+      agx_index offset = I->src[5];
+      pack_assert(I, is_imm(offset) && offset.value < (1 << 12));
+
+      unsigned x = offset.value & 15;
+      unsigned y = (offset.value >> 4) & 15;
+      unsigned z = (offset.value >> 8) & 15;
+      set_bits(bytes, 75, 4, x);
+      set_bits(bytes, 79, 1, y & 1);
+      set_bits(bytes, 105, 3, y >> 1);
+      set_bits(bytes, 108, 3, z & 7);
+      set_bits(bytes, 21, 1, z >> 3);
+   }
+
+   /* Permuted result selector; results pack in component order */
+   static const uint8_t selectors[16] = {
+      0, 0, 1, 5, 2, 8, 9, 6, 3, 4, 10, 13, 11, 12, 14, 7,
+   };
+   unsigned selector = selectors[mask];
+   set_bits(bytes, 27, 2, selector & 3);
+   set_bits(bytes, 37, 1, (selector >> 2) & 1);
+   set_bits(bytes, 86, 1, selector >> 3);
+
+   enum agx_apple9_encoding form = t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD
+                                   : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD
+                                              : AGX_APPLE9_ENC_TEXTURE_SAMPLE;
+
+   if (!register_texture) {
+      a9_init(p, form, bytes, 14);
+      return;
+   }
+
+   /* Bit 73 selects the 20-byte form, reading indices from registers */
+   bytes[9] |= 0x02;
+   bytes[15] = 0x20 | (retain(texture) ? 0 : 0x08);
+   bytes[18] = 0x40;
+   set_bits(bytes, 153, 1, dst >> 6);
+
+   unsigned tr = gpr(I, texture) * 2;
+   set_bits(bytes, 11, 4, tr & 0xf);
+   set_bits(bytes, 68, 3, (tr >> 4) & 7);
+   set_bits(bytes, 122, 1, tr >> 7);
+   bytes[10] |= 0x80;
+
+   if (register_sampler) {
+      unsigned sr = gpr(I, sampler) * 2;
+      set_bits(bytes, 32, 4, sr & 0xf);
+      set_bits(bytes, 65, 3, (sr >> 4) & 7);
+      bytes[9] &= ~0x01;
+      bytes[11] |= 0x01;
+      bytes[14] = 0x80 | (retain(sampler) ? 0 : 0x20);
+      set_bits(bytes, 116, 1, sr >> 7);
+   }
+
+   a9_init(p, form, bytes, 20);
+}
+
 /* Fragment outputs and tile access */
 static void
 pack_fragment(const agx_instr *I, struct a9_packed *p)
@@ -2691,6 +3010,11 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_PACK_HALF:
       pack_half_pair(I, p);
+      return;
+
+   case AGX_OPCODE_TEXTURE_SAMPLE:
+   case AGX_OPCODE_TEXTURE_LOAD:
+      pack_texture(I, p);
       return;
 
    case AGX_OPCODE_HADD:

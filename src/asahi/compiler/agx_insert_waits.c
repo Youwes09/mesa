@@ -72,10 +72,14 @@ apple9_producer(const agx_instr *I)
          p.fixed_slot = 5;
       return p;
 
-   case AGX_OPCODE_LD_TILE:
-   case AGX_OPCODE_LDCF:
    case AGX_OPCODE_TEXTURE_SAMPLE:
    case AGX_OPCODE_TEXTURE_LOAD:
+      /* Parameters are read until the result completes */
+      p.reads_sources = true;
+      return p;
+
+   case AGX_OPCODE_LD_TILE:
+   case AGX_OPCODE_LDCF:
    case AGX_OPCODE_IMAGE_LOAD:
       return p;
 
@@ -89,8 +93,9 @@ apple9_producer(const agx_instr *I)
 
    case AGX_OPCODE_BITOP:
    case AGX_OPCODE_FMUL:
-      /* Writes to export registers */
+      /* Writes to export registers, which complete on export group 0 */
       p.async = I->dest[0].reg_class == RA_EXPORT;
+      p.fixed_slot = 0;
       p.completion = AGX_APPLE9_COMPLETION_PUBLICATION;
       return p;
 
@@ -118,6 +123,9 @@ struct slot {
 
    /* Set of registers this slot is still reading */
    BITSET_DECLARE(reads, AGX_NUM_REGS);
+
+   /* Set of export registers this slot is still reading */
+   BITSET_DECLARE(export_reads, AGX_NUM_EXPORT_REGS);
 
    /* Apple9: private frame words this slot is still storing */
    BITSET_DECLARE(frame_writes, AGX_NUM_MODELED_REGS / 2);
@@ -254,6 +262,17 @@ apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
 }
 
 /*
+ * Apple9 texture operations wait for export group 0, which their parameter
+ * bundles are written on, without a wait instruction.
+ */
+static bool
+apple9_waits_for_exports(const agx_instr *I)
+{
+   return I->op == AGX_OPCODE_TEXTURE_SAMPLE ||
+          I->op == AGX_OPCODE_TEXTURE_LOAD;
+}
+
+/*
  * Insert waits within a block to stall after every async instruction. Useful
  * for debugging.
  */
@@ -291,20 +310,28 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
       struct producer p = producer(ctx, I);
 
       /* Check for read-after-write */
+      bool exports_waited = apple9 && apple9_waits_for_exports(I);
+
       agx_foreach_src(I, s) {
          if (I->src[s].type != AGX_INDEX_REGISTER)
             continue;
 
+         bool exp = I->src[s].reg_class == RA_EXPORT;
          unsigned nr_read = agx_index_size_16(I->src[s]);
          for (unsigned slot = 0; slot < nr_slots; ++slot) {
-            BITSET_WORD *writes = I->src[s].reg_class == RA_EXPORT
-                                     ? slots[slot].export_writes
-                                     : slots[slot].writes;
+            BITSET_WORD *writes =
+               exp ? slots[slot].export_writes : slots[slot].writes;
+
+            if (exp && exports_waited && slot == 0)
+               continue;
 
             if (BITSET_TEST_COUNT(writes, I->src[s].value, nr_read))
                wait_mask |= BITSET_BIT(slot);
          }
       }
+
+      if (exports_waited)
+         BITSET_ZERO(slots[0].export_writes);
 
       /* Check for write-after-write and write-after-read */
       agx_foreach_dest(I, d) {
@@ -317,7 +344,8 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
             struct slot *s = &slots[slot];
 
             if (I->dest[d].reg_class == RA_EXPORT
-                   ? BITSET_TEST_COUNT(s->export_writes, reg, nr_writes)
+                   ? (BITSET_TEST_COUNT(s->export_writes, reg, nr_writes) ||
+                      BITSET_TEST_COUNT(s->export_reads, reg, nr_writes))
                    : (BITSET_TEST_COUNT(s->writes, reg, nr_writes) ||
                       BITSET_TEST_COUNT(s->reads, reg, nr_writes)))
                wait_mask |= BITSET_BIT(slot);
@@ -400,7 +428,11 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 
          if (p.reads_sources) {
             agx_foreach_reg_src(I, s) {
-               if (I->src[s].reg_class == RA_GPR) {
+               if (I->src[s].reg_class == RA_EXPORT) {
+                  BITSET_SET_COUNT(slot->export_reads, I->src[s].value,
+                                   agx_index_size_16(I->src[s]));
+               } else if (I->src[s].reg_class == RA_GPR &&
+                          !apple9_waits_for_exports(I)) {
                   BITSET_SET_COUNT(slot->reads, I->src[s].value,
                                    agx_index_size_16(I->src[s]));
                }

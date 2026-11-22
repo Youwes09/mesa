@@ -574,6 +574,30 @@ pred_compare_ok(const agx_instr *I)
 
 static bool apple9_instr_is_legal(const agx_instr *I);
 
+/* Texture table index: a constant or a 32-bit register */
+static bool
+table_index_ok(agx_index idx, unsigned limit)
+{
+   return (is_imm(idx) && idx.value < limit) || (reg32(idx) && plain(idx));
+}
+
+/* Constant offsets, and the texture in a register if the sampler is */
+static bool
+texture_ok(const agx_instr *I)
+{
+   agx_index params = I->src[0];
+   unsigned comps = I->gather != AGX_GATHER_NONE ? 4 : util_bitcount(I->mask);
+
+   return agx_apple9_texture_encodable(I) && is_export(params) &&
+          agx_channels(params) == agx_apple9_texture_params(I) &&
+          agx_is_null(I->src[1]) && agx_is_null(I->src[2]) &&
+          table_index_ok(I->src[3], 256) && table_index_ok(I->src[4], 32) &&
+          (is_imm(I->src[4]) || !is_imm(I->src[3])) &&
+          (I->offset ? is_imm(I->src[5]) : agx_is_null(I->src[5])) &&
+          !I->sparse && I->dest[0].size == AGX_SIZE_32 && is_reg(I->dest[0]) &&
+          agx_channels(I->dest[0]) == comps;
+}
+
 /* Compares to 0/1 are lowered to selects */
 static bool
 cmp_ok(const agx_instr *I)
@@ -813,6 +837,8 @@ apple9_instr_is_legal(const agx_instr *I)
 
    case AGX_OPCODE_TEXTURE_SAMPLE:
    case AGX_OPCODE_TEXTURE_LOAD:
+      return texture_ok(I);
+
    case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_IMAGE_WRITE:
    case AGX_OPCODE_BLOCK_IMAGE_STORE:
@@ -934,6 +960,19 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
       /* The first conversion writes the destination before the second reads */
       c[0].early_clobber = true;
       break;
+
+   case AGX_OPCODE_TEXTURE_SAMPLE:
+   case AGX_OPCODE_TEXTURE_LOAD: {
+      /* Parameters in exports 0-31, results in r0-r63 with constant indices */
+      unsigned words = agx_apple9_texture_params(I);
+      unsigned last = words == 2 ? 30 : words == 4 ? 28 : 32 - words;
+      c[D].max = 2 * last;
+      c[D].align = words == 2 ? 4 : 8;
+
+      if (I->src[3].type == AGX_INDEX_IMMEDIATE)
+         c[0].max = 2 * (64 - agx_channels(I->dest[0]));
+      break;
+   }
 
    case AGX_OPCODE_FFMA:
       /* Operand B can only be the low half of a register */
