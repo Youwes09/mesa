@@ -8,15 +8,22 @@
 #include "agx_compiler.h"
 #include "shader_enums.h"
 
+/* Liveness of GPRs. Export registers are a separate file */
 static void
 postra_liveness_ins(BITSET_WORD *live, agx_instr *I)
 {
    agx_foreach_reg_dest(I, d) {
+      if (I->dest[d].reg_class != RA_GPR)
+         continue;
+
       unsigned reg = I->dest[d].value;
       BITSET_CLEAR_COUNT(live, reg, agx_index_size_16(I->dest[d]));
    }
 
    agx_foreach_reg_src(I, s) {
+      if (I->src[s].reg_class != RA_GPR)
+         continue;
+
       unsigned reg = I->src[s].value;
       BITSET_SET_COUNT(live, reg, agx_index_size_16(I->src[s]));
    }
@@ -28,8 +35,8 @@ postra_liveness_ins(BITSET_WORD *live, agx_instr *I)
  * list to compute live_in from live_out for each block on the work list,
  * adding the predecessors of the block to the work list if we made progress.
  */
-static void
-postra_liveness(agx_context *ctx)
+void
+agx_compute_postra_liveness(agx_context *ctx)
 {
    u_worklist worklist;
    agx_worklist_init(ctx, &worklist);
@@ -95,7 +102,7 @@ void
 agx_opt_register_cache(agx_context *ctx)
 {
    /* Analyze the shader globally */
-   postra_liveness(ctx);
+   agx_compute_postra_liveness(ctx);
 
    agx_foreach_block(ctx, block) {
       /* Live-set at each point in the program */
@@ -109,6 +116,9 @@ agx_opt_register_cache(agx_context *ctx)
 
       agx_foreach_instr_in_block_rev(block, I) {
          agx_foreach_reg_dest(I, d) {
+            if (I->dest[d].reg_class != RA_GPR)
+               continue;
+
             uint64_t reg = I->dest[d].value;
             unsigned nr = agx_index_size_16(I->dest[d]);
 
@@ -117,10 +127,14 @@ agx_opt_register_cache(agx_context *ctx)
          }
 
          agx_foreach_reg_src(I, s) {
-            I->src[s].cache = BITSET_TEST(alu_reads, I->src[s].value);
+            if (I->src[s].reg_class == RA_GPR)
+               I->src[s].cache = BITSET_TEST(alu_reads, I->src[s].value);
          }
 
          agx_foreach_reg_src(I, s) {
+            if (I->src[s].reg_class != RA_GPR)
+               continue;
+
             uint64_t reg = I->src[s].value;
             unsigned nr = agx_index_size_16(I->src[s]);
 
