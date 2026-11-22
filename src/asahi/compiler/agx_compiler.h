@@ -26,6 +26,9 @@ extern "C" {
 /* u0-u255 inclusive, as pairs of 16-bits */
 #define AGX_NUM_UNIFORMS (512)
 
+/* Largest export register file of any target, in 16-bit units */
+#define AGX_NUM_EXPORT_REGS (256)
+
 /* Largest register file of any target: the spill slots of a 32 KiB frame */
 #define AGX_NUM_MODELED_REGS_LOG2 (14)
 #define AGX_NUM_MODELED_REGS      (1 << AGX_NUM_MODELED_REGS_LOG2)
@@ -59,6 +62,21 @@ agx_size_align_16(enum agx_size size)
    UNREACHABLE("Invalid size");
 }
 
+/* Register files, each a namespace of 16-bit registers */
+enum ra_class {
+   /* General purpose register */
+   RA_GPR,
+
+   /* Memory, used to assign stack slots */
+   RA_MEM,
+
+   /* Export register, for texture, image and varying operands */
+   RA_EXPORT,
+
+   /* Keep last */
+   RA_CLASSES,
+};
+
 /* Keep synced with hash_index */
 typedef struct {
    /* Sufficient for as many SSA values, immediates, and uniforms as we need. */
@@ -78,8 +96,7 @@ typedef struct {
    bool abs : 1;
    bool neg : 1;
 
-   /* Register class */
-   bool memory : 1;
+   enum ra_class reg_class : 2;
 
    unsigned channels_m1     : 3;
    enum agx_size size       : 2;
@@ -93,7 +110,7 @@ typedef struct {
     */
    unsigned reg : AGX_NUM_MODELED_REGS_LOG2;
    bool has_reg     : 1;
-   unsigned padding : 17 - AGX_NUM_MODELED_REGS_LOG2;
+   unsigned padding : 16 - AGX_NUM_MODELED_REGS_LOG2;
 } agx_index;
 static_assert(sizeof(agx_index) == 8, "packed");
 
@@ -163,7 +180,18 @@ agx_memory_register(uint32_t imm, enum agx_size size)
 {
    return (agx_index){
       .value = imm,
-      .memory = true,
+      .reg_class = RA_MEM,
+      .size = size,
+      .type = AGX_INDEX_REGISTER,
+   };
+}
+
+static inline agx_index
+agx_export_register(uint32_t imm, enum agx_size size)
+{
+   return (agx_index){
+      .value = imm,
+      .reg_class = RA_EXPORT,
       .size = size,
       .type = AGX_INDEX_REGISTER,
    };
@@ -174,7 +202,7 @@ agx_register_like(uint32_t imm, agx_index like)
 {
    return (agx_index){
       .value = imm,
-      .memory = like.memory,
+      .reg_class = like.reg_class,
       .channels_m1 = like.channels_m1,
       .size = like.size,
       .type = AGX_INDEX_REGISTER,
@@ -270,21 +298,10 @@ agx_is_equiv(agx_index left, agx_index right)
    return (left.type == right.type) && (left.value == right.value);
 }
 
-enum ra_class {
-   /* General purpose register */
-   RA_GPR,
-
-   /* Memory, used to assign stack slots */
-   RA_MEM,
-
-   /* Keep last */
-   RA_CLASSES,
-};
-
 static inline enum ra_class
 ra_class_for_index(agx_index idx)
 {
-   return idx.memory ? RA_MEM : RA_GPR;
+   return idx.reg_class;
 }
 
 enum agx_icond {
@@ -342,10 +359,9 @@ enum agx_lod_mode {
 /* Forward declare for branch target */
 struct agx_block;
 
-/* Instruction-local register constraints, in 16-bit units. Bounds apply to
- * the first register of an operand; vectors must also fit in the register
- * file. A fixed source inside the reserved region is a short pre-instruction
- * copy, not a restriction on the source's whole live range. */
+/* Instruction-local bounds on the first register of a GPR operand, in 16-bit
+ * units. A fixed source in the reserved region is copied just before.
+ */
 struct agx_reg_constraint {
    uint16_t min, max, align;
    bool clobber;
@@ -516,6 +532,9 @@ struct agx_isa_target {
    /* Uniform registers */
    unsigned uniform_halves;
 
+   /* Export registers, for texture, image and varying operands, or zero */
+   unsigned export_halves;
+
    /* Spill slots, modeled as the memory register class */
    unsigned memory_halves;
 
@@ -656,6 +675,9 @@ typedef struct agx_context {
    /* Stats for shader-db */
    unsigned loop_count;
    unsigned max_reg;
+
+   /* Number of export registers used, in 16-bit units */
+   unsigned export_reg_count;
 
    /* Promoted constants. These will be appended to the binary at the end. */
    uint16_t rodata[512];

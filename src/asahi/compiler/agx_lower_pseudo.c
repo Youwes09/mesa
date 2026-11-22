@@ -46,8 +46,8 @@ cmpsel_for_break_if(agx_builder *b, agx_instr *I)
 static void
 swap(agx_builder *b, agx_index x, agx_index y)
 {
-   assert(!x.memory && "already lowered");
-   assert(!y.memory && "already lowered");
+   assert(x.reg_class != RA_MEM && "already lowered");
+   assert(y.reg_class != RA_MEM && "already lowered");
 
    /* We can swap lo/hi halves of a 32-bit register with a 32-bit extr */
    if (x.size == AGX_SIZE_16 && (x.value >> 1) == (y.value >> 1)) {

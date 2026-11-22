@@ -36,6 +36,7 @@ static const struct agx_isa_target agx_apple8_target = {
    .isa = AGX_SHADER_ISA_APPLE8,
    .gpr_halves = 256,
    .uniform_halves = 512,
+   .export_halves = 0,
    .memory_halves = 2048,
    .mov_imm_halves = 256,
    .spill_reserved_halves = 8,
@@ -45,15 +46,12 @@ static const struct agx_isa_target agx_apple8_target = {
    .occupancy_table = true,
 };
 
-/* 96 GPRs and 256 uniform words. Spill slots cover the whole 32 KiB private
- * frame: compact fills reach its first 4 KiB, indexed private loads and stores
- * the rest. mov_imm reaches r0-r63 only. Spilling reserves r0-r4 for its
- * copy, index and memory swap temporaries.
- */
+/* 96 GPRs, 256 uniform words, 128 export words and a 32 KiB private frame */
 static const struct agx_isa_target agx_apple9_target = {
    .isa = AGX_SHADER_ISA_APPLE9,
    .gpr_halves = 192,
    .uniform_halves = 512,
+   .export_halves = 256,
    .memory_halves = 16384,
    .mov_imm_halves = 128,
    .spill_reserved_halves = 10,

@@ -27,11 +27,11 @@ spill_fill(agx_builder *b, agx_instr *I, enum agx_size size, unsigned channels,
    assert(effective_chans <= 4);
 
    /* Pick off the memory and register parts of the move */
-   agx_index mem = I->dest[0].memory ? I->dest[0] : I->src[0];
-   agx_index reg = I->dest[0].memory ? I->src[0] : I->dest[0];
+   agx_index mem = I->dest[0].reg_class == RA_MEM ? I->dest[0] : I->src[0];
+   agx_index reg = I->dest[0].reg_class == RA_MEM ? I->src[0] : I->dest[0];
 
-   assert(mem.type == AGX_INDEX_REGISTER && mem.memory);
-   assert(reg.type == AGX_INDEX_REGISTER && !reg.memory);
+   assert(mem.type == AGX_INDEX_REGISTER && mem.reg_class == RA_MEM);
+   assert(reg.type == AGX_INDEX_REGISTER && reg.reg_class != RA_MEM);
 
    /* Slice the register according to the part of the spill we're handling */
    if (component_offset_el > 0 || channels != agx_channels(reg)) {
@@ -47,7 +47,7 @@ spill_fill(agx_builder *b, agx_instr *I, enum agx_size size, unsigned channels,
           "RA allocates enough scratch");
 
    /* Emit the spill/fill */
-   if (I->dest[0].memory) {
+   if (I->dest[0].reg_class == RA_MEM) {
       agx_stack_store(b, reg, agx_immediate(stack_offs_B), format, mask);
    } else {
       agx_stack_load_to(b, reg, agx_immediate(stack_offs_B), format, mask);
@@ -58,7 +58,8 @@ void
 agx_lower_spill(agx_context *ctx)
 {
    agx_foreach_instr_global_safe(ctx, I) {
-      if (I->op != AGX_OPCODE_MOV || (!I->dest[0].memory && !I->src[0].memory))
+      if (I->op != AGX_OPCODE_MOV ||
+          (I->dest[0].reg_class != RA_MEM && I->src[0].reg_class != RA_MEM))
          continue;
 
       enum agx_size size = I->dest[0].size;

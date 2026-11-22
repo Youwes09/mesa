@@ -1,0 +1,142 @@
+/*
+ * Copyright 2026 The Asahi Linux Contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+#include "compiler/nir/nir_builder.h"
+#include "agx_test.h"
+
+#include <gtest/gtest.h>
+
+class RegisterAllocate : public testing::Test {
+ protected:
+   RegisterAllocate()
+   {
+      mem_ctx = ralloc_context(NULL);
+      nir = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
+                                           &agx_nir_options, "ra");
+      ctx = rzalloc(mem_ctx, agx_context);
+      list_inithead(&ctx->blocks);
+      ctx->nir = nir.shader;
+      ctx->stage = MESA_SHADER_COMPUTE;
+      ctx->key = &key;
+      ctx->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE9);
+      block = agx_test_block(ctx);
+      b = agx_init_builder(ctx, agx_after_block(block));
+   }
+
+   ~RegisterAllocate()
+   {
+      ralloc_free(nir.shader);
+      ralloc_free(mem_ctx);
+   }
+
+   agx_index export_temp(enum agx_size size)
+   {
+      agx_index x = agx_temp(ctx, size);
+      x.reg_class = RA_EXPORT;
+      return x;
+   }
+
+   void *mem_ctx;
+   nir_builder nir;
+   agx_shader_key key = {};
+   agx_context *ctx;
+   agx_block *block;
+   agx_builder b;
+};
+
+/* Export values take no GPRs and may share register numbers with GPRs */
+TEST_F(RegisterAllocate, ExportFileIsSeparate)
+{
+   const unsigned count = ctx->target.export_halves / 2;
+   ASSERT_GT(2 * count, ctx->target.gpr_halves);
+
+   agx_index x = agx_mov_imm(&b, 32, 42);
+   agx_instr *exports[128];
+   ASSERT_LE(count, ARRAY_SIZE(exports));
+
+   for (unsigned i = 0; i < count; ++i)
+      exports[i] = agx_mov_to(&b, export_temp(AGX_SIZE_32), x);
+
+   /* Keep every export live until all are defined */
+   agx_index sum = x;
+   for (unsigned i = 0; i < count; ++i)
+      sum = agx_iadd(&b, sum, exports[i]->dest[0], 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(ctx->scratch_size_B, 0u);
+   EXPECT_EQ(ctx->export_reg_count, 2 * count);
+   EXPECT_LT(ctx->max_reg, 8u);
+
+   BITSET_DECLARE(used, AGX_NUM_EXPORT_REGS) = {0};
+   for (unsigned i = 0; i < count; ++i) {
+      agx_index e = exports[i]->dest[0];
+      ASSERT_EQ(e.type, AGX_INDEX_REGISTER);
+      ASSERT_EQ(e.reg_class, RA_EXPORT);
+      ASSERT_EQ(e.value % 2, 0u);
+      ASSERT_LT(e.value + 1, ctx->target.export_halves);
+      ASSERT_FALSE(BITSET_TEST_COUNT(used, e.value, 2));
+      BITSET_SET_COUNT(used, e.value, 2);
+   }
+
+   /* The first export and its GPR source both start at the bottom */
+   EXPECT_EQ(exports[0]->dest[0].value, exports[0]->src[0].value);
+}
+
+/* A freed export register is reused, without touching the GPR file */
+TEST_F(RegisterAllocate, ExportRegistersAreReused)
+{
+   agx_index x = agx_mov_imm(&b, 32, 7);
+   agx_instr *first = agx_mov_to(&b, export_temp(AGX_SIZE_32), x);
+   agx_iadd(&b, first->dest[0], x, 0);
+   agx_instr *second = agx_mov_to(&b, export_temp(AGX_SIZE_32), x);
+   agx_iadd(&b, second->dest[0], x, 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(first->dest[0].reg_class, RA_EXPORT);
+   EXPECT_EQ(second->dest[0].reg_class, RA_EXPORT);
+   EXPECT_EQ(first->dest[0].value, second->dest[0].value);
+   EXPECT_EQ(ctx->export_reg_count, 2u);
+}
+
+/* An export value keeps its register on both edges of a join */
+TEST_F(RegisterAllocate, ExportLiveAcrossJoin)
+{
+   agx_block *then_block = agx_test_block(ctx);
+   agx_block *else_block = agx_test_block(ctx);
+   agx_block *join = agx_test_block(ctx);
+   agx_block_add_successor(block, then_block);
+   agx_block_add_successor(block, else_block);
+   agx_block_add_successor(then_block, join);
+   agx_block_add_successor(else_block, join);
+
+   agx_index x = agx_mov_imm(&b, 32, 1);
+   agx_instr *def = agx_mov_to(&b, export_temp(AGX_SIZE_32), x);
+
+   /* Allocate exports differently in the two branches */
+   b.cursor = agx_after_block(then_block);
+   agx_instr *then_export = agx_mov_to(&b, export_temp(AGX_SIZE_32), x);
+   agx_iadd(&b, then_export->dest[0], x, 0);
+
+   b.cursor = agx_after_block(else_block);
+   agx_index y = agx_iadd(&b, x, agx_immediate(2), 0);
+   agx_iadd(&b, y, x, 0);
+
+   b.cursor = agx_after_block(join);
+   agx_instr *use = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), def->dest[0],
+                                agx_immediate(3), 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(use->src[0].type, AGX_INDEX_REGISTER);
+   EXPECT_EQ(use->src[0].reg_class, RA_EXPORT);
+   EXPECT_EQ(use->src[0].value, def->dest[0].value);
+   EXPECT_NE(then_export->dest[0].value, def->dest[0].value);
+
+   /* No copies were needed on either edge */
+   agx_foreach_instr_global(ctx, I) {
+      EXPECT_FALSE(I->op == AGX_OPCODE_MOV &&
+                   I->dest[0].reg_class == RA_EXPORT &&
+                   I->src[0].reg_class == RA_EXPORT);
+   }
+}

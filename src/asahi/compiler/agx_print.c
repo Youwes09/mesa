@@ -32,7 +32,8 @@ agx_print_sized(char prefix, unsigned value, enum agx_size size, FILE *fp)
 static void
 agx_print_reg(agx_index index, unsigned value, FILE *fp)
 {
-   agx_print_sized('r', value, index.size, fp);
+   char prefix = index.reg_class == RA_EXPORT ? 'e' : 'r';
+   agx_print_sized(prefix, value, index.size, fp);
 
    if (agx_channels(index) > 1) {
       unsigned last =
@@ -40,17 +41,19 @@ agx_print_reg(agx_index index, unsigned value, FILE *fp)
 
       fprintf(fp, "...");
 
-      if (index.memory)
+      if (index.reg_class == RA_MEM)
          fprintf(fp, "m");
-      agx_print_sized('r', last, index.size, fp);
+      agx_print_sized(prefix, last, index.size, fp);
    }
 }
 
 void
 agx_print_index(agx_index index, bool is_float, FILE *fp)
 {
-   if (index.memory)
+   if (index.reg_class == RA_MEM)
       fprintf(fp, "m");
+   else if (index.reg_class == RA_EXPORT && index.type == AGX_INDEX_NORMAL)
+      fprintf(fp, "e");
 
    switch (index.type) {
    case AGX_INDEX_NULL:
@@ -106,7 +109,7 @@ agx_print_index(agx_index index, bool is_float, FILE *fp)
       /* Print assigned register if we have one */
       if (index.has_reg) {
          fprintf(fp, "(");
-         if (index.memory)
+         if (index.reg_class == RA_MEM)
             fprintf(fp, "m");
 
          agx_print_reg(index, index.reg, fp);

@@ -52,7 +52,7 @@ agx_spill_coalesce_prepare(agx_context *ctx)
    unsigned n = 0, v;
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d)
-         n += I->dest[d].memory;
+         n += I->dest[d].reg_class == RA_MEM;
    }
 
    /* Keep the dense graph bounded; large shaders fall back. */
@@ -73,7 +73,7 @@ agx_spill_coalesce_prepare(agx_context *ctx)
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
          agx_index dst = I->dest[d];
-         if (!dst.memory)
+         if (dst.reg_class != RA_MEM)
             continue;
          g->node[dst.value] = n;
          g->home[n] =
@@ -96,7 +96,7 @@ agx_spill_coalesce_prepare(agx_context *ctx)
          if (I->op == AGX_OPCODE_PHI)
             continue;
          agx_foreach_ssa_dest(I, d) {
-            if (!I->dest[d].memory)
+            if (I->dest[d].reg_class != RA_MEM)
                continue;
             unsigned dst = g->node[I->dest[d].value];
             BITSET_FOREACH_SET(v, live, g->n)
@@ -104,14 +104,14 @@ agx_spill_coalesce_prepare(agx_context *ctx)
             BITSET_CLEAR(live, dst);
          }
          agx_foreach_ssa_src(I, s) {
-            if (I->src[s].memory)
+            if (I->src[s].reg_class == RA_MEM)
                BITSET_SET(live, g->node[I->src[s].value]);
          }
       }
       /* Even a dead phi writes its destination and must not clobber another
        * value live at entry. All phi destinations are simultaneous. */
       agx_foreach_phi_in_block(block, phi) {
-         if (phi->dest[0].memory)
+         if (phi->dest[0].reg_class == RA_MEM)
             BITSET_SET(live, g->node[phi->dest[0].value]);
       }
       clique(g, live);
@@ -130,7 +130,7 @@ static bool
 record_assignment(struct agx_spill_interference *g, unsigned *old,
                   agx_index idx)
 {
-   if (!idx.memory)
+   if (idx.reg_class != RA_MEM)
       return true;
    /* Don't attempt to recolor a physical memory move or a live-range split. */
    if (idx.type != AGX_INDEX_NORMAL || !idx.has_reg || idx.value >= g->alloc)
@@ -258,11 +258,11 @@ agx_spill_coalesce_apply(agx_context *ctx, struct agx_spill_interference *g,
     * too. The block exit maps are no longer read after allocation completes. */
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
-         if (I->dest[d].memory)
+         if (I->dest[d].reg_class == RA_MEM)
             I->dest[d].reg = color[group[g->node[I->dest[d].value]]];
       }
       agx_foreach_ssa_src(I, s) {
-         if (I->src[s].memory)
+         if (I->src[s].reg_class == RA_MEM)
             I->src[s].reg = color[group[g->node[I->src[s].value]]];
       }
    }

@@ -770,7 +770,8 @@ apple9_physical_move(struct agx_apple9_vir_program *out, agx_index dst,
       return apple9_physical_immediate(out, dst.value / 2, src.value);
    assert(src.type == AGX_INDEX_REGISTER && src.size == AGX_SIZE_32);
    assert(agx_channels(dst) == agx_channels(src));
-   if ((dst.memory || src.memory) && agx_channels(dst) > 1) {
+   if ((dst.reg_class == RA_MEM || src.reg_class == RA_MEM) &&
+       agx_channels(dst) > 1) {
       /* The shared spiller moves whole tuples. SAVE/FILL transfer one word,
        * so lower every component of the allocated memory/register range. */
       unsigned channels = agx_channels(dst);
@@ -783,12 +784,13 @@ apple9_physical_move(struct agx_apple9_vir_program *out, agx_index dst,
       }
       return true;
    }
-   if (!dst.memory && !src.memory)
+   if (dst.reg_class != RA_MEM && src.reg_class != RA_MEM)
       return apple9_physical_copy(out, dst.value / 2, src.value / 2,
                                   AGX_APPLE9_SCOREBOARD_SLOT_NONE);
-   assert(!dst.memory || !src.memory);
-   const unsigned word = frame_base + (src.memory ? src : dst).value / 2;
-   if (src.memory && word >= AGX_APPLE9_FILL_WORD_COUNT) {
+   assert(dst.reg_class != RA_MEM || src.reg_class != RA_MEM);
+   const unsigned word =
+      frame_base + (src.reg_class == RA_MEM ? src : dst).value / 2;
+   if (src.reg_class == RA_MEM && word >= AGX_APPLE9_FILL_WORD_COUNT) {
       /* The compact FILL encoding aliases offsets above 4 KiB. Indexed
        * private loads cover the full frame but only address low-bank GPRs.
        * Use the reserved copy register for both the zero index and result,
@@ -804,7 +806,7 @@ apple9_physical_move(struct agx_apple9_vir_program *out, agx_index dst,
              apple9_physical_copy(out, dst.value / 2, COPY_REG,
                                   AGX_APPLE9_SCOREBOARD_SLOT_NONE);
    }
-   if (src.memory) {
+   if (src.reg_class == RA_MEM) {
       struct agx_apple9_vir_instr load = apple9_physical_instruction(
          AGX_APPLE9_VIR_SPILL_LOAD, AGX_APPLE9_ENC_SPILL_LOAD, dst.value / 2);
       load.immediate = word;
@@ -1979,8 +1981,8 @@ apple9_needs_copy_register(agx_context *ctx)
    agx_foreach_instr_global(ctx, I) {
       if ((I->op == AGX_OPCODE_MOV_IMM ||
            (I->op == AGX_OPCODE_MOV && I->src[0].type == AGX_INDEX_IMMEDIATE)) &&
-          I->dest[0].type == AGX_INDEX_REGISTER && !I->dest[0].memory &&
-          I->dest[0].value / 2 >= 64)
+          I->dest[0].type == AGX_INDEX_REGISTER &&
+          I->dest[0].reg_class != RA_MEM && I->dest[0].value / 2 >= 64)
          return true;
    }
    return false;
@@ -2298,7 +2300,7 @@ apple9_within_spill_budget(const agx_context *ctx, void *data)
    uint64_t memory_halves = ctx->scratch_size_B / 2;
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
-         if (!I->dest[d].memory)
+         if (I->dest[d].reg_class != RA_MEM)
             continue;
          if (I->op != AGX_OPCODE_MOV && I->op != AGX_OPCODE_PHI)
             return true;
@@ -2336,7 +2338,7 @@ apple9_within_spill_budget(const agx_context *ctx, void *data)
              nesting)
             --nesting;
          if (I->op == AGX_OPCODE_MOV && I->src[0].type == AGX_INDEX_NORMAL &&
-             I->dest[0].memory != I->src[0].memory &&
+             I->dest[0].reg_class != I->src[0].reg_class &&
              I->src[0].size == AGX_SIZE_32 && I->dest[0].size == AGX_SIZE_32) {
             spills += (1u << (3 * MIN2(nesting, 3))) * agx_channels(I->dest[0]);
          }

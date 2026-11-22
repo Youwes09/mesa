@@ -42,9 +42,10 @@ vars_equal(struct var_offset x, struct var_offset y)
    return x.defined && y.defined && x.var == y.var && x.offset == y.offset;
 }
 
-/* Represents the contents of a single register file */
+/* Contents of the register files at one point, up to the highest named */
 struct regfile {
-   struct var_offset r[RA_CLASSES][AGX_NUM_MODELED_REGS];
+   struct var_offset *r[RA_CLASSES];
+   unsigned size[RA_CLASSES];
 };
 
 static void
@@ -52,12 +53,11 @@ print_regfile(struct regfile *file, FILE *fp)
 {
    fprintf(fp, "regfile: \n");
    for (enum ra_class cls = 0; cls < RA_CLASSES; ++cls) {
-      for (unsigned r = 0; r < AGX_NUM_MODELED_REGS; ++r) {
+      for (unsigned r = 0; r < file->size[cls]; ++r) {
          struct var_offset v = file->r[cls][r];
 
          if (v.defined) {
-            fprintf(fp, "   %c%u = %u[%u]\n", cls == RA_MEM ? 'm' : 'h', r,
-                    v.var, v.offset);
+            fprintf(fp, "   %c%u = %u[%u]\n", "hme"[cls], r, v.var, v.offset);
          }
       }
    }
@@ -83,7 +83,7 @@ copy_reg(struct regfile *file, agx_index dst, agx_index src)
    enum ra_class src_cls = ra_class_for_index(src);
 
    for (uint8_t offs = 0; offs < agx_index_size_16(dst); ++offs) {
-      assert(dst.value + offs < ARRAY_SIZE(file->r[dst_cls]));
+      assert(dst.value + offs < file->size[dst_cls]);
       file->r[dst_cls][dst.value + offs] = file->r[src_cls][src.value + offs];
    }
 }
@@ -101,8 +101,8 @@ swap_regs(struct regfile *file, agx_index a, agx_index b)
    assert(size == agx_index_size_16(b));
 
    for (uint8_t offs = 0; offs < size; ++offs) {
-      assert(a.value + offs < ARRAY_SIZE(file->r[a_cls]));
-      assert(b.value + offs < ARRAY_SIZE(file->r[b_cls]));
+      assert(a.value + offs < file->size[a_cls]);
+      assert(b.value + offs < file->size[b_cls]);
 
       struct var_offset tmp = file->r[a_cls][a.value + offs];
       file->r[a_cls][a.value + offs] = file->r[b_cls][b.value + offs];
@@ -117,7 +117,7 @@ record_dest(struct regfile *file, agx_index idx)
    enum ra_class cls = ra_class_for_index(idx);
 
    for (uint8_t offs = 0; offs < agx_index_size_16(idx); ++offs) {
-      assert(idx.reg + offs < ARRAY_SIZE(file->r[cls]));
+      assert(idx.reg + offs < file->size[cls]);
       file->r[cls][idx.reg + offs] = var_index(idx, offs);
    }
 }
@@ -129,7 +129,7 @@ validate_src(agx_instr *I, unsigned s, struct regfile *file, agx_index idx)
    enum ra_class cls = ra_class_for_index(idx);
 
    for (uint8_t offs = 0; offs < agx_index_size_16(idx); ++offs) {
-      assert(idx.reg + offs < ARRAY_SIZE(file->r[cls]));
+      assert(idx.reg + offs < file->size[cls]);
       struct var_offset actual = file->r[cls][idx.reg + offs];
 
       agx_validate_assert(file, I, s, offs, actual.defined);
@@ -140,8 +140,7 @@ validate_src(agx_instr *I, unsigned s, struct regfile *file, agx_index idx)
    return true;
 }
 
-/* Registers at or above a class's limit are never named, so they stay
- * undefined in every file and the predecessor merge can skip them. */
+/* Registers at or above a class's limit are never named */
 static void
 note_register(unsigned *limit, agx_index idx)
 {
@@ -154,8 +153,7 @@ note_register(unsigned *limit, agx_index idx)
       return;
 
    enum ra_class cls = ra_class_for_index(idx);
-   limit[cls] = MIN2(MAX2(limit[cls], base + agx_index_size_16(idx)),
-                     AGX_NUM_MODELED_REGS);
+   limit[cls] = MAX2(limit[cls], base + agx_index_size_16(idx));
 }
 
 static bool
@@ -222,7 +220,7 @@ validate_block(agx_context *ctx, agx_block *block, struct regfile *blocks,
          /* Register-only phis which resolve to the same variable in all blocks.
           * This is generated for edge case live range splits.
           */
-         assert(!I->dest[0].memory);
+         assert(I->dest[0].reg_class == RA_GPR);
          assert(!loop_header);
          for (uint8_t offs = 0; offs < agx_index_size_16(I->dest[0]); ++offs) {
             bool all_same = true;
@@ -232,7 +230,7 @@ validate_block(agx_context *ctx, agx_block *block, struct regfile *blocks,
                unsigned idx = agx_predecessor_index(block, *pred);
                agx_index src = I->src[idx];
 
-               assert(!src.memory);
+               assert(src.reg_class == RA_GPR);
                if (src.type != AGX_INDEX_REGISTER) {
                   all_same = false;
                   first = false;
@@ -306,7 +304,6 @@ void
 agx_validate_ra(agx_context *ctx)
 {
    bool succ = true;
-   struct regfile *blocks = calloc(ctx->num_blocks, sizeof(*blocks));
    unsigned limit[RA_CLASSES] = {0};
 
    agx_foreach_instr_global(ctx, I) {
@@ -314,6 +311,24 @@ agx_validate_ra(agx_context *ctx)
          note_register(limit, I->dest[d]);
       agx_foreach_src(I, s)
          note_register(limit, I->src[s]);
+   }
+
+   unsigned per_block = 0;
+   for (enum ra_class cls = 0; cls < RA_CLASSES; ++cls)
+      per_block += limit[cls];
+
+   struct regfile *blocks = calloc(ctx->num_blocks, sizeof(*blocks));
+   struct var_offset *regs =
+      calloc((size_t)ctx->num_blocks * per_block, sizeof(*regs));
+
+   for (unsigned b = 0; b < ctx->num_blocks; ++b) {
+      struct var_offset *r = regs + (size_t)b * per_block;
+
+      for (enum ra_class cls = 0; cls < RA_CLASSES; ++cls) {
+         blocks[b].r[cls] = r;
+         blocks[b].size[cls] = limit[cls];
+         r += limit[cls];
+      }
    }
 
    agx_foreach_block(ctx, block) {
@@ -325,6 +340,7 @@ agx_validate_ra(agx_context *ctx)
       UNREACHABLE("invalid RA");
    }
 
+   free(regs);
    free(blocks);
 }
 

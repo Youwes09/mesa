@@ -51,7 +51,7 @@ do_copy(agx_builder *b, const struct agx_copy *copy)
                       ? agx_memory_register(copy->dest, copy->src.size)
                       : agx_register(copy->dest, copy->src.size);
 
-   if (copy->dest_mem && copy->src.memory) {
+   if (copy->dest_mem && copy->src.reg_class == RA_MEM) {
       /* Memory-memory copies need to be lowered to memory-register and
        * register-memory, using a reserved scratch register.
        */
@@ -78,10 +78,10 @@ do_swap(agx_builder *b, const struct agx_copy *copy)
                     ? agx_memory_register(copy->dest, copy->src.size)
                     : agx_register(copy->dest, copy->src.size);
    agx_index y = copy->src;
-   assert(x.memory == y.memory);
+   assert(x.reg_class == y.reg_class);
 
    /* Memory-memory swaps lowered here, GPR swaps lowered later */
-   if (x.memory) {
+   if (x.reg_class == RA_MEM) {
       agx_index temp1 =
          agx_register(b->shader->target.spill_swap_regs[0], copy->src.size);
       agx_index temp2 =
@@ -127,7 +127,7 @@ static bool
 is_real(struct agx_copy *entry)
 {
    return entry->src.type == AGX_INDEX_REGISTER &&
-          entry->dest_mem == entry->src.memory;
+          entry->dest_mem == (entry->src.reg_class == RA_MEM);
 }
 
 /* TODO: Generalize to other bit sizes */

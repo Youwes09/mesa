@@ -125,7 +125,7 @@ TEST_F(RepairSSA, UnchangedValueAcrossDiamond)
       auto x = agx_mov_imm(b, AGX_SIZE_32, 0xcafe);
       if (memory) {
          auto slot = agx_temp(b->shader, AGX_SIZE_32);
-         slot.memory = true;
+         slot.reg_class = RA_MEM;
          agx_mov_to(b, slot, x);
          x = slot;
       }

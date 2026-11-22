@@ -52,7 +52,7 @@ record_write(struct repair_ctx *ctx, agx_block *block, unsigned node,
              agx_index val)
 {
    assert(node < ctx->n);
-   if (val.memory)
+   if (val.reg_class == RA_MEM)
       _mesa_hash_table_u64_insert(ctx->homes, val.value,
                                   (void *)(uintptr_t)(node + 1));
    struct hash_table_u64 *defs = repair_block(ctx, block)->defs;
@@ -134,7 +134,7 @@ seal_block(struct repair_ctx *ctx, agx_block *block)
       if (phi->imm) {
          agx_index var = agx_get_vec_index(phi->imm - 1, phi->dest[0].size,
                                            agx_channels(phi->dest[0]));
-         var.memory = phi->dest[0].memory;
+         var.reg_class = phi->dest[0].reg_class;
          add_phi_operands(ctx, block, phi, var);
          phi->imm = 0;
       }
@@ -360,7 +360,7 @@ agx_repair_ssa(agx_context *ctx)
             }
 
             if (!BITSET_TEST(redefined, handle)) {
-               if (I->dest[d].memory)
+               if (I->dest[d].reg_class == RA_MEM)
                   _mesa_hash_table_u64_insert(homes, handle,
                                               (void *)(uintptr_t)(handle + 1));
                continue;
@@ -429,7 +429,7 @@ agx_repair_ssa(agx_context *ctx)
    ctx->spill_home_count = ctx->alloc;
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
-         if (I->dest[d].memory)
+         if (I->dest[d].reg_class == RA_MEM)
             ctx->spill_home[I->dest[d].value] =
                (uintptr_t)_mesa_hash_table_u64_search(homes, I->dest[d].value);
       }

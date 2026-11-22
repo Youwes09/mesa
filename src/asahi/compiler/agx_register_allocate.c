@@ -90,7 +90,7 @@ phi_web_interference(agx_context *ctx, BITSET_WORD *constants, void *memctx)
 
    agx_foreach_instr_global(ctx, I) {
       agx_foreach_ssa_dest(I, d) {
-         if (I->dest[d].memory)
+         if (I->dest[d].reg_class == RA_MEM)
             BITSET_SET(memory, I->dest[d].value);
       }
 
@@ -489,7 +489,7 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
             for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
                agx_index index =
                   o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
-               if (index.type != AGX_INDEX_NORMAL || index.memory)
+               if (index.type != AGX_INDEX_NORMAL || index.reg_class != RA_GPR)
                   continue;
                struct agx_reg_constraint c = I->reg_constraints[o];
                unsigned width =
@@ -1102,12 +1102,13 @@ static void
 agx_emit_move_before_phi(agx_context *ctx, agx_block *block,
                          struct agx_copy *copy)
 {
-   assert(!copy->dest_mem && !copy->src.memory && "no memory shuffles");
+   assert(!copy->dest_mem && copy->src.reg_class == RA_GPR &&
+          "only GPR shuffles");
 
    /* Look for the phi writing the destination */
    agx_foreach_phi_in_block(block, phi) {
       if (agx_is_equiv(agx_as_register(phi->dest[0]), copy->src) &&
-          !phi->dest[0].memory) {
+          phi->dest[0].reg_class == RA_GPR) {
 
          phi->dest[0].reg = copy->dest;
          return;
@@ -1140,7 +1141,7 @@ find_regs(struct ra_ctx *rctx, agx_instr *I, unsigned dest_idx, unsigned count,
       return reg;
    } else {
       assert(!rctx->early_killed && "no live range splits with early kill");
-      assert(cls == RA_GPR && "no memory live range splits");
+      assert(cls == RA_GPR && "only GPR live ranges are split");
 
       struct util_dynarray copies = UTIL_DYNARRAY_INIT;
 
@@ -1233,7 +1234,7 @@ reserve_live_in(struct ra_ctx *rctx)
             unsigned pred_idx = agx_predecessor_index(rctx->block, *pred);
 
             phi->src[pred_idx] = agx_get_vec_index(i, size, channels);
-            phi->src[pred_idx].memory = cls == RA_MEM;
+            phi->src[pred_idx].reg_class = cls;
 
             if ((*pred)->ssa_to_reg_out == NULL) {
                /* If this is a loop header, we don't know where the register
@@ -1337,7 +1338,7 @@ validate_constraint_windows(agx_context *ctx, unsigned bound)
       for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
          agx_index value =
             o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
-         if (value.type != AGX_INDEX_NORMAL || value.memory)
+         if (value.type != AGX_INDEX_NORMAL || value.reg_class != RA_GPR)
             continue;
          struct agx_reg_constraint c = I->reg_constraints[o];
          unsigned count = util_next_power_of_two(agx_index_size_16(value));
@@ -1581,6 +1582,8 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
 #undef PINNED_WINDOW
 #undef USED_WINDOW
 
+static unsigned pick_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d);
+
 static bool
 assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
 {
@@ -1594,7 +1597,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
 
    agx_foreach_ssa_src(I, s) {
       struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-      if (c.min == c.max && c.max < reserved_size(rctx->shader))
+      if (I->src[s].reg_class != RA_GPR ||
+          (c.min == c.max && c.max < reserved_size(rctx->shader)))
          continue;
 
       /* Repeated uses of one SSA value must satisfy all their constraints. */
@@ -1632,8 +1636,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    rctx->reused_sources = 0;
    agx_foreach_ssa_src(I, s) {
       struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-      if (!reuse || !I->src[s].kill || I->src[s].memory || c.clobber ||
-          (c.min == c.max && c.max < reserved_size(rctx->shader)))
+      if (!reuse || !I->src[s].kill || I->src[s].reg_class != RA_GPR ||
+          c.clobber || (c.min == c.max && c.max < reserved_size(rctx->shader)))
          continue;
       unsigned base = rctx->ssa_to_reg[I->src[s].value];
       unsigned width = rctx->ncomps[I->src[s].value];
@@ -1642,6 +1646,11 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    }
    rctx->reusable = reuse ? reusable : NULL;
    agx_foreach_ssa_dest(I, d) {
+      if (I->dest[d].reg_class != RA_GPR) {
+         assign_regs(rctx, I->dest[d], pick_regs(rctx, I, d));
+         continue;
+      }
+
       unsigned reg = place_constrained_value(rctx, I->dest[d],
                                              I->reg_constraints[d], false);
       if (reg == ~0u) {
@@ -1684,7 +1693,8 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    }
    agx_foreach_ssa_src(I, s) {
       struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-      if (c.min != c.max || c.max >= reserved_size(rctx->shader))
+      if (I->src[s].reg_class != RA_GPR || c.min != c.max ||
+          c.max >= reserved_size(rctx->shader))
          continue;
       unsigned old = rctx->ssa_to_reg[I->src[s].value];
       for (unsigned i = 0; i < rctx->nr_moved; ++i) {
@@ -1715,7 +1725,7 @@ agx_set_sources(struct ra_ctx *rctx, agx_instr *I)
       assert(BITSET_TEST(rctx->visited, I->src[s].value) && "no phis");
 
       I->src[s].reg = rctx->ssa_to_reg[I->src[s].value];
-      if (I->reg_constraints) {
+      if (I->reg_constraints && I->src[s].reg_class == RA_GPR) {
          struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
          if (c.min == c.max && c.max < reserved_size(rctx->shader))
             I->src[s].reg = c.min;
@@ -1784,7 +1794,7 @@ pick_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
 
    /* Try to allocate moves compatibly with their sources */
    if (I->op == AGX_OPCODE_MOV && I->src[0].type == AGX_INDEX_NORMAL &&
-       I->src[0].memory == I->dest[0].memory &&
+       I->src[0].reg_class == I->dest[0].reg_class &&
        I->src[0].size == I->dest[0].size) {
 
       unsigned out;
@@ -1940,7 +1950,7 @@ try_kill_early_sources(struct ra_ctx *rctx, const agx_instr *I,
       return;
 
    for (unsigned s = first_source; s <= last_source; ++s) {
-      if (I->src[s].kill && !I->src[s].memory) {
+      if (I->src[s].kill && I->src[s].reg_class == RA_GPR) {
          kill_source(rctx, I, s);
          rctx->early_killed = true;
          I->src[s].kill = false;
@@ -1955,11 +1965,13 @@ agx_ra_assign_local(struct ra_ctx *rctx)
 {
    BITSET_DECLARE(used_regs_gpr, AGX_NUM_REGS) = {0};
    BITSET_DECLARE(used_regs_mem, AGX_NUM_MODELED_REGS) = {0};
+   BITSET_DECLARE(used_regs_export, AGX_NUM_EXPORT_REGS) = {0};
    uint16_t *ssa_to_reg = calloc(rctx->shader->alloc, sizeof(uint16_t));
 
    agx_block *block = rctx->block;
    rctx->used_regs[RA_GPR] = used_regs_gpr;
    rctx->used_regs[RA_MEM] = used_regs_mem;
+   rctx->used_regs[RA_EXPORT] = used_regs_export;
    rctx->ssa_to_reg = ssa_to_reg;
 
    reserve_live_in(rctx);
@@ -1977,8 +1989,9 @@ agx_ra_assign_local(struct ra_ctx *rctx)
       /* Early killing frees allocation space, but deferred destructive spill
        * stores still need to know whether the original value survives. */
       bool dead_spill_source = rctx->shader->ra_target.preserve_source_kills &&
-                               I->op == AGX_OPCODE_MOV && I->dest[0].memory &&
-                               !I->src[0].memory && I->src[0].kill;
+                               I->op == AGX_OPCODE_MOV &&
+                               I->dest[0].reg_class == RA_MEM &&
+                               I->src[0].reg_class != RA_MEM && I->src[0].kill;
 
       /* Optimization: if a split contains the last use of a vector, the split
        * can be removed by assigning the destinations overlapping the source.
@@ -2036,7 +2049,7 @@ agx_ra_assign_local(struct ra_ctx *rctx)
          unsigned start = 0;
 
          agx_foreach_ssa_src(I, s) {
-            if (I->src[s].kill && !I->src[s].memory) {
+            if (I->src[s].kill && I->src[s].reg_class == RA_GPR) {
                unsigned reg = rctx->ssa_to_reg[I->src[s].value];
 
                if (start == end || end != reg) {
@@ -2175,6 +2188,13 @@ agx_insert_parallel_copies(agx_context *ctx, agx_block *block)
          assert(dest.type == AGX_INDEX_REGISTER);
          assert(dest.size == src.size);
 
+         /* RA never moves export registers, so edges keep the same one */
+         if (dest.reg_class == RA_EXPORT) {
+            assert(src.type == AGX_INDEX_REGISTER &&
+                   src.reg_class == RA_EXPORT && src.value == dest.value);
+            continue;
+         }
+
          /* Scalarize the phi, since the parallel copy lowering doesn't handle
           * vector phis. While we scalarize phis in NIR, we can generate vector
           * phis from spilling so must take care.
@@ -2193,13 +2213,13 @@ agx_insert_parallel_copies(agx_context *ctx, agx_block *block)
             assert(i < nr_phi);
             copies[i++] = (struct agx_copy){
                .dest = dest.value + offs,
-               .dest_mem = dest.memory,
+               .dest_mem = dest.reg_class == RA_MEM,
                .src = src_,
             };
          }
       }
 
-      agx_emit_parallel_copies(&b, copies, nr_phi);
+      agx_emit_parallel_copies(&b, copies, i);
 
       free(copies);
    }
@@ -2250,7 +2270,8 @@ constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
          continue;
       agx_foreach_ssa_src(I, s) {
          struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-         if (I->src[s].memory || (c.min == c.max && c.max < reserved_size(ctx)))
+         if (I->src[s].reg_class != RA_GPR ||
+             (c.min == c.max && c.max < reserved_size(ctx)))
             continue;
          struct agx_reg_constraint *p = &preferred[I->src[s].value];
          p->min = MAX2(p->min, c.min);
@@ -2259,7 +2280,7 @@ constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
       }
       for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
          agx_index idx = o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
-         if (idx.type != AGX_INDEX_NORMAL || idx.memory)
+         if (idx.type != AGX_INDEX_NORMAL || idx.reg_class != RA_GPR)
             continue;
          struct agx_reg_constraint c = I->reg_constraints[o];
          unsigned width = util_next_power_of_two(agx_index_size_16(idx));
@@ -2299,6 +2320,7 @@ agx_ra(agx_context *ctx)
    unsigned max_possible_regs = ctx->target.gpr_halves;
    assert(max_possible_regs > 0 && max_possible_regs <= AGX_NUM_REGS);
    assert(ctx->target.memory_halves <= AGX_NUM_MODELED_REGS);
+   assert(ctx->target.export_halves <= AGX_NUM_EXPORT_REGS);
 
    /* Compute shaders need to have their entire workgroup together, so our
     * register usage is bounded by the workgroup size.
@@ -2355,11 +2377,11 @@ agx_ra(agx_context *ctx)
          unsigned needed = MAX2(ctx->ra_target.reserved_registers,
                                 ctx->target.spill_reserved_halves);
          agx_foreach_ssa_dest(I, v) {
-            if (!I->dest[v].memory)
+            if (I->dest[v].reg_class == RA_GPR)
                needed += util_next_power_of_two(agx_index_size_16(I->dest[v]));
          }
          agx_foreach_ssa_src(I, s) {
-            if (I->src[s].memory)
+            if (I->src[s].reg_class != RA_GPR)
                continue;
             bool duplicate = false;
             for (unsigned prev = 0; prev < s; ++prev)
@@ -2481,7 +2503,7 @@ agx_ra(agx_context *ctx)
                member = next_constant_member++;
 
             if (phi->dest[0].size != phi->src[s].size ||
-                phi->dest[0].memory != phi->src[s].memory ||
+                phi->dest[0].reg_class != phi->src[s].reg_class ||
                 agx_channels(phi->dest[0]) != agx_channels(phi->src[s]))
                continue;
 
@@ -2533,7 +2555,7 @@ agx_ra(agx_context *ctx)
                                  ? next_constant_preference++
                                  : ~0u;
             if (src->type != AGX_INDEX_NORMAL || src->size != dst->size ||
-                src->memory != dst->memory ||
+                src->reg_class != dst->reg_class ||
                 agx_channels(*src) != agx_channels(*dst))
                continue;
             uint64_t weight = 1ull << (3 * MIN2(depth[(*pred)->index], 6));
@@ -2544,7 +2566,7 @@ agx_ra(agx_context *ctx)
                redefined |= other->dest[0].value == src->value;
             bool dead =
                redefined || !u_sparse_bitset_test(&block->live_in, src->value);
-            if (dead && !src->memory &&
+            if (dead && src->reg_class == RA_GPR &&
                 !u_sparse_bitset_test(&interference[src->value], dst->value)) {
                struct phi_dead_group *g = dead_groups[src->value];
                while (g && (g->successor != block || g->predecessor != *pred))
@@ -2681,7 +2703,7 @@ agx_ra(agx_context *ctx)
    if (!validate_constraint_windows(ctx, max_regs))
       goto cleanup;
 
-   unsigned reg_count = 0, mem_slot_count = 0;
+   unsigned reg_count = 0, mem_slot_count = 0, export_count = 0;
 
    /* Assign registers in dominance-order. This coincides with source-order due
     * to a NIR invariant, so we do not need special handling for this.
@@ -2706,8 +2728,10 @@ agx_ra(agx_context *ctx)
              .visited = visited,
              .bound[RA_GPR] = max_regs,
              .bound[RA_MEM] = ctx->target.memory_halves,
+             .bound[RA_EXPORT] = ctx->target.export_halves,
              .count[RA_GPR] = &reg_count,
              .count[RA_MEM] = &mem_slot_count,
+             .count[RA_EXPORT] = &export_count,
              .preferred = preferred,
              .scarcity = scarcity,
              .scarcity_floor = scarcity_floor,
@@ -2721,6 +2745,7 @@ agx_ra(agx_context *ctx)
       agx_spill_coalesce_apply(ctx, spill_graph, &mem_slot_count);
 
    ctx->max_reg = reg_count ? (reg_count - 1) : 0;
+   ctx->export_reg_count = export_count;
    ctx->spill_base_B = ctx->scratch_size_B;
    ctx->scratch_size_B += mem_slot_count * 2;
 
@@ -2751,7 +2776,7 @@ agx_ra(agx_context *ctx)
          agx_foreach_ssa_src(ins, s) {
             agx_foreach_ssa_src(ins, t) {
                if (ins->src[t].kill && ins->src[s].value == ins->src[t].value &&
-                   ins->src[s].memory == ins->src[t].memory)
+                   ins->src[s].reg_class == ins->src[t].reg_class)
                   source_kills |= BITFIELD_BIT(s);
             }
          }
@@ -2767,7 +2792,7 @@ agx_ra(agx_context *ctx)
 
       if (ins->op == AGX_OPCODE_COLLECT) {
          assert(ins->dest[0].type == AGX_INDEX_REGISTER);
-         assert(!ins->dest[0].memory);
+         assert(ins->dest[0].reg_class == RA_GPR);
 
          unsigned base = ins->dest[0].value;
          unsigned width = agx_size_align_16(ins->src[0].size);
@@ -2806,7 +2831,7 @@ agx_ra(agx_context *ctx)
             if (ins->dest[i].type != AGX_INDEX_REGISTER)
                continue;
 
-            assert(!ins->dest[i].memory);
+            assert(ins->dest[i].reg_class == RA_GPR);
 
             agx_index src = ins->src[0];
             src.size = ins->dest[i].size;
@@ -2848,7 +2873,7 @@ agx_ra(agx_context *ctx)
          if (I->src[0].type == AGX_INDEX_REGISTER &&
              I->dest[0].size == I->src[0].size &&
              I->src[0].value == I->dest[0].value &&
-             I->src[0].memory == I->dest[0].memory) {
+             I->src[0].reg_class == I->dest[0].reg_class) {
 
             assert(I->dest[0].type == AGX_INDEX_REGISTER);
             agx_remove_instruction(I);

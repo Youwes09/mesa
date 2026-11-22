@@ -23,7 +23,7 @@ class SpillCoalesce : public testing::Test {
       agx_index x = agx_temp(b->shader, size);
       x.reg = reg;
       x.has_reg = true;
-      x.memory = memory;
+      x.reg_class = memory ? RA_MEM : RA_GPR;
       x.channels_m1 = channels - 1;
       if (memory)
          homes.emplace_back(x.value, home);

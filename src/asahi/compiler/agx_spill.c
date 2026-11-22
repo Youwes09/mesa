@@ -319,8 +319,8 @@ static inline agx_index
 agx_index_as_mem(agx_index idx, unsigned mem_base)
 {
    assert(idx.type == AGX_INDEX_NORMAL);
-   assert(!idx.memory);
-   idx.memory = true;
+   assert(idx.reg_class != RA_MEM);
+   idx.reg_class = RA_MEM;
    idx.value = mem_base + idx.value;
    return idx;
 }
@@ -329,7 +329,7 @@ static unsigned
 chase_mem_index(agx_index ref, unsigned mem_base)
 {
    assert(ref.type == AGX_INDEX_NORMAL);
-   return ref.memory ? (ref.value - mem_base) : ref.value;
+   return ref.reg_class == RA_MEM ? (ref.value - mem_base) : ref.value;
 }
 
 static agx_index
@@ -667,7 +667,7 @@ insert_coupling_code(struct spill_ctx *ctx, agx_block *pred, agx_block *succ)
       BITSET_SET(ctx->W, sp->W_exit[i]);
 
    agx_foreach_phi_in_block(succ, I) {
-      if (!I->dest[0].memory)
+      if (I->dest[0].reg_class != RA_MEM)
          continue;
 
       agx_builder b =
@@ -683,10 +683,10 @@ insert_coupling_code(struct spill_ctx *ctx, agx_block *pred, agx_block *succ)
                 I->src[s].type == AGX_INDEX_UNIFORM);
 
          agx_index mem = agx_temp_like(ctx->shader, I->dest[0]);
-         assert(mem.memory);
+         assert(mem.reg_class == RA_MEM);
 
          agx_index gpr = agx_temp_like(ctx->shader, I->dest[0]);
-         gpr.memory = false;
+         gpr.reg_class = RA_GPR;
 
          if (I->src[s].type == AGX_INDEX_IMMEDIATE)
             agx_mov_imm_to(&b, gpr, I->src[s].value);
@@ -759,7 +759,7 @@ insert_coupling_code(struct spill_ctx *ctx, agx_block *pred, agx_block *succ)
    }
 
    agx_foreach_phi_in_block(succ, I) {
-      if (I->dest[0].memory)
+      if (I->dest[0].reg_class == RA_MEM)
          continue;
 
       unsigned s = agx_predecessor_index(succ, pred);
@@ -784,7 +784,7 @@ insert_coupling_code(struct spill_ctx *ctx, agx_block *pred, agx_block *succ)
       }
 
       /* Leave as-is for the GPR version */
-      assert(!I->src[s].memory);
+      assert(I->src[s].reg_class != RA_MEM);
    }
 
    agx_foreach_phi_in_block(succ, phi) {
@@ -1571,8 +1571,9 @@ hoist_loop_invariant_spills(agx_context *ctx, unsigned n,
          if (block->index > end)
             break;
          agx_foreach_instr_in_block_safe(block, I) {
-            if (I->op != AGX_OPCODE_MOV || !I->dest[0].memory ||
-                I->src[0].memory || I->src[0].type != AGX_INDEX_NORMAL)
+            if (I->op != AGX_OPCODE_MOV || I->dest[0].reg_class != RA_MEM ||
+                I->src[0].reg_class == RA_MEM ||
+                I->src[0].type != AGX_INDEX_NORMAL)
                continue;
             unsigned v = I->src[0].value;
             if (v >= n || I->dest[0].value != n + v ||
@@ -1613,6 +1614,9 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
 
       /* Measure vectors */
       agx_foreach_ssa_dest(I, d) {
+         assert(I->dest[d].reg_class != RA_EXPORT &&
+                "the spiller handles GPR values only");
+
          assert(sizes[I->dest[d].value] == 0 && "broken SSA");
          assert(channels[I->dest[d].value] == 0 && "broken SSA");
 

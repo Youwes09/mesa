@@ -441,7 +441,7 @@ TEST(Apple9SharedRa, SpilledLoopPhisPreserveParallelAssignments)
          auto read = [&](agx_index x) {
             return x.type == AGX_INDEX_IMMEDIATE
                       ? x.value
-                      : (x.memory ? memory : regs)[x.value];
+                      : (x.reg_class == RA_MEM ? memory : regs)[x.value];
          };
          uint32_t result;
          switch (I->op) {
@@ -453,8 +453,8 @@ TEST(Apple9SharedRa, SpilledLoopPhisPreserveParallelAssignments)
             break;
          case AGX_OPCODE_MOV:
             result = read(I->src[0]);
-            stores += I->dest[0].memory;
-            loads += I->src[0].memory;
+            stores += I->dest[0].reg_class == RA_MEM;
+            loads += I->src[0].reg_class == RA_MEM;
             break;
          case AGX_OPCODE_EXPORT:
             regs[I->imm] = read(I->src[0]);
@@ -471,8 +471,8 @@ TEST(Apple9SharedRa, SpilledLoopPhisPreserveParallelAssignments)
          }
          auto dst = I->dest[0];
          ASSERT_EQ(dst.type, AGX_INDEX_REGISTER);
-         ASSERT_LT(dst.value, dst.memory ? 2048u : 128u);
-         (dst.memory ? memory : regs)[dst.value] = result;
+         ASSERT_LT(dst.value, dst.reg_class == RA_MEM ? 2048u : 128u);
+         (dst.reg_class == RA_MEM ? memory : regs)[dst.value] = result;
       }
    };
    execute(entry);

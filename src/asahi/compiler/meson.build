@@ -129,6 +129,7 @@ if with_tests
          'test/test-apple9-opt.cpp',
          'test/test-apple9-shared-ra.cpp',
          'test/test-pressure-schedule.cpp',
+         'test/test-register-allocate.cpp',
          'test/test-minifloat.cpp',
          'test/test-optimizer.cpp',
          'test/test-lower-pseudo.cpp',

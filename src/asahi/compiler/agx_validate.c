@@ -113,7 +113,7 @@ agx_validate_sources(agx_instr *I)
          agx_validate_assert(!agx_is_null(src));
       }
 
-      agx_validate_assert(!src.memory || is_stack_valid(I));
+      agx_validate_assert(src.reg_class != RA_MEM || is_stack_valid(I));
    }
 
    return true;
@@ -139,7 +139,7 @@ agx_validate_defs(agx_instr *I, BITSET_WORD *defs)
 
       BITSET_SET(defs, I->dest[d].value);
 
-      if (I->dest[d].memory && !is_stack_valid(I))
+      if (I->dest[d].reg_class == RA_MEM && !is_stack_valid(I))
          return false;
    }
 

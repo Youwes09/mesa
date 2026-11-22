@@ -229,7 +229,8 @@ TEST(Apple9Rematerialization, BoundedImmutableExpressions)
          unsigned memory_moves = 0, imports = 0;
          agx_foreach_instr_global(b->shader, I) {
             if (I->op == AGX_OPCODE_MOV)
-               memory_moves += I->dest[0].memory || I->src[0].memory;
+               memory_moves += I->dest[0].reg_class == RA_MEM ||
+                               I->src[0].reg_class == RA_MEM;
             if (I->op == AGX_OPCODE_APPLE9_PURE) {
                imports += I->apple9->op == AGX_APPLE9_VIR_IOR_UNIFORM;
                ASSERT_NE(I->reg_constraints, nullptr);
@@ -386,7 +387,7 @@ TEST(Apple9Rematerialization, HoistOnlyInvariantSpillStores)
          unsigned inside = 0, outside = 0;
          agx_foreach_block(ctx, block) {
             agx_foreach_instr_in_block(block, I) {
-               if (I->op == AGX_OPCODE_MOV && I->dest[0].memory) {
+               if (I->op == AGX_OPCODE_MOV && I->dest[0].reg_class == RA_MEM) {
                   if (block == entry)
                      ++outside;
                   else
