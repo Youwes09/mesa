@@ -452,21 +452,6 @@ pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_FLOAT2_PROJECT, bytes, 8);
 }
 
-/*
- * FP16 results in the low half of a 32-bit register are zero-extended by a
- * companion instruction, which reaches r0-r63, so that the register is
- * defined in full.
- */
-static void
-pack_zext16(const agx_instr *I, struct a9_packed *p, unsigned d)
-{
-   pack_assert(I, d < 64 && p->length + 4 <= A9_MAX_BYTES);
-
-   const uint8_t zext[4] = {((d & 15) << 4) | 3, 0, (d >> 4) << 6, 1};
-   memcpy(p->bytes + p->length, zext, sizeof(zext));
-   p->length += sizeof(zext);
-}
-
 /* FP32/FP16 conversion as fadd x, -0.0; narrowing writes one dest half */
 static void
 pack_float_convert(const agx_instr *I, struct a9_packed *p)
@@ -503,16 +488,9 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
       p,
       widen ? AGX_APPLE9_ENC_HALF_TO_FLOAT : AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT,
       bytes, 6);
-
-   if (I->op == AGX_OPCODE_F32_TO_F16)
-      pack_zext16(I, p, d);
 }
 
-/*
- * FP16 add, multiply and multiply-add. FP16 values are in the low halves of
- * 32-bit registers, which these forms name. There are no constants, uniforms,
- * saturation or modifiers, except that the add subtracts a negated operand B.
- */
+/* FP16 add, multiply and FMA on low halves, leaving the high half undefined */
 static void
 pack_half_alu(const agx_instr *I, struct a9_packed *p)
 {
@@ -557,7 +535,6 @@ pack_half_alu(const agx_instr *I, struct a9_packed *p)
 
    a9_init(p, fma ? AGX_APPLE9_ENC_HALF3 : AGX_APPLE9_ENC_HALF2, bytes,
            fma ? 8 : 6);
-   pack_zext16(I, p, dst);
 }
 
 /* Fused multiply-add */

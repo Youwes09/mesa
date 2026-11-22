@@ -865,14 +865,6 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
       c[0].max = c[D].max = c[D + 1].max = r63;
       break;
 
-   case AGX_OPCODE_F32_TO_F16:
-   case AGX_OPCODE_HADD:
-   case AGX_OPCODE_HMUL:
-   case AGX_OPCODE_HFMA:
-      /* The zero-extension companion of the FP16 result */
-      c[0].max = r63;
-      break;
-
    case AGX_OPCODE_LOCAL_LOAD:
       c[0].max = c[D + 1].max = r63;
       c[D + 1].align = 2;
