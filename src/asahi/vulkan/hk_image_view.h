@@ -52,7 +52,7 @@ struct hk_image_view {
        * since image memory can be bound after creating a view. */
       struct hk_apple9_image_part apple9_sampled, apple9_ia;
    } planes[3];
-   struct hk_apple9_storage_descriptor apple9_storage;
+   struct agx_apple9_storage_descriptor apple9_storage;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_image_view, vk.base, VkImageView,

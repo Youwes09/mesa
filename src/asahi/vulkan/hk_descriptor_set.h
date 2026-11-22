@@ -10,6 +10,7 @@
 #include "hk_descriptor_memory.h"
 #include "hk_private.h"
 
+#include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/lib/agx_apple9.h"
 #include "hk_device.h"
@@ -67,112 +68,9 @@ struct hk_storage_image_descriptor {
 };
 static_assert(sizeof(struct hk_storage_image_descriptor) == 48,
               "hk_storage_image_descriptor has no holes");
-
-/* GPU-readable format metadata for Apple9 uniform texel-buffer loads. The
- * ordinary texture prefix remains available for descriptor queries.
- * A component word contains byte offset [7:0], bit shift [12:8], width minus
- * one [17:13], and conversion kind [21:18]. Swizzles are resolved per component.
- */
-enum hk_apple9_texel_kind {
-   HK_TEXEL_ZERO,
-   HK_TEXEL_ONE,
-   HK_TEXEL_UINT,
-   HK_TEXEL_SINT,
-   HK_TEXEL_UNORM,
-   HK_TEXEL_SNORM,
-   HK_TEXEL_FLOAT16,
-   HK_TEXEL_FLOAT32,
-   HK_TEXEL_FLOAT11,
-   HK_TEXEL_RGB9E5,
-   HK_TEXEL_SRGB,
-};
-
-/* Storage images have no base or element count. They instead record the
- * residency table of their image and the base level | base layer << 16.
- */
-struct hk_apple9_texel_metadata {
-   uint64_t base;
-   uint32_t elements;
-   uint32_t size_B;
-   uint32_t component[4];
-   /* Sparse residency buffers: the residency byte of the page holding
-    * address A is at residency + A / AIL_PAGESIZE, see
-    * hk_buffer::apple9_residency. Zero for other resources. */
-   uint64_t residency;
-};
-
-/* Uniform texel buffers read every format but RGB32 through the texture
- * unit. Like hk_apple9_image_part, the descriptor holds the native
- * texture entry for shaders that address it directly. */
-struct hk_apple9_texel_descriptor {
-   struct agx_texture_packed tex;
-   struct hk_apple9_texel_metadata metadata;
-   uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
-};
-static_assert(sizeof(struct hk_apple9_texel_descriptor) == 96,
-              "Apple9 texel descriptor has no holes");
-static_assert(offsetof(struct hk_apple9_texel_descriptor, texture) ==
-                 AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-              "native texture entry is where register indices expect it");
-
-enum hk_apple9_storage_native_flags {
-   HK_APPLE9_STORAGE_READ_VALID = 1 << 0,
-   HK_APPLE9_STORAGE_WRITE_VALID = 1 << 1,
-   HK_APPLE9_STORAGE_LAYER_WRITE_VALID = 1 << 2,
-};
-
-bool hk_apple9_native_store_format(enum pipe_format format);
-
-/* Apple9 storage images and texel buffers append their texel layout, so
- * shaders can access them without a declared format. Storage images also
- * hold the native texture entry of their read-only view: loads that no
- * write of the invocation can precede go through the texture unit. The
- * entry is one table slot past where hk_apple9_image_part keeps its
- * own, so a handle 32 bytes past the descriptor addresses it. */
-struct hk_apple9_storage_descriptor {
-   struct hk_storage_image_descriptor common;
-   struct hk_apple9_texel_metadata metadata;
-   /* enum hk_apple9_storage_native_flags */
-   uint32_t native_ok;
-   /* enum hk_apple9_store_encode: how a store without a shader format can
-    * encode the texel, chosen on the host from the view format. */
-   uint32_t store_encode;
-   uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
-};
-static_assert(sizeof(struct hk_apple9_storage_descriptor) == 128,
-              "Apple9 storage descriptor retains the 128-byte ABI");
-static_assert(offsetof(struct hk_apple9_storage_descriptor, texture) ==
-                 (AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY + 1) *
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-              "native storage entry is one table slot past the image one");
-
-/* native_ok packs capability flags in bits 0..2 and the USC-relative PBE
- * table index in bits 3..29. All native writes, including 2D, use the table. */
-#define HK_APPLE9_STORAGE_PBE_SHIFT 3
-#define HK_APPLE9_STORAGE_PBE_MASK  ((1u << 27) - 1)
-
-void hk_apple9_texel_layout(enum pipe_format format,
-                            struct hk_apple9_texel_metadata *metadata);
-
-/* Encodings for stores to storage images without a shader format. A
- * canonical format packs its N channels in order, each W bits wide from bit
- * 0, so stores can encode it with constant shifts instead of decoding the
- * per-component layout. Everything else uses the layout (GENERIC).
- */
-enum hk_apple9_store_encode {
-   HK_STORE_ENCODE_GENERIC = 0,
-   /* 32-bit channels: the texel's bits as they are (float, uint, sint). */
-   HK_STORE_ENCODE_RAW32,
-   /* 8-bit unsigned normalized channels. */
-   HK_STORE_ENCODE_UNORM8,
-   /* 16-bit float channels. */
-   HK_STORE_ENCODE_FLOAT16,
-   /* R11G11B10 unsigned float (B10G11R11_UFLOAT_PACK32). */
-   HK_STORE_ENCODE_FLOAT11,
-};
-
-enum hk_apple9_store_encode hk_apple9_store_encode(enum pipe_format format);
+static_assert(sizeof(struct hk_storage_image_descriptor) ==
+                 sizeof(struct agx_apple9_storage_words),
+              "Apple9 storage descriptors begin with it");
 
 /* G16 descriptor records, 128 bytes each so translation layers can copy
  * them with their 128-byte paths: an image part and a sampler part. A

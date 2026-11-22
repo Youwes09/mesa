@@ -2239,10 +2239,11 @@ hk_apple9_lower_texel_buffer(nir_builder *b, nir_tex_instr *tex,
    nir_def *ptr =
       nir_load_from_texture_handle_agx(b, tex->src[handle_idx].src.ssa);
    ptr = nir_iadd_imm(b, ptr,
-                      offsetof(struct hk_apple9_texel_descriptor, metadata));
+                      offsetof(struct agx_apple9_texel_descriptor, metadata));
    nir_def *count = nir_load_global_constant(
       b, 1, 32,
-      nir_iadd_imm(b, ptr, offsetof(struct hk_apple9_texel_metadata, elements)),
+      nir_iadd_imm(b, ptr,
+                   offsetof(struct agx_apple9_texel_metadata, elements)),
       .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
    if (tex->op == nir_texop_txs) {
       nir_def_replace(&tex->def, count);
@@ -2255,11 +2256,11 @@ hk_apple9_lower_texel_buffer(nir_builder *b, nir_tex_instr *tex,
    nir_push_if(b, nir_ult(b, coord, count));
    nir_def *base = nir_load_global_constant(
       b, 1, 64,
-      nir_iadd_imm(b, ptr, offsetof(struct hk_apple9_texel_metadata, base)),
+      nir_iadd_imm(b, ptr, offsetof(struct agx_apple9_texel_metadata, base)),
       .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
    nir_def *size = nir_load_global_constant(
       b, 1, 32,
-      nir_iadd_imm(b, ptr, offsetof(struct hk_apple9_texel_metadata, size_B)),
+      nir_iadd_imm(b, ptr, offsetof(struct agx_apple9_texel_metadata, size_B)),
       .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
    nir_push_if(b, nir_ieq_imm(b, size, 12));
    nir_def *xyz = nir_load_global(
@@ -2309,13 +2310,14 @@ hk_apple9_lower_texel_buffer(nir_builder *b, nir_tex_instr *tex,
          nir_load_global_constant(
             b, 1, 32,
             nir_iadd_imm(
-               b, ptr, offsetof(struct hk_apple9_texel_metadata, component[3])),
+               b, ptr,
+               offsetof(struct agx_apple9_texel_metadata, component[3])),
             .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX),
          18);
       nir_def *one = floating ? nir_imm_float(b, 1.0) : nir_imm_int(b, 1);
       zero = nir_vector_insert_imm(
          b, zero,
-         nir_bcsel(b, nir_ieq_imm(b, alpha_kind, HK_TEXEL_ONE), one,
+         nir_bcsel(b, nir_ieq_imm(b, alpha_kind, AGX_APPLE9_TEXEL_ONE), one,
                    nir_imm_int(b, 0)),
          3);
    }
@@ -2405,10 +2407,10 @@ hk_apple9_decode_component(nir_builder *b, nir_def *words, nir_def *fmt,
 {
    nir_def *kind = nir_ushr_imm(b, fmt, 18);
    nir_def *value;
-   if (cls == HK_TEXEL_FLOAT11 || cls == HK_TEXEL_RGB9E5) {
+   if (cls == AGX_APPLE9_TEXEL_FLOAT11 || cls == AGX_APPLE9_TEXEL_RGB9E5) {
       nir_def *w0 = nir_channel(b, words, 0);
       value = c < 3 ? nir_channel(b,
-                                  cls == HK_TEXEL_FLOAT11
+                                  cls == AGX_APPLE9_TEXEL_FLOAT11
                                      ? nir_format_unpack_11f11f10f(b, w0)
                                      : nir_format_unpack_r9g9b9e5(b, w0),
                                   c)
@@ -2416,7 +2418,7 @@ hk_apple9_decode_component(nir_builder *b, nir_def *words, nir_def *fmt,
    } else {
       nir_def *raw = hk_apple9_texel_word(
          b, words, nir_ushr_imm(b, nir_iand_imm(b, fmt, 0xff), 2));
-      if (cls == HK_TEXEL_FLOAT32) {
+      if (cls == AGX_APPLE9_TEXEL_FLOAT32) {
          value = raw;
       } else {
          nir_def *shift = nir_iand_imm(b, nir_ushr_imm(b, fmt, 8), 31);
@@ -2427,18 +2429,18 @@ hk_apple9_decode_component(nir_builder *b, nir_def *words, nir_def *fmt,
          nir_def *u = nir_iand(b, nir_ushr(b, raw, shift), mask);
          nir_def *i = nir_ishr(b, nir_ishl(b, u, extend), extend);
          switch (cls) {
-         case HK_TEXEL_SINT:
+         case AGX_APPLE9_TEXEL_SINT:
             value = i;
             break;
-         case HK_TEXEL_UNORM:
+         case AGX_APPLE9_TEXEL_UNORM:
             value = nir_fdiv(b, nir_u2f32(b, u), nir_u2f32(b, mask));
             break;
-         case HK_TEXEL_SNORM:
+         case AGX_APPLE9_TEXEL_SNORM:
             value = nir_fmax(b, nir_imm_float(b, -1.0),
                              nir_fdiv(b, nir_i2f32(b, i),
                                       nir_u2f32(b, nir_ushr_imm(b, mask, 1))));
             break;
-         case HK_TEXEL_FLOAT16:
+         case AGX_APPLE9_TEXEL_FLOAT16:
             value = nir_channel(b, nir_unpack_half_2x16(b, u), 0);
             break;
          default:
@@ -2447,9 +2449,9 @@ hk_apple9_decode_component(nir_builder *b, nir_def *words, nir_def *fmt,
          }
       }
    }
-   value = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_ZERO), nir_imm_int(b, 0),
-                     value);
-   return nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_ONE),
+   value = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ZERO),
+                     nir_imm_int(b, 0), value);
+   return nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ONE),
                     floating ? nir_imm_float(b, 1.0) : nir_imm_int(b, 1),
                     value);
 }
@@ -2474,8 +2476,8 @@ hk_apple9_decode_texel_classes(nir_builder *b, nir_def *words, nir_def *layout,
       nir_def *ok = nir_ieq_imm(b, k, classes[0]);
       if (c)
          ok = nir_ior(b, ok,
-                      nir_ior(b, nir_ieq_imm(b, k, HK_TEXEL_ZERO),
-                              nir_ieq_imm(b, k, HK_TEXEL_ONE)));
+                      nir_ior(b, nir_ieq_imm(b, k, AGX_APPLE9_TEXEL_ZERO),
+                              nir_ieq_imm(b, k, AGX_APPLE9_TEXEL_ONE)));
       in_class = nir_iand(b, in_class, ok);
    }
    nir_push_if(b, in_class);
@@ -2496,10 +2498,12 @@ hk_apple9_decode_texel(nir_builder *b, nir_def *words, nir_def *layout,
                        bool floating)
 {
    static const unsigned float_classes[] = {
-      HK_TEXEL_UNORM, HK_TEXEL_FLOAT32, HK_TEXEL_FLOAT16,
-      HK_TEXEL_SNORM, HK_TEXEL_FLOAT11, HK_TEXEL_RGB9E5,
+      AGX_APPLE9_TEXEL_UNORM,   AGX_APPLE9_TEXEL_FLOAT32,
+      AGX_APPLE9_TEXEL_FLOAT16, AGX_APPLE9_TEXEL_SNORM,
+      AGX_APPLE9_TEXEL_FLOAT11, AGX_APPLE9_TEXEL_RGB9E5,
    };
-   static const unsigned int_classes[] = {HK_TEXEL_UINT, HK_TEXEL_SINT};
+   static const unsigned int_classes[] = {AGX_APPLE9_TEXEL_UINT,
+                                          AGX_APPLE9_TEXEL_SINT};
    return floating ? hk_apple9_decode_texel_classes(b, words, layout, true,
                                                     float_classes,
                                                     ARRAY_SIZE(float_classes))
@@ -2509,7 +2513,7 @@ hk_apple9_decode_texel(nir_builder *b, nir_def *words, nir_def *layout,
 }
 
 /* Decode a texel from the per-component layout of its descriptor, as
- * written by hk_apple9_texel_layout, evaluating every format kind. */
+ * written by agx_apple9_texel_layout, evaluating every format kind. */
 static nir_def *
 hk_apple9_decode_texel_select(nir_builder *b, nir_def *words, nir_def *layout,
                               bool floating)
@@ -2534,29 +2538,30 @@ hk_apple9_decode_texel_select(nir_builder *b, nir_def *words, nir_def *layout,
             nir_fmax(b, nir_imm_float(b, -1.0),
                      nir_fdiv(b, nir_i2f32(b, i),
                               nir_u2f32(b, nir_ushr_imm(b, mask, 1))));
+         value = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_SNORM),
+                           snorm, unorm);
          value =
-            nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_SNORM), snorm, unorm);
-         value =
-            nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT16),
+            nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT16),
                       nir_channel(b, nir_unpack_half_2x16(b, u), 0), value);
-         value =
-            nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT32), raw, value);
+         value = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT32),
+                           raw, value);
          if (c < 3) {
             nir_def *w0 = nir_channel(b, words, 0);
             value = nir_bcsel(
-               b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT11),
+               b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT11),
                nir_channel(b, nir_format_unpack_11f11f10f(b, w0), c), value);
             value = nir_bcsel(
-               b, nir_ieq_imm(b, kind, HK_TEXEL_RGB9E5),
+               b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_RGB9E5),
                nir_channel(b, nir_format_unpack_r9g9b9e5(b, w0), c), value);
          }
       } else {
-         value = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_SINT), i, u);
+         value =
+            nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_SINT), i, u);
       }
-      value = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_ZERO),
+      value = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ZERO),
                         nir_imm_int(b, 0), value);
       rgba[c] =
-         nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_ONE),
+         nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ONE),
                    floating ? nir_imm_float(b, 1.0) : nir_imm_int(b, 1), value);
    }
    return nir_vec(b, rgba, 4);
@@ -2619,16 +2624,17 @@ hk_apple9_encode_texel_kind(nir_builder *b, nir_def *value, nir_def *layout,
                            nir_fmin(b, nir_fmax(b, v, nir_imm_float(b, -1.0)),
                                     nir_imm_float(b, 1.0)),
                            nir_u2f32(b, nir_ushr_imm(b, mask, 1)))));
-         bits =
-            nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_SNORM), snorm, unorm);
-         bits = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT16),
+         bits = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_SNORM),
+                          snorm, unorm);
+         bits = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT16),
                           nir_pack_half_2x16_split(b, v, nir_imm_float(b, 0)),
                           bits);
-         bits = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT32), v, bits);
-      } else if (floating && cls == HK_TEXEL_UNORM) {
+         bits = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT32), v,
+                          bits);
+      } else if (floating && cls == AGX_APPLE9_TEXEL_UNORM) {
          bits = nir_f2u32(b, nir_fround_even(b, nir_fmul(b, nir_fsat(b, v),
                                                          nir_u2f32(b, mask))));
-      } else if (floating && cls == HK_TEXEL_SNORM) {
+      } else if (floating && cls == AGX_APPLE9_TEXEL_SNORM) {
          bits = nir_f2i32(
             b,
             nir_fround_even(
@@ -2636,30 +2642,32 @@ hk_apple9_encode_texel_kind(nir_builder *b, nir_def *value, nir_def *layout,
                            nir_fmin(b, nir_fmax(b, v, nir_imm_float(b, -1.0)),
                                     nir_imm_float(b, 1.0)),
                            nir_u2f32(b, nir_ushr_imm(b, mask, 1)))));
-      } else if (floating && cls == HK_TEXEL_FLOAT16) {
+      } else if (floating && cls == AGX_APPLE9_TEXEL_FLOAT16) {
          bits = nir_pack_half_2x16_split(b, v, nir_imm_float(b, 0));
       }
       bits = nir_ishl(b, nir_iand(b, bits, mask), shift);
       /* Packed float formats encode all three components at once. */
       if (floating && c == 0 &&
-          (cls < 0 || cls == HK_TEXEL_FLOAT11 || cls == HK_TEXEL_RGB9E5)) {
-         if (cls < 0 || cls == HK_TEXEL_FLOAT11)
-            bits = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT11),
+          (cls < 0 || cls == AGX_APPLE9_TEXEL_FLOAT11 ||
+           cls == AGX_APPLE9_TEXEL_RGB9E5)) {
+         if (cls < 0 || cls == AGX_APPLE9_TEXEL_FLOAT11)
+            bits = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT11),
                              hk_apple9_pack_float11(b, rgb), bits);
-         if (cls < 0 || cls == HK_TEXEL_RGB9E5)
-            bits = nir_bcsel(b, nir_ieq_imm(b, kind, HK_TEXEL_RGB9E5),
+         if (cls < 0 || cls == AGX_APPLE9_TEXEL_RGB9E5)
+            bits = nir_bcsel(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_RGB9E5),
                              nir_format_pack_r9g9b9e5(b, rgb), bits);
       } else if (floating && c < 3 &&
-                 (cls < 0 || cls == HK_TEXEL_FLOAT11 ||
-                  cls == HK_TEXEL_RGB9E5)) {
-         bits = nir_bcsel(b,
-                          nir_ior(b, nir_ieq_imm(b, kind, HK_TEXEL_FLOAT11),
-                                  nir_ieq_imm(b, kind, HK_TEXEL_RGB9E5)),
-                          nir_imm_int(b, 0), bits);
+                 (cls < 0 || cls == AGX_APPLE9_TEXEL_FLOAT11 ||
+                  cls == AGX_APPLE9_TEXEL_RGB9E5)) {
+         bits =
+            nir_bcsel(b,
+                      nir_ior(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_FLOAT11),
+                              nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_RGB9E5)),
+                      nir_imm_int(b, 0), bits);
       }
       bits = nir_bcsel(b,
-                       nir_ior(b, nir_ieq_imm(b, kind, HK_TEXEL_ZERO),
-                               nir_ieq_imm(b, kind, HK_TEXEL_ONE)),
+                       nir_ior(b, nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ZERO),
+                               nir_ieq_imm(b, kind, AGX_APPLE9_TEXEL_ONE)),
                        nir_imm_int(b, 0), bits);
       for (unsigned w = 0; w < 4; ++w) {
          words[w] = nir_bcsel(b, nir_ieq_imm(b, index, w),
@@ -2682,8 +2690,8 @@ hk_apple9_encode_texel_classes(nir_builder *b, nir_def *value, nir_def *layout,
       nir_def *ok = nir_ieq_imm(b, k, classes[0]);
       if (c)
          ok = nir_ior(b, ok,
-                      nir_ior(b, nir_ieq_imm(b, k, HK_TEXEL_ZERO),
-                              nir_ieq_imm(b, k, HK_TEXEL_ONE)));
+                      nir_ior(b, nir_ieq_imm(b, k, AGX_APPLE9_TEXEL_ZERO),
+                              nir_ieq_imm(b, k, AGX_APPLE9_TEXEL_ONE)));
       in_class = nir_iand(b, in_class, ok);
    }
    nir_push_if(b, in_class);
@@ -2702,8 +2710,9 @@ hk_apple9_encode_texel(nir_builder *b, nir_def *value, nir_def *layout,
                        bool floating)
 {
    static const unsigned float_classes[] = {
-      HK_TEXEL_UNORM, HK_TEXEL_FLOAT32, HK_TEXEL_FLOAT16,
-      HK_TEXEL_SNORM, HK_TEXEL_FLOAT11, HK_TEXEL_RGB9E5,
+      AGX_APPLE9_TEXEL_UNORM,   AGX_APPLE9_TEXEL_FLOAT32,
+      AGX_APPLE9_TEXEL_FLOAT16, AGX_APPLE9_TEXEL_SNORM,
+      AGX_APPLE9_TEXEL_FLOAT11, AGX_APPLE9_TEXEL_RGB9E5,
    };
    return floating ? hk_apple9_encode_texel_classes(b, value, layout, true,
                                                     float_classes,
@@ -2712,7 +2721,7 @@ hk_apple9_encode_texel(nir_builder *b, nir_def *value, nir_def *layout,
 }
 
 /* Encode with the constant shifts of a canonical format when the descriptor
- * names one (enum hk_apple9_store_encode), otherwise from the per-component
+ * names one (enum agx_apple9_store_encode), otherwise from the per-component
  * layout. The branches are uniform, and each fast arm computes exactly what
  * hk_apple9_encode_texel computes for those formats.
  */
@@ -2721,12 +2730,12 @@ nir_def *
 hk_apple9_encode_texel_fast(nir_builder *b, nir_def *value, nir_def *layout,
                             bool floating, nir_def *encode)
 {
-   nir_push_if(b, nir_ieq_imm(b, encode, HK_STORE_ENCODE_RAW32));
+   nir_push_if(b, nir_ieq_imm(b, encode, AGX_APPLE9_STORE_ENCODE_RAW32));
    nir_def *raw = value;
    nir_push_else(b, NULL);
    nir_def *rest;
    if (floating) {
-      nir_push_if(b, nir_ieq_imm(b, encode, HK_STORE_ENCODE_UNORM8));
+      nir_push_if(b, nir_ieq_imm(b, encode, AGX_APPLE9_STORE_ENCODE_UNORM8));
       nir_def *word = nir_imm_int(b, 0);
       for (unsigned c = 0; c < 4; ++c) {
          nir_def *u = nir_f2u32(
@@ -2738,7 +2747,7 @@ hk_apple9_encode_texel_fast(nir_builder *b, nir_def *value, nir_def *layout,
       nir_def *unorm8 = nir_vec4(b, word, nir_imm_int(b, 0), nir_imm_int(b, 0),
                                  nir_imm_int(b, 0));
       nir_push_else(b, NULL);
-      nir_push_if(b, nir_ieq_imm(b, encode, HK_STORE_ENCODE_FLOAT16));
+      nir_push_if(b, nir_ieq_imm(b, encode, AGX_APPLE9_STORE_ENCODE_FLOAT16));
       nir_def *float16 =
          nir_vec4(b,
                   nir_pack_half_2x16_split(b, nir_channel(b, value, 0),
@@ -2747,7 +2756,7 @@ hk_apple9_encode_texel_fast(nir_builder *b, nir_def *value, nir_def *layout,
                                            nir_channel(b, value, 3)),
                   nir_imm_int(b, 0), nir_imm_int(b, 0));
       nir_push_else(b, NULL);
-      nir_push_if(b, nir_ieq_imm(b, encode, HK_STORE_ENCODE_FLOAT11));
+      nir_push_if(b, nir_ieq_imm(b, encode, AGX_APPLE9_STORE_ENCODE_FLOAT11));
       nir_def *float11 =
          nir_vec4(b, hk_apple9_pack_float11(b, nir_trim_vector(b, value, 3)),
                   nir_imm_int(b, 0), nir_imm_int(b, 0), nir_imm_int(b, 0));
@@ -2775,7 +2784,7 @@ hk_apple9_buffer_texel_address(nir_builder *b, nir_def *meta, nir_def *coord,
 {
    nir_def *base = nir_load_global_constant(
       b, 1, 64,
-      nir_iadd_imm(b, meta, offsetof(struct hk_apple9_texel_metadata, base)),
+      nir_iadd_imm(b, meta, offsetof(struct agx_apple9_texel_metadata, base)),
       .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
    nir_def *offset = nir_imul(b, nir_channel(b, coord, 0), size_B);
    return nir_iadd(b, base, nir_u2u64(b, offset));
@@ -2797,7 +2806,7 @@ hk_apple9_lower_buffer_address(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def *pbe = nir_load_from_texture_handle_agx(b, intr->src[0].ssa);
    nir_def *meta =
       nir_iadd_imm(b, pbe,
-                   offsetof(struct hk_apple9_storage_descriptor, metadata) -
+                   offsetof(struct agx_apple9_storage_descriptor, metadata) -
                       offsetof(struct hk_storage_image_descriptor, pbe));
    unsigned size_B = atomic || swap
                         ? intr->def.bit_size / 8
@@ -2903,7 +2912,7 @@ hk_apple9_texture_route_loads(nir_shader *nir, struct set *safe)
 }
 
 /* Fetch a storage texel through the native entry of the descriptor that
- * load handle `tex` points at, see hk_apple9_storage_descriptor. */
+ * load handle `tex` points at, see agx_apple9_storage_descriptor. */
 static nir_def *
 hk_apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
                        nir_intrinsic_instr *handle, nir_def *coord)
@@ -2918,7 +2927,7 @@ hk_apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def *native = nir_bindless_image_agx(
       b,
       nir_iadd_imm(b, handle->src[0].ssa,
-                   offsetof(struct hk_apple9_storage_descriptor, texture) -
+                   offsetof(struct agx_apple9_storage_descriptor, texture) -
                       AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
                          AGX_APPLE9_TEXTURE_TABLE_STRIDE),
       .desc_set = nir_intrinsic_desc_set(handle));
@@ -2949,14 +2958,15 @@ hk_apple9_native_ok(nir_builder *b, nir_def *tex)
 {
    return nir_ine_imm(
       b,
-      nir_iand_imm(b,
-                   nir_load_global_constant(
-                      b, 1, 32,
-                      nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, tex),
-                                   offsetof(struct hk_apple9_storage_descriptor,
-                                            native_ok)),
-                      .align_mul = 4),
-                   HK_APPLE9_STORAGE_READ_VALID),
+      nir_iand_imm(
+         b,
+         nir_load_global_constant(
+            b, 1, 32,
+            nir_iadd_imm(
+               b, nir_load_from_texture_handle_agx(b, tex),
+               offsetof(struct agx_apple9_storage_descriptor, native_ok)),
+            .align_mul = 4),
+         AGX_APPLE9_STORAGE_READ_VALID),
       0);
 }
 
@@ -3049,7 +3059,7 @@ hk_apple9_can_native_store(const nir_builder *b,
    enum pipe_format format = nir_intrinsic_format(intr);
    return native_stores &&
           (format == PIPE_FORMAT_NONE ||
-           hk_apple9_native_store_format(format)) &&
+           agx_apple9_native_store_format(format)) &&
           b->shader->info.stage == MESA_SHADER_COMPUTE &&
           (dim == GLSL_SAMPLER_DIM_2D || dim == GLSL_SAMPLER_DIM_CUBE ||
            dim == GLSL_SAMPLER_DIM_3D) &&
@@ -3064,10 +3074,10 @@ hk_apple9_native_write_ok(nir_builder *b, nir_def *tex, bool array)
    nir_def *flags = nir_load_global_constant(
       b, 1, 32,
       nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, tex),
-                   offsetof(struct hk_apple9_storage_descriptor, native_ok)),
+                   offsetof(struct agx_apple9_storage_descriptor, native_ok)),
       .align_mul = 4);
-   unsigned mask = array ? HK_APPLE9_STORAGE_LAYER_WRITE_VALID
-                         : HK_APPLE9_STORAGE_WRITE_VALID;
+   unsigned mask = array ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
+                         : AGX_APPLE9_STORAGE_WRITE_VALID;
    return nir_ine_imm(b, nir_iand_imm(b, flags, mask), 0);
 }
 
@@ -3078,12 +3088,12 @@ hk_apple9_native_store(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def *packed = nir_load_global_constant(
       b, 1, 32,
       nir_iadd_imm(b, pbe_addr,
-                   offsetof(struct hk_apple9_storage_descriptor, native_ok) -
+                   offsetof(struct agx_apple9_storage_descriptor, native_ok) -
                       offsetof(struct hk_storage_image_descriptor, pbe)),
       .align_mul = 4);
    nir_def *index =
-      nir_iand_imm(b, nir_ushr_imm(b, packed, HK_APPLE9_STORAGE_PBE_SHIFT),
-                   HK_APPLE9_STORAGE_PBE_MASK);
+      nir_iand_imm(b, nir_ushr_imm(b, packed, AGX_APPLE9_STORAGE_PBE_SHIFT),
+                   AGX_APPLE9_STORAGE_PBE_MASK);
    /* Storage cube coordinates already contain the flattened face layer, and
     * 3D views have one 2D entry per depth slice. */
    if (array)
@@ -3144,15 +3154,15 @@ hk_apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
 
    nir_def *meta =
       nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, tex),
-                   offsetof(struct hk_apple9_storage_descriptor, metadata));
+                   offsetof(struct agx_apple9_storage_descriptor, metadata));
    nir_def *size_B = nir_load_global_constant(
       b, 1, 32,
-      nir_iadd_imm(b, meta, offsetof(struct hk_apple9_texel_metadata, size_B)),
+      nir_iadd_imm(b, meta, offsetof(struct agx_apple9_texel_metadata, size_B)),
       .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
    nir_def *layout = nir_load_global_constant(
       b, 4, 32,
       nir_iadd_imm(b, meta,
-                   offsetof(struct hk_apple9_texel_metadata, component)),
+                   offsetof(struct agx_apple9_texel_metadata, component)),
       .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
    /* Storage image descriptors also name a canonical store encoding. */
    nir_def *encode = NULL;
@@ -3161,7 +3171,7 @@ hk_apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
          b, 1, 32,
          nir_iadd_imm(
             b, nir_load_from_texture_handle_agx(b, tex),
-            offsetof(struct hk_apple9_storage_descriptor, store_encode)),
+            offsetof(struct agx_apple9_storage_descriptor, store_encode)),
          .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
    }
 
@@ -3259,8 +3269,8 @@ hk_apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
       nir_def *one = floating ? nir_imm_float(b, 1.0) : nir_imm_int(b, 1);
       zero =
          nir_vec4(b, nir_imm_int(b, 0), nir_imm_int(b, 0), nir_imm_int(b, 0),
-                  nir_bcsel(b, nir_ieq_imm(b, alpha_kind, HK_TEXEL_ONE), one,
-                            nir_imm_int(b, 0)));
+                  nir_bcsel(b, nir_ieq_imm(b, alpha_kind, AGX_APPLE9_TEXEL_ONE),
+                            one, nir_imm_int(b, 0)));
    }
    nir_pop_if(b, NULL);
    if (load) {
@@ -3318,7 +3328,7 @@ hk_apple9_residency_code(nir_builder *b, nir_def *table, nir_def *base,
 }
 
 /* Residency code of texel x of a buffer view, from the table of its buffer's
- * pages (see hk_apple9_texel_metadata::residency). A zero table is resident.
+ * pages (see agx_apple9_texel_metadata::residency). A zero table is resident.
  */
 static nir_def *
 hk_apple9_buffer_residency_code(nir_builder *b, nir_def *meta, nir_def *x)
@@ -3326,7 +3336,7 @@ hk_apple9_buffer_residency_code(nir_builder *b, nir_def *meta, nir_def *x)
    nir_def *table = nir_load_global_constant(
       b, 1, 64,
       nir_iadd_imm(b, meta,
-                   offsetof(struct hk_apple9_texel_metadata, residency)),
+                   offsetof(struct agx_apple9_texel_metadata, residency)),
       .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
    nir_def *code;
    nir_push_if(b, nir_ine_imm(b, table, 0));
@@ -3335,7 +3345,7 @@ hk_apple9_buffer_residency_code(nir_builder *b, nir_def *meta, nir_def *x)
       nir_def *fields = nir_load_global_constant(
          b, 2, 32,
          nir_iadd_imm(b, meta,
-                      offsetof(struct hk_apple9_texel_metadata, elements)),
+                      offsetof(struct agx_apple9_texel_metadata, elements)),
          .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
       nir_def *elements = nir_channel(b, fields, 0);
       nir_def *size_B = nir_channel(b, fields, 1);
@@ -3412,7 +3422,7 @@ hk_apple9_lower_sparse_tex(nir_builder *b, nir_tex_instr *tex,
    if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF && handle >= 0) {
       nir_def *meta = nir_iadd_imm(
          b, nir_load_from_texture_handle_agx(b, tex->src[handle].src.ssa),
-         offsetof(struct hk_apple9_texel_descriptor, metadata));
+         offsetof(struct agx_apple9_texel_descriptor, metadata));
       nir_def *coord =
          tex->src[nir_tex_instr_src_index(tex, nir_tex_src_coord)].src.ssa;
       code = hk_apple9_buffer_residency_code(
@@ -3513,18 +3523,18 @@ hk_apple9_lower_sparse_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
    if (dim == GLSL_SAMPLER_DIM_BUF) {
       nir_def *meta =
          nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, intr->src[0].ssa),
-                      offsetof(struct hk_apple9_storage_descriptor, metadata));
+                      offsetof(struct agx_apple9_storage_descriptor, metadata));
       code = hk_apple9_buffer_residency_code(
          b, meta, nir_u2u32(b, nir_channel(b, intr->src[1].ssa, 0)));
    } else if (dim == GLSL_SAMPLER_DIM_2D || dim == GLSL_SAMPLER_DIM_CUBE) {
       nir_def *meta =
          nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, intr->src[0].ssa),
-                      offsetof(struct hk_apple9_storage_descriptor, metadata));
+                      offsetof(struct agx_apple9_storage_descriptor, metadata));
       nir_def *table = nir_load_global_constant(b, 1, 64, meta, .align_mul = 8);
       nir_def *base = nir_load_global_constant(
          b, 1, 32,
          nir_iadd_imm(b, meta,
-                      offsetof(struct hk_apple9_texel_metadata, elements)),
+                      offsetof(struct agx_apple9_texel_metadata, elements)),
          .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
       nir_def *coord = nir_u2u32(b, intr->src[1].ssa);
       bool layered =

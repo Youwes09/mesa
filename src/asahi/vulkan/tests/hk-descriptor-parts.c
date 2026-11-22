@@ -185,14 +185,14 @@ check(void)
 
    view.plane_count = 1;
    memset(&view.apple9_storage, 0x61, sizeof(view.apple9_storage));
-   view.apple9_storage.native_ok = HK_APPLE9_STORAGE_READ_VALID;
-   view.apple9_storage.store_encode = HK_STORE_ENCODE_UNORM8;
-   view.apple9_store_flags = HK_APPLE9_STORAGE_LAYER_WRITE_VALID;
+   view.apple9_storage.native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+   view.apple9_storage.store_encode = AGX_APPLE9_STORE_ENCODE_UNORM8;
+   view.apple9_store_flags = AGX_APPLE9_STORAGE_LAYER_WRITE_VALID;
    view.apple9_pbe_index = 0x1234;
-   struct hk_apple9_storage_descriptor storage = view.apple9_storage;
+   struct agx_apple9_storage_descriptor storage = view.apple9_storage;
    storage.metadata.base = va[0].addr;
    storage.native_ok |= view.apple9_store_flags |
-                        view.apple9_pbe_index << HK_APPLE9_STORAGE_PBE_SHIFT;
+                        view.apple9_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT;
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,
                        sizeof(storage)));
    CHECK(view.apple9_storage.metadata.base == UINT64_C(0x6161616161616161));
@@ -224,15 +224,16 @@ check(void)
    }
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, info,
                        combined, sizeof(combined)));
-   struct hk_apple9_texel_descriptor texel = {.tex = tex};
+   struct agx_apple9_texel_descriptor texel = {.tex = tex};
    memcpy(texel.texture, null.texture, sizeof(texel.texture));
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, info,
                        &texel, sizeof(texel)));
-   struct hk_apple9_storage_descriptor storage_texel = {.common.tex = tex};
+   struct agx_apple9_storage_descriptor storage_texel = {.common.tex = tex};
    agx_set_null_pbe(&storage_texel.common.pbe);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, info,
                        &storage_texel, sizeof(storage_texel)));
-   storage = (struct hk_apple9_storage_descriptor){.metadata.base = va[0].addr};
+   storage =
+      (struct agx_apple9_storage_descriptor){.metadata.base = va[0].addr};
    agx_set_null_texture(&storage.common.tex);
    agx_set_null_pbe(&storage.common.pbe);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,

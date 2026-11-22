@@ -92,7 +92,7 @@ hk_descriptor_stride_align_for_type(
 
    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
       if (agx_is_apple9(&pdev->dev)) {
-         *stride = sizeof(struct hk_apple9_texel_descriptor);
+         *stride = sizeof(struct agx_apple9_texel_descriptor);
          *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
          break;
       }
@@ -101,7 +101,7 @@ hk_descriptor_stride_align_for_type(
    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
       if (agx_is_apple9(&pdev->dev) &&
           type != VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
-         *stride = sizeof(struct hk_apple9_storage_descriptor);
+         *stride = sizeof(struct agx_apple9_storage_descriptor);
          *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
          break;
       }

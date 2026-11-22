@@ -58,10 +58,10 @@ fold(nir_shader *s)
 /* Encode n texels with both encodings; out[i][0] generic, out[i][1] fast. */
 static bool
 encode_batch(const float (*rgba)[4], unsigned n, enum pipe_format format,
-             enum hk_apple9_store_encode encode, uint32_t (*out)[2][4])
+             enum agx_apple9_store_encode encode, uint32_t (*out)[2][4])
 {
-   struct hk_apple9_texel_metadata m;
-   hk_apple9_texel_layout(format, &m);
+   struct agx_apple9_texel_metadata m;
+   agx_apple9_texel_layout(format, &m);
    nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "encode");
    for (unsigned i = 0; i < n; ++i) {
@@ -72,7 +72,7 @@ encode_batch(const float (*rgba)[4], unsigned n, enum pipe_format format,
       for (unsigned k = 0; k < 2; ++k) {
          nir_def *words = hk_apple9_encode_texel_fast(
             &b, value, layout, true,
-            nir_imm_int(&b, k ? encode : HK_STORE_ENCODE_GENERIC));
+            nir_imm_int(&b, k ? encode : AGX_APPLE9_STORE_ENCODE_GENERIC));
          nir_store_global(&b, words, nir_imm_int64(&b, (i * 2 + k) * 16),
                           .align_mul = 16, .write_mask = 0xf);
       }
@@ -192,7 +192,7 @@ check_float11(void)
    static uint32_t out[ARRAY_SIZE(in)][2][4];
    for (unsigned i = 0; i < n; i += BATCH) {
       if (!encode_batch(&in[i], MIN2(BATCH, n - i), PIPE_FORMAT_R11G11B10_FLOAT,
-                        HK_STORE_ENCODE_FLOAT11, &out[i]))
+                        AGX_APPLE9_STORE_ENCODE_FLOAT11, &out[i]))
          return 1;
    }
 
@@ -237,10 +237,10 @@ check_float11(void)
 /* NIR ALU instructions left on the path that a uniform store encoding
  * selects, for a non-constant texel (informational). */
 static unsigned
-path_alu_count(enum pipe_format format, enum hk_apple9_store_encode encode)
+path_alu_count(enum pipe_format format, enum agx_apple9_store_encode encode)
 {
-   struct hk_apple9_texel_metadata m;
-   hk_apple9_texel_layout(format, &m);
+   struct agx_apple9_texel_metadata m;
+   agx_apple9_texel_layout(format, &m);
    nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "path");
    nir_def *value =
@@ -266,7 +266,9 @@ main(void)
 {
    printf(
       "R11G11B10 store path, NIR ALU instructions: generic %u, float11 arm %u\n",
-      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_GENERIC),
-      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT, HK_STORE_ENCODE_FLOAT11));
+      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT,
+                     AGX_APPLE9_STORE_ENCODE_GENERIC),
+      path_alu_count(PIPE_FORMAT_R11G11B10_FLOAT,
+                     AGX_APPLE9_STORE_ENCODE_FLOAT11));
    return check_float11();
 }
