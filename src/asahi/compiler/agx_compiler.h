@@ -439,15 +439,18 @@ typedef struct {
    /* Shift for a bitwise or memory op (conflicts with format for memory ops) */
    unsigned shift : 4;
 
-   /* Scoreboard index, 0 or 1. Leave as 0 for instructions that do not require
-    * scoreboarding (everything but memory load/store and texturing). */
-   unsigned scoreboard : 1;
+   /* Scoreboard slot, below scoreboard_slots. 0 for synchronous instructions */
+   unsigned scoreboard : 3;
+
+   /* The instruction itself waits for wait_slot, which Apple8 cannot encode */
+   bool wait          : 1;
+   unsigned wait_slot : 3;
 
    /* Output modifiers */
    bool saturate : 1;
    unsigned mask : 4;
 
-   unsigned padding : 8;
+   unsigned padding : 2;
 } agx_instr;
 
 static inline void
@@ -521,6 +524,9 @@ struct agx_isa_target {
    unsigned spill_reserved_halves;
    unsigned spill_copy_reg;
    unsigned spill_swap_regs[2];
+
+   /* Scoreboard slots for asynchronous instructions */
+   unsigned scoreboard_slots;
 
    /* Whether agx_occupancy_for_register_count describes this ISA */
    bool occupancy_table;

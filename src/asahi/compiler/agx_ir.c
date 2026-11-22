@@ -39,6 +39,7 @@ static const struct agx_isa_target agx_apple8_target = {
    .spill_reserved_halves = 8,
    .spill_copy_reg = 2,
    .spill_swap_regs = {4, 6},
+   .scoreboard_slots = 2,
    .occupancy_table = true,
 };
 
@@ -53,6 +54,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .spill_reserved_halves = 10,
    .spill_copy_reg = 2,
    .spill_swap_regs = {6, 8},
+   .scoreboard_slots = 6,
    .occupancy_table = false,
 };
 

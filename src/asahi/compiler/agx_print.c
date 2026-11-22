@@ -234,6 +234,15 @@ agx_print_instr(const agx_instr *I, FILE *fp)
       fprintf(fp, "inv");
    }
 
+   if (I->wait) {
+      if (print_comma)
+         fprintf(fp, ", ");
+      else
+         print_comma = true;
+
+      fprintf(fp, "wait slot %u", I->wait_slot);
+   }
+
    fprintf(fp, "\n");
 }
 

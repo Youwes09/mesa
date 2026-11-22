@@ -557,6 +557,13 @@ agx_validate(agx_context *ctx, const char *after)
          agx_print_instr(I, stdout);
          fail = true;
       }
+
+      if (I->scoreboard >= ctx->target.scoreboard_slots ||
+          (I->wait && I->wait_slot >= ctx->target.scoreboard_slots)) {
+         fprintf(stderr, "Invalid scoreboard slot after %s\n", after);
+         agx_print_instr(I, stderr);
+         fail = true;
+      }
    }
 
    if (!agx_validate_width(ctx)) {

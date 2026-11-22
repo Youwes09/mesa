@@ -557,6 +557,10 @@ static void
 agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups,
                agx_instr *I, enum u_tristate needs_g13x_coherency)
 {
+   /* Two scoreboard slots, and waits are separate instructions */
+   pack_assert(I, I->scoreboard < 2);
+   pack_assert(I, !I->wait);
+
    switch (I->op) {
    case AGX_OPCODE_LD_TILE:
    case AGX_OPCODE_ST_TILE: {
