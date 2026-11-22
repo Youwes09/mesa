@@ -119,6 +119,10 @@ struct slot {
    /* Set of registers this slot is still reading */
    BITSET_DECLARE(reads, AGX_NUM_REGS);
 
+   /* Apple9: private frame words this slot is still storing */
+   BITSET_DECLARE(frame_writes, AGX_NUM_MODELED_REGS / 2);
+   bool any_frame_writes;
+
    /* Completion classes of the pending messages */
    uint8_t completion;
 
@@ -320,6 +324,19 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
          }
       }
 
+      /* Fills wait for pending saves of their word, or any word if indexed */
+      if (apple9 && I->op == AGX_OPCODE_STACK_LOAD) {
+         bool indexed = I->src[0].type != AGX_INDEX_IMMEDIATE;
+
+         for (unsigned slot = 0; slot < nr_slots; ++slot) {
+            struct slot *s = &slots[slot];
+
+            if (s->any_frame_writes &&
+                (indexed || BITSET_TEST(s->frame_writes, I->src[0].value / 4)))
+               wait_mask |= BITSET_BIT(slot);
+         }
+      }
+
       /* Apple9 can fold a wait for an operand into the instruction */
       uint8_t operand_mask = wait_mask;
 
@@ -388,6 +405,12 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
                                    agx_index_size_16(I->src[s]));
                }
             }
+         }
+
+         if (apple9 && I->op == AGX_OPCODE_STACK_STORE) {
+            assert(I->src[1].type == AGX_INDEX_IMMEDIATE && "indexed are sync");
+            BITSET_SET(slot->frame_writes, I->src[1].value / 4);
+            slot->any_frame_writes = true;
          }
 
          slot->completion |= p.completion;
