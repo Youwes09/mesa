@@ -6268,6 +6268,7 @@ agx_apple9_runtime_sampler(uint32_t *record,
    record[AGX_APPLE9_SAMP_BORDER] = apple9_border_preset(state);
    record[AGX_APPLE9_SAMP_PIXEL_COORDS] = state->unnormalized_coords;
    record[AGX_APPLE9_SAMP_MAX_ANISOTROPY] = fui(MAX2(state->max_anisotropy, 1));
+   record[AGX_APPLE9_SAMP_SEAMFUL_CUBE] = !state->seamless_cube_map;
 }
 
 static uint64_t

@@ -18,6 +18,7 @@
 #include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "agx_builder.h"
+#include "agx_compile_apple9.h"
 #include "agx_compiler.h"
 #include "agx_debug.h"
 #include "agx_nir.h"
@@ -2780,7 +2781,8 @@ agx_gather_for_nir(nir_tex_instr *tex)
  * of their LOD word, cube maps in its low bits and in their third word.
  */
 static void
-agx_emit_cube_apple9(agx_builder *b, agx_index *words, bool array)
+agx_emit_cube_apple9(agx_builder *b, agx_index *words, bool array,
+                     bool as_array)
 {
    agx_index major = agx_vec_temp(b->shader, AGX_SIZE_32, 2);
    agx_cube_to(b, major, words[0], words[1], words[2], 0);
@@ -2802,6 +2804,19 @@ agx_emit_cube_apple9(agx_builder *b, agx_index *words, bool array)
 
    /* Only the low half of the face's register is defined */
    agx_index face = agx_extend_apple9(b, major_face[1], 16, false);
+
+   if (as_array) {
+      /* The face as a layer of a 2D array, 6 * cube + face, in place of the
+       * cube index in the low bits of the LOD word
+       */
+      agx_index cube = agx_extend_apple9(b, words[3], 16, false);
+      agx_index layer =
+         array ? agx_imad(b, cube, agx_immediate(6), face, 0) : face;
+
+      words[2] = layer;
+      words[3] = agx_or(b, agx_xor(b, words[3], cube), layer);
+      return;
+   }
 
    words[2] = face;
    words[3] =
@@ -2859,8 +2874,10 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
    if (fetch)
       sampler = agx_immediate(0);
 
+   bool cube_as_array = instr->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
+
    if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE && !fetch)
-      agx_emit_cube_apple9(b, words, instr->is_array);
+      agx_emit_cube_apple9(b, words, instr->is_array, cube_as_array);
 
    agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, nr);
    params.reg_class = RA_EXPORT;
@@ -2900,9 +2917,10 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
    agx_index dst = agx_vec_temp(b->shader, AGX_SIZE_32, util_bitcount(mask));
    agx_instr *I = agx_texture_sample_to(
       b, dst, params, agx_null(), agx_null(), texture, sampler, offset,
-      agx_tex_dim(instr->sampler_dim, instr->is_array), lod_mode, mask,
-      !agx_is_null(offset), instr->is_shadow, instr->op == nir_texop_lod,
-      agx_gather_for_nir(instr), false);
+      cube_as_array ? AGX_DIM_2D_ARRAY
+                    : agx_tex_dim(instr->sampler_dim, instr->is_array),
+      lod_mode, mask, !agx_is_null(offset), instr->is_shadow,
+      instr->op == nir_texop_lod, agx_gather_for_nir(instr), false);
 
    if (fetch)
       I->op = AGX_OPCODE_TEXTURE_LOAD;

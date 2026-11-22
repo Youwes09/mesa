@@ -185,6 +185,8 @@ enum agx_apple9_sampler_field {
    AGX_APPLE9_SAMP_BORDER,
    AGX_APPLE9_SAMP_PIXEL_COORDS,
    AGX_APPLE9_SAMP_MAX_ANISOTROPY,
+   /* Nonzero if cube maps are sampled without filtering across faces */
+   AGX_APPLE9_SAMP_SEAMFUL_CUBE,
 };
 
 /* RGB32 buffer views use three scalar texels in the physical descriptor. */
@@ -488,6 +490,8 @@ uint32_t agx_nir_apple9_offset_samplers(const nir_shader *nir);
  * includes the sampler's LOD bias: the per-draw sampler bias must not be
  * applied again. */
 #define AGX_APPLE9_TEXTURE_BIASED_LEVEL (1 << 13)
+/* A cube sample of a seamless sampler, after the seamful one was split off */
+#define AGX_APPLE9_TEXTURE_CUBE_SEAMLESS (1 << 14)
 
 bool agx_nir_lower_apple9_sampler_state(
    nir_shader *nir, const struct agx_apple9_sampler_key key[32],

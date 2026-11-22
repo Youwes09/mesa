@@ -1228,6 +1228,49 @@ apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    return true;
 }
 
+/*
+ * Apple9 cube filtering clamps at the edges of the selected face. Without
+ * seamless filtering, the sampler's wrap modes apply on the face instead, so
+ * the face is sampled as a layer of a 2D array (6 layers per cube). Whether
+ * a sampler is seamful is in its runtime record. Implicit-LOD, gradient and
+ * comparison samples stay native: as array layers, a quad straddling a face
+ * edge takes discontinuous derivatives, and gradients are not projected.
+ */
+static bool
+apple9_lower_seamful_cube(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
+{
+   if (tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE || tex->is_shadow ||
+       (tex->op != nir_texop_txl && tex->op != nir_texop_tg4) ||
+       (tex->backend_flags &
+        (AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY | AGX_APPLE9_TEXTURE_CUBE_SEAMLESS)))
+      return false;
+
+   tex->backend_flags |= AGX_APPLE9_TEXTURE_CUBE_SEAMLESS;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *seamful = nir_ine_imm(
+      b, agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_SEAMFUL_CUBE), 0);
+
+   nir_tex_instr *face =
+      nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
+   face->backend_flags |= AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
+
+   nir_push_if(b, seamful);
+   nir_builder_instr_insert(b, &face->instr);
+   nir_push_else(b, NULL);
+   nir_instr_remove(&tex->instr);
+   nir_builder_instr_insert(b, &tex->instr);
+   nir_pop_if(b, NULL);
+
+   nir_def *phi = nir_if_phi(b, &face->def, &tex->def);
+   nir_foreach_use_including_if_safe(use, &tex->def) {
+      if (nir_src_is_if(use) || nir_src_use_instr(use) != nir_def_instr(phi))
+         nir_src_rewrite(use, phi);
+   }
+
+   return true;
+}
+
 static bool
 agx_nir_lower_texture_apple9(nir_shader *s)
 {
@@ -1236,6 +1279,8 @@ agx_nir_lower_texture_apple9(nir_shader *s)
    NIR_PASS(progress, s, nir_shader_tex_pass, apple9_flag_offsets,
             nir_metadata_all, NULL);
    NIR_PASS(progress, s, agx_nir_lower_apple9_sampler_state_runtime);
+   NIR_PASS(progress, s, nir_shader_tex_pass, apple9_lower_seamful_cube,
+            nir_metadata_none, NULL);
 
    /* Lower the divisions and interpolations of the software path */
    nir_lower_idiv_options idiv_options = {.allow_fp16 = true};
