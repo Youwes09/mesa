@@ -1062,9 +1062,48 @@ agx_tex_dim(enum glsl_sampler_dim dim, bool array)
    }
 }
 
+/* Exports the implicit tile through the PBE descriptor at a table index */
+static agx_instr *
+agx_emit_block_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   assert(instr->intrinsic == nir_intrinsic_image_store_block_agx &&
+          "Apple9 block stores address the PBE table");
+   assert(!nir_intrinsic_explicit_coord(instr));
+
+   bool ms = nir_intrinsic_image_dim(instr) == GLSL_SAMPLER_DIM_MS;
+   bool array = nir_intrinsic_image_array(instr);
+   agx_index offset = agx_src_index(b->shader, &instr->src[1]);
+   offset = agx_shl32(b, offset, agx_immediate(16));
+
+   agx_index words[4] = {
+      agx_extract_nir_src(b, instr->src[2], 0),
+      agx_extract_nir_src(b, instr->src[2], 1),
+      array ? agx_extract_nir_src(b, instr->src[2], 2)
+      : ms  ? agx_mov_imm(b, 32, 0)
+            : offset,
+      offset,
+   };
+
+   agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, 4);
+   params.reg_class = RA_EXPORT;
+   agx_emit_collect_to(b, params, 4, words);
+
+   unsigned format =
+      agx_apple9_block_export_format(nir_intrinsic_format(instr));
+   assert(format <= 15 && "tile representations are exportable");
+
+   return agx_block_image_store(
+      b, params, agx_immediate(nir_src_as_uint(instr->src[0])), agx_null(),
+      agx_null(), format, agx_tex_dim(nir_intrinsic_image_dim(instr), array),
+      false);
+}
+
 static agx_instr *
 agx_emit_block_image_store(agx_builder *b, nir_intrinsic_instr *instr)
 {
+   if (agx_is_apple9(b->shader))
+      return agx_emit_block_image_store_apple9(b, instr);
+
    agx_index offset = agx_src_index(b->shader, &instr->src[1]);
    agx_index coords = agx_src_index(b->shader, &instr->src[2]);
    enum agx_format format = agx_format_for_pipe(nir_intrinsic_format(instr));

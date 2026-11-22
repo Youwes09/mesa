@@ -2976,6 +2976,36 @@ pack_image_write(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_IMAGE_WRITE, bytes, 22);
 }
 
+/* Block image store of the tile, then the join of its parameter export */
+static void
+pack_block_image_store(const agx_instr *I, struct a9_packed *p)
+{
+   unsigned base = export_word(I, I->src[0]);
+   bool ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY;
+   bool array = I->dim == AGX_DIM_2D_ARRAY || I->dim == AGX_DIM_2D_MS_ARRAY;
+
+   pack_assert(I, agx_channels(I->src[0]) == 4 && base <= 12 && !(base & 3));
+   pack_assert(I, I->src[1].value < 16 && I->format <= 15);
+
+   unsigned mode = array ? (ms ? 0x028 : 0x528) : ms ? 0x228 : 0x5a8;
+
+   const uint8_t bytes[18] = {
+      0x57,        0x10,
+      0x54,        base << 1,
+      0,           I->src[1].value << 4,
+      0,           0x80,
+      mode & 0xff, (I->format << 4) | (mode >> 8),
+      1,           0,
+      0x07,        0x12,
+      0x54,        0,
+      3,           0,
+   };
+   a9_init(p,
+           (array || ms) ? AGX_APPLE9_ENC_BLOCK_IMAGE_STORE_EXTENDED
+                         : AGX_APPLE9_ENC_BLOCK_IMAGE_STORE,
+           bytes, 18);
+}
+
 /* Fragment outputs and tile access */
 static void
 pack_fragment(const agx_instr *I, struct a9_packed *p)
@@ -3237,6 +3267,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_IMAGE_WRITE:
       pack_image_write(I, p);
+      return;
+
+   case AGX_OPCODE_BLOCK_IMAGE_STORE:
+      pack_block_image_store(I, p);
       return;
 
    case AGX_OPCODE_HADD:

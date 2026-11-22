@@ -894,8 +894,16 @@ apple9_instr_is_legal(const agx_instr *I)
              I->src[4].size == AGX_SIZE_32 && agx_channels(I->src[4]) == 2 &&
              I->dim == AGX_DIM_2D && !I->coherent;
 
-   case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_BLOCK_IMAGE_STORE:
+      /* Implicit tile coordinates, a 4-bit format and a table index */
+      return is_export(I->src[0]) && agx_channels(I->src[0]) == 4 &&
+             I->src[1].type == AGX_INDEX_IMMEDIATE && I->src[1].value < 16 &&
+             agx_is_null(I->src[2]) && agx_is_null(I->src[3]) &&
+             I->format <= 15 && !I->explicit_coords &&
+             (I->dim == AGX_DIM_2D || I->dim == AGX_DIM_2D_ARRAY ||
+              I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY);
+
+   case AGX_OPCODE_IMAGE_LOAD:
       /* No known Apple9 encoding */
       return false;
 
@@ -1023,6 +1031,12 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
    case AGX_OPCODE_PACK_UNORM_4X8:
       /* The halves are written by separate instructions */
       c[0].early_clobber = true;
+      break;
+
+   case AGX_OPCODE_BLOCK_IMAGE_STORE:
+      /* Parameters in four export registers at 0, 4, 8 or 12 */
+      c[D].max = 2 * 12;
+      c[D].align = 8;
       break;
 
    case AGX_OPCODE_IMAGE_WRITE:

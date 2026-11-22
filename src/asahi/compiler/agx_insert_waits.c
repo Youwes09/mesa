@@ -262,16 +262,13 @@ apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
    return ok;
 }
 
-/*
- * Apple9 texture operations and image writes wait for export group 0, which
- * their parameter bundles are written on, without a wait instruction. Image
- * writes join the export before the next instruction.
- */
+/* Texture operations and image stores wait for export group 0 themselves */
 static bool
 apple9_waits_for_exports(const agx_instr *I)
 {
    return I->op == AGX_OPCODE_TEXTURE_SAMPLE ||
-          I->op == AGX_OPCODE_TEXTURE_LOAD || I->op == AGX_OPCODE_IMAGE_WRITE;
+          I->op == AGX_OPCODE_TEXTURE_LOAD || I->op == AGX_OPCODE_IMAGE_WRITE ||
+          I->op == AGX_OPCODE_BLOCK_IMAGE_STORE;
 }
 
 /*
