@@ -99,7 +99,7 @@ typedef struct {
 
    enum ra_class reg_class : 2;
 
-   unsigned channels_m1     : 3;
+   unsigned channels_m1     : 4;
    enum agx_size size       : 2;
    enum agx_index_type type : 3;
 
@@ -111,7 +111,7 @@ typedef struct {
     */
    unsigned reg : AGX_NUM_MODELED_REGS_LOG2;
    bool has_reg     : 1;
-   unsigned padding : 16 - AGX_NUM_MODELED_REGS_LOG2;
+   unsigned padding : 15 - AGX_NUM_MODELED_REGS_LOG2;
 } agx_index;
 static_assert(sizeof(agx_index) == 8, "packed");
 
