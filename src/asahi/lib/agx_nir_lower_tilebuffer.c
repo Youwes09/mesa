@@ -38,6 +38,95 @@ apple9_samples(nir_builder *b, struct agx_tilebuffer_layout *tib)
       return nir_u2u16(b, nir_load_sample_mask_in(b));
 }
 
+static bool
+apple9_is_norm8(const struct util_format_description *desc)
+{
+   return desc->layout == UTIL_FORMAT_LAYOUT_PLAIN &&
+          desc->channel[0].size == 8 && desc->channel[0].normalized;
+}
+
+/* Pack RGBA into tile words. unorm8, FP16, RGB10A2 and RG11B10F are native */
+static nir_def *
+pack_apple9(nir_builder *b, enum pipe_format tile, nir_def *rgba)
+{
+   const struct util_format_description *desc = util_format_description(tile);
+
+   switch (tile) {
+   case PIPE_FORMAT_R10G10B10A2_UNORM:
+      return nir_pack_format_agx(b, rgba, .format = tile);
+
+   case PIPE_FORMAT_B10G10R10A2_UNORM:
+      return nir_pack_format_agx(
+         b, nir_swizzle(b, rgba, (unsigned[]){2, 1, 0, 3}, 4),
+         .format = PIPE_FORMAT_R10G10B10A2_UNORM);
+
+   case PIPE_FORMAT_R11G11B10_FLOAT:
+      return nir_pack_format_agx(b, nir_trim_vector(b, rgba, 3),
+                                 .format = tile);
+
+   default:
+      break;
+   }
+
+   nir_def *zero = nir_imm_float(b, 0.0);
+
+   if (apple9_is_norm8(desc) &&
+       desc->channel[0].type == UTIL_FORMAT_TYPE_UNSIGNED) {
+      nir_def *c[4];
+      for (unsigned i = 0; i < 4; ++i) {
+         bool present = i < desc->nr_channels &&
+                        desc->channel[i].type != UTIL_FORMAT_TYPE_VOID;
+         c[i] = present ? nir_channel(b, rgba, i) : zero;
+      }
+
+      return nir_pack_unorm_4x8(b, nir_vec(b, c, 4));
+   }
+
+   if (desc->layout == UTIL_FORMAT_LAYOUT_PLAIN &&
+       desc->channel[0].type == UTIL_FORMAT_TYPE_FLOAT &&
+       desc->channel[0].size == 16) {
+      nir_def *w[2];
+      unsigned words = DIV_ROUND_UP(desc->nr_channels, 2);
+      for (unsigned i = 0; i < words; ++i) {
+         nir_def *hi = 2 * i + 1 < desc->nr_channels
+                          ? nir_channel(b, rgba, 2 * i + 1)
+                          : zero;
+         w[i] = nir_pack_half_2x16_split(b, nir_channel(b, rgba, 2 * i), hi);
+      }
+
+      return nir_vec(b, w, words);
+   }
+
+   return nir_u2u32(b, nir_format_pack_rgba(b, tile, rgba));
+}
+
+static nir_def *
+unpack_apple9(nir_builder *b, enum pipe_format tile, nir_def *raw)
+{
+   const struct util_format_description *desc = util_format_description(tile);
+   unsigned bits = util_format_get_blocksizebits(tile);
+
+   if (apple9_is_norm8(desc)) {
+      nir_def *v = desc->channel[0].type == UTIL_FORMAT_TYPE_SIGNED
+                      ? nir_unpack_snorm_4x8(b, nir_channel(b, raw, 0))
+                      : nir_unpack_unorm_4x8(b, nir_channel(b, raw, 0));
+      nir_def *c[4];
+
+      for (unsigned i = 0; i < 4; ++i) {
+         enum pipe_swizzle s = desc->swizzle[i];
+         c[i] = s <= PIPE_SWIZZLE_W ? nir_channel(b, v, s)
+                                    : nir_imm_float(b, s == PIPE_SWIZZLE_1);
+      }
+
+      return nir_vec(b, c, 4);
+   }
+
+   if (bits < 32)
+      raw = nir_u2uN(b, raw, bits);
+
+   return nir_format_unpack_rgba(b, raw, tile);
+}
+
 static void
 store_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
                         enum pipe_format logical_format, unsigned rt,
@@ -59,8 +148,7 @@ store_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
    }
 
    value = nir_pad_vector(b, value, 4);
-   nir_def *packed =
-      nir_u2u32(b, nir_format_pack_rgba(b, util_format_linear(tile), value));
+   nir_def *packed = pack_apple9(b, util_format_linear(tile), value);
 
    /* With a word per component, the write mask selects words */
    if (!agx_tilebuffer_supports_mask(tib, rt))
@@ -80,7 +168,6 @@ load_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
 {
    enum pipe_format tile = agx_apple9_color_tile_format(logical_format);
    unsigned words = agx_apple9_color_words(logical_format);
-   unsigned bits = util_format_get_blocksizebits(tile);
 
    /* In a sample loop, the mask is narrowed to the iteration's sample */
    if (tib->nr_samples > 1)
@@ -92,10 +179,7 @@ load_tilebuffer_apple9(nir_builder *b, struct agx_tilebuffer_layout *tib,
       .base = agx_tilebuffer_offset_B(tib, rt),
       .format = agx_apple9_color_raw_format(words));
 
-   if (bits < 32)
-      raw = nir_u2uN(b, raw, bits);
-
-   nir_def *value = nir_format_unpack_rgba(b, raw, util_format_linear(tile));
+   nir_def *value = unpack_apple9(b, util_format_linear(tile), raw);
 
    if (util_format_is_srgb(logical_format)) {
       nir_def *rgb = nir_format_srgb_to_linear(b, value);
