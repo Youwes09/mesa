@@ -221,3 +221,68 @@ TEST_F(Apple9Legality, RegisterConstraints)
    EXPECT_EQ(add->reg_constraints, nullptr);
 }
 
+static void
+optimize(agx_context *ctx)
+{
+   agx_optimizer_backward(ctx);
+   agx_optimizer_forward(ctx);
+   agx_dce(ctx, true);
+}
+
+/* The optimizer only creates operands Apple9 can encode */
+TEST_F(Apple9Legality, OptimizerRespectsLegality)
+{
+   agx_index x = temp(), out = temp();
+
+   /* An 8-bit constant is inlined, a wider one is not */
+   agx_index small = agx_mov_imm(b, 32, 7);
+   agx_index big = agx_mov_imm(b, 32, 0x1234);
+   agx_index sum = agx_iadd(b, x, small, 0);
+   agx_iadd_to(b, out, sum, big, 0);
+   agx_unit_test(b, out);
+   optimize(ctx);
+
+   unsigned movs = 0;
+   agx_foreach_instr_global(ctx, I) {
+      if (I->op == AGX_OPCODE_MOV_IMM)
+         movs++;
+      if (I->op == AGX_OPCODE_IADD && I->dest[0].value != out.value) {
+         EXPECT_TRUE(agx_is_equiv(I->src[1], agx_immediate(7)));
+      }
+   }
+   EXPECT_EQ(movs, 1u);
+
+   /* xor(not x, y) would be xnor, which Apple9 lacks */
+   agx_builder *b2 = builder(AGX_SHADER_ISA_APPLE9);
+   agx_context *ctx2 = b2->shader;
+   agx_index a = agx_temp(ctx2, AGX_SIZE_32), c = agx_temp(ctx2, AGX_SIZE_32);
+   agx_index r = agx_temp(ctx2, AGX_SIZE_32);
+   agx_get_sr_to(b2, a, AGX_SR_THREAD_POSITION_IN_GRID_X);
+   agx_get_sr_to(b2, c, AGX_SR_THREAD_POSITION_IN_GRID_Y);
+   agx_xor_to(b2, r, agx_not(b2, a), c);
+   agx_unit_test(b2, r);
+   optimize(ctx2);
+
+   agx_foreach_instr_global(ctx2, I) {
+      if (I->op == AGX_OPCODE_BITOP) {
+         EXPECT_TRUE(agx_instr_is_legal(ctx2, I));
+      }
+   }
+
+   /* 17.0 goes in the addend of an FMA, not the multiplier */
+   agx_builder *b3 = builder(AGX_SHADER_ISA_APPLE9);
+   agx_context *ctx3 = b3->shader;
+   agx_index k = agx_mov_imm(b3, 32, fui(17.0));
+   agx_index p = agx_temp(ctx3, AGX_SIZE_32);
+   agx_index f = agx_temp(ctx3, AGX_SIZE_32);
+   agx_ffma_to(b3, f, p, k, k);
+   agx_unit_test(b3, f);
+   optimize(ctx3);
+
+   agx_foreach_instr_global(ctx3, I) {
+      if (I->op == AGX_OPCODE_FFMA) {
+         EXPECT_EQ(I->src[1].type, AGX_INDEX_NORMAL);
+         EXPECT_EQ(I->src[2].type, AGX_INDEX_IMMEDIATE);
+      }
+   }
+}
