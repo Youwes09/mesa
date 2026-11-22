@@ -1400,22 +1400,29 @@ TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
              0x00, 0x60, 0x03});
 }
 
-/* FP16 arithmetic on the low halves of registers */
+/* FP16 arithmetic on the low halves of registers. The bytes are the old
+ * compiler's encodings of these instructions in its FP16 test shader,
+ * followed by the zero-extension companion of FLOAT_TO_HALF_ZEXT.
+ */
 TEST_F(Apple9Pack, HalfArithmetic)
 {
    agx_instr *I = agx_hmul_to(b, r(6), r(4), r(3));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF2);
-   check(I, {0x60, 0x88, 0x05, 0x86, 0x00, 0x00});
+   check(I, {0x60, 0x88, 0x05, 0x86, 0x00, 0x00, 0x63, 0x00, 0x00, 0x01});
 
    check(agx_hadd_to(b, r(4), k(r(4)), r(3)),
-         {0x40, 0x08, 0x0c, 0x86, 0x00, 0x00});
+         {0x40, 0x08, 0x0c, 0x86, 0x00, 0x00, 0x43, 0x00, 0x00, 0x01});
 
    I = agx_hfma_to(b, r(5), r(4), r(3), r(4));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF3);
-   check(I, {0x50, 0x88, 0x06, 0x86, 0x01, 0x88, 0x00, 0x00});
+   check(I, {0x50, 0x88, 0x06, 0x86, 0x01, 0x88, 0x00, 0x00, 0x53, 0x00, 0x00,
+             0x01});
 }
 
-/* FP16 to FP32 from the low half of a register, and back */
+/* FP16 to FP32 from the low half of a register, as the old compiler encoded
+ * it, and back into the low half, zero-extended by the companion instruction
+ * of the old compiler's FLOAT_TO_HALF_ZEXT.
+ */
 TEST_F(Apple9Pack, HalfConversionsOfRegisters)
 {
    agx_instr *I = agx_f16_to_f32_to(b, r(10), k(r(5)));
@@ -1424,7 +1431,7 @@ TEST_F(Apple9Pack, HalfConversionsOfRegisters)
 
    I = agx_f32_to_f16_to(b, r(4), k(r(70)));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT);
-   check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03});
+   check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03, 0x43, 0x00, 0x00, 0x01});
 }
 
 /* Private memory at a word index in a register */
