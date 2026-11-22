@@ -740,23 +740,34 @@ agx_size_for_bits(unsigned bits)
    }
 }
 
-static inline agx_index
-agx_def_index(nir_def *ssa)
+/* Apple9 keeps booleans, 8-bit and 16-bit values in 32-bit registers */
+static inline enum agx_size
+agx_size_for_nir_bits(const agx_context *ctx, unsigned bits)
 {
-   return agx_get_vec_index(ssa->index, agx_size_for_bits(ssa->bit_size),
+   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9 && bits < 32)
+      return AGX_SIZE_32;
+
+   return agx_size_for_bits(bits);
+}
+
+static inline agx_index
+agx_def_index(const agx_context *ctx, nir_def *ssa)
+{
+   return agx_get_vec_index(ssa->index,
+                            agx_size_for_nir_bits(ctx, ssa->bit_size),
                             ssa->num_components);
 }
 
 static inline agx_index
-agx_src_index(nir_src *src)
+agx_src_index(const agx_context *ctx, nir_src *src)
 {
-   return agx_def_index(src->ssa);
+   return agx_def_index(ctx, src->ssa);
 }
 
 static inline agx_index
 agx_vec_for_def(agx_context *ctx, nir_def *def)
 {
-   return agx_vec_temp(ctx, agx_size_for_bits(def->bit_size),
+   return agx_vec_temp(ctx, agx_size_for_nir_bits(ctx, def->bit_size),
                        def->num_components);
 }
 
