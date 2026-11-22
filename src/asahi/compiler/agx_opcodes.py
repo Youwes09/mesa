@@ -116,6 +116,7 @@ ICOND = immediate("icond", "enum agx_icond")
 FCOND = immediate("fcond", "enum agx_fcond")
 NEST = immediate("nest")
 INVERT_COND = immediate("invert_cond")
+PRED = immediate("pred")
 TARGET = immediate("target", "agx_block *")
 ZS = immediate("zs")
 SR = enum("sr", {
@@ -215,6 +216,9 @@ funop("sin_pt_2",  0b001110, isa = APPLE8)
 funop("ceil",      0b010000)
 funop("trunc",     0b100000)
 funop("roundeven", 0b110000)
+
+# Scales an angle reduced to a quarter turn in NIR, replacing Apple8's sin_pt
+op("sin_factor", _, srcs = 1, is_float = True, isa = APPLE9)
 
 iunop("bitrev",    0b01)
 iunop("popcount",  0b10)
@@ -500,6 +504,67 @@ for (name, is_float) in [("break_if_icmp", False), ("break_if_fcmp", True)]:
        imms = [NEST, INVERT_COND, FCOND if is_float else ICOND, TARGET],
        can_eliminate = False, schedule_class = "invalid", isa = APPLE8)
 
+# Apple9 control flow: execution and loop mask stacks and six predicates
+
+# Compares the two sources into predicate register `pred`
+for (name, cond) in [("icmp_pred", ICOND), ("fcmp_pred", FCOND)]:
+    op(name, _, dests = 0, srcs = 2, imms = [cond, INVERT_COND, PRED],
+       is_float = name == "fcmp_pred", can_eliminate = False,
+       can_reorder = False, isa = APPLE9)
+
+# Pushes the execution mask, then disables lanes whose predicate is false
+# (true with invert_cond). Predicates 6 and 7 are constant true and false.
+op("if_pred", _, dests = 0, imms = [PRED, INVERT_COND], can_eliminate = False,
+   schedule_class = "invalid", isa = APPLE9)
+
+# Switches to the lanes the innermost if_pred disabled
+op("else_exec", _, dests = 0, can_eliminate = False, schedule_class = "invalid",
+   isa = APPLE9)
+
+# while_pred drops lanes with a false `pred` until end_loop. Polarity unverified
+op("begin_loop", _, dests = 0, can_eliminate = False, schedule_class = "invalid",
+   isa = APPLE9)
+op("while_pred", _, dests = 0, imms = [PRED, INVERT_COND],
+   can_eliminate = False, schedule_class = "invalid", isa = APPLE9)
+op("end_loop", _, dests = 0, can_eliminate = False, schedule_class = "invalid",
+   isa = APPLE9)
+
+# Disables lanes whose predicate is true in the innermost `nest` mask scopes
+op("break_pred", _, dests = 0, imms = [NEST, PRED], can_eliminate = False,
+   schedule_class = "invalid", isa = APPLE9)
+
+# Device memory fence that also waits for earlier device loads
+op("memory_barrier_acquire", _, dests = 0, can_eliminate = False,
+   schedule_class = "barrier", isa = APPLE9)
+
+# Ends a raster order critical section before the tile is released
+op("raster_order_fence", _, dests = 0, can_eliminate = False,
+   schedule_class = "barrier", isa = APPLE9)
+
+# Begin and end fragment access to the tile domains the immediate selects
+op("begin_tile", _, dests = 0, imms = [IMM], can_eliminate = False,
+   schedule_class = "barrier", isa = APPLE9)
+op("end_tile", _, dests = 0, imms = [IMM], can_eliminate = False,
+   schedule_class = "barrier", isa = APPLE9)
+
+# Sets the fragment's coverage to the source mask, discarding other samples
+op("write_coverage", _, dests = 0, srcs = 1, can_eliminate = False,
+   schedule_class = "coverage", isa = APPLE9)
+
+# Writes depth (zs bit 0) and/or stencil (bit 1) from a publication_pair
+op("zs_store", _, dests = 0, srcs = 1, imms = [ZS], can_eliminate = False,
+   schedule_class = "coverage", isa = APPLE9)
+
+# Multiplies by W unless coefficient `component` is constant over the primitive
+op("fmul_perspective", _, srcs = 2, imms = [COMPONENT], is_float = True,
+   isa = APPLE9)
+
+# Iteration position from a sample index or, for centroid, the coverage mask
+op("interpolation_position", _, srcs = 1, imms = [INTERPOLATION],
+   schedule_class = "coverage", isa = APPLE9)
+
+# Packs float channels into one RGB10A2 or RG11B10F word (fourth source null)
+op("pack_format", _, srcs = 4, imms = [FORMAT], isa = APPLE9)
 
 # Allocation IR for target-selected Apple9 instructions. Encoding remains in
 # the Apple9 backend; common SSA and allocation passes see explicit dataflow.
