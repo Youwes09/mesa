@@ -3117,7 +3117,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       pack_assert(I, !coords || load);
       pack_assert(I, coords ? (!dynamic && mask.value >= 1 && mask.value <= 15)
                             : (dynamic || mask.value == 1));
-      pack_assert(I, !dynamic || (mask.size == AGX_SIZE_16 && is_gpr(mask) &&
+      pack_assert(I, !dynamic || (mask.size <= AGX_SIZE_32 && is_gpr(mask) &&
                                   mask.value < 256));
 
       unsigned d = gpr(I, data);

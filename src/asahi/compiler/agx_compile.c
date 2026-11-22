@@ -810,6 +810,15 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 static void
 agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
 {
+   /* Apple9 holds the tile domains for the whole shader instead */
+   if (agx_is_apple9(b->shader)) {
+      b->shader->out->apple9_tile_reads |= mask & 0x8;
+      b->shader->out->apple9_tile_writes |= mask & 0x4;
+      b->shader->out->apple9_tile_domain =
+         MAX2(b->shader->out->apple9_tile_domain, 0x600);
+      return;
+   }
+
    /* Background programs do not need to wait as they are the eldest pixels */
    if (b->shader->key->fs.ignore_tib_dependencies) {
       assert(b->shader->nir->info.internal);
@@ -832,10 +841,75 @@ agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
    }
 }
 
+/* Tile accesses are per word, with a sample mask of 1 or in a register */
+static agx_index
+agx_tile_sample_mask_apple9(agx_builder *b, agx_index mask)
+{
+   if (mask.type == AGX_INDEX_IMMEDIATE && mask.value != 1)
+      mask = agx_mov_imm(b, 32, mask.value);
+
+   return mask;
+}
+
+static agx_instr *
+agx_emit_local_store_pixel_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   assert(!nir_intrinsic_explicit_coord(instr) && "no tile coordinate stores");
+   assert(nir_src_bit_size(instr->src[0]) == 32 &&
+          (nir_intrinsic_base(instr) % 4) == 0);
+
+   agx_index mask =
+      agx_tile_sample_mask_apple9(b, agx_src_index(b->shader, &instr->src[1]));
+   unsigned base = nir_intrinsic_base(instr) / 4;
+
+   b->shader->out->apple9_tile_writes = true;
+   b->shader->out->apple9_tile_domain =
+      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+   b->shader->out->tag_write_disable = false;
+
+   u_foreach_bit(i, nir_intrinsic_write_mask(instr)) {
+      agx_st_tile(b, agx_extract_nir_src(b, instr->src[0], i), mask, agx_null(),
+                  AGX_FORMAT_I32, 1, base + i, false);
+   }
+
+   return NULL;
+}
+
+static void
+agx_emit_local_load_pixel_apple9(agx_builder *b, agx_index dest,
+                                 nir_intrinsic_instr *instr)
+{
+   bool coords = instr->intrinsic == nir_intrinsic_load_tile_pixel_agx;
+   unsigned nr = instr->def.num_components;
+   assert(instr->def.bit_size == 32 && (nir_intrinsic_base(instr) % 4) == 0);
+
+   agx_index mask =
+      agx_tile_sample_mask_apple9(b, agx_src_index(b->shader, &instr->src[0]));
+   agx_index xy =
+      coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null();
+
+   b->shader->out->apple9_tile_reads = true;
+   b->shader->out->apple9_tile_domain =
+      MAX2(b->shader->out->apple9_tile_domain, coords ? 0xf00 : 0x600);
+
+   agx_index words[4];
+   for (unsigned i = 0; i < nr; ++i) {
+      words[i] = agx_temp(b->shader, AGX_SIZE_32);
+      agx_ld_tile_to(b, words[i], mask, xy, AGX_FORMAT_I32, 1,
+                     nir_intrinsic_base(instr) / 4 + i, coords);
+   }
+
+   agx_emit_collect_to(b, dest, nr, words);
+   agx_emit_cached_split(b, dest, nr);
+}
+
 static agx_instr *
 agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
 {
    bool explicit = nir_intrinsic_explicit_coord(instr);
+
+   if (agx_is_apple9(b->shader))
+      return agx_emit_local_store_pixel_apple9(b, instr);
 
    /* TODO: Reverse-engineer interactions with MRT */
    if (b->shader->stage == MESA_SHADER_FRAGMENT) {
@@ -891,6 +965,31 @@ agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 
    ctx->uvs_exports[index] = pub;
    return NULL;
+}
+
+/* Hold the tile domains for the whole shader, as the linker does for parts */
+static void
+agx_hold_tile_apple9(agx_context *ctx)
+{
+   const struct agx_shader_info *info = ctx->out;
+   bool access = info->apple9_tile_reads || info->apple9_tile_writes;
+
+   agx_builder b =
+      agx_init_builder(ctx, agx_before_block(agx_start_block(ctx)));
+
+   if (info->apple9_tile_domain)
+      agx_begin_tile(&b, info->apple9_tile_domain);
+
+   if (access)
+      agx_begin_tile(&b, 0x800 | (info->apple9_tile_writes ? 0xc : 0x8));
+
+   b = agx_init_builder(ctx, agx_after_block_logical(agx_exit_block(ctx)));
+
+   if (info->apple9_zs_release)
+      agx_end_tile(&b, 1);
+
+   if (access)
+      agx_end_tile(&b, info->apple9_tile_domain == 0xf00 ? 0x300 : 0x20c);
 }
 
 /* Commit or publish the vertex outputs at the end of the shader */
@@ -1050,6 +1149,11 @@ static void
 agx_emit_local_load_pixel(agx_builder *b, agx_index dest,
                           nir_intrinsic_instr *instr)
 {
+   if (agx_is_apple9(b->shader)) {
+      agx_emit_local_load_pixel_apple9(b, dest, instr);
+      return;
+   }
+
    agx_wait_pixel_mask(b, 0x8);
 
    unsigned nr_comps = instr->def.num_components;
@@ -1266,6 +1370,9 @@ agx_tex_dim(enum glsl_sampler_dim dim, bool array)
 static agx_instr *
 agx_emit_block_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 {
+   if (b->shader->stage == MESA_SHADER_FRAGMENT)
+      b->shader->out->apple9_tile_domain = 0x700;
+
    assert(instr->intrinsic == nir_intrinsic_image_store_block_agx &&
           "Apple9 block stores address the PBE table");
    assert(!nir_intrinsic_explicit_coord(instr));
@@ -1794,6 +1901,9 @@ agx_emit_image_store(agx_builder *b, nir_intrinsic_instr *instr)
 static agx_instr *
 agx_emit_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 {
+   if (b->shader->stage == MESA_SHADER_FRAGMENT)
+      b->shader->out->apple9_tile_domain = 0x700;
+
    nir_alu_type type = nir_intrinsic_src_type(instr);
    assert(nir_alu_type_get_type_size(type) == 32 && "lowered to 32-bit data");
 
@@ -3140,6 +3250,11 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
 
    if (fetch)
       sampler = agx_immediate(0);
+
+   /* Fragment shaders sample within the tile domain */
+   if (b->shader->stage == MESA_SHADER_FRAGMENT)
+      b->shader->out->apple9_tile_domain =
+         MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
    bool cube_as_array = instr->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
 
@@ -4640,6 +4755,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
        (ctx->stage == MESA_SHADER_VERTEX ||
         ctx->stage == MESA_SHADER_TESS_EVAL))
       agx_commit_uvs_apple9(ctx);
+
+   /* The linker holds the tile domains of shader parts */
+   if (agx_is_apple9(ctx) && !ctx->is_preamble &&
+       ctx->stage == MESA_SHADER_FRAGMENT && !key->no_stop && !key->secondary)
+      agx_hold_tile_apple9(ctx);
 
    /* Index blocks now that we're done emitting so the order is consistent. Do
     * this before agx_remove_unreachable_blocks so we match NIR indexing. This

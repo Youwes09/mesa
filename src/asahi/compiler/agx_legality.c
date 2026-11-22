@@ -530,7 +530,8 @@ tile_ok(const agx_instr *I)
              reg32(I->src[1]);
    }
 
-   return is_imm(mask) ? mask.value == 1 : reg16(mask);
+   /* A register mask is a 16-bit half, or the low half of a word */
+   return is_imm(mask) ? mask.value == 1 : (reg16(mask) || reg32(mask));
 }
 
 static bool
