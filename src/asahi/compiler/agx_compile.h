@@ -313,27 +313,29 @@ struct agx_precompiled_kernel_info {
    bool uses_txf;
 };
 
-static inline struct agx_precompiled_kernel_info
-agx_compact_kernel_info(struct agx_shader_info *info)
+/* Fills *out in place, as a returned struct would leave padding undefined */
+static inline void
+agx_compact_kernel_info(struct agx_precompiled_kernel_info *out,
+                        const struct agx_shader_info *info)
 {
    assert(info->has_preamble == (info->nr_preamble_gprs > 0));
    assert(info->texture_state_count <= 8 && "static maximum, no need to plumb");
 
-   return (struct agx_precompiled_kernel_info){
-      .preamble_offset = info->preamble_offset,
-      .main_offset = info->main_offset,
-      .main_size = info->main_size,
-      .binary_size = info->binary_size,
-      .rodata = info->rodata,
-      .nr_gprs = info->nr_gprs,
-      .nr_preamble_gprs = info->nr_preamble_gprs,
-      .push_count = info->push_count,
-      .workgroup_size = {info->workgroup_size[0], info->workgroup_size[1],
-                         info->workgroup_size[2]},
-      .local_size = info->local_size,
-      .imageblock_stride = info->imageblock_stride,
-      .uses_txf = info->uses_txf,
-   };
+   memset(out, 0, sizeof(*out));
+   out->preamble_offset = info->preamble_offset;
+   out->main_offset = info->main_offset;
+   out->main_size = info->main_size;
+   out->binary_size = info->binary_size;
+   out->rodata = info->rodata;
+   out->nr_gprs = info->nr_gprs;
+   out->nr_preamble_gprs = info->nr_preamble_gprs;
+   out->push_count = info->push_count;
+   out->workgroup_size[0] = info->workgroup_size[0];
+   out->workgroup_size[1] = info->workgroup_size[1];
+   out->workgroup_size[2] = info->workgroup_size[2];
+   out->local_size = info->local_size;
+   out->imageblock_stride = info->imageblock_stride;
+   out->uses_txf = info->uses_txf;
 }
 
 struct agx_shader_part {

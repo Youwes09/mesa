@@ -188,7 +188,8 @@ static void
 print_shader(FILE *fp, const char *name, const char *suffix, uint32_t variant,
              struct agx_shader_part *p)
 {
-   struct agx_precompiled_kernel_info info = agx_compact_kernel_info(&p->info);
+   struct agx_precompiled_kernel_info info;
+   agx_compact_kernel_info(&info, &p->info);
    size_t sz_B = sizeof(info) + p->info.binary_size;
    size_t sz_el = DIV_ROUND_UP(sz_B, 4);
    uint32_t *mem = calloc(sz_el, 4);
