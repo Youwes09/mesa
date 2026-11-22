@@ -1751,6 +1751,10 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id_zero_base(b)));
 
    case nir_intrinsic_load_vertex_id:
+      /* Apple9 reads vertex and instance IDs as system registers */
+      if (agx_is_apple9(b->shader))
+         return agx_get_sr_to(b, dst, AGX_SR_VERTEX_ID);
+
       /* We don't assert the HW stage since we use this same ABI with SW VS */
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id(b)));
 
@@ -1759,6 +1763,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id(b)));
 
    case nir_intrinsic_load_instance_id:
+      if (agx_is_apple9(b->shader))
+         return agx_get_sr_to(b, dst, AGX_SR_INSTANCE_ID);
+
       return agx_mov_to(b, dst, agx_abs(agx_instance_id(b)));
 
    case nir_intrinsic_load_tess_coord_xy: {
@@ -1811,7 +1818,10 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_to(b, dst, AGX_SR_THREAD_INDEX_IN_THREADGROUP);
 
    case nir_intrinsic_load_layer_id:
-      return agx_get_sr_to(b, dst, AGX_SR_THREADGROUP_POSITION_IN_GRID_Z);
+      return agx_get_sr_to(b, dst,
+                           agx_is_apple9(b->shader)
+                              ? AGX_SR_LAYER_ID
+                              : AGX_SR_THREADGROUP_POSITION_IN_GRID_Z);
 
    case nir_intrinsic_barrier: {
       assert(!b->shader->is_preamble && "invalid");

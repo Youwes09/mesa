@@ -1624,3 +1624,19 @@ TEST_F(Apple9Pack, ImageWrite)
          {0xd7, 0x10, 0x54, 0x10, 0x00, 0x40, 0x00, 0x0c, 0x20, 0x04, 0x00,
           0x00, 0x88, 0x1a, 0x89, 0x00, 0x07, 0x12, 0x54, 0x00, 0x03, 0x00});
 }
+
+/* Vertex and instance IDs are asynchronous; the layer is a system register */
+TEST_F(Apple9Pack, GraphicsSystemRegisters)
+{
+   agx_instr *I = agx_get_sr_to(b, r(5), AGX_SR_VERTEX_ID);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_DRAW_ID);
+   check(I, {0x5c, 0xdd, 0x10, 0x06});
+
+   I = agx_get_sr_to(b, r(40), AGX_SR_INSTANCE_ID);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_DRAW_ID);
+   check(I, {0x8c, 0xd8, 0x90, 0x06});
+
+   I = agx_get_sr_to(b, r(2), AGX_SR_LAYER_ID);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_SR);
+   check(I, {0x2c, 0xc3, 0x10, 0x06});
+}

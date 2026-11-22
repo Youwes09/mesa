@@ -154,6 +154,11 @@ SR = enum("sr", {
    144: 'helper_op',
    146: 'helper_arg_l',
    147: 'helper_arg_h',
+
+   # Apple9 only, numbered by their Apple9 selectors
+   0xc3: 'layer_id',
+   0xd8: 'instance_id',
+   0xdd: 'vertex_id',
 })
 
 ATOMIC_OPC = enum("atomic_opc", {

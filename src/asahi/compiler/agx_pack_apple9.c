@@ -1622,6 +1622,11 @@ sr_selector(enum agx_sr sr, struct a9_sr *out)
    case AGX_SR_COVERAGE_MASK:
       *out = (struct a9_sr){0xc2};
       return true;
+   case AGX_SR_LAYER_ID:
+   case AGX_SR_INSTANCE_ID:
+   case AGX_SR_VERTEX_ID:
+      *out = (struct a9_sr){sr};
+      return true;
    default:
       return false;
    }
@@ -1658,9 +1663,12 @@ pack_get_sr(const agx_instr *I, struct a9_packed *p)
       0x10 | ((dst >> 4) << 6),
       0x06,
    };
+   /* Coverage, vertex and instance IDs are asynchronous, in one layout */
    a9_init(p,
            I->sr == AGX_SR_COVERAGE_MASK ? AGX_APPLE9_ENC_GET_COVERAGE
-                                         : AGX_APPLE9_ENC_GET_SR,
+           : I->sr == AGX_SR_VERTEX_ID || I->sr == AGX_SR_INSTANCE_ID
+              ? AGX_APPLE9_ENC_GET_DRAW_ID
+              : AGX_APPLE9_ENC_GET_SR,
            bytes, 4);
 }
 

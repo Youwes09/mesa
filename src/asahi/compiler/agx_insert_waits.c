@@ -86,8 +86,9 @@ apple9_producer(const agx_instr *I)
    case AGX_OPCODE_GET_SR:
    case AGX_OPCODE_GET_SR_COVERAGE:
    case AGX_OPCODE_GET_SR_BARRIER:
-      /* Coverage is read asynchronously */
-      p.async = I->sr == AGX_SR_COVERAGE_MASK;
+      /* Coverage, vertex and instance IDs are read asynchronously */
+      p.async = I->sr == AGX_SR_COVERAGE_MASK || I->sr == AGX_SR_VERTEX_ID ||
+                I->sr == AGX_SR_INSTANCE_ID;
       p.fixed_slot = 0;
       return p;
 
