@@ -1840,8 +1840,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id_zero_base(b)));
 
    case nir_intrinsic_load_vertex_id:
-      /* Apple9 reads vertex and instance IDs as system registers */
-      if (agx_is_apple9(b->shader))
+      /* Apple9 preloads no IDs. The prolog reads them from system registers */
+      if (agx_is_apple9(b->shader) && b->shader->key->secondary)
          return agx_get_sr_to(b, dst, AGX_SR_VERTEX_ID);
 
       /* We don't assert the HW stage since we use this same ABI with SW VS */
@@ -1852,7 +1852,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id(b)));
 
    case nir_intrinsic_load_instance_id:
-      if (agx_is_apple9(b->shader))
+      if (agx_is_apple9(b->shader) && b->shader->key->secondary)
          return agx_get_sr_to(b, dst, AGX_SR_INSTANCE_ID);
 
       return agx_mov_to(b, dst, agx_abs(agx_instance_id(b)));
