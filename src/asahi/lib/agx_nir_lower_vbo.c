@@ -9,6 +9,7 @@
 #include "compiler/nir/nir_format_convert.h"
 #include "util/bitset.h"
 #include "util/u_math.h"
+#include "agx_compile.h"
 #include "agx_linker.h"
 #include "shader_enums.h"
 
@@ -146,6 +147,15 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned interchange_align = util_format_get_blocksize(interchange_format);
    unsigned interchange_comps = util_format_get_nr_components(attrib.format);
 
+   /* Apple9 loads only integers, so load the raw bits and convert below */
+   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+   bool raw = apple9 && !util_format_is_pure_uint(interchange_format);
+   if (raw) {
+      interchange_format = interchange_align == 4   ? PIPE_FORMAT_R32_UINT
+                           : interchange_align == 2 ? PIPE_FORMAT_R16_UINT
+                                                    : PIPE_FORMAT_R8_UINT;
+   }
+
    /* In the hardware, uint formats zero-extend and float formats convert.
     * However, non-uint formats using a uint interchange format shouldn't be
     * zero extended.
@@ -156,7 +166,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
          ? (interchange_align * 8)
          : intr->def.bit_size;
 
-   /* Non-UNORM R10G10B10A2 loaded as a scalar and unpacked */
+   /* Non-native R10G10B10A2 and R11G11B10F load as a scalar and unpack */
    if (interchange_format == PIPE_FORMAT_R32_UINT && !desc->is_array)
       interchange_comps = 1;
 
@@ -211,7 +221,10 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
     * an instruction. Shifts are only available for regular interchange formats,
     * i.e. the set of formats that support masking.
     */
-   if ((stride_el == 2 || stride_el == 4) &&
+   /* Apple9 loads narrow components one at a time, by element index */
+   bool scalarize = apple9 && interchange_align < 4 && interchange_comps > 1;
+
+   if ((stride_el == 2 || stride_el == 4) && !scalarize &&
        ail_isa_format_supports_mask((enum ail_isa_format)interchange_format)) {
 
       shift = util_logbase2(stride_el);
@@ -237,9 +250,21 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    }
 
    /* Load the raw vector */
-   nir_def *memory = nir_load_constant_agx(
-      b, interchange_comps, interchange_register_size, base, stride_offset_el,
-      .format = interchange_format, .base = shift);
+   nir_def *memory;
+   if (scalarize) {
+      nir_def *comps[4];
+      for (unsigned c = 0; c < interchange_comps; ++c) {
+         comps[c] = nir_load_constant_agx(b, 1, interchange_register_size, base,
+                                          nir_iadd_imm(b, stride_offset_el, c),
+                                          .format = interchange_format);
+      }
+
+      memory = nir_vec(b, comps, interchange_comps);
+   } else {
+      memory = nir_load_constant_agx(
+         b, interchange_comps, interchange_register_size, base,
+         stride_offset_el, .format = interchange_format, .base = shift);
+   }
 
    /* For scalar loads, it's faster to fix up the output than the address. */
    if (ctx->rs.level >= AGX_ROBUSTNESS_D3D && !rs_address_fixup) {
@@ -257,6 +282,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
          memory = nir_format_unpack_sint(b, memory, bits, 4);
       else
          memory = nir_format_unpack_uint(b, memory, bits, 4);
+   } else if (attrib.format == PIPE_FORMAT_R11G11B10_FLOAT && raw) {
+      memory = nir_format_unpack_11f11f10f(b, memory);
    }
 
    if (desc->channel[chan].normalized) {
@@ -264,6 +291,16 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
       if (is_rgb10_a2(desc) && is_signed) {
          unsigned bits[] = {10, 10, 10, 2};
          memory = nir_format_snorm_to_float(b, memory, bits);
+      } else if (raw && desc->channel[chan].size < 32) {
+         unsigned bits[4];
+         for (unsigned c = 0; c < 4; ++c)
+            bits[c] =
+               is_rgb10_a2(desc) ? (c == 3 ? 2 : 10) : desc->channel[chan].size;
+
+         if (is_signed)
+            memory = nir_format_snorm_to_float(b, memory, bits);
+         else
+            memory = nir_format_unorm_to_float(b, memory, bits);
       } else if (desc->channel[chan].size == 32) {
          assert(desc->is_array && "no non-array 32-bit norm formats");
          unsigned bits[] = {32, 32, 32, 32};
