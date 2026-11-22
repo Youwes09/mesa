@@ -479,7 +479,8 @@ local_ok(const agx_instr *I)
    agx_index base = load ? I->src[0] : I->src[1];
    agx_index index = load ? I->src[1] : I->src[2];
 
-   if (!is_imm(base) || base.value >= 64 || !reg16(index) || !plain(index))
+   if (!is_imm(base) || base.value >= 64 || !(reg16(index) || reg32(index)) ||
+       !plain(index))
       return false;
 
    if (atomic) {
@@ -491,6 +492,7 @@ local_ok(const agx_instr *I)
           reg32(load ? I->dest[0] : I->src[0]);
 }
 
+/* A constant byte offset, or a register holding a word index */
 static bool
 stack_ok(const agx_instr *I)
 {
@@ -498,9 +500,14 @@ stack_ok(const agx_instr *I)
    agx_index offset = I->src[load ? 0 : 1];
    unsigned words = load ? 1024 : 2048;
 
-   return I->format == AGX_FORMAT_I32 && I->mask == 1 && is_imm(offset) &&
-          !(offset.value & 3) && offset.value / 4 < words &&
-          reg32(load ? I->dest[0] : I->src[0]);
+   if (I->format != AGX_FORMAT_I32 || I->mask != 1 ||
+       !reg32(load ? I->dest[0] : I->src[0]))
+      return false;
+
+   if (is_imm(offset))
+      return !(offset.value & 3) && offset.value / 4 < words;
+   else
+      return reg32(offset) && plain(offset);
 }
 
 static bool
@@ -568,6 +575,24 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_FADD:
    case AGX_OPCODE_FMUL:
       return fadd_fmul_ok(I);
+
+   case AGX_OPCODE_HADD:
+   case AGX_OPCODE_HMUL:
+   case AGX_OPCODE_HFMA:
+      /* FP16 in the low halves of registers, only B of an add negated */
+      for (unsigned s = 0; s < I->nr_srcs; ++s) {
+         agx_index x = I->src[s];
+         if (!reg32(x) || x.abs ||
+             (x.neg && !(I->op == AGX_OPCODE_HADD && s == 1)))
+            return false;
+      }
+
+      return reg32(I->dest[0]) && !I->saturate;
+
+   case AGX_OPCODE_F32_TO_F16:
+   case AGX_OPCODE_F16_TO_F32:
+      return reg32(I->dest[0]) && reg32(I->src[0]) && plain(I->src[0]) &&
+             !I->saturate;
 
    case AGX_OPCODE_FMUL_PERSPECTIVE:
       return reg32(I->dest[0]) && reg32(I->src[0]) && reg32(I->src[1]) &&
@@ -818,6 +843,22 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
       c[D].max = r63 + 2 - agx_index_size_16(I->src[0]);
       c[D + 2].align = 2;
       c[D].clobber = c[D + 2].clobber = true;
+      break;
+
+   case AGX_OPCODE_STACK_LOAD:
+      /* Indexed private memory reaches r0-r63 only */
+      if (I->src[0].type == AGX_INDEX_IMMEDIATE)
+         return false;
+
+      c[0].max = c[D].max = r63;
+      break;
+
+   case AGX_OPCODE_STACK_STORE:
+      if (I->src[1].type == AGX_INDEX_IMMEDIATE)
+         return false;
+
+      c[D].max = c[D + 1].max = r63;
+      c[D].clobber = true;
       break;
 
    case AGX_OPCODE_ATOMIC:

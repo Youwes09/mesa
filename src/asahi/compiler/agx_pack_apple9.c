@@ -459,9 +459,14 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
    agx_index dst = I->dest[0], src = I->src[0];
    pack_assert(I, !src.abs && !src.neg && !I->saturate);
 
-   bool widen = dst.size == AGX_SIZE_32;
-   unsigned d = widen ? gpr(I, dst) : gpr_of_half(I, dst);
-   unsigned s = widen ? gpr_of_half(I, src) : gpr(I, src);
+   /* f32_to_f16 and f16_to_f32 name the register whose low half is FP16 */
+   bool widen = I->op == AGX_OPCODE_F16_TO_F32 ||
+                (I->op == AGX_OPCODE_FADD && dst.size == AGX_SIZE_32);
+   bool whole =
+      I->op == AGX_OPCODE_F32_TO_F16 || I->op == AGX_OPCODE_F16_TO_F32;
+
+   unsigned d = widen || whole ? gpr(I, dst) : gpr_of_half(I, dst);
+   unsigned s = !widen || whole ? gpr(I, src) : gpr_of_half(I, src);
 
    uint8_t bytes[6] = {0x01, 0x01, 0x1c, 0x81, 0x00, 0x02};
    set_bits(bytes, 4, 4, d & 15);
@@ -473,9 +478,9 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
    if (widen) {
       set_bits(bytes, 0, 4, 9);
       set_bits(bytes, 8, 1, 0);
-      set_bits(bytes, 35, 1, src.value & 1);
+      set_bits(bytes, 35, 1, !whole && (src.value & 1));
    } else {
-      set_bits(bytes, 34, 1, dst.value & 1);
+      set_bits(bytes, 34, 1, !whole && (dst.value & 1));
    }
 
    pack_compact_retain(bytes, retain(src), false);
@@ -483,6 +488,57 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
       p,
       widen ? AGX_APPLE9_ENC_HALF_TO_FLOAT : AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT,
       bytes, 6);
+}
+
+/*
+ * FP16 add, multiply and multiply-add. FP16 values are in the low halves of
+ * 32-bit registers, which these forms name. There are no constants, uniforms,
+ * saturation or modifiers, except that the add subtracts a negated operand B.
+ */
+static void
+pack_half_alu(const agx_instr *I, struct a9_packed *p)
+{
+   bool fma = I->op == AGX_OPCODE_HFMA;
+   unsigned count = fma ? 3 : 2;
+
+   pack_assert(I, !I->saturate);
+
+   uint8_t bytes[8] = {
+      0,
+      0,
+      fma ? 0x1e : I->op == AGX_OPCODE_HMUL ? 0x1d : 0x1c,
+      0,
+      fma ? 0x81 : 0,
+      0,
+      0,
+      0,
+   };
+
+   unsigned dst = gpr(I, I->dest[0]);
+   set_bits(bytes, 4, 4, dst & 15);
+   set_bits(bytes, 22, 2, (dst >> 4) & 3);
+   set_bits(bytes, fma ? 60 : 44, 1, dst >> 6);
+
+   for (unsigned s = 0; s < count; ++s) {
+      agx_index src = I->src[s];
+      unsigned reg = gpr(I, src);
+      pack_assert(
+         I, !src.abs && (!src.neg || (I->op == AGX_OPCODE_HADD && s == 1)));
+
+      set_bits(bytes, 9 + 16 * s, 6, reg & 63);
+      set_bits(bytes, s == 2 ? 38 : (fma ? 56 : 40) + 2 * s, 1, reg >> 6);
+
+      if (retain(src)) {
+         set_bits(bytes, 15 + 16 * s, 1, 1);
+         set_bits(bytes, s == 2 ? 39 : 19 + s, 1, 0);
+      }
+   }
+
+   if (I->op == AGX_OPCODE_HADD && I->src[1].neg)
+      set_bits(bytes, 43, 1, 1);
+
+   a9_init(p, fma ? AGX_APPLE9_ENC_HALF3 : AGX_APPLE9_ENC_HALF2, bytes,
+           fma ? 8 : 6);
 }
 
 /* Fused multiply-add */
@@ -1858,6 +1914,13 @@ pack_device_atomic(const agx_instr *I, struct a9_packed *p)
    }
 }
 
+/* Register whose low half holds a threadgroup memory word index */
+static unsigned
+local_index(const agx_instr *I, agx_index index)
+{
+   return index.size == AGX_SIZE_16 ? gpr_of_half(I, index) : gpr(I, index);
+}
+
 /* Threadgroup memory. Stores and atomics destroy their data and index */
 static void
 pack_local_load_store(const agx_instr *I, struct a9_packed *p)
@@ -1871,7 +1934,7 @@ pack_local_load_store(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, is_imm(base) && base.value < 64);
    pack_assert(I, !(index.value & 1));
 
-   unsigned d = gpr(I, data), idx = gpr_of_half(I, index);
+   unsigned d = gpr(I, data), idx = local_index(I, index);
    pack_assert(I, d < 64 && idx < 64);
 
    const uint8_t bytes[14] = {
@@ -1905,7 +1968,7 @@ pack_local_atomic(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, is_imm(base) && base.value < 64 && !(index.value & 1));
 
    unsigned dst = gpr(I, I->dest[0]), data = gpr(I, I->src[0]);
-   unsigned idx = gpr_of_half(I, index);
+   unsigned idx = local_index(I, index);
    unsigned root = base.value * 4;
    unsigned operation = 0x4800 | (atomic_op(I) << 6);
 
@@ -1918,11 +1981,28 @@ pack_local_atomic(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_SHARED_ATOMIC, bytes, 12);
 }
 
-/*
- * Spills: word-addressed private memory. Fills reach the first 1024 words,
- * saves the first 2048. Both complete on their slot; the save reads its
- * source asynchronously.
- */
+/* Private memory at a word index register. Stores destroy their data */
+static void
+pack_private(const agx_instr *I, struct a9_packed *p)
+{
+   bool load = I->op == AGX_OPCODE_STACK_LOAD;
+   unsigned data = gpr(I, load ? I->dest[0] : I->src[0]);
+   unsigned index = gpr(I, I->src[load ? 0 : 1]);
+
+   pack_assert(I, data < 64 && index < 64);
+
+   if (load) {
+      const uint8_t bytes[12] = {0x6f, 0, 0x54, data << 1, index << 1, 2,
+                                 0x49, 1, 0,    0,         3,          0};
+      a9_init(p, AGX_APPLE9_ENC_PRIVATE_LOAD, bytes, 12);
+   } else {
+      const uint8_t bytes[10] = {0xef, 0, 0x54, data << 1, index << 1,
+                                 2,    9, 3,    0,         0x60};
+      a9_init(p, AGX_APPLE9_ENC_PRIVATE_STORE, bytes, 10);
+   }
+}
+
+/* Spills: fills reach the first 1024 words, saves the first 2048 */
 static void
 pack_stack(const agx_instr *I, struct a9_packed *p)
 {
@@ -1931,7 +2011,13 @@ pack_stack(const agx_instr *I, struct a9_packed *p)
    unsigned slot = I->scoreboard;
 
    pack_assert(I, I->format == AGX_FORMAT_I32 && I->mask == 1);
-   pack_assert(I, is_imm(offset) && (offset.value & 3) == 0);
+
+   if (!is_imm(offset)) {
+      pack_private(I, p);
+      return;
+   }
+
+   pack_assert(I, (offset.value & 3) == 0);
 
    unsigned word = offset.value / 4;
 
@@ -2574,6 +2660,17 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_FMUL_PERSPECTIVE:
       pack_float2_perspective(I, p);
+      return;
+
+   case AGX_OPCODE_F32_TO_F16:
+   case AGX_OPCODE_F16_TO_F32:
+      pack_float_convert(I, p);
+      return;
+
+   case AGX_OPCODE_HADD:
+   case AGX_OPCODE_HMUL:
+   case AGX_OPCODE_HFMA:
+      pack_half_alu(I, p);
       return;
 
    case AGX_OPCODE_FFMA:

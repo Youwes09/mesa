@@ -563,6 +563,10 @@ op("fmul_perspective", _, srcs = 2, imms = [COMPONENT], is_float = True,
 op("interpolation_position", _, srcs = 1, imms = [INTERPOLATION],
    schedule_class = "coverage", isa = APPLE9)
 
+# FP32 to and from FP16 in a low half. Narrowing leaves the high half undefined
+op("f32_to_f16", _, srcs = 1, isa = APPLE9)
+op("f16_to_f32", _, srcs = 1, isa = APPLE9)
+
 # Packs float channels into one RGB10A2 or RG11B10F word (fourth source null)
 op("pack_format", _, srcs = 4, imms = [FORMAT], isa = APPLE9)
 

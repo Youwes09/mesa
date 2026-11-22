@@ -1399,3 +1399,52 @@ TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
    check(I, {0x67, 0x01, 0x54, 0x00, 0x00, 0x0a, 0x82, 0x82, 0x00, 0x60, 0x00,
              0x00, 0x60, 0x03});
 }
+
+/* FP16 arithmetic on the low halves of registers */
+TEST_F(Apple9Pack, HalfArithmetic)
+{
+   agx_instr *I = agx_hmul_to(b, r(6), r(4), r(3));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF2);
+   check(I, {0x60, 0x88, 0x05, 0x86, 0x00, 0x00});
+
+   check(agx_hadd_to(b, r(4), k(r(4)), r(3)),
+         {0x40, 0x08, 0x0c, 0x86, 0x00, 0x00});
+
+   I = agx_hfma_to(b, r(5), r(4), r(3), r(4));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF3);
+   check(I, {0x50, 0x88, 0x06, 0x86, 0x01, 0x88, 0x00, 0x00});
+}
+
+/* FP16 to FP32 from the low half of a register, and back */
+TEST_F(Apple9Pack, HalfConversionsOfRegisters)
+{
+   agx_instr *I = agx_f16_to_f32_to(b, r(10), k(r(5)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_TO_FLOAT);
+   check(I, {0xa9, 0x0a, 0x1c, 0x81, 0x00, 0x02});
+
+   I = agx_f32_to_f16_to(b, r(4), k(r(70)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT);
+   check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03});
+}
+
+/* Private memory at a word index in a register */
+TEST_F(Apple9Pack, IndexedPrivateMemory)
+{
+   agx_instr *I = agx_stack_load_to(b, r(3), r(3), AGX_FORMAT_I32, 1);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PRIVATE_LOAD);
+   check(I, {0x6f, 0x00, 0x54, 0x06, 0x06, 0x02, 0x49, 0x01, 0x00, 0x00, 0x03,
+             0x00});
+
+   I = agx_stack_store(b, r(5), r(4), AGX_FORMAT_I32, 1);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PRIVATE_STORE);
+   check(I, {0xef, 0x00, 0x54, 0x0a, 0x08, 0x02, 0x09, 0x03, 0x00, 0x60});
+}
+
+/* A 32-bit threadgroup index names the register holding the word index */
+TEST_F(Apple9Pack, ThreadgroupIndexRegister)
+{
+   check(
+      agx_local_load_to(b, r(5), agx_immediate(3), k(r(7)), AGX_FORMAT_I32, 1),
+      {0x67, 0x02, 0x54, 0x0a, 0x0c, 0x1c, 0x80, 0, 0x44, 0x0d, 0, 0xc0, 0x08,
+       0});
+}

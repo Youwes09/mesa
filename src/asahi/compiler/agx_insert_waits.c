@@ -61,10 +61,17 @@ apple9_producer(const agx_instr *I)
       return p;
 
    case AGX_OPCODE_STACK_STORE:
+      /* Indexed stores destroy their data register instead */
+      p.async = I->src[1].type == AGX_INDEX_IMMEDIATE;
       p.reads_sources = true;
       return p;
 
    case AGX_OPCODE_STACK_LOAD:
+      /* Indexed loads complete on slot 6 */
+      if (I->src[0].type != AGX_INDEX_IMMEDIATE)
+         p.fixed_slot = 5;
+      return p;
+
    case AGX_OPCODE_LD_TILE:
    case AGX_OPCODE_LDCF:
    case AGX_OPCODE_TEXTURE_SAMPLE:
