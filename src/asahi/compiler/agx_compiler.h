@@ -299,6 +299,14 @@ agx_is_equiv(agx_index left, agx_index right)
    return (left.type == right.type) && (left.value == right.value);
 }
 
+/* Same value with the same modifiers, regardless of liveness flags */
+static inline bool
+agx_is_equiv_with_modifiers(agx_index left, agx_index right)
+{
+   return agx_is_equiv(left, right) && left.size == right.size &&
+          left.abs == right.abs && left.neg == right.neg;
+}
+
 static inline enum ra_class
 ra_class_for_index(agx_index idx)
 {

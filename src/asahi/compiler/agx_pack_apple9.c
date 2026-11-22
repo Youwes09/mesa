@@ -1214,8 +1214,8 @@ minmax_select(const agx_instr *I)
       }
    } else {
       /* Modifiers must match between the compared and selected operands */
-      if (memcmp(&I->src[0], &I->src[same ? 2 : 3], sizeof(agx_index)) ||
-          memcmp(&I->src[1], &I->src[same ? 3 : 2], sizeof(agx_index)) ||
+      if (!agx_is_equiv_with_modifiers(I->src[0], I->src[same ? 2 : 3]) ||
+          !agx_is_equiv_with_modifiers(I->src[1], I->src[same ? 3 : 2]) ||
           I->src[0].neg || I->src[0].abs || I->src[1].abs)
          return -1;
 

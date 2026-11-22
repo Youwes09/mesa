@@ -167,8 +167,9 @@ is_minmax(const agx_instr *I)
          return false;
 
       agx_index a = I->src[0], b = I->src[1];
-      if (memcmp(&a, &I->src[same ? 2 : 3], sizeof(a)) ||
-          memcmp(&b, &I->src[same ? 3 : 2], sizeof(b)) || !plain(a) || b.abs)
+      if (!agx_is_equiv_with_modifiers(a, I->src[same ? 2 : 3]) ||
+          !agx_is_equiv_with_modifiers(b, I->src[same ? 3 : 2]) || !plain(a) ||
+          b.abs)
          return false;
 
       /* At most one constant, which cannot be negated */
