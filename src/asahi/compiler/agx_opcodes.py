@@ -579,6 +579,12 @@ op("interpolation_position", _, srcs = 1, imms = [INTERPOLATION],
 op("f32_to_f16", _, srcs = 1, isa = APPLE9)
 op("f16_to_f32", _, srcs = 1, isa = APPLE9)
 
+# FP16 ops on low halves. hcmp is a pseudo-instruction selected into hcmpsel
+op("hmin", _, srcs = 2, is_float = True, isa = APPLE9)
+op("hmax", _, srcs = 2, is_float = True, isa = APPLE9)
+op("hcmpsel", _, srcs = 4, imms = [FCOND], isa = APPLE9)
+op("hcmp", _, srcs = 2, imms = [FCOND, INVERT_COND], isa = APPLE9)
+
 # Two FP32 values to FP16 halves. The destination must not overlap the sources
 op("pack_half", _, srcs = 2, isa = APPLE9)
 

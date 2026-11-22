@@ -720,6 +720,28 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_FCMPSEL:
       return select_ok(I);
 
+   case AGX_OPCODE_HMIN:
+   case AGX_OPCODE_HMAX:
+      return reg32(I->dest[0]) && reg32(I->src[0]) && plain(I->src[0]) &&
+             reg32(I->src[1]) && plain(I->src[1]);
+
+   case AGX_OPCODE_HCMPSEL:
+      /* Registers only, without modifiers */
+      for (unsigned s = 0; s < 4; ++s) {
+         if (!reg32(I->src[s]) || !plain(I->src[s]))
+            return false;
+      }
+
+      return reg32(I->dest[0]) &&
+             (I->fcond == AGX_FCOND_EQ || I->fcond == AGX_FCOND_LT ||
+              I->fcond == AGX_FCOND_GT || I->fcond == AGX_FCOND_GE ||
+              I->fcond == AGX_FCOND_LE);
+
+   case AGX_OPCODE_HCMP:
+      /* Lowered to an FP16 select of registers */
+      return reg32(I->src[0]) && plain(I->src[0]) && reg32(I->src[1]) &&
+             plain(I->src[1]);
+
    case AGX_OPCODE_BITOP:
       return logic_ok(I);
 

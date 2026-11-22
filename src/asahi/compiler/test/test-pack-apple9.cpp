@@ -1672,3 +1672,18 @@ TEST_F(Apple9Pack, NormalizedPacking)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_UNORM_2X16);
    check(I, {0x97, 0x04, 0x56, 0x0e, 0x02, 0x04, 0x10, 0x50, 0x44, 0x82});
 }
+
+/* FP16 minimum, maximum and compare-select */
+TEST_F(Apple9Pack, HalfMinMaxSelect)
+{
+   agx_instr *I = agx_hmax_to(b, r(3), k(r(4)), k(r(3)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_MINMAX);
+   check(I, {0x32, 0x08, 0x3c, 0x06, 0x00, 0x00});
+
+   check(agx_hmin_to(b, r(3), k(r(3)), k(r(4))),
+         {0x32, 0x06, 0x3c, 0x08, 0x01, 0x00});
+
+   I = agx_hcmpsel_to(b, r(10), r(5), r(2), k(r(4)), r(3), AGX_FCOND_LT);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_COMPARE_SELECT);
+   check(I, {0xa2, 0x8a, 0x07, 0x84, 0x82, 0x08, 0x03, 0x00, 0x00, 0x86});
+}

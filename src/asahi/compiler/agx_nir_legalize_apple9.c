@@ -47,6 +47,15 @@ alu_width(const nir_instr *instr, UNUSED void *data)
    case nir_op_ffma:
    case nir_op_fneg:
    case nir_op_fabs:
+   case nir_op_fmin:
+   case nir_op_fmax:
+      return 0;
+
+   /* FP16 compares select whole registers */
+   case nir_op_flt:
+   case nir_op_fge:
+   case nir_op_feq:
+   case nir_op_fneu:
       return 0;
 
    case nir_op_mov:

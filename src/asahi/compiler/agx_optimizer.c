@@ -464,7 +464,8 @@ agx_optimizer_cmpsel(agx_context *ctx, agx_instr **defs, agx_instr *I)
 
    /* Check for condition */
    agx_instr *def = defs[I->src[0].value];
-   if (def->op != AGX_OPCODE_ICMP && def->op != AGX_OPCODE_FCMP)
+   if (def->op != AGX_OPCODE_ICMP && def->op != AGX_OPCODE_FCMP &&
+       def->op != AGX_OPCODE_HCMP)
       return;
 
    /* Fuse, unless the ISA cannot encode the result */
@@ -492,7 +493,8 @@ agx_optimizer_cmpsel(agx_context *ctx, agx_instr **defs, agx_instr *I)
       I->op = AGX_OPCODE_ICMPSEL;
       I->icond = def->icond;
    } else {
-      I->op = AGX_OPCODE_FCMPSEL;
+      I->op =
+         def->op == AGX_OPCODE_HCMP ? AGX_OPCODE_HCMPSEL : AGX_OPCODE_FCMPSEL;
       I->fcond = def->fcond;
    }
 

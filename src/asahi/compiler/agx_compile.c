@@ -2460,13 +2460,19 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    }
 
    case nir_op_feq:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_EQ, false);
    case nir_op_flt:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_LT, false);
    case nir_op_fge:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_GE, false);
-   case nir_op_fneu:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_EQ, true);
+   case nir_op_fneu: {
+      enum agx_fcond fcond = instr->op == nir_op_flt   ? AGX_FCOND_LT
+                             : instr->op == nir_op_fge ? AGX_FCOND_GE
+                                                       : AGX_FCOND_EQ;
+      bool invert = instr->op == nir_op_fneu;
+
+      if (agx_is_apple9(b->shader) && src_sz == 16)
+         return agx_hcmp_to(b, dst, s0, s1, fcond, invert);
+      else
+         return agx_fcmp_to(b, dst, s0, s1, fcond, invert);
+   }
 
    case nir_op_ieq:
       return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, false);
@@ -2501,6 +2507,16 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    case nir_op_fmax:
    case nir_op_fmin_agx:
    case nir_op_fmax_agx:
+      if (agx_is_apple9(b->shader) && sz == 16) {
+         assert(!nir_alu_instr_is_signed_zero_preserve(instr) &&
+                "should've been lowered");
+
+         if (instr->op == nir_op_fmin || instr->op == nir_op_fmin_agx)
+            return agx_hmin_to(b, dst, s0, s1);
+         else
+            return agx_hmax_to(b, dst, s0, s1);
+      }
+
       return agx_fminmax_to(b, dst, s0, s1, instr);
 
    case nir_op_imin:
@@ -4151,6 +4167,25 @@ agx_lower_float_moves_apple9(agx_context *ctx)
    }
 }
 
+/* Unfused FP16 compares select 1 or 0, which must be in registers */
+static void
+agx_lower_half_compares_apple9(agx_context *ctx)
+{
+   agx_foreach_instr_global_safe(ctx, I) {
+      if (I->op != AGX_OPCODE_HCMP)
+         continue;
+
+      agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
+      agx_index one = agx_mov_imm(&b, 32, 1);
+      agx_index zero = agx_mov_imm(&b, 32, 0);
+
+      agx_hcmpsel_to(&b, I->dest[0], I->src[0], I->src[1],
+                     I->invert_cond ? zero : one, I->invert_cond ? one : zero,
+                     I->fcond);
+      agx_remove_instruction(I);
+   }
+}
+
 /* Whether a device atomic in the function returns the old value */
 static bool
 agx_returns_atomic(nir_function_impl *impl)
@@ -4259,6 +4294,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    if (agx_is_apple9(ctx))
       AGX_PASS(ctx, agx_lower_float_moves_apple9);
+   AGX_PASS(ctx, agx_lower_half_compares_apple9);
 
    /* For correctness, lower uniform sources after copyprop (for correctness,
     * as copyprop creates uniform sources). To keep register pressure in

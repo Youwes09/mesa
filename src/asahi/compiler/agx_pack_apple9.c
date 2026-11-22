@@ -1208,7 +1208,7 @@ select_condition(const agx_instr *I, unsigned *cond, bool *swap)
 static int
 minmax_select(const agx_instr *I)
 {
-   if (I->dest[0].size != AGX_SIZE_32)
+   if (I->dest[0].size != AGX_SIZE_32 || I->op == AGX_OPCODE_HCMPSEL)
       return -1;
 
    bool same =
@@ -1266,7 +1266,8 @@ static void
 pack_minmax(const agx_instr *I, unsigned select, struct a9_packed *p)
 {
    agx_index a = I->src[0], b = I->src[1];
-   bool floating = I->op == AGX_OPCODE_FCMPSEL;
+   bool half = I->op == AGX_OPCODE_HMIN || I->op == AGX_OPCODE_HMAX;
+   bool floating = I->op == AGX_OPCODE_FCMPSEL || half;
 
    /* Operand B is the one that can be a constant */
    if (is_imm(a) || (is_uniform(a) && !is_uniform(b) && !b.neg)) {
@@ -1308,6 +1309,16 @@ pack_minmax(const agx_instr *I, unsigned select, struct a9_packed *p)
       set_bits(bytes, 42, 1, 0);
    }
 
+   /* FP16 operands are the low halves, without uniforms or negation */
+   if (half) {
+      pack_assert(I, is_gpr(a) && is_gpr(b) && !b.neg);
+      set_bits(bytes, 8, 1, 0);
+      set_bits(bytes, 17, 1, 0);
+      set_bits(bytes, 24, 1, 0);
+      a9_init(p, AGX_APPLE9_ENC_HALF_MINMAX, bytes, 6);
+      return;
+   }
+
    a9_init(p, AGX_APPLE9_ENC_MINMAX_COMPACT, bytes, 6);
 }
 
@@ -1332,7 +1343,8 @@ pack_select(const agx_instr *I, struct a9_packed *p)
       srcs[1] = t;
    }
 
-   bool floating = I->op == AGX_OPCODE_FCMPSEL;
+   bool half = I->op == AGX_OPCODE_HCMPSEL;
+   bool floating = I->op == AGX_OPCODE_FCMPSEL || half;
    bool abs_ab = srcs[0].abs || srcs[1].abs;
    pack_assert(I, I->dest[0].size == AGX_SIZE_32);
    pack_assert(I, !is_imm(srcs[0]) && !srcs[0].neg);
@@ -1418,6 +1430,17 @@ pack_select(const agx_instr *I, struct a9_packed *p)
    set_bits(bytes, 59, 1, srcs[1].neg);
 
    pack_assert(I, !modifiers || floating);
+
+   /* The FP16 select compares the low halves of operands A and B */
+   if (half) {
+      pack_assert(I, !modifiers && is_gpr(srcs[0]) && is_gpr(srcs[1]) &&
+                        is_gpr(srcs[2]) && is_gpr(srcs[3]));
+      set_bits(bytes, 8, 1, 0);
+      set_bits(bytes, 24, 1, 0);
+      a9_init(p, AGX_APPLE9_ENC_HALF_COMPARE_SELECT, bytes, 10);
+      return;
+   }
+
    a9_init(p,
            extended ? AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED
                     : AGX_APPLE9_ENC_SELECT_GPR_WIDE,
@@ -3220,8 +3243,14 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
       pack_derivative(I, p);
       return;
 
+   case AGX_OPCODE_HMIN:
+   case AGX_OPCODE_HMAX:
+      pack_minmax(I, I->op == AGX_OPCODE_HMIN ? 1 : 0, p);
+      return;
+
    case AGX_OPCODE_ICMPSEL:
    case AGX_OPCODE_FCMPSEL:
+   case AGX_OPCODE_HCMPSEL:
       pack_select(I, p);
       return;
 
