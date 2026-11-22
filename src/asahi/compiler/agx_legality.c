@@ -849,6 +849,11 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_WRITE_COVERAGE:
       return is_export(I->src[0]) && agx_channels(I->src[0]) == 1;
 
+   case AGX_OPCODE_PUBLICATION_PAIR:
+      return is_export(I->dest[0]) && agx_channels(I->dest[0]) == 2 &&
+             reg32(I->src[0]) && plain(I->src[0]) && reg32(I->src[1]) &&
+             plain(I->src[1]);
+
    case AGX_OPCODE_ZS_STORE:
       return is_export(I->src[0]) && agx_channels(I->src[0]) == 2 &&
              I->zs >= 1 && I->zs <= 3;
@@ -1031,6 +1036,12 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
    case AGX_OPCODE_PACK_UNORM_4X8:
       /* The halves are written by separate instructions */
       c[0].early_clobber = true;
+      break;
+
+   case AGX_OPCODE_PUBLICATION_PAIR:
+      /* An even pair of export registers below 64 */
+      c[0].max = 2 * 62;
+      c[0].align = 4;
       break;
 
    case AGX_OPCODE_BLOCK_IMAGE_STORE:

@@ -567,6 +567,9 @@ op("begin_tile", _, dests = 0, imms = [IMM], can_eliminate = False,
 op("end_tile", _, dests = 0, imms = [IMM], can_eliminate = False,
    schedule_class = "barrier", isa = APPLE9)
 
+# Export pair for zs_store: a word per source, or with IMM source 0 by lane half
+op("publication_pair", _, srcs = 2, imms = [IMM], isa = APPLE9)
+
 # Sets the fragment's coverage to the source mask, discarding other samples
 op("write_coverage", _, dests = 0, srcs = 1, can_eliminate = False,
    schedule_class = "coverage", isa = APPLE9)

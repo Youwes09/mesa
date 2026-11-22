@@ -913,6 +913,109 @@ agx_commit_uvs_apple9(agx_context *ctx)
    }
 }
 
+/* Control word: live samples in bits 0-3, affected samples in 4-7 and 8-11 */
+static agx_index
+agx_coverage_control_apple9(agx_builder *b, agx_index affected, agx_index live)
+{
+   agx_index coverage = agx_get_sr_coverage(b, 32, AGX_SR_COVERAGE_MASK);
+   agx_index covered = agx_and(b, coverage, agx_immediate(0xf));
+   agx_index control = agx_and(b, coverage, agx_immediate(0xf0));
+
+   affected = agx_and(b, affected, covered);
+   agx_index middle =
+      agx_and(b, agx_shl32(b, affected, agx_immediate(4)), control);
+   agx_index word = agx_imad(b, affected, agx_mov_imm(b, 32, 256), middle, 0);
+
+   return agx_or(b, word, agx_and(b, live, covered));
+}
+
+static agx_index
+agx_export_word_apple9(agx_builder *b, agx_index value)
+{
+   agx_index pub = agx_temp(b->shader, AGX_SIZE_32);
+   pub.reg_class = RA_EXPORT;
+   agx_instr *I = agx_collect_to(b, pub, 1);
+   I->src[0] = value;
+   return pub;
+}
+
+static void
+agx_test_zs_apple9(agx_builder *b, bool begin)
+{
+   agx_context *ctx = b->shader;
+
+   if (begin) {
+      agx_begin_tile(b, 1);
+   } else if (ctx->key->fs.inside_sample_loop) {
+      ctx->out->apple9_zs_release = true;
+   } else {
+      agx_end_tile(b, 1);
+   }
+}
+
+static agx_instr *
+agx_emit_sample_mask_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   agx_index affected =
+      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
+   agx_index live =
+      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[1]), 16, false);
+
+   /* As on Apple8, writes that kill samples unconditionally run no tests */
+   bool tests =
+      !(nir_src_is_const(instr->src[1]) && nir_src_as_uint(instr->src[1]) == 0);
+
+   b->shader->out->apple9_tile_domain =
+      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+
+   agx_index pub =
+      agx_export_word_apple9(b, agx_coverage_control_apple9(b, affected, live));
+
+   if (tests)
+      agx_test_zs_apple9(b, true);
+
+   agx_write_coverage(b, pub);
+
+   if (tests)
+      agx_test_zs_apple9(b, false);
+
+   return NULL;
+}
+
+/* Export pair: the control word with the stencil reference high, then depth */
+static agx_instr *
+agx_emit_store_zs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   unsigned zs = nir_intrinsic_base(instr);
+   assert(zs >= 1 && zs <= 3);
+
+   agx_index mask =
+      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
+   agx_index control = agx_coverage_control_apple9(b, mask, mask);
+
+   if (zs & 2) {
+      agx_index s = agx_extend_apple9(
+         b, agx_src_index(b->shader, &instr->src[2]), 16, false);
+      control = agx_or(b, control, agx_shl32(b, s, agx_immediate(16)));
+   }
+
+   agx_index depth =
+      (zs & 1) ? agx_src_index(b->shader, &instr->src[1]) : control;
+
+   agx_index pair = agx_vec_temp(b->shader, AGX_SIZE_32, 2);
+   pair.reg_class = RA_EXPORT;
+   agx_publication_pair_to(b, pair, control, depth, zs == 2);
+
+   b->shader->out->writes_sample_mask = true;
+   b->shader->out->apple9_tile_domain =
+      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+
+   agx_test_zs_apple9(b, true);
+   agx_zs_store(b, pair, zs);
+   agx_test_zs_apple9(b, false);
+   return NULL;
+}
+
 static agx_instr *
 agx_emit_store_zs(agx_builder *b, nir_intrinsic_instr *instr)
 {
@@ -1813,6 +1916,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_store_zs_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
+      if (agx_is_apple9(b->shader))
+         return agx_emit_store_zs_apple9(b, instr);
+
       return agx_emit_store_zs(b, instr);
 
    case nir_intrinsic_store_local_pixel_agx:
@@ -1851,6 +1957,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_sample_mask_agx: {
       assert(stage == MESA_SHADER_FRAGMENT);
       b->shader->out->writes_sample_mask = true;
+
+      if (agx_is_apple9(b->shader))
+         return agx_emit_sample_mask_apple9(b, instr);
 
       /* We need to wait_pix before running Z/S tests, but we don't need to
        * wait_pix before merely discarding. Omit the wait_pix when the affected

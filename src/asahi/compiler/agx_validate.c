@@ -196,6 +196,8 @@ agx_write_registers(const agx_instr *I, unsigned d)
       return 4;
    case AGX_OPCODE_COLLECT:
       return I->nr_srcs * agx_size_align_16(I->src[0].size);
+   case AGX_OPCODE_PUBLICATION_PAIR:
+      return 2 * size;
    default:
       return size;
    }
@@ -290,6 +292,10 @@ agx_read_registers(const agx_instr *I, unsigned s)
          return 2;
       else
          return size;
+
+   case AGX_OPCODE_ZS_STORE:
+      /* A pair of export registers */
+      return 4;
 
    case AGX_OPCODE_ZS_EMIT:
       if (s == 1) {

@@ -1616,6 +1616,53 @@ pack_logic(const agx_instr *I, struct a9_packed *p)
       bytes, 10);
 }
 
+/* Export moves of the DEPTH_STORE pair; bit 68 gives each lane one word */
+static void
+pack_publication_pair(const agx_instr *I, struct a9_packed *p)
+{
+   bool split = I->imm;
+   unsigned word = export_word(I, I->dest[0]);
+   pack_assert(I, word <= 62 && !(word & 1));
+
+   uint8_t bytes[20];
+   unsigned moves = split ? 1 : 2;
+
+   for (unsigned c = 0; c < moves; ++c) {
+      agx_index src = I->src[c];
+      pack_assert(I, is_gpr(src) && src.size == AGX_SIZE_32);
+
+      /* The move keeps its source if a later move or instruction reads it */
+      bool keep =
+         retain(src) || (c == 0 && !split && agx_is_equiv(I->src[1], src));
+
+      uint8_t *m = bytes + 10 * c;
+      const uint8_t logic_or[10] = {0x0b, 0x05, 0x1f, 0x01, 0x02, 0x08};
+      memcpy(m, logic_or, sizeof(logic_or));
+      memset(m + 6, 0, 4);
+
+      pack_compact_retain(m, keep, keep);
+      if (keep)
+         set_bits(m, 21, 1, 1);
+
+      pack_compact_registers(m, word + c, gpr(I, src), gpr(I, src));
+      m[4] |= 0x40;
+      set_bits(m, 21, 1, 1);
+      set_bits(m, 58, 3, I->scoreboard);
+
+      set_bits(m, 25, 6, 0);
+      set_bits(m, 42, 1, 0);
+      set_bits(m, 31, 1, 0);
+      set_bits(m, 20, 1, 0);
+      set_bits(m, 24, 1, 0);
+      set_bits(m, 43, 1, 0);
+
+      if (!split)
+         m[8] |= 0x10;
+   }
+
+   a9_init(p, AGX_APPLE9_ENC_PUBLICATION_PAIR, bytes, 10 * moves);
+}
+
 /* r0-r15 = 0-0x7f in two bytes; value bit 7 means no write */
 static void
 pack_mov_imm(const agx_instr *I, struct a9_packed *p)
@@ -3331,6 +3378,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    case AGX_OPCODE_FCMPSEL:
    case AGX_OPCODE_HCMPSEL:
       pack_select(I, p);
+      return;
+
+   case AGX_OPCODE_PUBLICATION_PAIR:
+      pack_publication_pair(I, p);
       return;
 
    case AGX_OPCODE_BITOP:
