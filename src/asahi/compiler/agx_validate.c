@@ -368,7 +368,10 @@ agx_read_registers(const agx_instr *I, unsigned s)
       }
 
    case AGX_OPCODE_BLOCK_IMAGE_STORE:
-      if (s == 3 && I->explicit_coords)
+      /* Apple9 parameters are in export registers */
+      if (I->src[0].reg_class == RA_EXPORT)
+         return agx_index_size_16(I->src[s]);
+      else if (s == 3 && I->explicit_coords)
          return agx_coordinate_registers(I, I->src[3].size);
       else
          return size;
