@@ -872,6 +872,14 @@ nir_is_coherent(nir_intrinsic_instr *instr)
    return nir_intrinsic_access(instr) & (ACCESS_COHERENT | ACCESS_VOLATILE);
 }
 
+/* Apple9 accesses are coherent as issued. Volatile ones await earlier ones */
+static void
+agx_emit_apple9_access_order(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   if (nir_intrinsic_access(instr) & ACCESS_VOLATILE)
+      agx_memory_barrier_acquire(b);
+}
+
 static void
 agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 {
@@ -889,11 +897,7 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    if (agx_is_apple9(b->shader)) {
       assert(!nir_intrinsic_sign_extend(instr));
-
-      /* Apple9 orders coherent accesses after earlier ones with a fence */
-      if (coherent)
-         agx_memory_barrier_acquire(b);
-
+      agx_emit_apple9_access_order(b, instr);
       coherent = false;
    } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
@@ -922,11 +926,7 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
 
    if (agx_is_apple9(b->shader)) {
       assert(!nir_intrinsic_sign_extend(instr));
-
-      /* Apple9 orders coherent accesses after earlier ones with a fence */
-      if (coherent)
-         agx_memory_barrier_acquire(b);
-
+      agx_emit_apple9_access_order(b, instr);
       coherent = false;
    } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
