@@ -1650,7 +1650,13 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
    rctx->reusable = reuse ? reusable : NULL;
    agx_foreach_ssa_dest(I, d) {
       if (I->dest[d].reg_class != RA_GPR) {
-         assign_regs(rctx, I->dest[d], pick_regs(rctx, I, d));
+         unsigned reg = pick_regs(rctx, I, d);
+         if (reg == ~0u) {
+            rctx->moved = NULL;
+            return false;
+         }
+
+         assign_regs(rctx, I->dest[d], reg);
          continue;
       }
 
@@ -1779,12 +1785,46 @@ try_coalesce_with(struct ra_ctx *rctx, agx_index ssa, unsigned count,
    return true;
 }
 
+/*
+ * Export values are written only by the instruction defining them and never
+ * moved, so they are placed once, in the window their readers can name. The
+ * readers' limits are on the defining instruction (agx_set_reg_constraints).
+ * Export values live briefly, so the window has room unless the shader keeps
+ * more of them live than the file holds, which instruction selection avoids.
+ */
+static unsigned
+pick_export_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
+{
+   assert(I->op != AGX_OPCODE_PHI && "export values have no phis");
+
+   unsigned count = rctx->ncomps[I->dest[d].value];
+   struct agx_reg_constraint c = {0, UINT16_MAX, 1};
+   if (I->reg_constraints)
+      c = I->reg_constraints[d];
+
+   unsigned first, last;
+   if (constraint_window(c, count, 0, rctx->bound[RA_EXPORT], &first, &last)) {
+      unsigned align = MAX2(count, c.align);
+
+      for (unsigned reg = first; reg <= last; reg += align) {
+         if (!BITSET_TEST_COUNT(rctx->used_regs[RA_EXPORT], reg, count))
+            return reg;
+      }
+   }
+
+   rctx->shader->ra_error = "No export registers free in the operand window";
+   return ~0u;
+}
+
 static unsigned
 pick_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
 {
    agx_index idx = I->dest[d];
    enum ra_class cls = ra_class_for_index(idx);
    assert(idx.type == AGX_INDEX_NORMAL);
+
+   if (cls == RA_EXPORT)
+      return pick_export_regs(rctx, I, d);
 
    unsigned count = rctx->ncomps[idx.value];
    assert(count >= 1);
@@ -2081,7 +2121,13 @@ agx_ra_assign_local(struct ra_ctx *rctx)
             if (I->op == AGX_OPCODE_PHI && I->dest[d].has_reg)
                continue;
 
-            assign_regs(rctx, I->dest[d], pick_regs(rctx, I, d));
+            unsigned reg = pick_regs(rctx, I, d);
+            if (reg == ~0u) {
+               free(ssa_to_reg);
+               return false;
+            }
+
+            assign_regs(rctx, I->dest[d], reg);
          }
       }
 
@@ -2830,7 +2876,25 @@ agx_ra(agx_context *ctx)
       /* Lower away RA pseudo-instructions */
       agx_builder b = agx_init_builder(ctx, agx_after_instr(ins));
 
-      if (ins->op == AGX_OPCODE_COLLECT) {
+      if (ins->op == AGX_OPCODE_COLLECT &&
+          ins->dest[0].reg_class == RA_EXPORT) {
+         /* Export moves, which cannot conflict with their sources */
+         unsigned base = ins->dest[0].value;
+         unsigned width = agx_size_align_16(ins->src[0].size);
+
+         agx_foreach_src(ins, i) {
+            if (agx_is_null(ins->src[i]) || ins->src[i].type == AGX_INDEX_UNDEF)
+               continue;
+
+            assert(ins->src[i].reg_class == RA_GPR);
+            agx_mov_to(
+               &b, agx_export_register(base + (i * width), ins->src[i].size),
+               ins->src[i]);
+         }
+
+         agx_remove_instruction(ins);
+         continue;
+      } else if (ins->op == AGX_OPCODE_COLLECT) {
          assert(ins->dest[0].type == AGX_INDEX_REGISTER);
          assert(ins->dest[0].reg_class == RA_GPR);
 

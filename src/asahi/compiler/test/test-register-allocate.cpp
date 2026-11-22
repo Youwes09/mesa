@@ -254,3 +254,87 @@ TEST_F(RegisterAllocate, EarlyClobberDestinationInFullFile)
    EXPECT_FALSE(overlaps(I->dest[0], I->src[0]));
    EXPECT_FALSE(overlaps(I->dest[0], I->src[1]));
 }
+
+/* An export collect is placed in its reader's window and becomes moves */
+TEST_F(RegisterAllocate, ExportBundleTakesReaderWindow)
+{
+   agx_index x[4];
+   for (unsigned i = 0; i < 4; ++i)
+      x[i] = agx_mov_imm(&b, 32, i);
+
+   /* An export value live across the bundle, in the bottom of the file */
+   agx_instr *other = agx_mov_to(&b, export_temp(AGX_SIZE_32), x[0]);
+
+   agx_index bundle = agx_vec_temp(ctx, AGX_SIZE_32, 4);
+   bundle.reg_class = RA_EXPORT;
+   agx_instr *collect = agx_collect_to(&b, bundle, 4);
+   for (unsigned i = 0; i < 4; ++i)
+      collect->src[i] = x[i];
+
+   /* Words 4 to 24, aligned to 4 words */
+   agx_instr *use = agx_unit_test(&b, bundle);
+   agx_reg_constraint *c = constrain(use);
+   c[0] = {8, 48, 8};
+
+   agx_iadd(&b, other->dest[0], x[1], 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   ASSERT_EQ(use->src[0].type, AGX_INDEX_REGISTER);
+   ASSERT_EQ(use->src[0].reg_class, RA_EXPORT);
+   EXPECT_GE(use->src[0].value, 8u);
+   EXPECT_LE(use->src[0].value, 48u);
+   EXPECT_EQ(use->src[0].value % 8, 0u);
+   EXPECT_FALSE(overlaps(use->src[0], other->dest[0]));
+
+   /* The collect became one export move per word */
+   unsigned moves = 0;
+   agx_foreach_instr_global(ctx, I) {
+      EXPECT_NE(I->op, AGX_OPCODE_COLLECT);
+      if (I->op == AGX_OPCODE_MOV && I->dest[0].reg_class == RA_EXPORT &&
+          I->dest[0].value >= use->src[0].value &&
+          I->dest[0].value < use->src[0].value + 8) {
+         EXPECT_EQ(I->src[0].reg_class, RA_GPR);
+         moves++;
+      }
+   }
+   EXPECT_EQ(moves, 4u);
+}
+
+/* Spilling GPRs leaves export values in their registers */
+TEST_F(RegisterAllocate, SpillingLeavesExportsAlone)
+{
+   ctx->target.gpr_halves = 16;
+
+   /* Values that cannot be rematerialized */
+   agx_index live[12];
+   live[0] = agx_get_sr(&b, 32, AGX_SR_THREAD_POSITION_IN_GRID_X);
+   for (unsigned i = 1; i < ARRAY_SIZE(live); ++i)
+      live[i] = agx_iadd(&b, live[i - 1], agx_immediate(i), 0);
+
+   agx_index bundle = agx_vec_temp(ctx, AGX_SIZE_32, 2);
+   bundle.reg_class = RA_EXPORT;
+   agx_instr *collect = agx_collect_to(&b, bundle, 2);
+   collect->src[0] = live[0];
+   collect->src[1] = live[1];
+   agx_instr *use = agx_unit_test(&b, bundle);
+   constrain(use)[0] = {0, 60, 4};
+
+   agx_index sum = live[0];
+   for (unsigned i = 1; i < ARRAY_SIZE(live); ++i)
+      sum = agx_iadd(&b, sum, live[i], 0);
+   agx_unit_test(&b, sum);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_GT(ctx->scratch_size_B, 0u);
+   EXPECT_EQ(use->src[0].reg_class, RA_EXPORT);
+   EXPECT_EQ(ctx->export_reg_count, 4u);
+
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_dest(I, d) {
+         if (I->dest[d].reg_class == RA_MEM) {
+            agx_foreach_src(I, s)
+               EXPECT_NE(I->src[s].reg_class, RA_EXPORT);
+         }
+      }
+   }
+}

@@ -250,6 +250,7 @@ agx_read_registers(const agx_instr *I, unsigned s)
       return agx_index_size_16(I->src[s]);
    case AGX_OPCODE_MOV:
    case AGX_OPCODE_EXPORT:
+   case AGX_OPCODE_UNIT_TEST:
       /* Tautological */
       return agx_index_size_16(I->src[0]);
 

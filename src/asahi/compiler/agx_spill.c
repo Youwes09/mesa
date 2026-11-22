@@ -233,6 +233,9 @@ struct spill_ctx {
    uint8_t *channels;
    enum agx_size *size;
 
+   /* Values in export registers, which are never spilled */
+   BITSET_WORD *exports;
+
    /* Mapping of rematerializable values to their definitions, or NULL for nodes
     * that are not materializable.
     */
@@ -273,9 +276,18 @@ spill_block(struct spill_ctx *ctx, agx_block *block)
 /* Calculate the register demand of a node. This is rounded up to a power-of-two
  * to match the equivalent calculations in RA.
  */
+static bool
+is_export(struct spill_ctx *ctx, unsigned node)
+{
+   return node < ctx->n && BITSET_TEST(ctx->exports, node);
+}
+
 static unsigned
 node_size(struct spill_ctx *ctx, unsigned node)
 {
+   if (is_export(ctx, node))
+      return 0;
+
    return util_next_power_of_two(ctx->channels[node]) *
           agx_size_align_16(ctx->size[node]);
 }
@@ -516,6 +528,9 @@ insert_W(struct spill_ctx *ctx, unsigned v)
 {
    assert(v < ctx->n);
    assert(!BITSET_TEST(ctx->W, v));
+
+   if (is_export(ctx, v))
+      return;
 
    BITSET_SET(ctx->W, v);
    ctx->nW += node_size(ctx, v);
@@ -759,7 +774,7 @@ insert_coupling_code(struct spill_ctx *ctx, agx_block *pred, agx_block *succ)
    }
 
    agx_foreach_phi_in_block(succ, I) {
-      if (I->dest[0].reg_class == RA_MEM)
+      if (I->dest[0].reg_class != RA_GPR)
          continue;
 
       unsigned s = agx_predecessor_index(succ, pred);
@@ -899,7 +914,8 @@ min_algorithm(struct spill_ctx *ctx)
        * Phi sources are handled later.
        */
       if (I->op == AGX_OPCODE_PHI) {
-         if (!BITSET_TEST(ctx->W, I->dest[0].value)) {
+         if (!BITSET_TEST(ctx->W, I->dest[0].value) &&
+             !is_export(ctx, I->dest[0].value)) {
             I->dest[0] = agx_index_as_mem(I->dest[0], ctx->spill_base);
          }
 
@@ -915,7 +931,7 @@ min_algorithm(struct spill_ctx *ctx)
 
       agx_foreach_ssa_src(I, s) {
          unsigned node = I->src[s].value;
-         if (BITSET_TEST(ctx->W, node))
+         if (BITSET_TEST(ctx->W, node) || is_export(ctx, node))
             continue;
 
          /* Mark this variable as needing a reload. */
@@ -1163,7 +1179,7 @@ compute_w_entry_loop_header(struct spill_ctx *ctx)
                  in_preheader_w_exit(ctx, block, node);
       }
 
-      if (fits) {
+      if (fits && !is_export(ctx, node)) {
          insert_W(ctx, node);
          sb->W_entry[sb->nW_entry++] = node;
          if (through)
@@ -1281,7 +1297,7 @@ compute_w_entry(struct spill_ctx *ctx)
       unsigned node = candidates[i].node;
       unsigned comps = node_size(ctx, node);
 
-      if ((ctx->nW + comps) <= ctx->k) {
+      if ((ctx->nW + comps) <= ctx->k && !is_export(ctx, node)) {
          insert_W(ctx, node);
          sb->W_entry[sb->nW_entry++] = node;
       }
@@ -1315,7 +1331,7 @@ compute_s_entry(struct spill_ctx *ctx)
    }
 
    U_SPARSE_BITSET_FOREACH_SET(&ctx->block->live_in, v) {
-      if (!BITSET_TEST(ctx->W, v))
+      if (!BITSET_TEST(ctx->W, v) && !is_export(ctx, v))
          BITSET_SET(ctx->S, v);
    }
 
@@ -1607,6 +1623,7 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
    dist_t *next_uses = rzalloc_array(memctx, dist_t, ctx->alloc);
    enum agx_size *sizes = rzalloc_array(memctx, enum agx_size, ctx->alloc);
    agx_instr **remat = rzalloc_array(memctx, agx_instr *, ctx->alloc);
+   BITSET_WORD *exports = BITSET_RZALLOC(memctx, ctx->alloc);
 
    agx_foreach_instr_global(ctx, I) {
       if (can_remat(I))
@@ -1614,8 +1631,8 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
 
       /* Measure vectors */
       agx_foreach_ssa_dest(I, d) {
-         assert(I->dest[d].reg_class != RA_EXPORT &&
-                "the spiller handles GPR values only");
+         if (I->dest[d].reg_class == RA_EXPORT)
+            BITSET_SET(exports, I->dest[d].value);
 
          assert(sizes[I->dest[d].value] == 0 && "broken SSA");
          assert(channels[I->dest[d].value] == 0 && "broken SSA");
@@ -1636,9 +1653,14 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
       if (I->op == AGX_OPCODE_PHI)
          continue;
       unsigned needed = 0;
-      agx_foreach_ssa_dest(I, d)
-         needed += util_next_power_of_two(agx_index_size_16(I->dest[d]));
+      agx_foreach_ssa_dest(I, d) {
+         if (I->dest[d].reg_class == RA_GPR)
+            needed += util_next_power_of_two(agx_index_size_16(I->dest[d]));
+      }
       agx_foreach_ssa_src(I, s) {
+         if (I->src[s].reg_class != RA_GPR)
+            continue;
+
          bool duplicate = false;
          for (unsigned prev = 0; prev < s; ++prev)
             duplicate |= agx_is_equiv(I->src[prev], I->src[s]);
@@ -1676,6 +1698,7 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
          .n = n,
          .channels = channels,
          .size = sizes,
+         .exports = exports,
          .remat = remat,
          .next_uses = next_uses,
          .block = block,
@@ -1710,6 +1733,7 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
          .n = n,
          .channels = channels,
          .size = sizes,
+         .exports = exports,
          .remat = remat,
          .block = block,
          .blocks = blocks,

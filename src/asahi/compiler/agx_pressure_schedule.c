@@ -174,13 +174,17 @@ calculate_pressure_delta(agx_instr *I, struct u_sparse_bitset *live)
 {
    signed delta = 0;
 
-   /* Destinations must be unique */
+   /* Destinations must be unique. Export registers are not GPRs */
    agx_foreach_ssa_dest(I, d) {
-      if (u_sparse_bitset_test(live, I->dest[d].value))
+      if (I->dest[d].reg_class == RA_GPR &&
+          u_sparse_bitset_test(live, I->dest[d].value))
          delta -= agx_index_size_16(I->dest[d]);
    }
 
    agx_foreach_ssa_src(I, src) {
+      if (I->src[src].reg_class != RA_GPR)
+         continue;
+
       /* Filter duplicates */
       bool dupe = false;
 
@@ -241,6 +245,10 @@ choose_instr(struct sched_ctx *s)
        * not read or write registers, this has no effect on pressure.
        */
       if (n->instr->op == AGX_OPCODE_WAIT_PIX)
+         return n;
+
+      /* Export values cannot move, so define them right before their reader */
+      if (n->instr->nr_dests && n->instr->dest[0].reg_class == RA_EXPORT)
          return n;
 
       int32_t delta = calculate_pressure_delta(n->instr, &s->live);

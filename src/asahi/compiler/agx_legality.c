@@ -597,11 +597,27 @@ apple9_instr_is_legal(const agx_instr *I)
       return cmp_ok(I);
 
    case AGX_OPCODE_MOV:
-      /* Constants are moved with mov_imm */
+      /* Constants use mov_imm, export registers are written from registers */
+      if (is_export(I->dest[0]))
+         return reg32(I->src[0]) && plain(I->src[0]);
+
       return !is_imm(I->src[0]);
 
-   case AGX_OPCODE_PHI:
    case AGX_OPCODE_COLLECT:
+      /* A collect into export registers becomes export moves of registers */
+      if (I->dest[0].reg_class == RA_EXPORT) {
+         for (unsigned s = 0; s < I->nr_srcs; ++s) {
+            if (!agx_is_null(I->src[s]) && I->src[s].type != AGX_INDEX_UNDEF &&
+                !(reg32(I->src[s]) && plain(I->src[s])))
+               return false;
+         }
+
+         return true;
+      }
+
+      FALLTHROUGH;
+
+   case AGX_OPCODE_PHI:
       /* Parallel copies write wide constants as an add of two 8-bit ones */
       for (unsigned s = 0; s < I->nr_srcs; ++s) {
          if (is_imm(I->src[s]) && I->src[s].value > UINT8_MAX)
@@ -935,6 +951,56 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
    return any;
 }
 
+/* Exports are never moved, so narrow definitions to their readers' limits */
+static void
+constrain_export_definitions(agx_context *ctx)
+{
+   agx_instr **defs = calloc(ctx->alloc, sizeof(*defs));
+   uint8_t *dest_index = calloc(ctx->alloc, sizeof(*dest_index));
+
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_ssa_dest(I, d) {
+         if (I->dest[d].reg_class == RA_EXPORT) {
+            defs[I->dest[d].value] = I;
+            dest_index[I->dest[d].value] = d;
+         }
+      }
+   }
+
+   agx_foreach_instr_global(ctx, I) {
+      if (!I->reg_constraints)
+         continue;
+
+      agx_foreach_ssa_src(I, s) {
+         if (I->src[s].reg_class != RA_EXPORT)
+            continue;
+
+         struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
+         agx_instr *def = defs[I->src[s].value];
+         unsigned d = dest_index[I->src[s].value];
+         assert(def != NULL && "export values are defined before use");
+
+         if (!def->reg_constraints) {
+            unsigned n = def->nr_dests + def->nr_srcs;
+            def->reg_constraints =
+               ralloc_array(def, struct agx_reg_constraint, n);
+
+            for (unsigned i = 0; i < n; ++i)
+               def->reg_constraints[i] =
+                  (struct agx_reg_constraint){0, UINT16_MAX, 1};
+         }
+
+         struct agx_reg_constraint *dc = &def->reg_constraints[d];
+         dc->min = MAX2(dc->min, c.min);
+         dc->max = MIN2(dc->max, c.max);
+         dc->align = MAX2(dc->align, c.align);
+      }
+   }
+
+   free(defs);
+   free(dest_index);
+}
+
 void
 agx_set_reg_constraints(agx_context *ctx)
 {
@@ -956,4 +1022,6 @@ agx_set_reg_constraints(agx_context *ctx)
          memcpy(I->reg_constraints, c, sizeof(c[0]) * n);
       }
    }
+
+   constrain_export_definitions(ctx);
 }
