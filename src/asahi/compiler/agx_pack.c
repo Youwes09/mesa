@@ -1210,6 +1210,11 @@ agx_fixup_branch(struct util_dynarray *emission, struct agx_branch_fixup fix)
 void
 agx_pack_binary(agx_context *ctx, struct util_dynarray *emission)
 {
+   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+      agx_pack_binary_apple9(ctx, emission);
+      return;
+   }
+
    struct util_dynarray fixups;
    util_dynarray_init(&fixups, ctx);
 

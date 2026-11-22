@@ -13,6 +13,7 @@
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
 #include "util/u_worklist.h"
+#include "agx_apple9_machine.h"
 #include "agx_compile.h"
 #include "agx_opcodes.h"
 
@@ -1195,6 +1196,17 @@ void agx_opt_register_cache(agx_context *ctx);
 void agx_opt_break_if(agx_context *ctx);
 void agx_opt_jmp_none(agx_context *ctx);
 void agx_pack_binary(agx_context *ctx, struct util_dynarray *emission);
+
+/* agx_apple9_pack_instr packs one instruction and returns its length */
+void agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission);
+unsigned agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
+                               bool alu_reads_result, uint8_t *bytes);
+
+/* Encoding form an allocated instruction packs to, given its wait */
+enum agx_apple9_encoding agx_apple9_encoding_for(const agx_instr *I);
+
+bool agx_apple9_float_immediate_ok(agx_index idx, bool wide);
+bool agx_apple9_sr_supported(enum agx_sr sr);
 
 #ifndef NDEBUG
 void agx_validate(agx_context *ctx, const char *after_str);
