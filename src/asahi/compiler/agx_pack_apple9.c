@@ -2276,7 +2276,9 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->pred < 6);
 
    agx_index a = I->src[0], b = I->src[1];
-   bool floating = I->op == AGX_OPCODE_FCMP_PRED;
+   bool half = I->op == AGX_OPCODE_HCMP_PRED;
+   bool floating = I->op == AGX_OPCODE_FCMP_PRED || half;
+   pack_assert(I, !half || (is_gpr(a) && is_gpr(b)));
    pack_assert(I, !is_imm(a) && a.size == AGX_SIZE_32);
    pack_assert(I, is_imm(b) || b.size == AGX_SIZE_32);
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg);
@@ -2291,8 +2293,9 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
    if (is_gpr(b) && !retain(b))
       control |= 0x10;
 
-   uint8_t bytes[10] = {opcode, ((ra & 63) << 1) | 1, control,
-                        ((rb & 63) << 1) | 1};
+   /* Bit 0 of bytes 1 and 3 marks FP32 operands, clear for FP16 */
+   uint8_t bytes[10] = {opcode, ((ra & 63) << 1) | !half, control,
+                        ((rb & 63) << 1) | !half};
 
    if (!extended) {
       bytes[4] = cond;
@@ -2306,7 +2309,10 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
       if (is_imm(b))
          pack_compare_literal(I, bytes, b, floating, 36, 41);
 
-      a9_init(p, AGX_APPLE9_ENC_PREDICATE_COMPARE_SHORT, bytes, 6);
+      a9_init(p,
+              half ? AGX_APPLE9_ENC_HALF_PREDICATE_SHORT
+                   : AGX_APPLE9_ENC_PREDICATE_COMPARE_SHORT,
+              bytes, 6);
    } else {
       bytes[4] = 0x06;
       bytes[6] = cond;
@@ -2328,7 +2334,10 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
       if (is_imm(b))
          pack_compare_literal(I, bytes, b, floating, 52, 57);
 
-      a9_init(p, AGX_APPLE9_ENC_PREDICATE_COMPARE_EXTENDED, bytes, 10);
+      a9_init(p,
+              half ? AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED
+                   : AGX_APPLE9_ENC_PREDICATE_COMPARE_EXTENDED,
+              bytes, 10);
    }
 }
 
@@ -3307,6 +3316,7 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_ICMP_PRED:
    case AGX_OPCODE_FCMP_PRED:
+   case AGX_OPCODE_HCMP_PRED:
       pack_compare_pred(I, p);
       return;
 

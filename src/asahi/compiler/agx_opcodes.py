@@ -518,10 +518,11 @@ for (name, is_float) in [("break_if_icmp", False), ("break_if_fcmp", True)]:
 
 # Apple9 control flow: execution and loop mask stacks and six predicates
 
-# Compares the two sources into predicate register `pred`
-for (name, cond) in [("icmp_pred", ICOND), ("fcmp_pred", FCOND)]:
+# Compares into predicate `pred`. hcmp_pred compares FP16 low halves
+for (name, cond) in [("icmp_pred", ICOND), ("fcmp_pred", FCOND),
+                     ("hcmp_pred", FCOND)]:
     op(name, _, dests = 0, srcs = 2, imms = [cond, INVERT_COND, PRED],
-       is_float = name == "fcmp_pred", can_eliminate = False,
+       is_float = name != "icmp_pred", can_eliminate = False,
        can_reorder = False, isa = APPLE9)
 
 # Pushes the execution mask, then disables lanes whose predicate is false

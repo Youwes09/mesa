@@ -1687,3 +1687,15 @@ TEST_F(Apple9Pack, HalfMinMaxSelect)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_COMPARE_SELECT);
    check(I, {0xa2, 0x8a, 0x07, 0x84, 0x82, 0x08, 0x03, 0x00, 0x00, 0x86});
 }
+
+/* FP16 compares into predicates of r2 and r70, kept then released */
+TEST_F(Apple9Pack, HalfPredicates)
+{
+   agx_instr *I = agx_hcmp_pred(b, r(2), r(70), AGX_FCOND_LT, false, 1);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_SHORT);
+   check(I, {0x2a, 0x04, 0x22, 0x0c, 0x03, 0x04});
+
+   I = agx_hcmp_pred(b, k(r(2)), k(r(70)), AGX_FCOND_EQ, false, 2);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED);
+   check(I, {0x4a, 0x04, 0x3b, 0x0c, 0x06, 0x00, 0x00, 0x04, 0x00, 0x00});
+}

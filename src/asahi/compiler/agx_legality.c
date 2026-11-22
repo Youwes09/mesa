@@ -793,6 +793,10 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_FCMP_PRED:
       return pred_compare_ok(I);
 
+   case AGX_OPCODE_HCMP_PRED:
+      /* FP16 compares take registers only */
+      return pred_compare_ok(I) && reg32(I->src[0]) && reg32(I->src[1]);
+
    case AGX_OPCODE_IF_PRED:
       return I->pred < 8;
 

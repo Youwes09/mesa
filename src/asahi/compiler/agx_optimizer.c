@@ -422,6 +422,44 @@ agx_optimizer_if_cmp(agx_instr **defs, agx_instr *I)
    }
 }
 
+/* Fuse icmp_pred(cmp(x, y, c), 0, eq) into cmp_pred(x, y, inverted c) */
+static void
+agx_optimizer_pred(agx_context *ctx, agx_instr **defs, agx_instr *I)
+{
+   if (!agx_is_equiv(I->src[1], agx_zero()) || I->icond != AGX_ICOND_UEQ ||
+       I->src[0].type != AGX_INDEX_NORMAL)
+      return;
+
+   agx_instr *def = defs[I->src[0].value];
+   if (!def || (def->op != AGX_OPCODE_ICMP && def->op != AGX_OPCODE_FCMP &&
+                def->op != AGX_OPCODE_HCMP))
+      return;
+
+   agx_instr old = *I;
+   agx_index srcs[2] = {I->src[0], I->src[1]};
+
+   I->src[0] = def->src[0];
+   I->src[1] = def->src[1];
+   I->invert_cond = def->invert_cond ^ !I->invert_cond;
+
+   if (def->op == AGX_OPCODE_ICMP) {
+      I->op = AGX_OPCODE_ICMP_PRED;
+      I->icond = def->icond;
+   } else {
+      I->op = def->op == AGX_OPCODE_HCMP ? AGX_OPCODE_HCMP_PRED
+                                         : AGX_OPCODE_FCMP_PRED;
+      I->fcond = def->fcond;
+   }
+
+   if (!agx_instr_is_legal(ctx, I)) {
+      I->op = old.op;
+      I->icond = old.icond;
+      I->invert_cond = old.invert_cond;
+      I->src[0] = srcs[0];
+      I->src[1] = srcs[1];
+   }
+}
+
 /*
  * Fuse invert into if. Acts on if_icmp and fuses:
  *
@@ -619,6 +657,8 @@ agx_optimizer_forward(agx_context *ctx)
          agx_optimizer_if_cmp(defs, I);
       } else if (I->op == AGX_OPCODE_ICMPSEL) {
          agx_optimizer_cmpsel(ctx, defs, I);
+      } else if (I->op == AGX_OPCODE_ICMP_PRED) {
+         agx_optimizer_pred(ctx, defs, I);
       } else if (I->op == AGX_OPCODE_BALLOT ||
                  I->op == AGX_OPCODE_QUAD_BALLOT) {
          agx_optimizer_ballot(ctx, defs, I);
