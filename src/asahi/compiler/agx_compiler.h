@@ -560,6 +560,14 @@ struct agx_isa_target {
 
 const struct agx_isa_target *agx_get_isa_target(enum agx_shader_isa isa);
 
+/* Whether the ISA has the operation */
+static inline bool
+agx_opcode_on_isa(enum agx_opcode op, enum agx_shader_isa isa)
+{
+   return isa == AGX_SHADER_ISA_APPLE9 ? agx_opcodes_info[op].apple9
+                                       : agx_opcodes_info[op].apple8;
+}
+
 /* Allocation policy beyond the register files. Instruction selection and
  * spill lowering remain target-specific; SSA spilling and register assignment
  * are shared.

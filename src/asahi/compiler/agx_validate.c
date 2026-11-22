@@ -570,6 +570,13 @@ agx_validate(agx_context *ctx, const char *after)
    }
 
    agx_foreach_instr_global(ctx, I) {
+      if (!agx_opcode_on_isa(I->op, ctx->target.isa)) {
+         fprintf(stderr, "Operation not available on the ISA after %s\n",
+                 after);
+         agx_print_instr(I, stderr);
+         fail = true;
+      }
+
       if (!agx_validate_sources(I)) {
          fprintf(stderr, "Invalid sources form after %s\n", after);
          agx_print_instr(I, stderr);

@@ -28,12 +28,14 @@ const struct agx_opcode_info agx_opcodes_info[AGX_NUM_OPCODES] = {
       ${int(op.is_float)},
       ${int(op.can_eliminate)},
       ${int(op.can_reorder)},
+      ${int(bool(op.isa & APPLE8))},
+      ${int(bool(op.isa & APPLE9))},
    },
 % endfor
 };
 """
 
 from mako.template import Template
-from agx_opcodes import opcodes
+from agx_opcodes import opcodes, APPLE8, APPLE9
 
-print(Template(template).render(opcodes=opcodes))
+print(Template(template).render(opcodes=opcodes, APPLE8=APPLE8, APPLE9=APPLE9))

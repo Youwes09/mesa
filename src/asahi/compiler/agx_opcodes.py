@@ -11,7 +11,7 @@ VARIABLE = ~0
 
 class Opcode(object):
    def __init__(self, name, dests, srcs, imms, is_float, can_eliminate,
-                can_reorder, schedule_class, encoding):
+                can_reorder, schedule_class, encoding, isa):
       self.name = name
       self.dests = dests if dests != VARIABLE else 0
       self.srcs = srcs if srcs != VARIABLE else 0
@@ -23,6 +23,7 @@ class Opcode(object):
       self.can_reorder = can_reorder
       self.schedule_class = schedule_class
       self.encoding = encoding
+      self.isa = isa
 
 class Immediate(object):
    def __init__(self, name, ctype):
@@ -44,12 +45,18 @@ class Encoding(object):
       if self.extensible:
          assert(length_long == length_short + (4 if length_short > 8 else 2))
 
+# Shader ISAs an operation exists on. The encoding field is Apple8 only
+APPLE8 = 1 << 0
+APPLE9 = 1 << 1
+ALL = APPLE8 | APPLE9
+
 def op(name, encoding, dests = 1, srcs = 0, imms = [], is_float = False,
-        can_eliminate = True, can_reorder = True, schedule_class = "none"):
+        can_eliminate = True, can_reorder = True, schedule_class = "none",
+        isa = ALL):
    encoding = Encoding(encoding) if encoding is not None else None
 
    opcodes[name] = Opcode(name, dests, srcs, imms, is_float, can_eliminate,
-                          can_reorder, schedule_class,  encoding)
+                          can_reorder, schedule_class, encoding, isa)
 
 def immediate(name, ctype = "uint32_t"):
    imm = Immediate(name, ctype)
@@ -109,7 +116,6 @@ ICOND = immediate("icond", "enum agx_icond")
 FCOND = immediate("fcond", "enum agx_fcond")
 NEST = immediate("nest")
 INVERT_COND = immediate("invert_cond")
-NEST = immediate("nest")
 TARGET = immediate("target", "agx_block *")
 ZS = immediate("zs")
 SR = enum("sr", {
@@ -187,9 +193,9 @@ SIMD_OP = enum("simd_op", {
 FUNOP = lambda x: (x << 28)
 FUNOP_MASK = FUNOP((1 << 14) - 1)
 
-def funop(name, opcode, schedule_class = "none"):
+def funop(name, opcode, schedule_class = "none", isa = ALL):
    op(name, (0x0A | (opcode << 28), 4, 6),
-      srcs = 1, is_float = True, schedule_class = schedule_class)
+      srcs = 1, is_float = True, schedule_class = schedule_class, isa = isa)
 
 def iunop(name, opcode):
     assert(opcode < 4)
@@ -202,10 +208,10 @@ funop("dfdx",      0b000100, schedule_class = "coverage")
 funop("dfdy",      0b000110, schedule_class = "coverage")
 funop("rcp",       0b001000)
 funop("rsqrt",     0b001001)
-funop("sin_pt_1",  0b001010)
+funop("sin_pt_1",  0b001010, isa = APPLE8)
 funop("log2",      0b001100)
 funop("exp2",      0b001101)
-funop("sin_pt_2",  0b001110)
+funop("sin_pt_2",  0b001110, isa = APPLE8)
 funop("ceil",      0b010000)
 funop("trunc",     0b100000)
 funop("roundeven", 0b110000)
@@ -225,33 +231,35 @@ op("iadd", encoding = (0x0E, 8, _), srcs = 2, imms = [SHIFT])
 op("imad", encoding = (0x1E, 8, _), srcs = 3, imms = [SHIFT])
 op("bfi", encoding = (0x2E, 8, _), srcs = 3, imms = [BFI_MASK])
 op("bfeil", encoding = (0x2E | L, 8, _), srcs = 3, imms = [BFI_MASK])
-op("extr", encoding = (0x2E | (0x1 << 26), 8, _), srcs = 3, imms = [BFI_MASK])
+op("extr", encoding = (0x2E | (0x1 << 26), 8, _), srcs = 3, imms = [BFI_MASK],
+   isa = APPLE8)
 op("asr", encoding = (0x2E | L | (0x1 << 26), 8, _), srcs = 2)
 op("icmpsel", encoding = (0x12, 8, 10), srcs = 4, imms = [ICOND])
 op("fcmpsel", encoding = (0x02, 8, 10), srcs = 4, imms = [FCOND])
 
-def subgroup_op(name, opc):
+def subgroup_op(name, opc, isa):
     exact      = 0b01101111 | L | (opc << 29)
-    op(name, encoding = (exact, 6, _), srcs = 1, imms = [SIMD_OP])
+    op(name, encoding = (exact, 6, _), srcs = 1, imms = [SIMD_OP], isa = isa)
 
-subgroup_op("quad_reduce", 0x0)
-subgroup_op("simd_reduce", 0x1)
-subgroup_op("quad_prefix", 0x2)
-subgroup_op("simd_prefix", 0x3)
+subgroup_op("quad_reduce", 0x0, APPLE8)
+subgroup_op("simd_reduce", 0x1, ALL)
+subgroup_op("quad_prefix", 0x2, APPLE8)
+subgroup_op("simd_prefix", 0x3, ALL)
 
 for window, w_bit in [('quad_', 0), ('', 1)]:
     for s, shuffle in enumerate(['', '_xor', '_up', '_down']):
+        # Apple9 only has the plain SIMD shuffle
         op(f"{window}shuffle{shuffle}",
             encoding = (0b01101111 | (w_bit << 26) | (s << 38), 6, _),
-            srcs = 2)
+            srcs = 2, isa = ALL if (window, shuffle) == ("", "") else APPLE8)
 
-    # Pseudo-instruction ballotting a boolean
-    op(f"{window}ballot", _, srcs = 1)
+    # Ballotting a boolean. A pseudo-instruction on Apple8, a real one on Apple9
+    op(f"{window}ballot", _, srcs = 1, isa = ALL if window == "" else APPLE8)
 
     for T, T_bit, cond in [('f', 0, FCOND), ('i', 1, ICOND)]:
         op(f"{T}cmp_{window}ballot",
            encoding = (0b0100010 | (T_bit << 4) | (w_bit << 48), 8, _),
-           srcs = 2, imms = [cond, INVERT_COND])
+           srcs = 2, imms = [cond, INVERT_COND], isa = APPLE8)
 
 # Pseudo-instructions for compares returning 1/0
 op("icmp", _, srcs = 2, imms = [ICOND, INVERT_COND])
@@ -305,7 +313,7 @@ op("uniform_store",
 for kind, bit in [("tex", 1 << 6), ("sampler", 0)]:
     op(f"{kind}_state_store", encoding = (0b10101101 | bit | (1 << 20), 8, _),
           dests = 0, srcs = 2, imms = [IMM, SCOREBOARD], can_eliminate = False,
-          schedule_class = "store")
+          schedule_class = "store", isa = APPLE8)
 
 # sources are value, base, index
 op("atomic",
@@ -327,11 +335,12 @@ for (suffix, schedule_class) in [("", "none"), ("_coverage", "coverage"), ("_bar
        schedule_class = schedule_class, can_reorder = schedule_class == "none")
 
 op("sample_mask", (0x7fc1, 6, _), dests = 0, srcs = 2,
-    can_eliminate = False, schedule_class = "coverage")
+    can_eliminate = False, schedule_class = "coverage", isa = APPLE8)
 
 # Sources: sample mask, combined depth/stencil
 op("zs_emit", (0x41, 4, _), dests = 0, srcs = 2,
-              can_eliminate = False, imms = [ZS], schedule_class = "coverage")
+              can_eliminate = False, imms = [ZS], schedule_class = "coverage",
+   isa = APPLE8)
 
 # Sources: sample mask, explicit coords (if present)
 op("ld_tile", (0x49, 8, _), dests = 1, srcs = 2,
@@ -362,10 +371,11 @@ for is_float in [False, True]:
 
       op(name, (exact, 6, _), dests = 0, srcs = 2, can_eliminate = False,
             imms = imms, is_float = is_float,
-            schedule_class = "preload" if cf == "else" else "invalid")
+            schedule_class = "preload" if cf == "else" else "invalid",
+            isa = APPLE8)
 
 op("bitop", (0x7E, 6, _), srcs = 2, imms = [TRUTH_TABLE])
-op("intl", (0x3E, 6, _), srcs = 2, imms = [])
+op("intl", (0x3E, 6, _), srcs = 2, imms = [], isa = APPLE8)
 op("convert", (0x3E | L, 6, _), srcs = 2, imms = [ROUND]) 
 
 # Sources are the coeffient register and the sample index (if applicable)
@@ -373,22 +383,24 @@ op("iter", (0x21, 8, _), srcs = 2, imms = [CHANNELS, INTERPOLATION])
 
 # Sources are the coeffient register for the varying, the coefficient register
 # for W, and the sample index (if applicable)
-op("iterproj", (0x21, 8, _), srcs = 3, imms = [CHANNELS, INTERPOLATION])
+op("iterproj", (0x21, 8, _), srcs = 3, imms = [CHANNELS, INTERPOLATION],
+   isa = APPLE8)
 
 op("ldcf", (0xA1, 8, _), srcs = 1, imms = [CHANNELS])
 op("st_vary", None, dests = 0, srcs = 2, can_eliminate = False)
-op("no_varyings", (0x80000051, 4, _), dests = 0, can_eliminate = False)
+op("no_varyings", (0x80000051, 4, _), dests = 0, can_eliminate = False,
+   isa = APPLE8)
 op("stop", (0x88, 2, _), dests = 0, can_eliminate = False,
    schedule_class = "invalid")
 op("trap", (0x08, 2, _), dests = 0, can_eliminate = False,
-   schedule_class = "invalid")
+   schedule_class = "invalid", isa = APPLE8)
 
 # These are modelled as total barriers since they can guard global memory
 # access too, and even need to be properly ordered with loads.
 op("wait_pix", (0x48, 4, _), dests = 0, imms = [WRITEOUT],
-   can_eliminate = False, schedule_class = "barrier")
+   can_eliminate = False, schedule_class = "barrier", isa = APPLE8)
 op("signal_pix", (0x58, 4, _), dests = 0, imms = [WRITEOUT],
-   can_eliminate = False, schedule_class = "barrier")
+   can_eliminate = False, schedule_class = "barrier", isa = APPLE8)
 
 # Sources are the data vector, the coordinate vector, the LOD, the bindless
 # table if present (zero for texture state registers), and texture index.
@@ -405,11 +417,11 @@ op("block_image_store", (0xB1, 10, _), dests = 0, srcs = 4,
 op("threadgroup_barrier", (0x0068, 2, _), dests = 0, srcs = 0,
    can_eliminate = False, schedule_class = "barrier")
 
-def memory_barrier(name, a, b, c):
+def memory_barrier(name, a, b, c, isa = APPLE8):
     op(name, (0xF5 | (a << 10) | (b << 8) | (c << 12), 2, _), dests = 0, srcs = 0,
-       can_eliminate = False, schedule_class = "barrier")
+       can_eliminate = False, schedule_class = "barrier", isa = isa)
 
-memory_barrier("memory_barrier", 1, 2, 9)
+memory_barrier("memory_barrier", 1, 2, 9, ALL)
 
 # TODO: Not clear what these individually are. Some might be cache flushes?
 memory_barrier("image_barrier_1", 2, 2, 10)
@@ -429,14 +441,17 @@ memory_barrier("device_barrier_1", 3, 1, 9)
 memory_barrier("device_barrier_2", 3, 2, 9)
 
 op("doorbell", (0x60020 | 0x28 << 32, 6, _), dests = 0,
-      can_eliminate = False, can_reorder = False, imms = [IMM])
+      can_eliminate = False, can_reorder = False, imms = [IMM],
+      isa = APPLE8)
 
-op("stack_unmap", (0x00075, 8, _), dests = 1, srcs = 0, can_eliminate = False, can_reorder = False, imms = [IMM])
-op("stack_map",   (0x10075, 8, _), dests = 0, srcs = 1, can_eliminate = False, can_reorder = False, imms = [IMM])
+op("stack_unmap", (0x00075, 8, _), dests = 1, srcs = 0, can_eliminate = False, can_reorder = False, imms = [IMM],
+   isa = APPLE8)
+op("stack_map",   (0x10075, 8, _), dests = 0, srcs = 1, can_eliminate = False, can_reorder = False, imms = [IMM],
+   isa = APPLE8)
 
 op("stack_adjust", encoding = (0x10100b5, 8, _),
       dests = 0, srcs = 0, can_eliminate = False, can_reorder = False,
-      imms = [STACK_SIZE], schedule_class = "store")
+      imms = [STACK_SIZE], schedule_class = "store", isa = APPLE8)
 
 # source is offset
 op("stack_load", encoding = (0x35, 6, 8),
@@ -476,14 +491,15 @@ op("export", _, dests = 0, srcs = 1, imms = [IMM], can_eliminate = False,
    schedule_class = "invalid")
 
 # Pseudo-instructions to set the nesting counter. Lowers to r0l writes after RA.
-op("begin_cf", _, dests = 0, can_eliminate = False)
+op("begin_cf", _, dests = 0, can_eliminate = False, isa = APPLE8)
 op("break", _, dests = 0, imms = [NEST, TARGET], can_eliminate = False,
-   schedule_class = "invalid")
+   schedule_class = "invalid", isa = APPLE8)
 
 for (name, is_float) in [("break_if_icmp", False), ("break_if_fcmp", True)]:
     op(name, _, dests = 0, srcs = 2,
        imms = [NEST, INVERT_COND, FCOND if is_float else ICOND, TARGET],
-       can_eliminate = False, schedule_class = "invalid")
+       can_eliminate = False, schedule_class = "invalid", isa = APPLE8)
+
 
 # Allocation IR for target-selected Apple9 instructions. Encoding remains in
 # the Apple9 backend; common SSA and allocation passes see explicit dataflow.

@@ -76,6 +76,10 @@ struct agx_opcode_info {
    bool is_float : 1;
    bool can_eliminate : 1;
    bool can_reorder : 1;
+
+   /* Shader ISAs with this operation */
+   bool apple8 : 1;
+   bool apple9 : 1;
 };
 
 extern const struct agx_opcode_info agx_opcodes_info[AGX_NUM_OPCODES];
