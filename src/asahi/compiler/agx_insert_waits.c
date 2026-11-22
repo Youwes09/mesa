@@ -92,9 +92,10 @@ apple9_producer(const agx_instr *I)
       p.fixed_slot = 0;
       return p;
 
+   case AGX_OPCODE_MOV:
    case AGX_OPCODE_BITOP:
    case AGX_OPCODE_FMUL:
-      /* Writes to export registers, which complete on export group 0 */
+      /* Export register writes complete on export group 0 */
       p.async = I->dest[0].reg_class == RA_EXPORT;
       p.fixed_slot = 0;
       p.completion = AGX_APPLE9_COMPLETION_PUBLICATION;

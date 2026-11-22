@@ -816,6 +816,58 @@ agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
                       nir_intrinsic_base(instr), explicit);
 }
 
+/*
+ * Apple9 vertex outputs are written to export registers, which a VARY_STORE
+ * commits to a varying slot. Exports stay published until the shader ends, so
+ * the export values are live until then, and every UVS word is committed once
+ * at the end: here for a complete shader, by the linker for a vertex shader
+ * part, whose varying slots depend on the fragment shader's interpolation
+ * (agx_linker.h). The index is the UVS word's unlinked index.
+ */
+static agx_instr *
+agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+{
+   agx_context *ctx = b->shader;
+   assert(nir_src_is_const(instr->src[1]) && "Apple9 varying slots are fixed");
+   assert(instr->instr.block->cf_node.parent->type == nir_cf_node_function &&
+          "outputs are stored at the top level");
+
+   unsigned index = nir_src_as_uint(instr->src[1]);
+   assert(index < ARRAY_SIZE(ctx->uvs_exports));
+
+   agx_index value = agx_src_index(ctx, &instr->src[0]);
+   assert(value.size == AGX_SIZE_32 && "no 16-bit varyings");
+
+   /* A collect rather than a move, which would be propagated */
+   agx_index pub = agx_temp(ctx, AGX_SIZE_32);
+   pub.reg_class = RA_EXPORT;
+   agx_instr *I = agx_collect_to(b, pub, 1);
+   I->src[0] = value;
+
+   ctx->uvs_exports[index] = pub;
+   return NULL;
+}
+
+/* Commit or publish the vertex outputs at the end of the shader */
+static void
+agx_commit_uvs_apple9(agx_context *ctx)
+{
+   agx_block *exit = agx_exit_block(ctx);
+
+   for (unsigned i = 0; i < ARRAY_SIZE(ctx->uvs_exports); ++i) {
+      if (agx_is_null(ctx->uvs_exports[i]))
+         continue;
+
+      if (ctx->key->no_stop) {
+         agx_builder b = agx_init_builder(ctx, agx_after_block(exit));
+         agx_publish(&b, ctx->uvs_exports[i], i);
+      } else {
+         agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
+         agx_st_vary(&b, agx_immediate(i), ctx->uvs_exports[i]);
+      }
+   }
+}
+
 static agx_instr *
 agx_emit_store_zs(agx_builder *b, nir_intrinsic_instr *instr)
 {
@@ -1680,6 +1732,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_store_uvs_agx:
       assert(stage == MESA_SHADER_VERTEX || stage == MESA_SHADER_TESS_EVAL);
+      if (agx_is_apple9(b->shader))
+         return agx_emit_store_uvs_apple9(b, instr);
+
       return agx_st_vary(b, agx_src_index(b->shader, &instr->src[1]),
                          agx_src_index(b->shader, &instr->src[0]));
 
@@ -4408,6 +4463,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    emit_cf_list(ctx, &impl->body);
    agx_emit_phis_deferred(ctx);
 
+   if (agx_is_apple9(ctx) && !ctx->is_preamble &&
+       (ctx->stage == MESA_SHADER_VERTEX ||
+        ctx->stage == MESA_SHADER_TESS_EVAL))
+      agx_commit_uvs_apple9(ctx);
+
    /* Index blocks now that we're done emitting so the order is consistent. Do
     * this before agx_remove_unreachable_blocks so we match NIR indexing. This
     * makes for easier debugging.
@@ -4494,6 +4554,15 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    AGX_PASS(ctx, agx_ra);
    agx_lower_64bit_postra(ctx);
 
+   /* Record where the vertex outputs of a shader part are published */
+   agx_foreach_instr_in_block_safe(agx_exit_block(ctx), I) {
+      if (I->op == AGX_OPCODE_PUBLISH) {
+         assert(I->src[0].reg_class == RA_EXPORT && I->imm < 256);
+         out->apple9_uvs_exports[I->imm] = 1 + (I->src[0].value / 2);
+         agx_remove_instruction(I);
+      }
+   }
+
    if (agx_is_apple9(ctx)) {
       /* Apple9 sizes the private frame in bytes. Returning atomics alone only
        * need their atomic frame.
@@ -4536,9 +4605,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
          out->scratch_size = stack_size;
    }
 
+   /* Apple9 marks no final varying store */
    if ((ctx->stage == MESA_SHADER_VERTEX ||
         ctx->stage == MESA_SHADER_TESS_EVAL) &&
-       !impl->function->is_preamble && !ctx->key->secondary)
+       !impl->function->is_preamble && !ctx->key->secondary &&
+       !agx_is_apple9(ctx))
       agx_set_st_vary_final(ctx);
 
    agx_insert_waits(ctx);

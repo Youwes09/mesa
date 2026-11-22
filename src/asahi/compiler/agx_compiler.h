@@ -723,6 +723,11 @@ typedef struct agx_context {
    /* Number of export registers used, in 16-bit units */
    unsigned export_reg_count;
 
+   /* Apple9 vertex outputs: the export value of each UVS word written, by
+    * unlinked UVS index, or null.
+    */
+   agx_index uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
+
    /* Promoted constants. These will be appended to the binary at the end. */
    uint16_t rodata[512];
 } agx_context;
@@ -1123,6 +1128,7 @@ instr_after_logical_end(const agx_instr *I)
    case AGX_OPCODE_END_LOOP:
    case AGX_OPCODE_STOP:
    case AGX_OPCODE_EXPORT:
+   case AGX_OPCODE_PUBLISH:
       return true;
    default:
       return false;

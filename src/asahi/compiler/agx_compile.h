@@ -221,6 +221,12 @@ struct agx_shader_info {
    /* How an Apple9 compute shader is launched */
    struct agx_apple9_compute_profile apple9_compute;
 
+   /* Apple9 vertex shader parts: one plus the export register holding each
+    * UVS word, by unlinked UVS index, or zero if the word is not written. The
+    * linker commits them to their varying slots.
+    */
+   uint8_t apple9_uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
+
    union agx_varyings varyings;
 
    /* Number of uniforms */
