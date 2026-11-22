@@ -66,5 +66,10 @@ struct agx_bg_eot_shader {
 struct agx_bg_eot_shader *agx_get_bg_eot_shader(struct agx_bg_eot_cache *cache,
                                                 struct agx_bg_eot_key *key);
 
+/* The tile program, lowered for agx_compile_shader_nir with the key it fills */
+struct nir_shader *agx_nir_bg_eot_shader(const struct agx_bg_eot_key *key,
+                                         enum agx_shader_isa isa,
+                                         struct agx_shader_key *compiler_key);
+
 void agx_bg_eot_init(struct agx_bg_eot_cache *cache, struct agx_device *dev);
 void agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache);

@@ -4,6 +4,7 @@
  */
 
 #include "agx_bg_eot.h"
+#include "asahi/compiler/agx_compile_apple9.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
 #include "agx_compile.h"
@@ -32,10 +33,8 @@ lower_tex_handle_to_u0(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
-static struct agx_bg_eot_shader *
-agx_compile_bg_eot_shader(struct agx_bg_eot_cache *cache, nir_shader *shader,
-                          struct agx_shader_key *key,
-                          struct agx_tilebuffer_layout *tib)
+static void
+agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
 {
    agx_nir_lower_texture(shader);
    agx_preprocess_nir(shader);
@@ -49,7 +48,12 @@ agx_compile_bg_eot_shader(struct agx_bg_eot_cache *cache, nir_shader *shader,
       NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_tex_handle_to_u0,
                nir_metadata_control_flow, NULL);
    }
+}
 
+static struct agx_bg_eot_shader *
+agx_compile_bg_eot_shader(struct agx_bg_eot_cache *cache, nir_shader *shader,
+                          struct agx_shader_key *key)
+{
    struct agx_bg_eot_shader *res = rzalloc(cache->ht, struct agx_bg_eot_shader);
    struct agx_shader_part bin;
    agx_compile_shader_nir(shader, key, &bin);
@@ -105,18 +109,13 @@ build_background_op(nir_builder *b, enum agx_bg_eot_op op, unsigned rt,
    }
 }
 
-static struct agx_bg_eot_shader *
-agx_build_background_shader(struct agx_bg_eot_cache *cache,
-                            struct agx_bg_eot_key *key)
+static nir_shader *
+agx_build_background_shader(const struct agx_bg_eot_key *key,
+                            enum agx_shader_isa isa)
 {
    nir_builder b = nir_builder_init_simple_shader(
-      MESA_SHADER_FRAGMENT, &agx_nir_options, "agx_background");
+      MESA_SHADER_FRAGMENT, agx_nir_options_for_isa(isa), "agx_background");
    b.shader->info.fs.untyped_color_outputs = true;
-
-   struct agx_shader_key compiler_key = {
-      .fs.ignore_tib_dependencies = true,
-      .reserved_preamble = key->reserved_preamble,
-   };
 
    for (unsigned rt = 0; rt < ARRAY_SIZE(key->op); ++rt) {
       if (key->op[rt] == AGX_BG_EOT_NONE)
@@ -137,13 +136,59 @@ agx_build_background_shader(struct agx_bg_eot_cache *cache,
       b.shader->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DATA0 + rt);
    }
 
-   return agx_compile_bg_eot_shader(cache, b.shader, &compiler_key, &key->tib);
+   struct agx_tilebuffer_layout tib = key->tib;
+   agx_lower_bg_eot_shader(b.shader, &tib);
+   return b.shader;
 }
 
-static struct agx_bg_eot_shader *
-agx_build_end_of_tile_shader(struct agx_bg_eot_cache *cache,
-                             struct agx_bg_eot_key *key)
+/* Apple9 block image stores each render target's tile at the tile origin */
+static nir_shader *
+agx_build_end_of_tile_shader_apple9(const struct agx_bg_eot_key *key)
 {
+   nir_builder b = nir_builder_init_simple_shader(
+      MESA_SHADER_FRAGMENT, &agx_nir_options_apple9, "agx_eot");
+
+   enum glsl_sampler_dim dim =
+      (key->tib.nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;
+
+   assert(key->tib.apple9 && "Apple9 tile layout");
+   unsigned height = key->tib.tile_size == 32 * 16 ? 16 : 32;
+   nir_def *tile = nir_load_tile_id_agx(&b);
+   nir_def *xy = nir_vec2(&b, nir_imul_imm(&b, nir_channel(&b, tile, 0), 32),
+                          nir_imul_imm(&b, nir_channel(&b, tile, 1), height));
+
+   nir_def *coords =
+      key->tib.layered
+         ? nir_vec4(&b, nir_channel(&b, xy, 0), nir_channel(&b, xy, 1),
+                    nir_load_layer_id(&b), nir_imm_int(&b, 0))
+         : nir_pad_vec4(&b, xy);
+
+   for (unsigned rt = 0; rt < ARRAY_SIZE(key->op); ++rt) {
+      if (key->op[rt] == AGX_BG_EOT_NONE || key->tib.spilled[rt])
+         continue;
+
+      assert(key->op[rt] == AGX_EOT_STORE);
+      enum pipe_format format = key->tib.logical_format[rt];
+
+      nir_image_store_block_agx(
+         &b, nir_imm_int(&b, rt),
+         nir_imm_int(&b, agx_tilebuffer_offset_B(&key->tib, rt)), coords,
+         .format = agx_apple9_color_tile_format(format), .image_dim = dim,
+         .image_array = key->tib.layered);
+   }
+
+   b.shader->info.num_images = AGX_MAX_RENDER_TARGETS;
+   agx_lower_bg_eot_shader(b.shader, NULL);
+   return b.shader;
+}
+
+static nir_shader *
+agx_build_end_of_tile_shader(const struct agx_bg_eot_key *key,
+                             enum agx_shader_isa isa)
+{
+   if (isa == AGX_SHADER_ISA_APPLE9)
+      return agx_build_end_of_tile_shader_apple9(key);
+
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
                                                   &agx_nir_options, "agx_eot");
 
@@ -174,11 +219,27 @@ agx_build_end_of_tile_shader(struct agx_bg_eot_cache *cache,
          .image_dim = dim, .image_array = key->tib.layered);
    }
 
-   struct agx_shader_key compiler_key = {
+   agx_lower_bg_eot_shader(b.shader, NULL);
+   return b.shader;
+}
+
+/* See agx_bg_eot.h */
+nir_shader *
+agx_nir_bg_eot_shader(const struct agx_bg_eot_key *key, enum agx_shader_isa isa,
+                      struct agx_shader_key *compiler_key)
+{
+   bool eot = false;
+   for (unsigned rt = 0; rt < ARRAY_SIZE(key->op); ++rt)
+      eot |= key->op[rt] == AGX_EOT_STORE;
+
+   *compiler_key = (struct agx_shader_key){
+      .dev.shader_isa = isa,
       .reserved_preamble = key->reserved_preamble,
+      .fs.ignore_tib_dependencies = !eot,
    };
 
-   return agx_compile_bg_eot_shader(cache, b.shader, &compiler_key, NULL);
+   return eot ? agx_build_end_of_tile_shader(key, isa)
+              : agx_build_background_shader(key, isa);
 }
 
 struct agx_bg_eot_shader *
@@ -189,17 +250,12 @@ agx_get_bg_eot_shader(struct agx_bg_eot_cache *cache,
    if (ent)
       return ent->data;
 
-   struct agx_bg_eot_shader *ret = NULL;
+   struct agx_shader_key compiler_key;
+   nir_shader *nir = agx_nir_bg_eot_shader(
+      key, agx_gather_device_key(cache->dev).shader_isa, &compiler_key);
 
-   for (unsigned rt = 0; rt < ARRAY_SIZE(key->op); ++rt) {
-      if (key->op[rt] == AGX_EOT_STORE) {
-         ret = agx_build_end_of_tile_shader(cache, key);
-         break;
-      }
-   }
-
-   if (!ret)
-      ret = agx_build_background_shader(cache, key);
+   struct agx_bg_eot_shader *ret =
+      agx_compile_bg_eot_shader(cache, nir, &compiler_key);
 
    ret->key = *key;
    _mesa_hash_table_insert(cache->ht, &ret->key, ret);
