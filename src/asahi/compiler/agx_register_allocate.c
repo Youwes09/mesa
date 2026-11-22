@@ -2719,7 +2719,9 @@ agx_ra(agx_context *ctx)
          sizes[v] = I->dest[d].size;
          classes[v] = ra_class_for_index(I->dest[d]);
 
-         max_ncomps = MAX2(max_ncomps, ncomps[v]);
+         /* Export registers are a file of their own */
+         if (classes[v] != RA_EXPORT)
+            max_ncomps = MAX2(max_ncomps, ncomps[v]);
       }
    }
 
