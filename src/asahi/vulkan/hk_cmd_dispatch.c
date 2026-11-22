@@ -530,7 +530,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    if (!root ||
        !agx_apple9_prepare_compute_dispatch_alloc_tmpl(
           &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
-          p->resource_binding_count, textures, samplers, &geometry,
+          p->resource_binding_count, textures, samplers, 0, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
           shader && shader->apple9_body == body ? shader->apple9_launch : NULL,
           &launch)) {

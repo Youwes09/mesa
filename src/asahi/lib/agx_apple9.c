@@ -144,7 +144,10 @@ static bool
 apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
                              const struct apple9_compute_abi_desc *abi)
 {
-   if (!profile || !abi || profile->resource_binding_count == 0 ||
+   /* Programs with the graphics argument layout may have no buffer table */
+   bool tables =
+      profile && profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+   if (!profile || !abi || (profile->resource_binding_count == 0 && !tables) ||
        profile->resource_binding_count > abi->resource_count ||
        (profile->abi == AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS &&
         profile->resource_binding_count >
@@ -161,7 +164,7 @@ apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
    const uint32_t resource_mask = BITFIELD_MASK(active);
    const uint32_t read_mask = profile->resource_read_mask;
    const uint32_t write_mask = profile->resource_write_mask;
-   if ((!write_mask && !profile->writes_global) ||
+   if ((!tables && !write_mask && !profile->writes_global) ||
        ((read_mask | write_mask) & ~resource_mask))
       return false;
 
@@ -569,7 +572,7 @@ agx_apple9_prepare_compute_dispatch_alloc(
 {
    return agx_apple9_prepare_compute_dispatch_alloc_tmpl(
       dev, allocator, alloc, body, profile, resources, resource_count, textures,
-      samplers, geometry, preamble_address, NULL, launch_address);
+      samplers, 0, geometry, preamble_address, NULL, launch_address);
 }
 
 bool
@@ -578,13 +581,13 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
    struct agx_ptr (*alloc)(void *, size_t, size_t),
    struct agx_shader_body *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
-   unsigned resource_count, uint64_t textures, uint64_t samplers,
+   unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
    const struct agx_apple9_compute_geometry *geometry,
    uint64_t preamble_address, const struct agx_apple9_launch_template *tmpl,
    uint64_t *launch_address)
 {
    const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   if (!abi || !resources || !geometry || !launch_address ||
+   if (!abi || (resource_count && !resources) || !geometry || !launch_address ||
        !apple9_compute_profile_valid(profile, abi) ||
        resource_count != profile->resource_binding_count ||
        !!preamble_address != !!profile->preamble_size)
@@ -609,17 +612,21 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
                                                  record.gpu, geometry))
       return false;
    if (profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES) {
-      struct agx_ptr table = alloc(allocator, resource_count * 8, 64);
-      if (!table.cpu)
-         return false;
-      memcpy(table.cpu, resources, resource_count * 8);
+      struct agx_ptr table = {0};
+      if (resource_count) {
+         table = alloc(allocator, resource_count * 8, 64);
+         if (!table.cpu)
+            return false;
+         memcpy(table.cpu, resources, resource_count * 8);
+      }
+      static_assert(AGX_APPLE9_PUSH_ROOT == 5, "last root");
       uint64_t roots[AGX_APPLE9_GRAPHICS_ROOT_WORDS / 2] = {
          textures,
          samplers,
          table.gpu,
          apple9_get_u64(record.cpu),
          AGX_APPLE9_COMPUTE_SHARED_ROOT,
-         0,
+         push,
       };
       memcpy(record.cpu, roots, sizeof(roots));
    } else {
