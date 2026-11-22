@@ -12,6 +12,63 @@
 #include "nir_lower_blend.h"
 #include "util/macros.h"
 
+/*
+ * Apple9 programs are linked from the same parts as Apple8 programs: a vertex
+ * prolog fetching attributes before the vertex shader, and a fragment prolog
+ * and epilog around the fragment shader. Every part is compiled by
+ * agx_compile_shader_nir, with no_stop and the part ABI below, and the linker
+ * joins them:
+ *
+ *    [tile open]  prolog  [sample loop {]  main  epilog  [}]
+ *    [varying commits]  [tile close]  stop
+ *    prolog preamble  epilog preamble  main preamble  stop
+ *
+ * Registers. Values cross parts in the GPRs of agx_abi.h, exactly as on
+ * Apple8: attributes, vertex and instance IDs from the vertex prolog (where
+ * Apple8 hardware preloads the IDs, the Apple9 prolog reads them), colours,
+ * depth, stencil and sample masks into the fragment epilog. A part that does
+ * not stop waits for its outstanding memory and export operations at its
+ * end, so the next part finds them complete.
+ *
+ * Uniforms. Apple9 preloads no uniforms. The launch writes the six graphics
+ * roots into the first 12 uniform words (agx_apple9_profile.h); the driver's
+ * push words, which Apple8 preloads into the uniform registers it reserves,
+ * are in memory at AGX_APPLE9_PUSH_ROOT. Each part's preamble loads the push
+ * words that part reads into uniform 24 + w, so a word is at the same uniform
+ * in every part; the main shader's preamble results follow the reserved
+ * push words. The launch enters the preambles, which run one after another,
+ * the main shader's last; its stop starts the program. Parts use no buffer
+ * table entries, so the main shader's launch profile is the program's.
+ *
+ * Varyings. VARY_STORE names its varying slot in the instruction, and slots
+ * of user varyings depend on the fragment shader's interpolation qualifiers.
+ * A vertex shader part writes its outputs in the unlinked UVS layout to
+ * export registers, which stay published until the end, and records them in
+ * apple9_uvs_exports; the linker commits each to its linked slot,
+ * apple9_uvs_slots (agx_apple9_uvs_slots), or the same slot if NULL.
+ *
+ * Tile. Fragment shaders hold the tile and raster order domains from before
+ * their first access to after their last, which may be in different parts,
+ * so parts record what they access (apple9_tile_*) and the linker opens the
+ * domains at the start and closes them at the end. Depth/stencil tests open
+ * and close their own domain around the test, except in a sample loop, where
+ * the linker closes it after the loop.
+ */
+struct agx_apple9_program {
+   /* Code from malloc, starting at offset 0 */
+   uint8_t *binary;
+   uint32_t size;
+
+   /* The launch enters the preamble first, if preamble_size is nonzero */
+   uint32_t preamble_offset, preamble_size;
+
+   /* How the program is launched: arguments, publications, private frame */
+   struct agx_apple9_compute_profile profile;
+
+   /* 16-bit registers used */
+   uint16_t nr_gprs;
+};
+
 struct agx_linked_shader {
    /* Mapped executable memory */
    struct agx_bo *bo;
@@ -41,6 +98,9 @@ struct agx_linked_shader {
    /* Coefficient register bindings */
    struct agx_varyings_fs cf;
 
+   /* Apple9 program, at the start of bo */
+   struct agx_apple9_program apple9;
+
    /* Data structures packed for the linked program */
    struct agx_usc_shader_packed shader;
    struct agx_usc_registers_packed regs;
@@ -52,7 +112,14 @@ struct agx_linked_shader {
 void agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
                    bool fragment, struct agx_shader_part *main,
                    struct agx_shader_part *prolog,
-                   struct agx_shader_part *epilog, unsigned nr_samples_shaded);
+                   struct agx_shader_part *epilog, unsigned nr_samples_shaded,
+                   const uint8_t *apple9_uvs_slots);
+
+void agx_apple9_link(struct agx_apple9_program *p, bool fragment,
+                     struct agx_shader_part *main,
+                     struct agx_shader_part *prolog,
+                     struct agx_shader_part *epilog, unsigned nr_samples_shaded,
+                     const uint8_t *uvs_slots);
 
 /* These parts of the vertex element affect the generated code */
 struct agx_velem_key {

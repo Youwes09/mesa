@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "agx_apple9_encoding.h"
 #include "agx_apple9_machine.h"
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
@@ -3045,8 +3046,8 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
                            : (c == 0x300 || (c & ~0xfcull) == 0 ||
                               (c & ~0xfcull) == 0x200 || c == 1));
 
-      const uint8_t bytes[6] = {begin ? 0x87 : 0x07, 2, 0x54, c & 0xff,
-                                (c >> 8) & 0xff,     0};
+      uint8_t bytes[6];
+      agx_apple9_encode_tile(bytes, begin, c);
       a9_init(p, begin ? AGX_APPLE9_ENC_TILE_ACCESS : AGX_APPLE9_ENC_TILE_FENCE,
               bytes, 6);
       return;
@@ -3126,17 +3127,10 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
    case AGX_OPCODE_ST_VARY: {
       /* Commits an export register to a varying slot */
       agx_index slot = I->src[0];
-      pack_assert(I, is_imm(slot) && slot.value < 64);
-      unsigned value = export_word(I, I->src[1]);
-
-      const uint8_t bytes[8] = {0x57,
-                                0x06,
-                                0x54,
-                                value << 1,
-                                (slot.value & 7) << 5,
-                                0x40 | (slot.value >> 3),
-                                0,
-                                0};
+      uint8_t bytes[8];
+      pack_assert(
+         I, is_imm(slot) && agx_apple9_encode_vary_store(
+                               bytes, export_word(I, I->src[1]), slot.value));
       a9_init(p, AGX_APPLE9_ENC_VARY_STORE, bytes, 8);
       return;
    }

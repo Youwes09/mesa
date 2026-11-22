@@ -7213,7 +7213,7 @@ hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
 {
    struct hk_linked_shader *s = rzalloc(NULL, struct hk_linked_shader);
    agx_fast_link(&s->b, &dev->dev, fragment, &main->b, prolog, epilog,
-                 nr_samples_shaded);
+                 nr_samples_shaded, NULL);
 
    if (fragment) {
       unsigned samplers = main->b.info.sampler_state_count;

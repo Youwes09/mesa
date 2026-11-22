@@ -95,4 +95,42 @@ agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
    return true;
 }
 
+/* Commit export register `word` to varying slot `slot`, without waiting */
+static inline bool
+agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
+{
+   if (word >= 128 || slot >= 64)
+      return false;
+   const uint8_t bytes[8] = {
+      0x57,
+      0x06,
+      0x54,
+      (uint8_t)(word << 1),
+      (uint8_t)((slot & 7) << 5),
+      (uint8_t)(0x40 | (slot >> 3)),
+      0,
+      0,
+   };
+   memcpy(out, bytes, sizeof(bytes));
+   return true;
+}
+
+/* Open (TILE_ACCESS) or close (TILE_FENCE) tile and raster order domains */
+static inline void
+agx_apple9_encode_tile(uint8_t out[6], bool begin, unsigned control)
+{
+   const uint8_t bytes[6] = {
+      (uint8_t)(begin ? 0x87 : 0x07), 2, 0x54, (uint8_t)(control & 0xff),
+      (uint8_t)(control >> 8),        0,
+   };
+   memcpy(out, bytes, sizeof(bytes));
+}
+
+static inline void
+agx_apple9_encode_halt(uint8_t out[4])
+{
+   const uint8_t bytes[4] = {0x0e, 0, 0, 0};
+   memcpy(out, bytes, sizeof(bytes));
+}
+
 #endif

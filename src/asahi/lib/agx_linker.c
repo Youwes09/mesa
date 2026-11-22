@@ -6,7 +6,9 @@
 #include "agx_linker.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "asahi/compiler/agx_apple9_encoding.h"
 #include "util/ralloc.h"
+#include "util/u_dynarray.h"
 #include "agx_abi.h"
 #include "agx_compile.h"
 #include "agx_device.h"
@@ -79,12 +81,177 @@ static const uint8_t sample_loop_footer[] = {
 #define SAMPLE_LOOP_FOOTER_COUNT_SHIFT (4)
 /* clang-format on */
 
+static void
+append(struct util_dynarray *d, const void *data, size_t size)
+{
+   memcpy(util_dynarray_grow_bytes(d, 1, size), data, size);
+}
+
+static void
+append_tile(struct util_dynarray *d, bool begin, unsigned control)
+{
+   uint8_t bytes[6];
+   agx_apple9_encode_tile(bytes, begin, control);
+   append(d, bytes, sizeof(bytes));
+}
+
+static void
+append_halt(struct util_dynarray *d)
+{
+   uint8_t bytes[4];
+   agx_apple9_encode_halt(bytes);
+   append(d, bytes, sizeof(bytes));
+}
+
+/* See agx_linker.h */
+void
+agx_apple9_link(struct agx_apple9_program *p, bool fragment,
+                struct agx_shader_part *main, struct agx_shader_part *prolog,
+                struct agx_shader_part *epilog, unsigned nr_samples_shaded,
+                const uint8_t *uvs_slots)
+{
+   struct agx_shader_part *parts[] = {prolog, main, epilog};
+   struct util_dynarray d;
+   util_dynarray_init(&d, NULL);
+
+   memset(p, 0, sizeof(*p));
+   p->profile = main->info.apple9_compute;
+   assert(p->profile.abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES &&
+          "parts are compiled for the graphics ABI");
+
+   unsigned domain = 0;
+   bool reads = false, writes = false, zs_release = false;
+
+   for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
+      if (!parts[i])
+         continue;
+
+      const struct agx_shader_info *info = &parts[i]->info;
+      const struct agx_apple9_compute_profile *pp = &info->apple9_compute;
+
+      assert((parts[i] == main || !pp->resource_binding_count) &&
+             "only the main shader uses the buffer table");
+
+      p->nr_gprs = MAX2(p->nr_gprs, info->nr_gprs);
+      p->profile.publication_count =
+         MAX2(p->profile.publication_count, pp->publication_count);
+      p->profile.scratch_size = MAX2(p->profile.scratch_size, pp->scratch_size);
+      p->profile.atomic_frame_size =
+         MAX2(p->profile.atomic_frame_size, pp->atomic_frame_size);
+
+      /* Image writes and tile coordinates need a wider domain */
+      if (info->apple9_tile_domain) {
+         assert(!domain || domain == info->apple9_tile_domain ||
+                domain == 0x600 || info->apple9_tile_domain == 0x600);
+         if (domain != 0x700 && domain != 0xf00)
+            domain = info->apple9_tile_domain;
+      }
+
+      reads |= info->apple9_tile_reads;
+      writes |= info->apple9_tile_writes;
+      zs_release |= info->apple9_zs_release;
+   }
+
+   assert(nr_samples_shaded <= 1 && "todo: Apple9 sample loop");
+
+   if (fragment && domain) {
+      append_tile(&d, true, domain);
+
+      if (reads || writes)
+         append_tile(&d, true, 0x800 | (writes ? 0xc : 0x8));
+   }
+
+   for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
+      if (parts[i])
+         append(&d, parts[i]->binary, parts[i]->info.main_size);
+   }
+
+   /* Commit the vertex outputs to their varying slots */
+   for (unsigned i = 0; i < AGX_APPLE9_MAX_UVS_SLOTS; ++i) {
+      unsigned word = main->info.apple9_uvs_exports[i];
+
+      if (word) {
+         uint8_t bytes[8];
+         ASSERTED bool ok = agx_apple9_encode_vary_store(
+            bytes, word - 1, uvs_slots ? uvs_slots[i] : i);
+         assert(ok && "encodable slot");
+         append(&d, bytes, sizeof(bytes));
+      }
+   }
+
+   if (fragment) {
+      if (zs_release)
+         append_tile(&d, false, 1);
+
+      if (reads || writes)
+         append_tile(&d, false, domain == 0xf00 ? 0x300 : 0x20c);
+   }
+
+   append_halt(&d);
+   p->profile.preamble_offset = d.size;
+
+   /* The main shader's preamble is last and stops */
+   struct agx_shader_part *preambles[] = {prolog, epilog, main};
+   bool any = false;
+
+   for (unsigned i = 0; i < ARRAY_SIZE(preambles); ++i) {
+      if (!preambles[i])
+         continue;
+
+      const struct agx_apple9_compute_profile *pp =
+         &preambles[i]->info.apple9_compute;
+
+      if (pp->preamble_size) {
+         append(&d, (uint8_t *)preambles[i]->binary + pp->preamble_offset,
+                pp->preamble_size);
+         any = true;
+      }
+   }
+
+   if (any && !main->info.apple9_compute.preamble_size)
+      append_halt(&d);
+
+   p->profile.preamble_size = any ? d.size - p->profile.preamble_offset : 0;
+   p->preamble_offset = p->profile.preamble_offset;
+   p->preamble_size = p->profile.preamble_size;
+   if (!any)
+      p->profile.preamble_offset = p->preamble_offset = 0;
+
+   p->size = d.size;
+   p->binary = d.data;
+}
+
 void
 agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
               bool fragment, struct agx_shader_part *main,
               struct agx_shader_part *prolog, struct agx_shader_part *epilog,
-              unsigned nr_samples_shaded)
+              unsigned nr_samples_shaded, const uint8_t *apple9_uvs_slots)
 {
+   if (main->info.apple9_compute.abi) {
+      struct agx_apple9_program *p = &linked->apple9;
+      agx_apple9_link(p, fragment, main, prolog, epilog, nr_samples_shaded,
+                      apple9_uvs_slots);
+
+      linked->bo = agx_bo_create(dev, p->size, 0, AGX_BO_EXEC | AGX_BO_LOW_VA,
+                                 "Linked executable");
+      memcpy(agx_bo_map(linked->bo), p->binary, p->size);
+      free(p->binary);
+      p->binary = NULL;
+
+      struct agx_shader_part *parts[] = {prolog, main, epilog};
+      for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
+         if (parts[i]) {
+            linked->uses_base_param |= parts[i]->info.uses_base_param;
+            linked->uses_txf |= parts[i]->info.uses_txf;
+         }
+      }
+
+      if (fragment)
+         memcpy(&linked->cf, &main->info.varyings.fs, sizeof(linked->cf));
+
+      return;
+   }
+
    size_t size = 0;
    unsigned nr_gprs = 0, scratch_size = 0;
    bool reads_tib = false, writes_sample_mask = false,

@@ -227,6 +227,15 @@ struct agx_shader_info {
     */
    uint8_t apple9_uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
 
+   /* Apple9 fragment parts: the TILE_ACCESS control the linked program holds
+    * throughout (0x600, 0x700 with images, 0xf00 with tile coordinates) or 0.
+    */
+   uint16_t apple9_tile_domain;
+   bool apple9_tile_reads, apple9_tile_writes;
+
+   /* Apple9: the linker releases the depth/stencil domain after the loop */
+   bool apple9_zs_release;
+
    union agx_varyings varyings;
 
    /* Number of uniforms */
