@@ -282,13 +282,19 @@ nir_color_logicop(nir_builder *b, nir_def *src, nir_def *dst,
    nir_alu_type type =
       util_format_is_pure_integer(format) ? nir_type_uint : nir_type_float;
 
+   assert(src->num_components <= 4);
+   assert(dst->num_components <= 4);
+
+   /* Channels missing from the format pass the source through */
+   nir_def *full_src = src;
+   unsigned nr = MIN2(format_desc->nr_channels, src->num_components);
+   src = nir_trim_vector(b, src, nr);
+   dst = nir_trim_vector(b, dst, nr);
+
    if (bit_size != 32) {
       src = nir_convert_to_bit_size(b, src, type, 32);
       dst = nir_convert_to_bit_size(b, dst, type, 32);
    }
-
-   assert(src->num_components <= 4);
-   assert(dst->num_components <= 4);
 
    unsigned bits[4];
    for (int i = 0; i < 4; ++i)
@@ -309,7 +315,7 @@ nir_color_logicop(nir_builder *b, nir_def *src, nir_def *dst,
       mask[i] = nir_const_value_for_uint(BITFIELD_MASK(bits[i]), 32);
 
    nir_def *out = nir_logicop_func(b, func, src, dst,
-                                   nir_build_imm(b, 4, 32, mask));
+                                   nir_build_imm(b, nr, 32, mask));
 
    if (util_format_is_unorm(format)) {
       out = nir_format_unorm_to_float(b, out, bits);
@@ -324,7 +330,11 @@ nir_color_logicop(nir_builder *b, nir_def *src, nir_def *dst,
    if (bit_size != 32)
       out = nir_convert_to_bit_size(b, out, type, bit_size);
 
-   return out;
+   nir_def *channels[4];
+   for (unsigned i = 0; i < full_src->num_components; ++i)
+      channels[i] = nir_channel(b, i < nr ? out : full_src, i);
+
+   return nir_vec(b, channels, full_src->num_components);
 }
 
 static bool
