@@ -451,9 +451,10 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 
    /* If there are outstanding messages, wait for them. We don't do this for the
     * exit block, though, since nothing else will execute in the shader so
-    * waiting is pointless.
+    * waiting is pointless. On Apple9, a shader part that does not stop is
+    * followed by another, which must find its registers and exports written.
     */
-   if (block != agx_exit_block(ctx)) {
+   if (block != agx_exit_block(ctx) || (apple9 && ctx->falls_through)) {
       agx_builder b = agx_init_builder(ctx, agx_after_block_logical(block));
 
       for (unsigned slot = 0; slot < nr_slots; ++slot) {

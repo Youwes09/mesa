@@ -4429,9 +4429,14 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    ctx->scratch_size_B += ctx->atomic_frame_B;
 
    /* Stop the main shader or preamble shader after the exit block. For real
-    * functions, we would return here.
+    * functions, we would return here. Linked Apple9 preambles run in sequence.
     */
-   if (!ctx->key->no_stop || ctx->is_preamble) {
+   bool stop = ctx->is_preamble ? !(agx_is_apple9(ctx) && ctx->key->secondary)
+                                : !ctx->key->no_stop;
+
+   ctx->falls_through = !stop;
+
+   if (stop) {
       agx_block *last_block = list_last_entry(&ctx->blocks, agx_block, link);
       agx_builder _b = agx_init_builder(ctx, agx_after_block(last_block));
       agx_stop(&_b);

@@ -649,6 +649,9 @@ typedef struct agx_context {
    bool is_preamble;
    unsigned scratch_size_B;
 
+   /* The program does not stop, but continues into another shader part */
+   bool falls_through;
+
    struct list_head blocks; /* list of agx_block */
    struct agx_shader_info *out;
    struct agx_shader_key *key;
