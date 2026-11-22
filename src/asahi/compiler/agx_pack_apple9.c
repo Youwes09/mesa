@@ -2779,6 +2779,70 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
    a9_init(p, form, bytes, 20);
 }
 
+/* Normalized unpacking of two unorm/snorm 8/16-bit values into a pair */
+static void
+pack_unpack_norm(const agx_instr *I, struct a9_packed *p)
+{
+   static const uint8_t modes[] = {
+      [AGX_FORMAT_S16NORM] = 2,
+      [AGX_FORMAT_S8NORM] = 3,
+      [AGX_FORMAT_U16NORM] = 4,
+      [AGX_FORMAT_U8NORM] = 6,
+   };
+   bool narrow =
+      I->format == AGX_FORMAT_U8NORM || I->format == AGX_FORMAT_S8NORM;
+   unsigned dst = gpr(I, I->dest[0]);
+   agx_index src = I->src[0];
+
+   pack_assert(I, I->format < ARRAY_SIZE(modes) && modes[I->format]);
+   pack_assert(I, agx_channels(I->dest[0]) == 2 && !(dst & 1));
+   pack_assert(I, narrow || !I->imm);
+
+   uint8_t bytes[8] = {0x17, 0x04, 0x54, 0, 0, 0, 0x04, 0x8a};
+   set_bits(bytes, 25, 7, dst);
+   set_bits(bytes, 41, 1, I->imm);
+   set_bits(bytes, 42, 7, gpr(I, src));
+   set_bits(bytes, 49, 1, retain(src));
+   set_bits(bytes, 51, 1, !narrow);
+   set_bits(bytes, 52, 1, !retain(src));
+   set_bits(bytes, 60, 3, modes[I->format]);
+   a9_init(p, AGX_APPLE9_ENC_UNPACK_NORM, bytes, 8);
+}
+
+/* unorm packing of FP32 pairs; 8-bit writes one half per pair */
+static void
+pack_pack_unorm(const agx_instr *I, struct a9_packed *p)
+{
+   bool bytes = I->op == AGX_OPCODE_PACK_UNORM_4X8;
+   unsigned dst = gpr(I, I->dest[0]);
+   uint8_t code[20] = {0};
+
+   for (unsigned pair = 0; pair < (bytes ? 2 : 1); ++pair) {
+      unsigned a = gpr(I, I->src[2 * pair]);
+      unsigned b = gpr(I, I->src[2 * pair + 1]);
+      pack_assert(I, !bytes || (a != dst && b != dst));
+
+      uint8_t *part = code + 10 * pair;
+      memcpy(
+         part,
+         (const uint8_t[]){0x97, 0x04, 0x56, 0, 0x02, 0, 0, 0x50, 0x44, 0x82},
+         10);
+      set_bits(part, 25, 7, dst);
+      set_bits(part, 42, 7, a);
+      set_bits(part, 51, 7, b);
+
+      if (bytes) {
+         part[2] = 0x54;
+         set_bits(part, 24, 1, pair);
+         part[9] = 0xc2;
+      }
+   }
+
+   a9_init(
+      p, bytes ? AGX_APPLE9_ENC_PACK_UNORM_4X8 : AGX_APPLE9_ENC_PACK_UNORM_2X16,
+      code, bytes ? 20 : 10);
+}
+
 /* Cube face selection: major axis, then the face in the next low half */
 static void
 pack_cube(const agx_instr *I, struct a9_packed *p)
@@ -3089,6 +3153,15 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_CUBE:
       pack_cube(I, p);
+      return;
+
+   case AGX_OPCODE_UNPACK_NORM:
+      pack_unpack_norm(I, p);
+      return;
+
+   case AGX_OPCODE_PACK_UNORM_2X16:
+   case AGX_OPCODE_PACK_UNORM_4X8:
+      pack_pack_unorm(I, p);
       return;
 
    case AGX_OPCODE_IMAGE_WRITE:

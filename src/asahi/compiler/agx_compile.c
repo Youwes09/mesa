@@ -84,16 +84,10 @@ const nir_shader_compiler_options agx_nir_options_apple9 = {
    .lower_fminmax_signed_zero = true,
    .lower_fdph = true,
    .lower_ffract = true,
-   .lower_pack_unorm_2x16 = true,
    .lower_pack_snorm_2x16 = true,
-   .lower_pack_unorm_4x8 = true,
    .lower_pack_snorm_4x8 = true,
    .lower_pack_64_2x32 = true,
    .lower_unpack_half_2x16 = true,
-   .lower_unpack_unorm_2x16 = true,
-   .lower_unpack_snorm_2x16 = true,
-   .lower_unpack_unorm_4x8 = true,
-   .lower_unpack_snorm_4x8 = true,
    .lower_extract_byte = true,
    .lower_extract_word = true,
    .lower_insert_byte = true,
@@ -2208,6 +2202,45 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
    case nir_op_pack_half_2x16_split:
       return agx_pack_half_to(b, dst, s0, s1);
 
+   case nir_op_pack_unorm_2x16:
+   case nir_op_pack_unorm_4x8: {
+      unsigned n = instr->op == nir_op_pack_unorm_4x8 ? 4 : 2;
+      agx_index c[4];
+      for (unsigned i = 0; i < n; ++i) {
+         c[i] =
+            agx_extract_nir_src(b, instr->src[0].src, instr->src[0].swizzle[i]);
+      }
+
+      if (n == 4)
+         return agx_pack_unorm_4x8_to(b, dst, c[0], c[1], c[2], c[3]);
+      else
+         return agx_pack_unorm_2x16_to(b, dst, c[0], c[1]);
+   }
+
+   case nir_op_unpack_unorm_2x16:
+   case nir_op_unpack_snorm_2x16:
+   case nir_op_unpack_unorm_4x8:
+   case nir_op_unpack_snorm_4x8: {
+      /* Two components per instruction */
+      bool narrow = instr->op == nir_op_unpack_unorm_4x8 ||
+                    instr->op == nir_op_unpack_snorm_4x8;
+      bool sign = instr->op == nir_op_unpack_snorm_2x16 ||
+                  instr->op == nir_op_unpack_snorm_4x8;
+      enum agx_format format =
+         narrow ? (sign ? AGX_FORMAT_S8NORM : AGX_FORMAT_U8NORM)
+                : (sign ? AGX_FORMAT_S16NORM : AGX_FORMAT_U16NORM);
+      unsigned n = instr->def.num_components;
+      agx_index c[4];
+
+      for (unsigned i = 0; i < n; i += 2) {
+         agx_index pair = agx_vec_temp(b->shader, AGX_SIZE_32, 2);
+         agx_unpack_norm_to(b, pair, s0, format, i / 2);
+         agx_emit_split(b, c + i, pair, 2);
+      }
+
+      return agx_emit_collect_to(b, dst, n, c);
+   }
+
    case nir_op_u2u8:
    case nir_op_u2u16:
    case nir_op_u2u32:
@@ -2343,7 +2376,10 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
    ASSERTED unsigned comps = instr->def.num_components;
 
-   assert(comps == 1 || nir_op_is_vec_or_mov(instr->op));
+   /* Apple9 unpacks normalized values natively, as vectors */
+   assert(comps == 1 || nir_op_is_vec_or_mov(instr->op) ||
+          (agx_is_apple9(b->shader) &&
+           nir_op_infos[instr->op].output_size == comps));
    assert(
       sz == 1 ||
       ((nir_op_is_vec_or_mov(instr->op) || is_conversion_to_8bit(instr->op) ||

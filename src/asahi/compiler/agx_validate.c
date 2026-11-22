@@ -191,6 +191,8 @@ agx_write_registers(const agx_instr *I, unsigned d)
       return 6;
    case AGX_OPCODE_CUBE:
       return I->imm == 0 ? 4 : 2;
+   case AGX_OPCODE_UNPACK_NORM:
+      return 4;
    case AGX_OPCODE_COLLECT:
       return I->nr_srcs * agx_size_align_16(I->src[0].size);
    default:

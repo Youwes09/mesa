@@ -582,6 +582,13 @@ op("f16_to_f32", _, srcs = 1, isa = APPLE9)
 # Two FP32 values to FP16 halves. The destination must not overlap the sources
 op("pack_half", _, srcs = 2, isa = APPLE9)
 
+# Two normalized values to FP32. With imm, the 8-bit pair is in the high half
+op("unpack_norm", _, srcs = 1, imms = [FORMAT, IMM], isa = APPLE9)
+
+# Clamped, round-to-even FP32 to unorm. 4x8 must not overlap its sources
+op("pack_unorm_2x16", _, srcs = 2, isa = APPLE9)
+op("pack_unorm_4x8", _, srcs = 4, isa = APPLE9)
+
 # Cube face selection: mode 0 major axis and face, modes 1 and 2 face coords
 op("cube", _, srcs = 3, imms = [IMM], isa = APPLE9)
 

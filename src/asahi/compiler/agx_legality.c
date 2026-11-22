@@ -788,6 +788,20 @@ apple9_instr_is_legal(const agx_instr *I)
       return reg32(I->dest[0]) && reg32(I->src[0]) && plain(I->src[0]) &&
              reg32(I->src[1]) && plain(I->src[1]);
 
+   case AGX_OPCODE_UNPACK_NORM:
+      return is_reg(I->dest[0]) && I->dest[0].size == AGX_SIZE_32 &&
+             agx_channels(I->dest[0]) == 2 && reg32(I->src[0]) &&
+             plain(I->src[0]);
+
+   case AGX_OPCODE_PACK_UNORM_2X16:
+   case AGX_OPCODE_PACK_UNORM_4X8:
+      for (unsigned s = 0; s < I->nr_srcs; ++s) {
+         if (!reg32(I->src[s]) || !plain(I->src[s]))
+            return false;
+      }
+
+      return reg32(I->dest[0]);
+
    case AGX_OPCODE_CUBE:
       return is_reg(I->dest[0]) && I->dest[0].size == AGX_SIZE_32 &&
              agx_channels(I->dest[0]) == (I->imm == 0 ? 2 : 1) &&
@@ -972,6 +986,16 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
 
    case AGX_OPCODE_PACK_HALF:
       /* The first conversion writes the destination before the second reads */
+      c[0].early_clobber = true;
+      break;
+
+   case AGX_OPCODE_UNPACK_NORM:
+      /* An aligned register pair */
+      c[0].align = 4;
+      break;
+
+   case AGX_OPCODE_PACK_UNORM_4X8:
+      /* The halves are written by separate instructions */
       c[0].early_clobber = true;
       break;
 

@@ -1640,3 +1640,35 @@ TEST_F(Apple9Pack, GraphicsSystemRegisters)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_SR);
    check(I, {0x2c, 0xc3, 0x10, 0x06});
 }
+
+/* Normalized unpacking and packing */
+TEST_F(Apple9Pack, NormalizedPacking)
+{
+   agx_index pair = r(2);
+   pair.channels_m1 = 1;
+
+   agx_instr *I = agx_unpack_norm_to(b, pair, r(1), AGX_FORMAT_U8NORM, 0);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_UNPACK_NORM);
+   check(I, {0x17, 0x04, 0x54, 0x04, 0x00, 0x04, 0x06, 0xea});
+
+   pair = r(4);
+   pair.channels_m1 = 1;
+   check(agx_unpack_norm_to(b, pair, r(1), AGX_FORMAT_S8NORM, 1),
+         {0x17, 0x04, 0x54, 0x08, 0x00, 0x06, 0x06, 0xba});
+   check(agx_unpack_norm_to(b, pair, k(r(1)), AGX_FORMAT_S16NORM, 0),
+         {0x17, 0x04, 0x54, 0x08, 0x00, 0x04, 0x1c, 0xaa});
+
+   pair = r(2);
+   pair.channels_m1 = 1;
+   check(agx_unpack_norm_to(b, pair, r(1), AGX_FORMAT_U16NORM, 0),
+         {0x17, 0x04, 0x54, 0x04, 0x00, 0x04, 0x0e, 0xca});
+
+   I = agx_pack_unorm_4x8_to(b, r(6), r(2), r(3), r(4), r(1));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_UNORM_4X8);
+   check(I, {0x97, 0x04, 0x54, 0x0c, 0x02, 0x08, 0x18, 0x50, 0x44, 0xc2,
+             0x97, 0x04, 0x54, 0x0d, 0x02, 0x10, 0x08, 0x50, 0x44, 0xc2});
+
+   I = agx_pack_unorm_2x16_to(b, r(7), r(1), r(2));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_UNORM_2X16);
+   check(I, {0x97, 0x04, 0x56, 0x0e, 0x02, 0x04, 0x10, 0x50, 0x44, 0x82});
+}
