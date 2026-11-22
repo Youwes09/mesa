@@ -35,6 +35,7 @@ struct resource {
 
 struct abi {
    struct agx_apple9_compute_profile *profile;
+   struct hash_table *ranges;
    struct resource resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
    unsigned count;
 };
@@ -220,8 +221,39 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned shift = util_logbase2(
       MIN3(bit_size / 8, 4, nir_combined_align(align_mul, align_offset)));
 
+   /* A constant added to the byte offset goes into the instruction's byte
+    * offset, so accesses with different constants share their index. That is
+    * only exact if adding it to the 32-bit offset does not wrap, and the
+    * remaining offset is still a multiple of the element size.
+    */
+   uint32_t k = 0;
+   if (!atomic) {
+      nir_scalar s = nir_scalar_resolved(offset, 0);
+
+      if (nir_scalar_is_alu(s) && nir_scalar_alu_op(s) == nir_op_iadd) {
+         for (unsigned i = 0; i < 2; ++i) {
+            nir_scalar c = nir_scalar_chase_alu_src(s, i);
+            nir_scalar x = nir_scalar_chase_alu_src(s, 1 - i);
+
+            if (!nir_scalar_is_const(c))
+               continue;
+
+            uint32_t v = nir_scalar_as_uint(c);
+            if (v <= INT16_MAX && (v & BITFIELD_MASK(shift)) == 0 &&
+                !nir_addition_might_overflow(b->shader, abi->ranges, x, v)) {
+               k = v;
+               offset = nir_mov_scalar(b, x);
+            }
+
+            break;
+         }
+      }
+   }
+
    nir_def *addr = nir_ulea_agx(b, base, nir_ushr_imm(b, offset, shift),
                                 nir_imm_int(b, shift));
+   if (k)
+      addr = nir_iadd_imm(b, addr, k);
    enum gl_access_qualifier access =
       nir_intrinsic_has_access(intr) ? nir_intrinsic_access(intr) : 0;
 
@@ -323,8 +355,10 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
    for (unsigned i = 0; i < 3; ++i)
       profile->local_size[i] = nir->info.workgroup_size[i];
 
+   abi.ranges = _mesa_pointer_hash_table_create(NULL);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_access,
             nir_metadata_control_flow, &abi);
+   _mesa_hash_table_destroy(abi.ranges, NULL);
 
    return tables(profile) ? AGX_APPLE9_GRAPHICS_ROOT_WORDS
                           : agx_apple9_compute_preamble_base(abi.count);

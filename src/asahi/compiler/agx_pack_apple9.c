@@ -1668,12 +1668,7 @@ pack_memory_address(const agx_instr *I, uint8_t *bytes, bool load,
    set_bits(bytes, base + 22, 3, shift == 4 ? 0 : shift + 1);
 }
 
-/*
- * Device loads. The base is a 64-bit uniform (a "binding") or a register
- * pair, and the address is base + (index << shift) + offset with an unsigned
- * 32-bit index register. A constant index with a register base is a pointer
- * load with a byte offset. Narrow loads zero-extend to a full register.
- */
+/* Device loads of base + (index << shift) + offset, zero-extended */
 static void
 pack_device_load(const agx_instr *I, const struct a9_state *st,
                  struct a9_packed *p)
@@ -1742,7 +1737,7 @@ pack_device_load(const agx_instr *I, const struct a9_state *st,
          bytes[9] |= 4;
    }
 
-   int offset = pointer ? (int)(index.value << shift) : 0;
+   int offset = (pointer ? (int)(index.value << shift) : 0) + I->byte_offset;
    pack_memory_address(I, bytes, true, pointer ? 0 : shift, offset);
 
    a9_init(p,
@@ -1803,7 +1798,7 @@ pack_device_store(const agx_instr *I, struct a9_packed *p)
    if (indirect)
       bytes[12] |= 0x08;
 
-   pack_memory_address(I, bytes, false, shift, 0);
+   pack_memory_address(I, bytes, false, shift, I->byte_offset);
    a9_init(p,
            indirect ? AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT
                     : AGX_APPLE9_ENC_DEVICE_STORE,

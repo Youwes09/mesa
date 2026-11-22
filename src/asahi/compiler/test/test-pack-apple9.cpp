@@ -565,7 +565,8 @@ TEST_F(Apple9Pack, IntegerFamilyWaitIsOneHotAt12)
                      AGX_ROUND_RTZ),
       agx_rcp_to(b, r(4), k(r(2))),
       agx_asr_to(b, r(4), k(r(2)), agx_immediate(3)),
-      agx_device_store(b, r(4), u64(0), k(r(2)), AGX_FORMAT_I32, 1, 0, false),
+      agx_device_store(b, r(4), u64(0), k(r(2)), AGX_FORMAT_I32, 1, 0, false,
+                       0),
    };
 
    for (agx_instr *I : instrs) {
@@ -1035,8 +1036,8 @@ TEST_F(Apple9Pack, DeviceLoadSlotTokens)
    };
 
    for (unsigned slot = 0; slot < 6; ++slot) {
-      agx_instr *I =
-         agx_device_load_to(b, r(2), u64(3), r(1), AGX_FORMAT_I32, 1, 0, false);
+      agx_instr *I = agx_device_load_to(b, r(2), u64(3), r(1), AGX_FORMAT_I32,
+                                        1, 0, false, 0);
       I->scoreboard = slot;
       check(I,
             {0x67, 0x00, 0x54, 0x04, 0x03, 0x01, 0x20, 0x00, tokens[slot][0],
@@ -1046,7 +1047,7 @@ TEST_F(Apple9Pack, DeviceLoadSlotTokens)
 
    /* The last load clears byte 2 bit 4; a dying index sets byte 5 bit 7 */
    agx_instr *I =
-      agx_device_load_to(b, r(0), u64(0), r(1), AGX_FORMAT_I32, 1, 0, false);
+      agx_device_load_to(b, r(0), u64(0), r(1), AGX_FORMAT_I32, 1, 0, false, 0);
    I->scoreboard = 5;
    check(I, {0x67, 0x00, 0x44, 0x00, 0x00, 0x01, 0x20, 0x00, 0x51, 0x01, 0x00,
              0x40, 0x46, 0x00});
@@ -1108,7 +1109,7 @@ TEST_F(Apple9Pack, VectorMemory)
 
       agx_instr *load =
          agx_device_load_to(b, dst, u64(0), r(test.index), AGX_FORMAT_I32, mask,
-                            test.shift, false);
+                            test.shift, false, 0);
       load->scoreboard = 5;
       wait(load, test.wait);
       check(load, std::vector<uint8_t>(test.load, test.load + 14), {},
@@ -1118,7 +1119,7 @@ TEST_F(Apple9Pack, VectorMemory)
       data.channels_m1 = test.components - 1;
       agx_instr *store =
          agx_device_store(b, data, u64(1), k(r(test.index)), AGX_FORMAT_I32,
-                          mask, test.shift, false);
+                          mask, test.shift, false, 0);
       wait(store, 6);
       check(store, std::vector<uint8_t>(test.store_load, test.store_load + 14));
       wait(store, 0);
@@ -1129,13 +1130,14 @@ TEST_F(Apple9Pack, VectorMemory)
 TEST_F(Apple9Pack, NarrowScalarMemory)
 {
    agx_instr *I =
-      agx_device_load_to(b, r(1), u64(1), r(0), AGX_FORMAT_I8, 1, 0, false);
+      agx_device_load_to(b, r(1), u64(1), r(0), AGX_FORMAT_I8, 1, 0, false, 0);
    I->scoreboard = 5;
    wait(I, 1);
    check(I, {0x67, 0x10, 0x44, 0x02, 0x01, 0x00, 0x20, 0x00, 0x61, 0x01, 0x00,
              0x40, 0x42, 0x00});
 
-   I = agx_device_load_to(b, r(1), u64(2), r(0), AGX_FORMAT_I16, 1, 0, false);
+   I =
+      agx_device_load_to(b, r(1), u64(2), r(0), AGX_FORMAT_I16, 1, 0, false, 0);
    I->scoreboard = 5;
    wait(I, 1);
    check(I,
@@ -1143,16 +1145,17 @@ TEST_F(Apple9Pack, NarrowScalarMemory)
           0x40, 0x44, 0x00},
          {}, true);
 
-   check(agx_device_store(b, r(0), u64(0), k(r(0)), AGX_FORMAT_I8, 1, 0, false),
-         {0xe7, 0x00, 0x54, 0x00, 0x00, 0x00, 0x21, 0x00, 0x21, 0x00, 0x00,
-          0x90, 0x10, 0x00});
    check(
-      agx_device_store(b, r(0), u64(0), k(r(0)), AGX_FORMAT_I16, 1, 0, false),
-      {0xe7, 0x00, 0x54, 0x00, 0x00, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x10,
-       0x11, 0x00});
+      agx_device_store(b, r(0), u64(0), k(r(0)), AGX_FORMAT_I8, 1, 0, false, 0),
+      {0xe7, 0x00, 0x54, 0x00, 0x00, 0x00, 0x21, 0x00, 0x21, 0x00, 0x00, 0x90,
+       0x10, 0x00});
+   check(agx_device_store(b, r(0), u64(0), k(r(0)), AGX_FORMAT_I16, 1, 0, false,
+                          0),
+         {0xe7, 0x00, 0x54, 0x00, 0x00, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00,
+          0x10, 0x11, 0x00});
 
    /* Registers and the index lifetime */
-   I = agx_device_store(b, r(17), u64(3), r(9), AGX_FORMAT_I32, 1, 0, false);
+   I = agx_device_store(b, r(17), u64(3), r(9), AGX_FORMAT_I32, 1, 0, false, 0);
    std::vector<uint8_t> p = pack(I);
    EXPECT_EQ(p[2], 0x54);
    EXPECT_EQ(p[3], 34);
@@ -1223,7 +1226,7 @@ TEST_F(Apple9Pack, PointerLoads)
       dst.channels_m1 = test.components - 1;
       agx_instr *I = agx_device_load_to(
          b, dst, k(r64(0)), agx_immediate(test.index), test.format,
-         BITFIELD_MASK(test.components), 0, false);
+         BITFIELD_MASK(test.components), 0, false, 0);
       I->scoreboard = 5;
       EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_LOAD_POINTER);
       check(I, std::vector<uint8_t>(test.bytes, test.bytes + 14),
@@ -1388,8 +1391,8 @@ TEST_F(Apple9Pack, UnverifiedHalfConversions)
 /* Unverified: register-pointer stores and atomics */
 TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
 {
-   agx_instr *I =
-      agx_device_store(b, r(3), r64(10), k(r(4)), AGX_FORMAT_I32, 1, 0, false);
+   agx_instr *I = agx_device_store(b, r(3), r64(10), k(r(4)), AGX_FORMAT_I32, 1,
+                                   0, false, 0);
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT);
    check(I, {0xe7, 0x00, 0x54, 0x06, 0x0a, 0x04, 0x21, 0x00, 0x11, 0x00, 0x00,
              0x90, 0x19, 0x00});

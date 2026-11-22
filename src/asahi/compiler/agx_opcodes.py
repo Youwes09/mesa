@@ -84,6 +84,7 @@ BFI_MASK = immediate("bfi_mask")
 LOD_MODE = immediate("lod_mode", "enum agx_lod_mode")
 PIXEL_OFFSET = immediate("pixel_offset")
 STACK_SIZE = immediate("stack_size", 'int16_t')
+BYTE_OFFSET = immediate("byte_offset", 'int16_t')
 EXPLICIT_COORDS = immediate("explicit_coords", "bool")
 
 DIM = enum("dim", {
@@ -282,10 +283,11 @@ for memory, can_reorder in [("texture", True), ("image", False)]:
        can_reorder = can_reorder,
        schedule_class = "none" if can_reorder else "load")
 
-# sources are base, index
+# sources are base, index. Apple9 adds a constant byte offset to the address
 op("device_load",
       encoding = (0x05, 6, 8),
-      srcs = 2, imms = [FORMAT, MASK, SHIFT, SCOREBOARD, COHERENT], can_reorder = False,
+      srcs = 2, imms = [FORMAT, MASK, SHIFT, SCOREBOARD, COHERENT, BYTE_OFFSET],
+      can_reorder = False,
       schedule_class = "load")
 
 # sources are base (relative to workgroup memory), index
@@ -298,7 +300,9 @@ op("local_load",
 # TODO: Consider permitting the short form
 op("device_store",
       encoding = (0x45 | (1 << 47), 8, _),
-      dests = 0, srcs = 3, imms = [FORMAT, MASK, SHIFT, SCOREBOARD, COHERENT], can_eliminate = False,
+      dests = 0, srcs = 3,
+      imms = [FORMAT, MASK, SHIFT, SCOREBOARD, COHERENT, BYTE_OFFSET],
+      can_eliminate = False,
       schedule_class = "store")
 
 # sources are value, base, index

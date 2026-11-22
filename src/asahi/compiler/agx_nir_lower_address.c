@@ -60,6 +60,33 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    /* Apple9 indices are unsigned, and atomics take the whole address */
    bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
 
+   /* Apple9 loads and stores add a signed 16-bit byte offset to the address */
+   int byte_offset = 0;
+   while (apple9 && !atomic && nir_scalar_is_alu(base) &&
+          nir_scalar_alu_op(base) == nir_op_iadd) {
+      bool peeled = false;
+
+      for (unsigned i = 0; i < 2; ++i) {
+         nir_scalar k = nir_scalar_chase_alu_src(base, i);
+         if (!nir_scalar_is_const(k))
+            continue;
+
+         int64_t sum = byte_offset + nir_scalar_as_int(k);
+         if (sum >= INT16_MIN && sum <= INT16_MAX) {
+            byte_offset = sum;
+            base = nir_scalar_chase_alu_src(base, 1 - i);
+            peeled = true;
+         }
+
+         break;
+      }
+
+      if (!peeled)
+         break;
+   }
+
+   match.base = base;
+
    if (nir_scalar_is_alu(base) && !(apple9 && atomic)) {
       nir_op op = nir_scalar_alu_op(base);
       if ((op == nir_op_ulea_agx || op == nir_op_ilea_agx) &&
@@ -123,13 +150,15 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
       repl =
          nir_load_agx(b, num_components, bit_size, new_base, offset,
                       .access = nir_intrinsic_access(intr), .base = match.shift,
-                      .format = format, .sign_extend = match.sign_extend);
+                      .format = format, .sign_extend = match.sign_extend,
+                      .byte_offset = byte_offset);
 
    } else if (intr->intrinsic == nir_intrinsic_load_global_constant) {
       repl = nir_load_constant_agx(b, num_components, bit_size, new_base,
                                    offset, .access = nir_intrinsic_access(intr),
                                    .base = match.shift, .format = format,
-                                   .sign_extend = match.sign_extend);
+                                   .sign_extend = match.sign_extend,
+                                   .byte_offset = byte_offset);
    } else if (intr->intrinsic == nir_intrinsic_global_atomic) {
       repl =
          nir_global_atomic_agx(b, bit_size, new_base, offset, intr->src[1].ssa,
@@ -143,7 +172,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    } else {
       nir_store_agx(b, intr->src[0].ssa, new_base, offset,
                     .access = nir_intrinsic_access(intr), .base = match.shift,
-                    .format = format, .sign_extend = match.sign_extend);
+                    .format = format, .sign_extend = match.sign_extend,
+                    .byte_offset = byte_offset);
    }
 
    if (repl)

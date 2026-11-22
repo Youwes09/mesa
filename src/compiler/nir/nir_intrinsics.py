@@ -329,6 +329,9 @@ index("unsigned", "value_id")
 # Whether to sign-extend offsets in address arithmatic (else zero extend)
 index("bool", "sign_extend")
 
+# Constant number of bytes added to the address of a memory access
+index("int", "byte_offset")
+
 # Instruction specific flags
 index("unsigned", "flags")
 
@@ -2578,21 +2581,23 @@ image("store_block_agx", [1, -1], extra_indices=[EXPLICIT_COORD])
 # Formatted load/store. The format is the pipe_format in memory (see ail for the
 # supported list). This accesses:
 #
-#     address + extend(index) << (format shift + shift)
+#     address + extend(index) << (format shift + shift) + byte_offset
 #
 # The nir_intrinsic_base() index encodes the shift. The sign_extend index
 # determines whether sign- or zero-extension is used for the index.
+# byte_offset is a signed 16-bit displacement, only nonzero on Apple9.
 #
 # All loads and stores on AGX uses these hardware instructions, so while these are
 # logically load_global_agx/load_global_constant_agx/store_global_agx, the
 # _global is omitted as it adds nothing.
 #
 # src[] = { address, index }.
-load("agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND], [CAN_ELIMINATE])
-load("constant_agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND],
+load("agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND, BYTE_OFFSET],
+     [CAN_ELIMINATE])
+load("constant_agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND, BYTE_OFFSET],
      [CAN_ELIMINATE, CAN_REORDER])
 # src[] = { value, address, index }.
-store("agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND])
+store("agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND, BYTE_OFFSET])
 
 # Logical complement of load_front_face, mapping to an AGX system value
 system_value("back_face_agx", 1, bit_sizes=[1, 32])

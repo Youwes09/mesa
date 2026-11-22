@@ -890,10 +890,9 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset if we're not sign-extending. Apple9 indices are
-    * always unsigned.
-    */
+   /* Zero-extend offset unless sign-extending. Apple9 indices are unsigned */
    bool coherent = nir_is_coherent(instr);
+   int byte_offset = nir_intrinsic_byte_offset(instr);
 
    if (agx_is_apple9(b->shader)) {
       assert(!nir_intrinsic_sign_extend(instr));
@@ -903,9 +902,10 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
       offset = agx_abs(offset);
    }
 
+   assert(byte_offset == 0 || agx_is_apple9(b->shader));
    agx_device_load_to(b, dest, addr, offset, fmt,
-                      BITFIELD_MASK(instr->def.num_components), shift,
-                      coherent);
+                      BITFIELD_MASK(instr->def.num_components), shift, coherent,
+                      byte_offset);
    agx_emit_cached_split(b, dest, instr->def.num_components);
 }
 
@@ -919,10 +919,9 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset if we're not sign-extending. Apple9 indices are
-    * always unsigned.
-    */
+   /* Zero-extend offset unless sign-extending. Apple9 indices are unsigned */
    bool coherent = nir_is_coherent(instr);
+   int byte_offset = nir_intrinsic_byte_offset(instr);
 
    if (agx_is_apple9(b->shader)) {
       assert(!nir_intrinsic_sign_extend(instr));
@@ -932,9 +931,10 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
       offset = agx_abs(offset);
    }
 
+   assert(byte_offset == 0 || agx_is_apple9(b->shader));
    agx_device_store(b, agx_recollect_vector(b, instr->src[0]), addr, offset,
                     fmt, BITFIELD_MASK(nir_src_num_components(instr->src[0])),
-                    shift, coherent);
+                    shift, coherent, byte_offset);
 }
 
 /*

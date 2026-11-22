@@ -60,7 +60,7 @@ class InsertWaits : public testing::Test {
    agx_instr *load(agx_builder *b, agx_index dst, agx_index index)
    {
       return agx_device_load_to(b, dst, agx_uniform(0, AGX_SIZE_64), index,
-                                AGX_FORMAT_I32, 1, 0, false);
+                                AGX_FORMAT_I32, 1, 0, false, 0);
    }
 
    void *mem_ctx;

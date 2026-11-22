@@ -457,7 +457,8 @@ device_memory_ok(const agx_instr *I)
    if (is_imm(index)) {
       /* A constant index is a byte offset from a register pair */
       return load && is_reg(base) &&
-             (index.value << memory_shift(I)) <= INT16_MAX;
+             ((int64_t)index.value << memory_shift(I)) + I->byte_offset <=
+                INT16_MAX;
    }
 
    return reg32(index) && plain(index);

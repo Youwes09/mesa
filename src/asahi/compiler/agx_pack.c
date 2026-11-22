@@ -709,6 +709,7 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups,
    case AGX_OPCODE_UNIFORM_STORE: {
       bool is_device_store = I->op == AGX_OPCODE_DEVICE_STORE;
       bool is_uniform_store = I->op == AGX_OPCODE_UNIFORM_STORE;
+      assert(is_uniform_store || I->byte_offset == 0);
       bool is_store = is_device_store || is_uniform_store;
       bool has_base = !is_uniform_store;
 

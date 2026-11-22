@@ -115,7 +115,7 @@ TEST_F(Apple9Legality, Uniforms)
 
    /* Memory bases are uniform pairs, indices are registers */
    agx_instr *load = agx_device_load_to(b, temp(), agx_uniform(8, AGX_SIZE_64),
-                                        temp(), AGX_FORMAT_I32, 1, 0, false);
+                                        temp(), AGX_FORMAT_I32, 1, 0, false, 0);
    EXPECT_TRUE(agx_instr_is_legal(ctx, load));
    EXPECT_FALSE(src_ok(load, 1, agx_uniform(8, AGX_SIZE_32)));
    EXPECT_FALSE(src_ok(load, 0, agx_uniform(10, AGX_SIZE_64)));
