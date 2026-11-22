@@ -735,6 +735,45 @@ agx_interp_for_bary(agx_builder *b, nir_intrinsic_instr *bary,
    }
 }
 
+/* Iterates one coefficient at a time, multiplying by W for perspective */
+static void
+agx_emit_load_vary_apple9(agx_builder *b, agx_index dest,
+                          nir_intrinsic_instr *instr, agx_index I,
+                          nir_intrinsic_instr *bary,
+                          enum agx_interpolation interp, agx_index sample)
+{
+   unsigned components = instr->num_components;
+   assert(I.type == AGX_INDEX_IMMEDIATE && "Apple9 has no indirect inputs");
+
+   agx_index position = agx_zero();
+   if (interp == AGX_INTERPOLATION_SAMPLE) {
+      position = agx_interpolation_position(b, sample, interp);
+   } else if (interp == AGX_INTERPOLATION_CENTROID) {
+      agx_index coverage = agx_get_sr_coverage(b, 32, AGX_SR_COVERAGE_MASK);
+      position = agx_interpolation_position(b, coverage, interp);
+   }
+
+   agx_index w = agx_null();
+   if (nir_intrinsic_interp_mode(bary) != INTERP_MODE_NOPERSPECTIVE) {
+      agx_index J = agx_get_cf(b->shader, VARYING_SLOT_POS, 3);
+      agx_index rw = agx_temp(b->shader, AGX_SIZE_32);
+      agx_iter_to(b, rw, J, position, 1, interp);
+      w = agx_rcp(b, rw);
+   }
+
+   agx_index channels[4];
+   for (unsigned c = 0; c < components; ++c) {
+      agx_index cf = agx_immediate(I.value + c);
+      channels[c] = agx_temp(b->shader, AGX_SIZE_32);
+      agx_iter_to(b, channels[c], cf, position, 1, interp);
+
+      if (!agx_is_null(w))
+         channels[c] = agx_fmul_perspective(b, channels[c], w, cf.value);
+   }
+
+   agx_emit_collect_to(b, dest, components, channels);
+}
+
 static void
 agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 {
@@ -750,6 +789,12 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
       nir_intrinsic_interp_mode(bary) != INTERP_MODE_NOPERSPECTIVE;
 
    agx_index I = cf_for_intrinsic(b, instr);
+
+   if (agx_is_apple9(b->shader)) {
+      agx_emit_load_vary_apple9(b, dest, instr, I, bary, interp, sample_index);
+      agx_emit_cached_split(b, dest, components);
+      return;
+   }
 
    /* For perspective interpolation, we project (multiply by 1/W) */
    if (perspective) {
@@ -1721,7 +1766,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_load_coefficients_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
-      agx_ldcf_to(b, dst, cf_for_intrinsic(b, instr), 1);
+      /* Apple9 names the three words of the coefficient */
+      agx_ldcf_to(b, dst, cf_for_intrinsic(b, instr),
+                  agx_is_apple9(b->shader) ? 3 : 1);
       agx_emit_cached_split(b, dst, 3);
       return NULL;
 
@@ -1777,13 +1824,17 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       agx_emit_local_load_pixel(b, dst, instr);
       return NULL;
 
-   case nir_intrinsic_load_pixel_coord:
+   case nir_intrinsic_load_pixel_coord: {
+      /* Apple9 reads the words, whose low halves are the coordinates */
+      unsigned bits = agx_is_apple9(b->shader) ? 32 : 16;
+
       return agx_emit_collect_to(
          b, dst, 2,
          (agx_index[2]){
-            agx_get_sr(b, 16, AGX_SR_THREAD_POSITION_IN_GRID_X),
-            agx_get_sr(b, 16, AGX_SR_THREAD_POSITION_IN_GRID_Y),
+            agx_get_sr(b, bits, AGX_SR_THREAD_POSITION_IN_GRID_X),
+            agx_get_sr(b, bits, AGX_SR_THREAD_POSITION_IN_GRID_Y),
          });
+   }
 
    case nir_intrinsic_load_frag_coord_z: {
       agx_index cf = agx_get_cf(b->shader, VARYING_SLOT_POS, 2);
@@ -1816,12 +1867,25 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    }
 
    case nir_intrinsic_load_back_face_agx:
+      /* Apple9 reads a word, nonzero if back-facing */
+      if (agx_is_apple9(b->shader)) {
+         return agx_icmp_to(b, dst, agx_get_sr(b, 32, AGX_SR_BACKFACING),
+                            agx_zero(), AGX_ICOND_UEQ, true);
+      }
+
       return agx_get_sr_to(b, dst, AGX_SR_BACKFACING);
 
    case nir_intrinsic_load_samples_log2_agx:
       return agx_get_sr_to(b, dst, AGX_SR_SAMPLES_LOG2);
 
    case nir_intrinsic_load_sample_mask_in:
+      /* Apple9 coverage has the covered samples in its low bits */
+      if (agx_is_apple9(b->shader)) {
+         return agx_and_to(b, dst,
+                           agx_get_sr_coverage(b, 32, AGX_SR_COVERAGE_MASK),
+                           agx_immediate(0xf));
+      }
+
       return agx_get_sr_to(b, dst, AGX_SR_INPUT_SAMPLE_MASK);
 
    case nir_intrinsic_load_sample_mask:

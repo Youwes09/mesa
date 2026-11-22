@@ -1685,6 +1685,9 @@ sr_selector(enum agx_sr sr, struct a9_sr *out)
    case AGX_SR_COVERAGE_MASK:
       *out = (struct a9_sr){0xc2};
       return true;
+   case AGX_SR_BACKFACING:
+      *out = (struct a9_sr){0xc5};
+      return true;
    case AGX_SR_LAYER_ID:
    case AGX_SR_INSTANCE_ID:
    case AGX_SR_VERTEX_ID:
