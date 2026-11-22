@@ -6,9 +6,7 @@
 #include "agx_bg_eot.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
-#include "agx_apple9_libagx.h"
 #include "agx_compile.h"
-#include "agx_compile_apple9.h"
 #include "agx_device.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
@@ -234,38 +232,29 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
    cache->dev = NULL;
 }
 
-/* Returns false when the program's USC allocation fails (the aperture is
- * full); nothing is cached then, so a later call can retry. */
+/* Apple9 programs get their own BO. False if the USC aperture is full */
 static bool
-agx_compile_apple9_precompiled(struct agx_bg_eot_cache *cache,
-                               struct agx_precompiled_shader *p,
-                               unsigned program)
+agx_upload_apple9_precompiled(struct agx_bg_eot_cache *cache,
+                              struct agx_precompiled_shader *p,
+                              unsigned program)
 {
-   nir_shader *nir = agx_apple9_libagx_nir(program, NULL);
+   const uint32_t *bin = cache->dev->libagx_programs[program];
+   assert(bin != NULL && "the program never runs on Apple9");
 
-   struct agx_shader_part part = {0};
-   const char *reason = NULL;
-   if (!agx_compile_apple9_tiny(nir, &part, &p->apple9_profile, &reason)) {
-      fprintf(stderr, "Apple9 internal program %u (%s) compile failed: %s\n",
-              program, nir->info.name ?: "unnamed", reason ?: "unknown");
-      nir_print_shader(nir, stderr);
-      abort();
-   }
-   ralloc_free(nir);
+   const struct agx_precompiled_apple9_kernel_info *info = (const void *)bin;
+   const uint32_t *local = info->profile.local_size;
+
    p->apple9 = true;
-   p->b.workgroup =
-      agx_workgroup(part.info.workgroup_size[0], part.info.workgroup_size[1],
-                    part.info.workgroup_size[2]);
-   p->bo = agx_bo_create(cache->dev, part.info.binary_size, 0,
+   p->apple9_profile = info->profile;
+   p->b.workgroup = agx_workgroup(local[0], local[1], local[2]);
+   p->bo = agx_bo_create(cache->dev, info->binary_size, 0,
                          AGX_BO_EXEC | AGX_BO_LOW_VA | AGX_BO_WRITEBACK,
                          "Apple9 internal shader");
-   if (!p->bo) {
-      free(part.binary);
+   if (!p->bo)
       return false;
-   }
-   memcpy(agx_bo_map(p->bo), part.binary, part.info.binary_size);
+
+   memcpy(agx_bo_map(p->bo), info + 1, info->binary_size);
    p->ptr = p->bo->va->addr;
-   free(part.binary);
    return true;
 }
 
@@ -285,7 +274,7 @@ agx_get_precompiled_locked(struct agx_bg_eot_cache *cache, unsigned program)
       rzalloc(cache->ht, struct agx_precompiled_shader);
 
    if (agx_is_apple9(cache->dev)) {
-      if (!agx_compile_apple9_precompiled(cache, p, program)) {
+      if (!agx_upload_apple9_precompiled(cache, p, program)) {
          ralloc_free(p);
          return NULL;
       }

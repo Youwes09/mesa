@@ -7,7 +7,6 @@
 #include "asahi_clc.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_nir.h"
-#include "asahi/lib/agx_apple9_libagx.h"
 #include "compiler/glsl_types.h"
 #include "compiler/spirv/nir_spirv.h"
 #include "nir.h"
@@ -15,7 +14,6 @@
 #include "nir_builder_opcodes.h"
 #include "nir_intrinsics.h"
 #include "nir_precompiled.h"
-#include "nir_serialize.h"
 #include "shader_enums.h"
 
 #include <fcntl.h>
@@ -388,64 +386,6 @@ main(int argc, char **argv)
       for (unsigned v = 0; v < nr_vars; ++v) {
          nir_shader *s = build_variant(libfunc, v, &agx_nir_options, nir, &opt);
 
-         /* Preserve a target-independent helper for ISAs with a separate
-          * backend. In particular Apple9 must never execute the Apple8 blob
-          * emitted below. The argument layout stays shared by both paths. */
-         nir_shader *portable = nir_shader_clone(NULL, s);
-         NIR_PASS(_, portable, nir_lower_array_deref_of_vec,
-                  nir_var_function_temp, NULL,
-                  nir_lower_indirect_array_deref_of_vec_load |
-                     nir_lower_indirect_array_deref_of_vec_store);
-         NIR_PASS(_, portable, nir_lower_indirect_derefs_to_if_else_trees,
-                  nir_var_function_temp, 32);
-         optimize(portable);
-         NIR_PASS(_, portable, nir_lower_explicit_io,
-                  nir_var_shader_temp | nir_var_function_temp |
-                     nir_var_mem_shared | nir_var_mem_global,
-                  nir_address_format_62bit_generic);
-         NIR_PASS(_, portable, nir_remove_dead_variables, nir_var_all, NULL);
-
-         /* Full-shader NIR serialization embeds shader_info verbatim, which
-          * cannot be shared by a 64-bit build tool and a 32-bit driver. These
-          * kernels have one inlined function and explicit memory accesses, so
-          * serialize that function with fixed-width kernel metadata instead.
-          * Reject additional module state rather than silently dropping it.
-          */
-         if (portable->info.stage != MESA_SHADER_COMPUTE ||
-             !exec_list_is_empty(&portable->variables) ||
-             exec_list_length(&portable->functions) != 1 ||
-             portable->constant_data_size || portable->info.uses_printf ||
-             portable->xfb_info) {
-            fprintf(stderr, "Unsupported module state in libagx kernel %s\n",
-                    libfunc->name);
-            exit(EXIT_FAILURE);
-         }
-         const struct agx_apple9_libagx_metadata metadata = {
-            .format = AGX_APPLE9_LIBAGX_FORMAT,
-            .workgroup_size = {portable->info.workgroup_size[0],
-                               portable->info.workgroup_size[1],
-                               portable->info.workgroup_size[2]},
-            .shared_size = portable->info.shared_size,
-            .scratch_size = portable->scratch_size,
-            .float_controls = portable->info.float_controls_execution_mode,
-            .api_subgroup_size = portable->info.api_subgroup_size,
-            .min_subgroup_size = portable->info.min_subgroup_size,
-            .max_subgroup_size = portable->info.max_subgroup_size,
-            .variable_local_size = portable->info.workgroup_size_variable,
-         };
-         struct blob serialized;
-         blob_init(&serialized);
-         blob_write_uint32(&serialized, 0);
-         blob_write_bytes(&serialized, &metadata, sizeof(metadata));
-         nir_serialize_function(&serialized,
-                                nir_shader_get_entrypoint(portable)->function);
-         blob_overwrite_uint32(&serialized, 0, serialized.size - 4);
-         nir_precomp_print_blob(fp_c, libfunc->name, "nir", v,
-                                (uint32_t *)serialized.data, serialized.size,
-                                true);
-         blob_finish(&serialized);
-         ralloc_free(portable);
-
          agx_preprocess_nir(s);
          lower_variant_io(s);
 
@@ -528,9 +468,6 @@ main(int argc, char **argv)
    }
 
    print_apple9_binary_map(fp_c, fp_h, nir);
-
-   nir_precomp_print_extern_binary_map(fp_h, "libagx", "nir");
-   nir_precomp_print_binary_map(fp_c, nir, "libagx", "nir", remap_variant);
 
    glsl_type_singleton_decref();
    fclose(fp_c);

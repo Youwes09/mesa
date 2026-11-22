@@ -4,109 +4,58 @@
  */
 
 #include <array>
-#include "asahi/compiler/agx_compile_apple9.h"
-#include "compiler/glsl_types.h"
-#include "compiler/nir/nir_serialize.h"
+#include "asahi/compiler/agx_compile.h"
 #include "agx_apple9.h"
-#include "agx_apple9_libagx.h"
 
 #include <gtest/gtest.h>
 
-/* Every libagx program a driver can dispatch on Apple9 must compile with the
- * Apple9 compute compiler, or the driver aborts the first time it is used.
- */
+/* Every libagx program a driver dispatches has an asahi_clc Apple9 binary */
 extern "C" {
 unsigned test_libagx_num_programs(void);
 bool test_libagx_expected_to_fail(unsigned program);
 unsigned test_libagx_fast_clear_4x(void);
+const uint32_t *test_libagx_apple9_binary(unsigned program);
 }
 
-class LibagxApple9 : public testing::TestWithParam<unsigned> {
- protected:
-   static void SetUpTestSuite()
-   {
-      glsl_type_singleton_init_or_ref();
-   }
-   static void TearDownTestSuite()
-   {
-      glsl_type_singleton_decref();
-   }
-};
+class LibagxApple9 : public testing::TestWithParam<unsigned> {};
 
-TEST_P(LibagxApple9, Compiles)
+TEST_P(LibagxApple9, Compiled)
 {
    unsigned program = GetParam();
-   nir_shader *nir = agx_apple9_libagx_nir(program, NULL);
-   ASSERT_EQ(nir->info.stage, MESA_SHADER_COMPUTE);
-   if (program == test_libagx_fast_clear_4x()) {
-      EXPECT_EQ(nir->info.workgroup_size[0], 32u);
-      EXPECT_EQ(nir->info.workgroup_size[1], 1u);
-      EXPECT_EQ(nir->info.workgroup_size[2], 1u);
-      EXPECT_EQ(nir->info.shared_size, 0u);
-      EXPECT_EQ(nir->scratch_size, 0u);
+   const uint32_t *bin = test_libagx_apple9_binary(program);
+
+   if (test_libagx_expected_to_fail(program)) {
+      EXPECT_EQ(bin, nullptr);
+      return;
    }
-   struct agx_shader_part part = {};
-   struct agx_apple9_compute_profile profile = {};
-   const char *reason = NULL;
-   bool ok = agx_compile_apple9_tiny(nir, &part, &profile, &reason);
 
-   if (test_libagx_expected_to_fail(program))
-      EXPECT_FALSE(ok) << "now compiles; remove it from expected_to_fail";
-   else
-      EXPECT_TRUE(ok) << (reason ? reason : "unknown reason");
+   ASSERT_NE(bin, nullptr);
+   const agx_precompiled_apple9_kernel_info *info =
+      (const agx_precompiled_apple9_kernel_info *)bin;
+   const agx_apple9_compute_profile *p = &info->profile;
 
-   free(part.binary);
-   ralloc_free(nir);
+   EXPECT_GT(info->binary_size, 0u);
+   EXPECT_EQ(p->abi, AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS);
+   EXPECT_LE(p->preamble_offset + p->preamble_size, info->binary_size);
+
+   /* Kernel inputs are UBO 0 */
+   for (unsigned i = 0; i < p->resource_binding_count; ++i) {
+      EXPECT_TRUE(p->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED ||
+                  (p->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
+                   p->resource_binding[i] == 0));
+   }
+
+   if (program == test_libagx_fast_clear_4x()) {
+      EXPECT_EQ(p->local_size[0], 32u);
+      EXPECT_EQ(p->local_size[1], 1u);
+      EXPECT_EQ(p->local_size[2], 1u);
+      EXPECT_EQ(p->required_threadgroup_memory_bytes, 0u);
+      EXPECT_EQ(p->scratch_size, 0u);
+   }
 }
 
 INSTANTIATE_TEST_SUITE_P(All, LibagxApple9,
                          testing::Range(0u, test_libagx_num_programs()));
-
-class LibagxBlob : public testing::Test {
- protected:
-   static void SetUpTestSuite()
-   {
-      glsl_type_singleton_init_or_ref();
-   }
-   static void TearDownTestSuite()
-   {
-      glsl_type_singleton_decref();
-   }
-};
-
-TEST_F(LibagxBlob, RejectsOldToolBeforeFunctionDecode)
-{
-   /* The unversioned tool wrote workgroup_size[0] at the start instead. */
-   agx_apple9_libagx_metadata stale = {};
-   stale.format = 32;
-   EXPECT_DEATH(agx_apple9_libagx_deserialize(&stale, sizeof(stale), NULL),
-                "incompatible kernel blob format; rebuild asahi_clc");
-}
-
-TEST_F(LibagxBlob, RejectsTruncatedMetadata)
-{
-   uint32_t format = AGX_APPLE9_LIBAGX_FORMAT;
-   EXPECT_DEATH(agx_apple9_libagx_deserialize(&format, sizeof(format), NULL),
-                "truncated kernel metadata; rebuild asahi_clc");
-}
-
-TEST_F(LibagxBlob, RejectsTrailingFunctionData)
-{
-   nir_shader *nir = agx_apple9_libagx_nir(test_libagx_fast_clear_4x(), NULL);
-   agx_apple9_libagx_metadata metadata = {};
-   metadata.format = AGX_APPLE9_LIBAGX_FORMAT;
-   struct blob serialized;
-   blob_init(&serialized);
-   blob_write_bytes(&serialized, &metadata, sizeof(metadata));
-   nir_serialize_function(&serialized,
-                          nir_shader_get_entrypoint(nir)->function);
-   blob_write_uint32(&serialized, 0xbad);
-   EXPECT_DEATH(
-      agx_apple9_libagx_deserialize(serialized.data, serialized.size, NULL),
-      "invalid kernel function stream; rebuild asahi_clc");
-   blob_finish(&serialized);
-   ralloc_free(nir);
-}
 
 /* Guard both ends: these sizes are also the command allocator reservation. */
 TEST(Apple9Dispatch, PacketFootprints)

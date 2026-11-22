@@ -11,6 +11,13 @@
 unsigned test_libagx_num_programs(void);
 bool test_libagx_expected_to_fail(unsigned program);
 unsigned test_libagx_fast_clear_4x(void);
+const uint32_t *test_libagx_apple9_binary(unsigned program);
+
+const uint32_t *
+test_libagx_apple9_binary(unsigned program)
+{
+   return libagx_g16[program];
+}
 
 unsigned
 test_libagx_fast_clear_4x(void)
@@ -24,9 +31,7 @@ test_libagx_num_programs(void)
    return LIBAGX_NUM_PROGRAMS;
 }
 
-/* Programs that cannot compile for Apple9, each unreachable there. An entry
- * that starts compiling should be removed.
- */
+/* Programs that are not compiled for Apple9, each unreachable there */
 bool
 test_libagx_expected_to_fail(unsigned program)
 {
