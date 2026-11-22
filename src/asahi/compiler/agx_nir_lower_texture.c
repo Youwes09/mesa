@@ -506,7 +506,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
             w3 = nir_ior(b, w3,
                          nir_ishl_imm(b, apple9_min_lod_word(b, min_lod), 16));
 
-         words[2] = z ? z : zero;
+         /* The layer is in word 3, word 2 is the comparator or zero */
+         words[2] = (z && z != layer) ? z : zero;
          words[3] = volume ? undef : w3;
       }
 
