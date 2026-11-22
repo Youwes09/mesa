@@ -724,11 +724,26 @@ pack_float3(const agx_instr *I, struct a9_packed *p)
    a9_init(p, form, bytes, length);
 }
 
-/*
- * Integer add. A negated operand subtracts: the encoding computes A - B, so
- * a negated A swaps the operands. Either operand can be a register, a
- * uniform or an 8-bit constant.
- */
+/* Bit 33 clear writes an 8-bit uniform word, even for a 64-bit product */
+static unsigned
+uniform_destination(const agx_instr *I, uint8_t *bytes)
+{
+   agx_index dst = I->dest[0];
+   pack_assert(I, dst.type == AGX_INDEX_UNIFORM && !(dst.value & 1));
+   pack_assert(
+      I, dst.value + agx_index_size_16(dst) <= AGX_APPLE9_UNIFORM_COUNT * 2);
+   pack_assert(I, dst.size != AGX_SIZE_64 || !(dst.value & 3));
+
+   set_bits(bytes, 33, 1, 0);
+   set_bits(bytes, 25, 8, dst.value >> 1);
+
+   for (unsigned s = 0; s < I->nr_srcs; ++s)
+      pack_assert(I, is_gpr(I->src[s]) || agx_is_equiv(I->src[s], agx_zero()));
+
+   return dst.value >> 1;
+}
+
+/* Integer add. A negated B subtracts; a negated A swaps the operands */
 static void
 pack_iadd(const agx_instr *I, struct a9_packed *p)
 {
@@ -743,9 +758,14 @@ pack_iadd(const agx_instr *I, struct a9_packed *p)
    }
 
    bool sub = b.neg;
+   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
    uint8_t bytes[10] = {
       sub ? 0x1f : 0x9f, 0x01, 0x54, 0x00, 0x02, 0x00, 0x00, 0xa8, 0x17, 0x05};
-   set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+
+   if (uniform)
+      uniform_destination(I, bytes);
+   else
+      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
 
    agx_index srcs[2] = {a, b};
    for (unsigned s = 0; s < 2; ++s) {
@@ -767,7 +787,10 @@ pack_iadd(const agx_instr *I, struct a9_packed *p)
       }
    }
 
-   a9_init(p, AGX_APPLE9_ENC_INT_ADD_EXTENDED, bytes, 10);
+   a9_init(p,
+           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_ADD
+                   : AGX_APPLE9_ENC_INT_ADD_EXTENDED,
+           bytes, 10);
 }
 
 /* 32x32 to 64-bit multiply; abs zero-extends both factors */
@@ -783,7 +806,12 @@ pack_imul_wide(const agx_instr *I, struct a9_packed *p)
    if (!a.abs)
       bytes[10] = 0x1e;
 
-   set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
+   if (uniform)
+      uniform_destination(I, bytes);
+   else
+      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+
    set_bits(bytes, 42, 7, gpr(I, a));
    set_bits(bytes, 51, 7, gpr(I, b));
    if (retain(a)) {
@@ -795,7 +823,10 @@ pack_imul_wide(const agx_instr *I, struct a9_packed *p)
       set_bits(bytes, 74, 1, 0);
    }
 
-   a9_init(p, AGX_APPLE9_ENC_INT_MUL_WIDE, bytes, 12);
+   a9_init(p,
+           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE
+                   : AGX_APPLE9_ENC_INT_MUL_WIDE,
+           bytes, 12);
 }
 
 /* Integer multiply-add. Constants go in factor B and the addend */
@@ -820,7 +851,12 @@ pack_imad(const agx_instr *I, struct a9_packed *p)
 
    uint8_t bytes[12] = {0x9f, 0x00, 0x54, 0x00, 0x02, 0x00,
                         0x00, 0x00, 0xd0, 0x2f, 0x2a, 0x00};
-   set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
+
+   if (uniform)
+      uniform_destination(I, bytes);
+   else
+      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
 
    for (unsigned s = 0; s < 3; ++s) {
       agx_index src = srcs[s];
@@ -843,7 +879,10 @@ pack_imad(const agx_instr *I, struct a9_packed *p)
       }
    }
 
-   a9_init(p, AGX_APPLE9_ENC_INT_MAD_EXTENDED, bytes, 12);
+   a9_init(p,
+           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MAD
+                   : AGX_APPLE9_ENC_INT_MAD_EXTENDED,
+           bytes, 12);
 }
 
 /* ishl is bfi into zero, ushr bfeil from zero, by a constant or register */

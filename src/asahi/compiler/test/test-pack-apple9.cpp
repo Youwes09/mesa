@@ -1699,3 +1699,31 @@ TEST_F(Apple9Pack, HalfPredicates)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED);
    check(I, {0x4a, 0x04, 0x3b, 0x0c, 0x06, 0x00, 0x00, 0x04, 0x00, 0x00});
 }
+
+/* Integer arithmetic into the uniform file, the STORE_UNIFORM_* forms */
+TEST_F(Apple9Pack, UniformDestinations)
+{
+   agx_instr *I =
+      agx_iadd_to(b, agx_uniform(400, AGX_SIZE_32), r(3), k(r(70)), 0);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_ADD);
+   check(I, {0x9f, 0x01, 0x54, 0x90, 0x01, 0x0c, 0x32, 0xaa, 0x15, 0x05});
+
+   check(agx_iadd_to(b, agx_uniform(26, AGX_SIZE_32), k(r(3)),
+                     agx_neg(k(r(70))), 0),
+         {0x1f, 0x01, 0x54, 0x1a, 0x00, 0x0c, 0x30, 0xaa, 0x17, 0x05});
+
+   I = agx_imad_to(b, agx_uniform(34, AGX_SIZE_32), r(3), k(r(70)), r(9), 0);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_MAD);
+   check(I, {0x9f, 0x00, 0x54, 0x22, 0x00, 0x0c, 0x32, 0x92, 0xd8, 0x25, 0x2a,
+             0x00});
+
+   I = agx_imad_to(b, agx_uniform(80, AGX_SIZE_64), agx_abs(k(r(3))),
+                   agx_abs(k(r(70))), agx_zero(), 0);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE);
+   check(I, {0x9f, 0x00, 0x54, 0x50, 0x00, 0x0c, 0x30, 0x02, 0xe0, 0x26, 0x0a,
+             0x00});
+
+   check(
+      agx_imad_to(b, agx_uniform(80, AGX_SIZE_64), r(3), r(70), agx_zero(), 0),
+      {0x9f, 0x00, 0x54, 0x50, 0x00, 0x0c, 0x32, 0x06, 0xe0, 0x20, 0x1e, 0x00});
+}

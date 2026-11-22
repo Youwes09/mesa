@@ -4167,6 +4167,119 @@ agx_lower_float_moves_apple9(agx_context *ctx)
    }
 }
 
+/* Apple9 iadd, imad and widening imul can write the uniform file directly */
+static bool
+fusable_uniform_def(const agx_instr *I)
+{
+   if (I->op == AGX_OPCODE_IADD) {
+      return I->dest[0].size == AGX_SIZE_32 && !I->shift && !I->saturate &&
+             I->src[0].type == AGX_INDEX_REGISTER &&
+             I->src[1].type == AGX_INDEX_REGISTER &&
+             I->src[0].size == AGX_SIZE_32 && I->src[1].size == AGX_SIZE_32;
+   } else if (I->op == AGX_OPCODE_IMAD) {
+      for (unsigned s = 0; s < 3; ++s) {
+         if (!(I->src[s].type == AGX_INDEX_REGISTER &&
+               I->src[s].size == AGX_SIZE_32) &&
+             !(I->dest[0].size == AGX_SIZE_64 && s == 2))
+            return false;
+      }
+
+      return !I->shift && !I->wait;
+   } else {
+      return false;
+   }
+}
+
+static bool
+touches_uniforms(const agx_instr *I, unsigned first, unsigned count)
+{
+   agx_foreach_src(I, s) {
+      agx_index src = I->src[s];
+      if (src.type == AGX_INDEX_UNIFORM && src.value < first + count &&
+          first < src.value + agx_index_size_16(src))
+         return true;
+   }
+
+   /* Uniform stores at a constant word */
+   return I->op == AGX_OPCODE_UNIFORM_STORE;
+}
+
+static bool
+reads_reg(const agx_instr *I, agx_index reg)
+{
+   agx_foreach_reg_src(I, s) {
+      agx_index src = I->src[s];
+      if (src.reg_class == RA_GPR &&
+          src.value < reg.value + agx_index_size_16(reg) &&
+          reg.value < src.value + agx_index_size_16(src))
+         return true;
+   }
+
+   return false;
+}
+
+static void
+agx_fuse_uniform_stores_apple9(agx_context *ctx)
+{
+   agx_foreach_block(ctx, block) {
+      agx_instr *next = NULL;
+
+      for (agx_instr *store =
+              list_first_entry(&block->instructions, agx_instr, link);
+           &store->link != &block->instructions; store = next) {
+         next = agx_next_op(store);
+
+         if (store->op != AGX_OPCODE_UNIFORM_STORE || store->wait ||
+             !store->src[0].discard || store->src[0].type != AGX_INDEX_REGISTER)
+            continue;
+
+         agx_index value = store->src[0];
+         unsigned uniform = store->src[1].value;
+
+         /* Find the instruction writing the value */
+         agx_instr *def = NULL;
+         for (agx_instr *I = agx_prev_op(store);
+              &I->link != &block->instructions; I = agx_prev_op(I)) {
+            agx_foreach_reg_dest(I, d) {
+               agx_index dst = I->dest[d];
+               if (dst.reg_class == RA_GPR && dst.value < value.value + 2 &&
+                   value.value < dst.value + agx_index_size_16(dst)) {
+                  def = I;
+               }
+            }
+
+            if (def || reads_reg(I, value) || touches_uniforms(I, uniform, 2))
+               break;
+         }
+
+         if (!def || !fusable_uniform_def(def))
+            continue;
+
+         if (def->dest[0].size == AGX_SIZE_32) {
+            assert(def->dest[0].value == value.value);
+            def->dest[0] = agx_uniform(uniform, AGX_SIZE_32);
+            agx_remove_instruction(store);
+            continue;
+         }
+
+         /* The high word of the product, stored right after the low word */
+         agx_instr *high = agx_next_op(store);
+         if ((uniform & 3) || value.value != def->dest[0].value ||
+             &high->link == &block->instructions ||
+             high->op != AGX_OPCODE_UNIFORM_STORE || high->wait ||
+             !high->src[0].discard || high->src[0].type != AGX_INDEX_REGISTER ||
+             high->src[0].value != value.value + 2 ||
+             high->src[1].value != uniform + 2)
+            continue;
+
+         next = agx_next_op(high);
+         def->dest[0] = agx_uniform(uniform, AGX_SIZE_64);
+         agx_remove_instruction(store);
+         agx_remove_instruction(high);
+      }
+   }
+}
+
 /* Unfused FP16 compares select 1 or 0, which must be in registers */
 static void
 agx_lower_half_compares_apple9(agx_context *ctx)
@@ -4378,6 +4491,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    /* Set last-use bits after lowering pseudo for best results. */
    agx_opt_register_cache(ctx);
+
+   if (agx_is_apple9(ctx))
+      agx_fuse_uniform_stores_apple9(ctx);
 
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       agx_print_shader(ctx, stdout);
