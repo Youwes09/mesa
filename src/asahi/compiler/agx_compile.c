@@ -5293,6 +5293,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
        agx_nir_preload_apple9_push(nir, 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS,
                                    push_halves)) {
       NIR_PASS(_, nir, agx_nir_lower_address);
+      NIR_PASS(_, nir, nir_lower_pack);
       NIR_PASS(_, nir, nir_opt_dce);
    }
 
