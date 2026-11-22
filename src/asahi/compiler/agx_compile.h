@@ -9,6 +9,7 @@
 #include "util/shader_stats.h"
 #include "util/u_dynarray.h"
 #include "util/u_tristate.h"
+#include "agx_apple9_profile.h"
 #include "shader_enums.h"
 
 /* Shared by the standalone compiler and the driver's device initialization. */
@@ -216,6 +217,9 @@ struct agx_shader_info {
    bool apple9_uses_discard;
    /* Fragment shader with pixel_interlock_{ordered,unordered}. */
    bool apple9_pixel_interlock;
+
+   /* How an Apple9 compute shader is launched */
+   struct agx_apple9_compute_profile apple9_compute;
 
    union agx_varyings varyings;
 
