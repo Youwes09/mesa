@@ -293,11 +293,13 @@ fadd_fmul_ok(const agx_instr *I)
    if (!reg32(I->dest[0]))
       return false;
 
-   /* One constant, with a register */
+   /* One constant and a register. Modified float moves become bitwise ops */
    if (is_imm(a) || is_imm(b)) {
       agx_index k = is_imm(a) ? a : b;
       agx_index x = is_imm(a) ? b : a;
-      return !is_imm(x) && reg32(x) && !x.abs &&
+      bool fmov = I->op == AGX_OPCODE_FADD && agx_is_equiv(k, agx_negzero());
+
+      return !is_imm(x) && reg32(x) && (!x.abs || fmov) &&
              agx_apple9_float_immediate_ok(k, true);
    }
 
@@ -569,10 +571,30 @@ pred_compare_ok(const agx_instr *I)
    }
 }
 
+static bool apple9_instr_is_legal(const agx_instr *I);
+
+/* Compares to 0/1 are lowered to selects */
+static bool
+cmp_ok(const agx_instr *I)
+{
+   agx_index srcs[4] = {I->src[0], I->src[1], agx_immediate(1),
+                        agx_immediate(0)};
+   agx_instr sel = *I;
+
+   sel.op = I->op == AGX_OPCODE_ICMP ? AGX_OPCODE_ICMPSEL : AGX_OPCODE_FCMPSEL;
+   sel.src = srcs;
+   sel.nr_srcs = 4;
+   return apple9_instr_is_legal(&sel);
+}
+
 static bool
 apple9_instr_is_legal(const agx_instr *I)
 {
    switch (I->op) {
+   case AGX_OPCODE_ICMP:
+   case AGX_OPCODE_FCMP:
+      return cmp_ok(I);
+
    case AGX_OPCODE_MOV:
       /* Constants are moved with mov_imm */
       return !is_imm(I->src[0]);

@@ -579,6 +579,42 @@ agx_emit_cached_split(agx_builder *b, agx_index vec, unsigned n)
    agx_cache_collect(b, vec, n, dests);
 }
 
+/* 32-bit x << amount */
+static agx_index
+agx_shl32(agx_builder *b, agx_index x, agx_index amount)
+{
+   agx_index dst = agx_temp(b->shader, AGX_SIZE_32);
+   agx_bfi_to(b, dst, agx_zero(), x, amount, 0);
+   return dst;
+}
+
+/* The bits of 32-bit x from a constant offset on, zero-extended */
+static agx_index
+agx_bitfield32(agx_builder *b, agx_index x, unsigned offset, unsigned bits)
+{
+   agx_index dst = agx_temp(b->shader, AGX_SIZE_32);
+   agx_bfeil_to(b, dst, agx_zero(), x, agx_immediate(offset), bits);
+   return dst;
+}
+
+/* Narrow values have undefined high bits. Extend one to all 32 bits */
+static agx_index
+agx_extend_apple9(agx_builder *b, agx_index x, unsigned bits, bool sign)
+{
+   assert(x.size == AGX_SIZE_32);
+
+   if (bits >= 32) {
+      return x;
+   } else if (sign) {
+      agx_index shift = agx_immediate(32 - bits);
+      return agx_asr(b, agx_shl32(b, x, shift), shift);
+   } else if (bits == 8 || bits == 1) {
+      return agx_and(b, x, agx_immediate(BITFIELD_MASK(bits)));
+   } else {
+      return agx_bitfield32(b, x, 0, bits);
+   }
+}
+
 static void
 agx_emit_load_const(agx_builder *b, nir_load_const_instr *instr)
 {
@@ -586,9 +622,21 @@ agx_emit_load_const(agx_builder *b, nir_load_const_instr *instr)
    unsigned bit_size = instr->def.bit_size;
    assert(instr->def.num_components == 1);
 
+   uint64_t value = nir_const_value_as_uint(instr->value[0], bit_size);
+   agx_index dst = agx_def_index(b->shader, &instr->def);
+
+   /* Apple9 only moves 32-bit constants */
+   if (agx_is_apple9(b->shader) && bit_size == 64) {
+      agx_emit_collect_to(b, dst, 2,
+                          (agx_index[]){
+                             agx_mov_imm(b, 32, value & UINT32_MAX),
+                             agx_mov_imm(b, 32, value >> 32),
+                          });
+      return;
+   }
+
    /* Emit move, later passes can inline/push if useful */
-   agx_mov_imm_to(b, agx_def_index(b->shader, &instr->def),
-                  nir_const_value_as_uint(instr->value[0], bit_size));
+   agx_mov_imm_to(b, dst, value);
 }
 
 /*
@@ -1927,6 +1975,135 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    return agx_fcmpsel_to(b, dst, s0, s1, s0, s1, fcond);
 }
 
+/* ALU operations Apple9 implements differently, or NULL for the rest */
+static agx_instr *
+agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
+                    agx_index s0, agx_index s1, agx_index s2, agx_index s3)
+{
+   unsigned srcs = nir_op_infos[instr->op].num_inputs;
+   unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
+   unsigned sz = instr->def.bit_size;
+
+   switch (instr->op) {
+   case nir_op_f2f16:
+   case nir_op_f2f16_rtne:
+      assert(src_sz == 32 && "doubles are lowered");
+      return agx_f32_to_f16_to(b, dst, s0);
+
+   case nir_op_f2f32:
+      assert(src_sz == 16 && "doubles are lowered");
+      return agx_f16_to_f32_to(b, dst, s0);
+
+   case nir_op_u2u8:
+   case nir_op_u2u16:
+   case nir_op_u2u32:
+   case nir_op_i2i8:
+   case nir_op_i2i16:
+   case nir_op_i2i32: {
+      bool sign = instr->op == nir_op_i2i8 || instr->op == nir_op_i2i16 ||
+                  instr->op == nir_op_i2i32;
+
+      if (src_sz == 64) {
+         return agx_subdivide_to(b, dst, s0, 0);
+      } else if (src_sz >= sz) {
+         /* The low bits are the narrower value */
+         return agx_mov_to(b, dst, s0);
+      } else {
+         return agx_mov_to(b, dst, agx_extend_apple9(b, s0, src_sz, sign));
+      }
+   }
+
+   case nir_op_u2f32:
+   case nir_op_i2f32: {
+      bool sign = instr->op == nir_op_i2f32;
+      assert(src_sz <= 32 && "64-bit conversions are lowered");
+
+      return agx_convert_to(
+         b, dst,
+         agx_immediate(sign ? AGX_CONVERT_S32_TO_F : AGX_CONVERT_U32_TO_F),
+         agx_extend_apple9(b, s0, src_sz, sign), AGX_ROUND_RTE);
+   }
+
+   case nir_op_inot:
+      if (sz == 1)
+         return NULL;
+
+      return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, UINT32_MAX));
+
+   case nir_op_fsin_factor_agx:
+      return agx_sin_factor_to(b, dst, s0);
+
+   case nir_op_fneg:
+   case nir_op_fabs:
+      /* FP16 sign operations are bitwise */
+      if (sz != 16)
+         return NULL;
+      else if (instr->op == nir_op_fneg)
+         return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, 0x8000));
+      else
+         return agx_and_to(b, dst, s0, agx_mov_imm(b, 32, 0x7fff));
+
+   case nir_op_imadshl_agx:
+   case nir_op_imsubshl_agx: {
+      /* Shift the addend first */
+      if (!nir_src_is_const(instr->src[3].src) ||
+          nir_alu_src_as_uint(instr->src[3]) != 0)
+         s2 = agx_shl32(b, s2, s3);
+
+      if (instr->op == nir_op_imsubshl_agx)
+         s2 = agx_neg(s2);
+
+      if (nir_src_is_const(instr->src[1].src) &&
+          nir_alu_src_as_uint(instr->src[1]) == 1)
+         return agx_iadd_to(b, dst, s0, s2, 0);
+      else
+         return agx_imad_to(b, dst, s0, s1, s2, 0);
+   }
+
+   case nir_op_ubitfield_extract: {
+      unsigned m = nir_alu_src_as_uint(instr->src[2]);
+      assert(m != 0 && "should've been optimized");
+
+      if (m >= 32)
+         return agx_ushr_to(b, dst, s0, s1);
+      else if (nir_src_is_const(instr->src[1].src))
+         return agx_bfeil_to(b, dst, agx_zero(), s0, s1, m);
+
+      /* Only constant offsets have a width */
+      return agx_mov_to(b, dst,
+                        agx_extend_apple9(b, agx_ushr(b, s0, s1), m, false));
+   }
+
+   case nir_op_pack_32_2x16_split:
+      return agx_or_to(b, dst, agx_extend_apple9(b, s0, 16, false),
+                       agx_shl32(b, s1, agx_immediate(16)));
+
+   case nir_op_unpack_32_2x16_split_x:
+      return agx_mov_to(b, dst, s0);
+
+   case nir_op_unpack_32_2x16_split_y:
+      return agx_ushr_to(b, dst, s0, agx_immediate(16));
+
+   case nir_op_pack_64_4x16: {
+      agx_index words[2];
+      for (unsigned i = 0; i < 2; ++i) {
+         agx_index lo = agx_extract_nir_src(b, instr->src[0].src,
+                                            instr->src[0].swizzle[2 * i]);
+         agx_index hi = agx_extract_nir_src(b, instr->src[0].src,
+                                            instr->src[0].swizzle[2 * i + 1]);
+
+         words[i] = agx_or(b, agx_extend_apple9(b, lo, 16, false),
+                           agx_shl32(b, hi, agx_immediate(16)));
+      }
+
+      return agx_emit_collect_to(b, dst, 2, words);
+   }
+
+   default:
+      return NULL;
+   }
+}
+
 static agx_instr *
 agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
 {
@@ -1936,11 +2113,12 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    ASSERTED unsigned comps = instr->def.num_components;
 
    assert(comps == 1 || nir_op_is_vec_or_mov(instr->op));
-   assert(sz == 1 ||
-          ((nir_op_is_vec_or_mov(instr->op) ||
-            is_conversion_to_8bit(instr->op) || instr->op == nir_op_bcsel) &&
-           sz == 8) ||
-          sz == 16 || sz == 32 || sz == 64);
+   assert(
+      sz == 1 ||
+      ((nir_op_is_vec_or_mov(instr->op) || is_conversion_to_8bit(instr->op) ||
+        instr->op == nir_op_bcsel || agx_is_apple9(b->shader)) &&
+       sz == 8) ||
+      sz == 16 || sz == 32 || sz == 64);
 
    agx_index dst = agx_def_index(b->shader, &instr->def);
    agx_index s0 = srcs > 0 ? agx_alu_src_index(b, instr->src[0]) : agx_null();
@@ -1950,6 +2128,12 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
 
    agx_index i0 = agx_immediate(0);
    agx_index i1 = agx_immediate(1);
+
+   if (agx_is_apple9(b->shader)) {
+      agx_instr *I = agx_emit_alu_apple9(b, instr, dst, s0, s1, s2, s3);
+      if (I)
+         return I;
+   }
 
 #define UNOP(nop, aop)                                                         \
    case nir_op_##nop:                                                          \
@@ -2538,15 +2722,26 @@ agx_emit_undef(agx_builder *b, nir_undef_instr *instr)
     * the lowering happens in NIR and this just allows for late lowering passes
     * to result in undefs.
     */
-   if (instr->def.num_components > 1) {
-      assert(instr->def.num_components <= 4);
+   agx_index dst = agx_def_index(b->shader, &instr->def);
+   assert(instr->def.num_components <= 4);
+
+   /* Apple9 only moves 32-bit constants */
+   if (agx_is_apple9(b->shader)) {
+      agx_index zero = agx_mov_imm(b, 32, 0);
+      bool wide = instr->def.bit_size == 64;
+      assert(!wide || instr->def.num_components == 1);
+      unsigned words = wide ? 2 : instr->def.num_components;
+
+      agx_emit_collect_to(
+         b, dst, words,
+         (agx_index[8]){zero, zero, zero, zero, zero, zero, zero, zero});
+   } else if (instr->def.num_components > 1) {
       agx_index zero = agx_mov_imm(b, instr->def.bit_size, 0);
 
-      agx_emit_collect_to(b, agx_def_index(b->shader, &instr->def),
-                          instr->def.num_components,
+      agx_emit_collect_to(b, dst, instr->def.num_components,
                           (agx_index[4]){zero, zero, zero, zero});
    } else {
-      agx_mov_imm_to(b, agx_def_index(b->shader, &instr->def), 0);
+      agx_mov_imm_to(b, dst, 0);
    }
 }
 
@@ -3447,6 +3642,38 @@ agx_should_dump(nir_shader *nir, unsigned agx_dbg_bit)
       agx_validate(ctx, #pass);                                                \
    } while (0)
 
+/* Apple9 float moves flush subnormals, so negate and abs by the sign bit */
+static void
+agx_lower_float_moves_apple9(agx_context *ctx)
+{
+   agx_foreach_instr_global_safe(ctx, I) {
+      if (I->op != AGX_OPCODE_FADD || !agx_is_equiv(I->src[1], agx_negzero()) ||
+          (!I->src[0].abs && !I->src[0].neg) ||
+          I->src[0].type == AGX_INDEX_IMMEDIATE)
+         continue;
+
+      agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
+      agx_index x = I->src[0];
+      x.abs = x.neg = false;
+
+      if (I->src[0].abs) {
+         x = agx_and(&b, x, agx_mov_imm(&b, 32, 0x7fffffff));
+
+         if (I->src[0].neg)
+            x = agx_or(&b, x, agx_mov_imm(&b, 32, 0x80000000));
+      } else {
+         x = agx_xor(&b, x, agx_mov_imm(&b, 32, 0x80000000));
+      }
+
+      if (I->saturate) {
+         I->src[0] = x;
+      } else {
+         agx_mov_to(&b, I->dest[0], x);
+         agx_remove_instruction(I);
+      }
+   }
+}
+
 static unsigned
 agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
                          struct agx_shader_key *key,
@@ -3516,14 +3743,19 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       /* After DCE, use counts are right so we can run the optimizer. */
       AGX_PASS(ctx, agx_optimizer_backward);
       AGX_PASS(ctx, agx_optimizer_forward);
-      AGX_PASS(ctx, agx_opt_compact_constants);
+      /* Apple9 has no FP16 sources to compact constants into */
+      if (!agx_is_apple9(ctx))
+         AGX_PASS(ctx, agx_opt_compact_constants);
 
-      /* After inlining constants, promote what's left */
-      if (key->promote_constants && !key->secondary &&
+      /* After inlining constants, promote what's left. Apple9 preloads none */
+      if (key->promote_constants && !key->secondary && !agx_is_apple9(ctx) &&
           !(agx_compiler_debug & AGX_DBG_NOPROMOTE)) {
          AGX_PASS(ctx, agx_opt_promote_constants);
       }
    }
+
+   if (agx_is_apple9(ctx))
+      AGX_PASS(ctx, agx_lower_float_moves_apple9);
 
    /* For correctness, lower uniform sources after copyprop (for correctness,
     * as copyprop creates uniform sources). To keep register pressure in

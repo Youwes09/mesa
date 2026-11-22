@@ -149,6 +149,10 @@ agx_opt_register_cache(agx_context *ctx)
              */
             I->src[s].discard = lu && !block->divergent;
 
+            /* Only the low half is written, so the register stays in use */
+            if (I->op == AGX_OPCODE_F32_TO_F16 && writes_reg(I, reg))
+               I->src[s].discard = false;
+
             /* Mark any source read by an ALU instruction in the same block as
              * wanting a .cache hint. This is better than just marking
              * everything, although it overly hints for very long blocks and
