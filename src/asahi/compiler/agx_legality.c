@@ -573,6 +573,20 @@ static bool
 apple9_instr_is_legal(const agx_instr *I)
 {
    switch (I->op) {
+   case AGX_OPCODE_MOV:
+      /* Constants are moved with mov_imm */
+      return !is_imm(I->src[0]);
+
+   case AGX_OPCODE_PHI:
+   case AGX_OPCODE_COLLECT:
+      /* Parallel copies write wide constants as an add of two 8-bit ones */
+      for (unsigned s = 0; s < I->nr_srcs; ++s) {
+         if (is_imm(I->src[s]) && I->src[s].value > UINT8_MAX)
+            return false;
+      }
+
+      return true;
+
    case AGX_OPCODE_FADD:
    case AGX_OPCODE_FMUL:
       return fadd_fmul_ok(I);
@@ -800,6 +814,7 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
    bool any = true;
 
    switch (I->op) {
+   case AGX_OPCODE_MOV_IMM:
    case AGX_OPCODE_GET_SR:
    case AGX_OPCODE_GET_SR_COVERAGE:
    case AGX_OPCODE_GET_SR_BARRIER:
