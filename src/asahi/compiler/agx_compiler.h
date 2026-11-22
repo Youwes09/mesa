@@ -364,11 +364,16 @@ struct agx_block;
  */
 struct agx_reg_constraint {
    uint16_t min, max, align;
+
+   /* Source only: the instruction overwrites the source's registers */
    bool clobber;
 
    /* Destination only: the instruction reads its sources before writing, so
     * the destination may occupy registers of sources that die here. */
    bool reuse_killed;
+
+   /* Destination only: written before all sources are read, so no overlap */
+   bool early_clobber;
 };
 
 /* Keep synced with hash_instr */

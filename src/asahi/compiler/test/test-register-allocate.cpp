@@ -31,6 +31,24 @@ class RegisterAllocate : public testing::Test {
       ralloc_free(mem_ctx);
    }
 
+   /* Give every operand an unrestricted constraint, to be adjusted */
+   agx_reg_constraint *constrain(agx_instr *I)
+   {
+      unsigned n = I->nr_dests + I->nr_srcs;
+      I->reg_constraints = rzalloc_array(ctx, agx_reg_constraint, n);
+      for (unsigned i = 0; i < n; ++i)
+         I->reg_constraints[i] = {0, UINT16_MAX, 1};
+      return I->reg_constraints;
+   }
+
+   unsigned count_moves()
+   {
+      unsigned n = 0;
+      agx_foreach_instr_global(ctx, I)
+         n += I->op == AGX_OPCODE_MOV;
+      return n;
+   }
+
    agx_index export_temp(enum agx_size size)
    {
       agx_index x = agx_temp(ctx, size);
@@ -139,4 +157,100 @@ TEST_F(RegisterAllocate, ExportLiveAcrossJoin)
                    I->dest[0].reg_class == RA_EXPORT &&
                    I->src[0].reg_class == RA_EXPORT);
    }
+}
+
+static bool
+overlaps(agx_index a, agx_index b)
+{
+   return a.value < b.value + agx_index_size_16(b) &&
+          b.value < a.value + agx_index_size_16(a);
+}
+
+/* A clobbered source whose value is read later gets a copy to destroy */
+TEST_F(RegisterAllocate, ClobberedSourceLiveAfterIsCopied)
+{
+   agx_index x = agx_mov_imm(&b, 32, 5);
+   agx_instr *I =
+      agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), x, agx_immediate(1), 0);
+   constrain(I)[1].clobber = true;
+   agx_instr *later =
+      agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), x, I->dest[0], 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(count_moves(), 1u);
+   EXPECT_FALSE(overlaps(I->src[0], later->src[0]));
+}
+
+/* A clobbered source at its last use is destroyed in place */
+TEST_F(RegisterAllocate, ClobberedSourceDyingIsNotCopied)
+{
+   agx_instr *def = agx_mov_imm_to(&b, agx_temp(ctx, AGX_SIZE_32), 5);
+   agx_instr *I = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), def->dest[0],
+                              agx_immediate(1), 0);
+   constrain(I)[1].clobber = true;
+   agx_iadd(&b, I->dest[0], agx_immediate(2), 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(count_moves(), 0u);
+   EXPECT_EQ(I->src[0].value, def->dest[0].value);
+}
+
+/* Another source of the same instruction still needs the value */
+TEST_F(RegisterAllocate, ClobberedSourceReadTwiceIsCopied)
+{
+   agx_index x = agx_mov_imm(&b, 32, 5);
+   agx_instr *I = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), x, x, 0);
+   constrain(I)[1].clobber = true;
+   agx_iadd(&b, I->dest[0], agx_immediate(2), 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(count_moves(), 1u);
+   EXPECT_FALSE(overlaps(I->src[0], I->src[1]));
+}
+
+/* Only a destination without early clobber may take over a dying source */
+TEST_F(RegisterAllocate, EarlyClobberDestinationAvoidsSources)
+{
+   agx_index x = agx_mov_imm(&b, 32, 1);
+   agx_index y = agx_mov_imm(&b, 32, 2);
+   agx_instr *plain = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), x, y, 0);
+
+   agx_index u = agx_mov_imm(&b, 32, 3);
+   agx_index v = agx_mov_imm(&b, 32, 4);
+   agx_instr *early = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), u, v, 0);
+   constrain(early)[0].early_clobber = true;
+
+   agx_iadd(&b, plain->dest[0], early->dest[0], 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_TRUE(overlaps(plain->dest[0], plain->src[0]) ||
+               overlaps(plain->dest[0], plain->src[1]));
+   EXPECT_FALSE(overlaps(early->dest[0], early->src[0]));
+   EXPECT_FALSE(overlaps(early->dest[0], early->src[1]));
+}
+
+/* In a full file, an early-clobber destination still avoids its sources */
+TEST_F(RegisterAllocate, EarlyClobberDestinationInFullFile)
+{
+   ctx->target.gpr_halves = 16;
+
+   /* Five live values, two dying sources and the destination fill 16 halves */
+   agx_index live[5];
+   for (unsigned i = 0; i < ARRAY_SIZE(live); ++i)
+      live[i] = agx_mov_imm(&b, 32, i);
+
+   agx_index x = agx_mov_imm(&b, 32, 10);
+   agx_index y = agx_mov_imm(&b, 32, 11);
+   agx_instr *I = agx_iadd_to(&b, agx_temp(ctx, AGX_SIZE_32), x, y, 0);
+   constrain(I)[0].early_clobber = true;
+
+   agx_index sum = I->dest[0];
+   for (unsigned i = 0; i < ARRAY_SIZE(live); ++i)
+      sum = agx_iadd(&b, sum, live[i], 0);
+
+   ASSERT_TRUE(agx_ra(ctx));
+   EXPECT_EQ(ctx->scratch_size_B, 0u);
+   EXPECT_LT(ctx->max_reg, 16u);
+   EXPECT_FALSE(overlaps(I->dest[0], I->src[0]));
+   EXPECT_FALSE(overlaps(I->dest[0], I->src[1]));
 }

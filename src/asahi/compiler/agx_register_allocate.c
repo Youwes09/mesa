@@ -1627,9 +1627,12 @@ assign_constrained_operands(struct ra_ctx *rctx, agx_instr *I)
       }
    }
    /* Sources dying here, other than destroyed or fixed-register copies,
-    * whose tuple fits the destination's aligned window. */
+    * whose tuple fits the destination's aligned window. Without reuse, the
+    * destination is placed while every source still holds its registers, as
+    * an early-clobber destination requires. */
    BITSET_DECLARE(reusable, AGX_NUM_REGS) = {0};
-   bool reuse = I->nr_dests == 1 && I->reg_constraints[0].reuse_killed;
+   bool reuse = I->nr_dests == 1 && I->dest[0].reg_class == RA_GPR &&
+                I->reg_constraints[0].reuse_killed;
    unsigned dest_count = reuse ? rctx->ncomps[I->dest[0].value] : 0;
    unsigned dest_align =
       MAX2(dest_count, reuse ? I->reg_constraints[0].align : 1);
@@ -2294,25 +2297,60 @@ constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
    }
 }
 
+static bool
+is_clobbered(const agx_instr *I, unsigned s)
+{
+   return I->reg_constraints && I->reg_constraints[I->nr_dests + s].clobber;
+}
+
+/* Clobbered sources whose value is still needed read a copy instead */
+static void
+copy_clobbered_sources(agx_context *ctx)
+{
+   bool any = false;
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_ssa_src(I, s)
+         any |= is_clobbered(I, s);
+   }
+
+   if (!any)
+      return;
+
+   agx_compute_liveness(ctx);
+
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_ssa_src(I, s) {
+         if (!is_clobbered(I, s))
+            continue;
+
+         assert(I->src[s].reg_class == RA_GPR && "only GPRs are clobbered");
+
+         bool needed = !I->src[s].kill;
+         agx_foreach_ssa_src(I, t) {
+            needed |= t != s && agx_is_equiv(I->src[s], I->src[t]);
+         }
+
+         if (!needed)
+            continue;
+
+         agx_index value = I->src[s];
+         value.kill = false;
+         value.abs = value.neg = false;
+
+         agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
+         agx_index copy = agx_temp_like(ctx, value);
+         agx_mov_to(&b, copy, value);
+         agx_replace_src(I, s, copy);
+      }
+   }
+}
+
 bool
 agx_ra(agx_context *ctx)
 {
    ctx->ra_error = NULL;
-   /* Destructive input operands get a private SSA lifetime. Ordinary move
-    * coalescing removes the copy when the original value dies here. */
-   agx_foreach_instr_global_safe(ctx, I) {
-      if (!I->reg_constraints)
-         continue;
-      agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
-      agx_foreach_ssa_src(I, s) {
-         if (!I->reg_constraints[I->nr_dests + s].clobber)
-            continue;
-         agx_index copy =
-            agx_vec_temp(ctx, I->src[s].size, agx_channels(I->src[s]));
-         agx_mov_to(&b, copy, I->src[s]);
-         I->src[s] = copy;
-      }
-   }
+   copy_clobbered_sources(ctx);
+
    bool force_spilling =
       (agx_compiler_debug & AGX_DBG_SPILL) && ctx->key->has_scratch;
 

@@ -454,6 +454,30 @@ agx_validate_predecessors(agx_block *block)
    return true;
 }
 
+/* Clobbers apply to sources, reuse and early clobber to destinations */
+static bool
+agx_validate_constraints(const agx_instr *I)
+{
+   if (!I->reg_constraints)
+      return true;
+
+   for (unsigned d = 0; d < I->nr_dests; ++d) {
+      struct agx_reg_constraint c = I->reg_constraints[d];
+
+      if (c.clobber || (c.reuse_killed && c.early_clobber))
+         return false;
+   }
+
+   for (unsigned s = 0; s < I->nr_srcs; ++s) {
+      struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
+
+      if (c.reuse_killed || c.early_clobber)
+         return false;
+   }
+
+   return true;
+}
+
 static bool
 agx_validate_sr(const agx_instr *I)
 {
@@ -561,6 +585,12 @@ agx_validate(agx_context *ctx, const char *after)
       if (I->scoreboard >= ctx->target.scoreboard_slots ||
           (I->wait && I->wait_slot >= ctx->target.scoreboard_slots)) {
          fprintf(stderr, "Invalid scoreboard slot after %s\n", after);
+         agx_print_instr(I, stderr);
+         fail = true;
+      }
+
+      if (!agx_validate_constraints(I)) {
+         fprintf(stderr, "Invalid register constraints after %s\n", after);
          agx_print_instr(I, stderr);
          fail = true;
       }

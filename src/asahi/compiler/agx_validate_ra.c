@@ -140,6 +140,45 @@ validate_src(agx_instr *I, unsigned s, struct regfile *file, agx_index idx)
    return true;
 }
 
+static void
+clobber_src(struct regfile *file, agx_index idx)
+{
+   assert(idx.type == AGX_INDEX_NORMAL && idx.has_reg);
+   enum ra_class cls = ra_class_for_index(idx);
+
+   for (uint8_t offs = 0; offs < agx_index_size_16(idx); ++offs) {
+      assert(idx.reg + offs < file->size[cls]);
+      file->r[cls][idx.reg + offs] = var_undef();
+   }
+}
+
+/* An early-clobber destination must not overlap any source */
+static bool
+validate_early_clobber(agx_instr *I)
+{
+   agx_foreach_ssa_dest(I, d) {
+      agx_index dest = I->dest[d];
+      if (!I->reg_constraints[d].early_clobber)
+         continue;
+
+      agx_foreach_ssa_src(I, s) {
+         agx_index src = I->src[s];
+         if (src.reg_class != dest.reg_class)
+            continue;
+
+         if (dest.reg < src.reg + agx_index_size_16(src) &&
+             src.reg < dest.reg + agx_index_size_16(dest)) {
+            fprintf(stderr, "early-clobber destination %u overlaps source %u\n",
+                    d, s);
+            agx_print_instr(I, stderr);
+            return false;
+         }
+      }
+   }
+
+   return true;
+}
+
 /* Registers at or above a class's limit are never named */
 static void
 note_register(unsigned *limit, agx_index idx)
@@ -200,6 +239,16 @@ validate_block(agx_context *ctx, agx_block *block, struct regfile *blocks,
          agx_foreach_ssa_src(I, s) {
             success &= validate_src(I, s, file, I->src[s]);
          }
+      }
+
+      /* Clobbered sources hold nothing afterwards */
+      if (I->reg_constraints) {
+         agx_foreach_ssa_src(I, s) {
+            if (I->reg_constraints[I->nr_dests + s].clobber)
+               clobber_src(file, I->src[s]);
+         }
+
+         success &= validate_early_clobber(I);
       }
 
       agx_foreach_ssa_dest(I, d) {
