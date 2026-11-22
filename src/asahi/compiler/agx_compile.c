@@ -3526,6 +3526,11 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     */
    NIR_PASS(_, nir, agx_nir_lower_algebraic_late);
    NIR_PASS(_, nir, agx_nir_fuse_selects);
+
+   /* The algebraic passes can form narrow arithmetic again */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+      NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
+
    NIR_PASS(_, nir, nir_opt_constant_folding);
    NIR_PASS(_, nir, nir_opt_combine_barriers, NULL, NULL);
    NIR_PASS(_, nir, nir_opt_copy_prop);
@@ -3615,6 +3620,35 @@ mem_access_size_align_cb(nir_intrinsic_op intrin, uint8_t bytes,
       .num_components = MIN2(bytes / (bit_size / 8), 4),
       .bit_size = bit_size,
       .align = bit_size / 8,
+      .shift = nir_mem_access_shift_method_scalar,
+   };
+}
+
+/* Only device memory is accessed in vectors, of up to four words */
+static nir_mem_access_size_align
+mem_access_size_align_apple9_cb(nir_intrinsic_op intrin, uint8_t bytes,
+                                uint8_t bit_size, uint32_t align,
+                                uint32_t align_offset, bool offset_is_const,
+                                enum gl_access_qualifier access,
+                                const void *cb_data)
+{
+   align = nir_combined_align(align, align_offset);
+   assert(util_is_power_of_two_nonzero(align));
+
+   bool word_memory = intrin == nir_intrinsic_load_shared ||
+                      intrin == nir_intrinsic_store_shared ||
+                      intrin == nir_intrinsic_load_scratch ||
+                      intrin == nir_intrinsic_store_scratch;
+
+   unsigned size = MIN3(align, bytes, 4);
+   size = 1 << util_logbase2(size);
+
+   unsigned comps = size == 4 && !word_memory ? MIN2(bytes / 4, 4) : 1;
+
+   return (nir_mem_access_size_align){
+      .num_components = comps,
+      .bit_size = size * 8,
+      .align = size,
       .shift = nir_mem_access_shift_method_scalar,
    };
 }
@@ -4081,6 +4115,10 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    bool selftest = false;
 #endif
 
+   /* There is no Apple9 disassembler here */
+   if (agx_is_apple9(ctx))
+      dump_shaders = selftest = false;
+
    if (dump_shaders || selftest) {
       FILE *fp = selftest ? fopen("/dev/null", "w") : stdout;
       bool errors =
@@ -4199,9 +4237,11 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, agx_lower_front_face,
             nir_metadata_control_flow, NULL);
 
-   /* Apple9 has no quad derivatives in compute. They use shuffles. */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+   /* Apple9 lacks compute derivatives and must flush FP32 min/max reductions */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
       NIR_PASS(_, nir, agx_nir_lower_apple9_compute_derivatives);
+      NIR_PASS(_, nir, agx_nir_lower_apple9_subgroup_denorms);
+   }
 
    NIR_PASS(_, nir, agx_nir_lower_subgroups);
    NIR_PASS(_, nir, nir_lower_all_phis_to_scalar);
@@ -4271,16 +4311,13 @@ void
 agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                        struct agx_shader_part *out)
 {
-   /*
-    * Apple9 is a distinct ISA from Apple8.  The general Apple9 backend is not
-    * implemented here yet.  G16/G17 direct-render bring-up currently reaches
-    * this path only for metadata while installing a caller-supplied Apple9
-    * program.  Executable Apple9 compute uses agx_compile_apple9_tiny().
-    * Keep the ISA in the key so the two compiler paths cannot alias in caches.
-    */
-   assert(key->dev.shader_isa == AGX_SHADER_ISA_DEFAULT ||
-          key->dev.shader_isa == AGX_SHADER_ISA_APPLE8 ||
-          key->dev.shader_isa == AGX_SHADER_ISA_APPLE9);
+   bool apple9 = key->dev.shader_isa == AGX_SHADER_ISA_APPLE9;
+
+   /* The shader must have been prepared for the ISA it is compiled for */
+   assert(apple9 == (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9));
+
+   /* Apple9 graphics stages are not compiled here yet */
+   assert(!apple9 || mesa_shader_stage_is_compute(nir->info.stage));
 
    agx_compiler_debug = agx_get_compiler_debug();
    struct agx_shader_info *info = &out->info;
@@ -4299,6 +4336,17 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    NIR_PASS(_, nir, agx_nir_lower_printf_buffer);
 
+   /* Apple9 compute shaders get root pointers instead of preloaded uniforms.
+    * Preamble results follow the roots.
+    */
+   unsigned reserved_preamble = key->reserved_preamble;
+   if (apple9) {
+      reserved_preamble =
+         agx_nir_lower_apple9_compute_abi(nir, &info->apple9_compute) * 2;
+
+      NIR_PASS(_, nir, agx_nir_lower_apple9_math);
+   }
+
    NIR_PASS(_, nir, nir_lower_frag_coord_to_pixel_coord);
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
@@ -4307,7 +4355,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       .modes = nir_var_mem_ssbo | nir_var_mem_constant |
                nir_var_mem_task_payload | nir_var_shader_temp |
                nir_var_function_temp | nir_var_mem_global | nir_var_mem_shared,
-      .callback = mem_access_size_align_cb,
+      .callback =
+         apple9 ? mem_access_size_align_apple9_cb : mem_access_size_align_cb,
    };
    NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes, &lower_mem_access_options);
 
@@ -4321,6 +4370,13 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                nir_var_function_temp, ~0);
    }
 
+   /* Apple9 accesses threadgroup and private memory in words */
+   if (apple9) {
+      NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
+               &lower_mem_access_options);
+      NIR_PASS(_, nir, agx_nir_legalize_apple9_memory);
+   }
+
    /* Cleanup 8-bit math before lowering */
    bool progress;
    do {
@@ -4331,7 +4387,10 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       NIR_PASS(progress, nir, nir_opt_dce);
    } while (progress);
 
-   NIR_PASS(_, nir, nir_lower_bit_size, lower_bit_size_callback, NULL);
+   if (apple9)
+      NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
+   else
+      NIR_PASS(_, nir, nir_lower_bit_size, lower_bit_size_callback, NULL);
 
    /* Late blend lowering creates vectors */
    NIR_PASS(_, nir, nir_lower_alu_to_scalar, NULL, NULL);
@@ -4346,7 +4405,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    NIR_PASS(_, nir, agx_nir_lower_sink_address);
 
-   info->push_count = key->reserved_preamble;
+   info->push_count = reserved_preamble;
    agx_optimize_nir(
       nir, key->dev.soft_fault, key->secondary ? NULL : &info->push_count,
       (key->secondary || !key->promote_textures) ? NULL
@@ -4359,23 +4418,47 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       assign_coefficient_regs(nir, &info->varyings.fs);
    }
 
+   /* Flush FP32 subnormals after the algebraic passes, which could undo it */
+   if (apple9) {
+      NIR_PASS(_, nir, agx_nir_lower_apple9_denorms);
+      NIR_PASS(_, nir, agx_nir_lower_apple9_denorm_preserve);
+      NIR_PASS(_, nir, nir_opt_dce);
+   }
+
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       nir_print_shader(nir, stdout);
 
    info->local_size = nir->info.shared_size;
 
-   nir_foreach_function_with_impl(func, impl, nir) {
-      unsigned offset =
-         agx_compile_function_nir(nir, impl, key, &binary, &out->info);
+   if (apple9) {
+      /* The preamble follows the main shader, is entered first and starts it */
+      nir_function_impl *main = nir_shader_get_entrypoint(nir);
+      agx_compile_function_nir(nir, main, key, &binary, &out->info);
+      info->main_size = binary.size;
 
-      if (func->is_preamble) {
-         info->preamble_offset = offset;
-         info->has_preamble = true;
-      } else if (func->is_entrypoint) {
-         info->main_offset = offset;
-         info->main_size = binary.size - offset;
-      } else {
-         UNREACHABLE("General functions not yet supported");
+      if (main->preamble) {
+         unsigned offset = agx_compile_function_nir(nir, main->preamble->impl,
+                                                    key, &binary, &out->info);
+
+         info->apple9_compute.preamble_offset = offset;
+         info->apple9_compute.preamble_size = binary.size - offset;
+      }
+
+      info->apple9_compute.scratch_size = info->scratch_size;
+   } else {
+      nir_foreach_function_with_impl(func, impl, nir) {
+         unsigned offset =
+            agx_compile_function_nir(nir, impl, key, &binary, &out->info);
+
+         if (func->is_preamble) {
+            info->preamble_offset = offset;
+            info->has_preamble = true;
+         } else if (func->is_entrypoint) {
+            info->main_offset = offset;
+            info->main_size = binary.size - offset;
+         } else {
+            UNREACHABLE("General functions not yet supported");
+         }
       }
    }
 
