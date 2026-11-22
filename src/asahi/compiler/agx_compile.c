@@ -882,13 +882,26 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset if we're not sign-extending */
-   if (!nir_intrinsic_sign_extend(instr))
+   /* Zero-extend offset if we're not sign-extending. Apple9 indices are
+    * always unsigned.
+    */
+   bool coherent = nir_is_coherent(instr);
+
+   if (agx_is_apple9(b->shader)) {
+      assert(!nir_intrinsic_sign_extend(instr));
+
+      /* Apple9 orders coherent accesses after earlier ones with a fence */
+      if (coherent)
+         agx_memory_barrier_acquire(b);
+
+      coherent = false;
+   } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
+   }
 
    agx_device_load_to(b, dest, addr, offset, fmt,
                       BITFIELD_MASK(instr->def.num_components), shift,
-                      nir_is_coherent(instr));
+                      coherent);
    agx_emit_cached_split(b, dest, instr->def.num_components);
 }
 
@@ -902,13 +915,26 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset if we're not sign-extending */
-   if (!nir_intrinsic_sign_extend(instr))
+   /* Zero-extend offset if we're not sign-extending. Apple9 indices are
+    * always unsigned.
+    */
+   bool coherent = nir_is_coherent(instr);
+
+   if (agx_is_apple9(b->shader)) {
+      assert(!nir_intrinsic_sign_extend(instr));
+
+      /* Apple9 orders coherent accesses after earlier ones with a fence */
+      if (coherent)
+         agx_memory_barrier_acquire(b);
+
+      coherent = false;
+   } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
+   }
 
    agx_device_store(b, agx_recollect_vector(b, instr->src[0]), addr, offset,
                     fmt, BITFIELD_MASK(nir_src_num_components(instr->src[0])),
-                    shift, nir_is_coherent(instr));
+                    shift, coherent);
 }
 
 /*
@@ -967,6 +993,28 @@ agx_emit_store_preamble(agx_builder *b, nir_intrinsic_instr *instr)
    agx_index vec = agx_src_index(b->shader, &instr->src[0]);
    unsigned stride = agx_size_align_16(vec.size);
    unsigned nr = nir_src_num_components(instr->src[0]);
+
+   /* Apple9 stores one 32-bit uniform at a time */
+   if (agx_is_apple9(b->shader)) {
+      for (unsigned i = 0; i < nr; ++i) {
+         agx_index x = agx_extract_nir_src(b, instr->src[0], i);
+         unsigned words = stride / 2;
+
+         for (unsigned w = 0; w < words; ++w) {
+            agx_index word = x;
+
+            if (words > 1) {
+               word = agx_temp(b->shader, AGX_SIZE_32);
+               agx_subdivide_to(b, word, x, w);
+            }
+
+            agx_uniform_store(b, word,
+                              agx_immediate(base + (i * stride) + (w * 2)), 1);
+         }
+      }
+
+      return NULL;
+   }
 
    for (unsigned i = 0; i < nr; i += (4 / stride)) {
       agx_index data[4] = {0};
@@ -1066,7 +1114,7 @@ agx_load_compute_dimension(agx_builder *b, agx_index dst,
                            nir_intrinsic_instr *instr, enum agx_sr base)
 {
    unsigned dim = instr->def.num_components;
-   unsigned size = instr->def.bit_size;
+   unsigned size = 16 * agx_size_align_16(dst.size);
    assert(size == 16 || size == 32);
 
    agx_index srcs[] = {
@@ -1113,6 +1161,25 @@ agx_local_base(agx_builder *b, nir_src src)
       return agx_src_index(b->shader, &src);
 }
 
+/* Threadgroup word index. Narrow byte offsets have undefined high bits */
+static agx_index
+agx_local_word_apple9(agx_builder *b, nir_src offset, unsigned base)
+{
+   agx_index bytes = agx_src_index(b->shader, &offset);
+
+   if (base)
+      bytes = agx_iadd(b, bytes, agx_mov_imm(b, 32, base), 0);
+
+   return agx_bitfield32(b, bytes, 2, 14);
+}
+
+static agx_index
+agx_local_root_apple9(agx_builder *b)
+{
+   return agx_immediate(
+      agx_apple9_shared_root(&b->shader->out->apple9_compute));
+}
+
 static void
 agx_emit_atomic(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr,
                 bool local)
@@ -1131,7 +1198,14 @@ agx_emit_atomic(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr,
       value = agx_vec2(b, value2, value);
    }
 
-   if (local) {
+   if (local && agx_is_apple9(b->shader)) {
+      /* Threadgroup atomics always return the old value */
+      if (agx_is_null(dst))
+         dst = agx_temp(b->shader, AGX_SIZE_32);
+
+      agx_local_atomic_to(b, dst, value, agx_local_root_apple9(b),
+                          agx_local_word_apple9(b, instr->src[0], 0), op);
+   } else if (local) {
       assert(base.size == AGX_SIZE_16);
       agx_local_atomic_to(b, dst, value, base, index, op);
    } else {
@@ -1158,6 +1232,15 @@ format_for_bitsize(unsigned bitsize)
 static void
 agx_emit_local_load(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
+   if (agx_is_apple9(b->shader)) {
+      assert(instr->def.num_components == 1 && instr->def.bit_size == 32);
+      agx_local_load_to(
+         b, dst, agx_local_root_apple9(b),
+         agx_local_word_apple9(b, instr->src[0], nir_intrinsic_base(instr)),
+         AGX_FORMAT_I32, 1);
+      return;
+   }
+
    agx_index base = agx_local_base(b, instr->src[0]);
    agx_index index = agx_zero(); /* TODO: optimize address arithmetic */
    assert(base.size == AGX_SIZE_16);
@@ -1174,6 +1257,17 @@ static void
 agx_emit_local_store(agx_builder *b, nir_intrinsic_instr *instr)
 {
    agx_index value = agx_src_index(b->shader, &instr->src[0]);
+
+   if (agx_is_apple9(b->shader)) {
+      assert(nir_src_num_components(instr->src[0]) == 1 &&
+             nir_src_bit_size(instr->src[0]) == 32);
+      agx_local_store(
+         b, value, agx_local_root_apple9(b),
+         agx_local_word_apple9(b, instr->src[1], nir_intrinsic_base(instr)),
+         AGX_FORMAT_I32, 1);
+      return;
+   }
+
    agx_index base = agx_local_base(b, instr->src[1]);
    agx_index index = agx_zero(); /* TODO: optimize address arithmetic */
    assert(base.size == AGX_SIZE_16);
@@ -1185,9 +1279,35 @@ agx_emit_local_store(agx_builder *b, nir_intrinsic_instr *instr)
    agx_local_store(b, value, base, index, format, mask);
 }
 
+/*
+ * Apple9 private memory is addressed by a word index from the start of the
+ * invocation's frame, where returning atomics may keep a word first.
+ */
+static agx_index
+agx_scratch_word_apple9(agx_builder *b, nir_src offset)
+{
+   agx_index word =
+      agx_ushr(b, agx_src_index(b->shader, &offset), agx_immediate(2));
+
+   if (b->shader->atomic_frame_B) {
+      word = agx_iadd(b, word,
+                      agx_mov_imm(b, 32, b->shader->atomic_frame_B / 4), 0);
+   }
+
+   return word;
+}
+
 static void
 agx_emit_load_scratch(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
+   if (agx_is_apple9(b->shader)) {
+      assert(instr->def.num_components == 1 && instr->def.bit_size == 32);
+      agx_stack_load_to(b, dst, agx_scratch_word_apple9(b, instr->src[0]),
+                        AGX_FORMAT_I32, 1);
+      b->shader->any_scratch = true;
+      return;
+   }
+
    agx_index offset = agx_src_index(b->shader, &instr->src[0]);
    enum agx_format format = format_for_bitsize(instr->def.bit_size);
    unsigned nr = instr->def.num_components;
@@ -1201,6 +1321,16 @@ agx_emit_load_scratch(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 static void
 agx_emit_store_scratch(agx_builder *b, nir_intrinsic_instr *instr)
 {
+   if (agx_is_apple9(b->shader)) {
+      assert(nir_src_num_components(instr->src[0]) == 1 &&
+             nir_src_bit_size(instr->src[0]) == 32);
+      agx_stack_store(b, agx_src_index(b->shader, &instr->src[0]),
+                      agx_scratch_word_apple9(b, instr->src[1]), AGX_FORMAT_I32,
+                      1);
+      b->shader->any_scratch = true;
+      return;
+   }
+
    agx_index value = agx_recollect_vector(b, instr->src[0]);
    agx_index offset = agx_src_index(b->shader, &instr->src[1]);
    enum agx_format format = format_for_bitsize(nir_src_bit_size(instr->src[0]));
@@ -1496,6 +1626,10 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_global_atomic_agx:
    case nir_intrinsic_global_atomic_swap_agx:
+      /* The old value goes through private memory, so only ask if used */
+      if (agx_is_apple9(b->shader) && nir_def_is_unused(&instr->def))
+         dst = agx_null();
+
       agx_emit_atomic(b, dst, instr, false);
       return NULL;
 
@@ -1641,6 +1775,26 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_barrier: {
       assert(!b->shader->is_preamble && "invalid");
+
+      if (agx_is_apple9(b->shader)) {
+         nir_variable_mode modes = nir_intrinsic_memory_modes(instr);
+         assert(nir_intrinsic_execution_scope(instr) <= SCOPE_WORKGROUP);
+
+         /* Barriers order threadgroup memory, acquires also wait for loads */
+         if (nir_intrinsic_memory_scope(instr) != SCOPE_NONE &&
+             (modes &
+              (nir_var_mem_global | nir_var_mem_ssbo | nir_var_image))) {
+            if (nir_intrinsic_memory_semantics(instr) & NIR_MEMORY_ACQUIRE)
+               agx_memory_barrier_acquire(b);
+            else
+               agx_memory_barrier(b);
+         }
+
+         if (nir_intrinsic_execution_scope(instr) == SCOPE_WORKGROUP)
+            agx_threadgroup_barrier(b);
+
+         return NULL;
+      }
 
       bool needs_image_barriers = false;
 
@@ -1791,7 +1945,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_read_invocation: {
       /* TODO: Check if we're actually inside divergent control flow */
-      b->shader->any_quad_divergent_shuffle |= b->shader->any_cf;
+      if (!agx_is_apple9(b->shader))
+         b->shader->any_quad_divergent_shuffle |= b->shader->any_cf;
 
       /* Lane ID guaranteed to be uniform */
       return agx_shuffle_to(b, dst, agx_src_index(b->shader, &instr->src[0]),
@@ -3156,6 +3311,18 @@ agx_mem_vectorize_cb(unsigned align_mul, unsigned align_offset,
    return true;
 }
 
+/* Apple9 only accesses vectors of 32-bit elements */
+static bool
+mem_vectorize_apple9_cb(unsigned align_mul, unsigned align_offset,
+                        unsigned bit_size, unsigned num_components,
+                        int64_t hole_size, nir_intrinsic_instr *low,
+                        nir_intrinsic_instr *high, void *data)
+{
+   return bit_size == 32 &&
+          agx_mem_vectorize_cb(align_mul, align_offset, bit_size,
+                               num_components, hole_size, low, high, data);
+}
+
 static bool
 set_speculate(nir_builder *b, nir_instr *instr, UNUSED void *_)
 {
@@ -3207,7 +3374,9 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
             &(const nir_load_store_vectorize_options){
                .modes = nir_var_mem_global | nir_var_mem_constant |
                         nir_var_shader_temp,
-               .callback = agx_mem_vectorize_cb,
+               .callback = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9
+                              ? mem_vectorize_apple9_cb
+                              : agx_mem_vectorize_cb,
             });
    NIR_PASS(_, nir, nir_lower_pack);
    NIR_PASS(_, nir, nir_opt_algebraic);
@@ -3674,6 +3843,26 @@ agx_lower_float_moves_apple9(agx_context *ctx)
    }
 }
 
+/* Whether a device atomic in the function returns the old value */
+static bool
+agx_returns_atomic(nir_function_impl *impl)
+{
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         if ((intr->intrinsic == nir_intrinsic_global_atomic_agx ||
+              intr->intrinsic == nir_intrinsic_global_atomic_swap_agx) &&
+             !nir_def_is_unused(&intr->def))
+            return true;
+      }
+   }
+
+   return false;
+}
+
 static unsigned
 agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
                          struct agx_shader_key *key,
@@ -3698,6 +3887,10 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       ctx->any_cf = key->fs.inside_sample_loop;
    }
 
+   /* A returning Apple9 device atomic writes the private frame's first word */
+   if (agx_is_apple9(ctx) && agx_returns_atomic(impl))
+      ctx->atomic_frame_B = 16;
+
    ctx->alloc = impl->ssa_alloc;
    emit_cf_list(ctx, &impl->body);
    agx_emit_phis_deferred(ctx);
@@ -3719,6 +3912,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       assert(!ctx->is_preamble && "preambles don't use scratch");
       ctx->scratch_size_B = align(nir->scratch_size, 16);
    }
+
+   ctx->scratch_size_B += ctx->atomic_frame_B;
 
    /* Stop the main shader or preamble shader after the exit block. For real
     * functions, we would return here.
@@ -3780,7 +3975,18 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    AGX_PASS(ctx, agx_ra);
    agx_lower_64bit_postra(ctx);
 
-   if (ctx->scratch_size_B > 0) {
+   if (agx_is_apple9(ctx)) {
+      /* Apple9 sizes the private frame in bytes. Returning atomics alone only
+       * need their atomic frame.
+       */
+      assert(!ctx->is_preamble || ctx->scratch_size_B == 0);
+
+      if (ctx->scratch_size_B > ctx->atomic_frame_B)
+         out->scratch_size = ctx->scratch_size_B;
+
+      if (ctx->atomic_frame_B)
+         out->apple9_compute.atomic_frame_size = 4;
+   } else if (ctx->scratch_size_B > 0) {
       /* Apple always allocate 40 more bytes in the entrypoint and align to 4. */
       uint64_t stack_size = align(DIV_ROUND_UP(ctx->scratch_size_B, 4) + 10, 4);
 

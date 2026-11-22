@@ -576,6 +576,11 @@ struct agx_isa_target {
 
 const struct agx_isa_target *agx_get_isa_target(enum agx_shader_isa isa);
 
+/* Apple9 threadgroup atomics always return the old value */
+#define agx_dest_required(ctx, I)                                              \
+   ((ctx)->target.isa == AGX_SHADER_ISA_APPLE9 &&                              \
+    (I)->op == AGX_OPCODE_LOCAL_ATOMIC)
+
 /* Whether the ISA has the operation */
 static inline bool
 agx_opcode_on_isa(enum agx_opcode op, enum agx_shader_isa isa)
@@ -696,6 +701,9 @@ typedef struct agx_context {
     * NIR-level scratch.
     */
    unsigned spill_base_B;
+
+   /* Bytes at the start of the Apple9 frame for returning device atomics */
+   unsigned atomic_frame_B;
 
    /* Beginning of stack allocation used for parallel copy lowering */
    bool has_spill_pcopy_reserved;

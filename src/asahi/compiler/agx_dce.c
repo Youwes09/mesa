@@ -39,7 +39,7 @@ agx_dce(agx_context *ctx, bool partial)
              */
             if (BITSET_TEST(seen, I->dest[d].value)) {
                needed = true;
-            } else if (partial) {
+            } else if (partial && !agx_dest_required(ctx, I)) {
                I->dest[d] = agx_null();
             }
          }
