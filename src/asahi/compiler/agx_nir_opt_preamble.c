@@ -426,7 +426,9 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          } else if (src->src_type == nir_tex_src_texture_handle && ts) {
             nir_steal_tex_src(tex, nir_tex_src_texture_handle);
             tex->texture_index = base / 2;
-         } else if (src->src_type == nir_tex_src_texture_handle) {
+         } else if (src->src_type == nir_tex_src_texture_handle &&
+                    agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9) {
+            /* Apple9 handles are table indices, used as they are */
             assert(new_ != NULL);
             nir_src_rewrite(use, new_);
          }
