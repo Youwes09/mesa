@@ -2173,6 +2173,21 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
       }
    }
 
+   case nir_op_f2i16:
+   case nir_op_f2i32:
+   case nir_op_f2u16:
+   case nir_op_f2u32: {
+      /* Narrow integer results are the low bits. Conversions take FP32 only */
+      bool sign = instr->op == nir_op_f2i16 || instr->op == nir_op_f2i32;
+      if (src_sz == 16)
+         s0 = agx_f16_to_f32(b, s0);
+
+      return agx_convert_to(
+         b, dst,
+         agx_immediate(sign ? AGX_CONVERT_F_TO_S32 : AGX_CONVERT_F_TO_U32), s0,
+         AGX_ROUND_RTZ);
+   }
+
    case nir_op_u2f32:
    case nir_op_i2f32: {
       bool sign = instr->op == nir_op_i2f32;
@@ -2227,7 +2242,9 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
       if (m >= 32)
          return agx_ushr_to(b, dst, s0, s1);
       else if (nir_src_is_const(instr->src[1].src))
-         return agx_bfeil_to(b, dst, agx_zero(), s0, s1, m);
+         return agx_bfeil_to(b, dst, agx_zero(), s0,
+                             agx_immediate(nir_alu_src_as_uint(instr->src[1])),
+                             m);
 
       /* Only constant offsets have a width */
       return agx_mov_to(b, dst,
