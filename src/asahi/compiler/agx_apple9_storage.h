@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "asahi/genxml/agx_pack.h"
+#include "asahi/layout/layout.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "util/format/u_formats.h"
 #include "agx_compile_apple9.h"
@@ -109,3 +110,45 @@ enum agx_apple9_store_encode agx_apple9_store_encode(enum pipe_format format);
 
 /* Whether the PBE stores this format from 32-bit data */
 bool agx_apple9_native_store_format(enum pipe_format format);
+
+/* Sparse image records: residency table address, then level | layer << 16 */
+#define AGX_APPLE9_DESCRIPTOR_RESIDENCY                                        \
+   (AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO + AGX_APPLE9_TEXTURE_INFO_STRIDE)
+
+/* Raster-order tile pages from page; the mip tail has no tiles_per_row */
+struct agx_apple9_residency_level {
+   uint32_t page;
+   uint16_t tiles_per_row;
+   uint8_t shift_x, shift_y;
+};
+
+struct agx_apple9_residency {
+   uint32_t layer_pages;
+   uint32_t pages;
+   uint32_t pad[2];
+   struct agx_apple9_residency_level level[AIL_MAX_MIP_LEVELS];
+   /* One byte per page of each layer in turn, nonzero if bound */
+   uint8_t resident[];
+};
+static_assert(sizeof(struct agx_apple9_residency) == 144,
+              "Apple9 residency header is packed");
+
+struct nir_shader;
+struct nir_builder;
+struct nir_def;
+
+bool agx_nir_lower_apple9_storage(struct nir_shader *nir);
+bool agx_nir_lower_apple9_sparse_residency(struct nir_shader *nir);
+
+/* Run after agx_preprocess_nir, once storage images are in device memory */
+bool agx_nir_lower_apple9_image_barriers(struct nir_shader *nir);
+
+/* Whether a shader can use native PBE stores: no image read can follow one */
+bool agx_apple9_native_store_shader(const struct nir_shader *nir);
+
+/* Storage texel encoding, by store encoding or layout; exposed for tests */
+struct nir_def *agx_apple9_encode_texel_fast(struct nir_builder *b,
+                                             struct nir_def *value,
+                                             struct nir_def *layout,
+                                             bool floating,
+                                             struct nir_def *encode);

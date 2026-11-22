@@ -92,6 +92,9 @@ struct hk_apple9_image_part {
    uint8_t pad1[32];
 };
 static_assert(sizeof(struct hk_apple9_image_part) == 128, "128-byte record");
+static_assert(offsetof(struct hk_apple9_image_part, residency_lo) ==
+                 AGX_APPLE9_DESCRIPTOR_RESIDENCY,
+              "residency table where shaders read it");
 static_assert(offsetof(struct hk_apple9_image_part, texture_info) ==
                  AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO,
               "texture info where shaders read it");

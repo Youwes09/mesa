@@ -482,13 +482,13 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
       hk_apple9_compute_sysvals(dev, agx_bo_map(dev->apple9_compute_sysvals));
 
       dev->apple9_resident =
-         agx_bo_create(&dev->dev, sizeof(struct hk_apple9_residency) + 4, 0, 0,
+         agx_bo_create(&dev->dev, sizeof(struct agx_apple9_residency) + 4, 0, 0,
                        "Apple9 resident table");
       if (!dev->apple9_resident) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
       }
-      struct hk_apple9_residency *resident = agx_bo_map(dev->apple9_resident);
+      struct agx_apple9_residency *resident = agx_bo_map(dev->apple9_resident);
       memset(resident, 0, sizeof(*resident) + 4);
       resident->pages = 1;
       for (unsigned l = 0; l < AIL_MAX_MIP_LEVELS; ++l)

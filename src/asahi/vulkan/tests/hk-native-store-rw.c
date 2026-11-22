@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <stdio.h>
+#include "asahi/compiler/agx_apple9_storage.h"
 #include "compiler/nir/nir_builder.h"
 #include "hk_descriptor_set.h"
 #include "hk_shader.h"
@@ -55,21 +56,21 @@ main(void)
    nir_builder b = shader();
    image_op(&b, LOAD);
    image_op(&b, STORE);
-   CHECK(hk_apple9_native_store_shader(b.shader));
+   CHECK(agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* Store, then read: the read could observe the native write. */
    b = shader();
    image_op(&b, STORE);
    image_op(&b, LOAD);
-   CHECK(!hk_apple9_native_store_shader(b.shader));
+   CHECK(!agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* An atomic after a store reads it too. */
    b = shader();
    image_op(&b, STORE);
    image_op(&b, nir_intrinsic_bindless_image_atomic);
-   CHECK(!hk_apple9_native_store_shader(b.shader));
+   CHECK(!agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* Read before store inside one loop: the next iteration reads the write. */
@@ -79,7 +80,7 @@ main(void)
    image_op(&b, STORE);
    nir_jump(&b, nir_jump_break);
    nir_pop_loop(&b, NULL);
-   CHECK(!hk_apple9_native_store_shader(b.shader));
+   CHECK(!agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* Reads in a loop that ends before the stores: native. */
@@ -92,7 +93,7 @@ main(void)
    image_op(&b, STORE);
    nir_jump(&b, nir_jump_break);
    nir_pop_loop(&b, NULL);
-   CHECK(hk_apple9_native_store_shader(b.shader));
+   CHECK(agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* Store in the then-branch, read in the else-branch: rejected (block order).
@@ -103,7 +104,7 @@ main(void)
    nir_push_else(&b, NULL);
    image_op(&b, LOAD);
    nir_pop_if(&b, NULL);
-   CHECK(!hk_apple9_native_store_shader(b.shader));
+   CHECK(!agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    /* A second function: block order is no longer program order. */
@@ -112,7 +113,7 @@ main(void)
    image_op(&b, STORE);
    nir_function *callee = nir_function_create(b.shader, "callee");
    nir_function_impl_create(callee);
-   CHECK(!hk_apple9_native_store_shader(b.shader));
+   CHECK(!agx_apple9_native_store_shader(b.shader));
    ralloc_free(b.shader);
 
    puts("native storage rw rule: order, loops, branches and calls pass");

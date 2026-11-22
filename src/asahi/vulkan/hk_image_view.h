@@ -58,7 +58,7 @@ struct hk_image_view {
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_image_view, vk.base, VkImageView,
                                VK_OBJECT_TYPE_IMAGE_VIEW)
 
-/* Address of the struct hk_apple9_residency table for a plane of the view. */
+/* Address of the struct agx_apple9_residency table for a plane of the view. */
 uint64_t hk_apple9_view_residency(const struct hk_device *dev,
                                   const struct hk_image_view *view,
                                   unsigned plane);

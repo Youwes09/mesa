@@ -8,6 +8,7 @@
  */
 #include <stdio.h>
 
+#include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_nir.h"
 #include "asahi/compiler/agx_nir_texture.h"
 #include "compiler/nir/nir_builder.h"
@@ -42,7 +43,7 @@ check(nir_texop op, bool array)
    nir_store_global(&b, value, nir_imm_int64(&b, 0), .align_mul = 4,
                     .write_mask = 0x1f);
 
-   hk_apple9_lower_sparse_residency(b.shader);
+   agx_nir_lower_apple9_sparse_residency(b.shader);
    nir_validate_shader(b.shader, "after sparse residency lowering");
    agx_nir_lower_texture_queries(b.shader);
 
