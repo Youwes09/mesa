@@ -70,11 +70,21 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    bool single_vary = util_is_power_of_two_nonzero64(ctx->layout->written);
    enum uvs_group group = group_for_varying(sem.location);
 
+   /* Apple9 vertex shaders write unlinked slots for the linker to relocate */
+   bool unlinked = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+
    nir_def *base;
-   if ((group == UVS_VARYINGS) && !single_vary)
+   if ((group == UVS_VARYINGS) && unlinked) {
+      unsigned offs = ctx->layout->group_offs[UVS_VARYINGS];
+      u_foreach_bit64(loc, ctx->layout->written & BITFIELD64_MASK(sem.location))
+         offs += ctx->layout->components[loc];
+
+      base = nir_imm_intN_t(b, offs, 16);
+   } else if ((group == UVS_VARYINGS) && !single_vary) {
       base = nir_load_uvs_index_agx(b, .io_semantics = sem);
-   else
+   } else {
       base = nir_imm_intN_t(b, ctx->layout->group_offs[group], 16);
+   }
 
    nir_def *index = nir_iadd(b, nir_iadd_imm(b, base, component),
                              nir_imul_imm(b, nir_u2u16(b, offset), 4));
@@ -225,7 +235,8 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
    /* If we know the interpolation qualifiers in the vertex shader, we can
     * inline UVS indices to eliminate some indirection.
     */
-   if (s->info.known_interpolation_qualifiers) {
+   if (s->info.known_interpolation_qualifiers &&
+       agx_nir_shader_isa(s) != AGX_SHADER_ISA_APPLE9) {
       struct agx_varyings_vs v;
       uint64_t flat = ~(s->info.linear_varyings | s->info.perspective_varyings);
 
@@ -236,6 +247,24 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
    }
 
    return progress;
+}
+
+/* Linked slot of each unlinked UVS word, non-user varyings keep theirs */
+void
+agx_apple9_uvs_slots(uint8_t *slots,
+                     const struct agx_unlinked_uvs_layout *layout,
+                     const struct agx_varyings_vs *varyings)
+{
+   for (unsigned i = 0; i < layout->size; ++i)
+      slots[i] = i;
+
+   unsigned offs = layout->group_offs[UVS_VARYINGS];
+   u_foreach_bit64(loc, layout->written) {
+      for (unsigned c = 0; c < layout->components[loc]; ++c)
+         slots[offs + c] = varyings->slots[loc] + c;
+
+      offs += layout->components[loc];
+   }
 }
 
 void
