@@ -147,6 +147,12 @@ agx_get_compiler_debug(void)
    return debug_get_option_agx_compiler_debug();
 }
 
+static bool
+agx_is_apple9(const agx_context *ctx)
+{
+   return ctx->target.isa == AGX_SHADER_ISA_APPLE9;
+}
+
 static agx_index
 agx_cached_preload(agx_context *ctx, unsigned base, enum agx_size size)
 {
@@ -2462,6 +2468,14 @@ agx_emit_jump(agx_builder *b, nir_jump_instr *instr)
 {
    if (instr->type == nir_jump_halt) {
       agx_stop(b);
+   } else if (agx_is_apple9(b->shader)) {
+      assert(instr->type == nir_jump_break);
+      agx_block_add_successor(b->shader->current_block, b->shader->break_block);
+
+      /* Unwind the loop's two mask scopes and one per if inside it */
+      agx_index zero = agx_mov_imm(b, 32, 0);
+      agx_icmp_pred(b, zero, agx_zero(), AGX_ICOND_UEQ, false, 1);
+      agx_break_pred(b, b->shader->loop_nesting + 2, 1);
    } else {
       assert(instr->type == nir_jump_break);
       agx_block_add_successor(b->shader->current_block, b->shader->break_block);
@@ -2619,9 +2633,16 @@ emit_if(agx_context *ctx, nir_if *nif)
    agx_block *first_block = ctx->current_block;
    agx_builder _b = agx_init_builder(ctx, agx_after_block(first_block));
    agx_index cond = agx_src_index(ctx, &nif->condition);
+   agx_instr *if_ = NULL;
 
-   agx_instr *if_ = agx_if_icmp(&_b, cond, agx_zero(), 1, AGX_ICOND_UEQ, true,
-                                NULL /* filled in later */);
+   if (agx_is_apple9(ctx)) {
+      /* Push the execution mask, keeping the lanes with a nonzero condition */
+      agx_icmp_pred(&_b, cond, agx_zero(), AGX_ICOND_UEQ, false, 0);
+      agx_if_pred(&_b, 0, true);
+   } else {
+      if_ = agx_if_icmp(&_b, cond, agx_zero(), 1, AGX_ICOND_UEQ, true,
+                        NULL /* filled in later */);
+   }
    ctx->loop_nesting++;
    ctx->total_nesting++;
 
@@ -2634,16 +2655,22 @@ emit_if(agx_context *ctx, nir_if *nif)
    agx_block *else_block = emit_cf_list(ctx, &nif->else_list);
    agx_block *end_else = ctx->current_block;
 
-   /* If the "if" fails, we fallthrough to the else */
-   if_->target = else_block;
-
-   /* Insert an else instruction at the beginning of the else block. We use
-    * "else_fcmp 0.0, 0.0, eq" as unconditional else, matching the blob.
-    *
-    * If it fails, we fall through to the logical end of the last else block.
-    */
+   /* Insert an else instruction at the beginning of the else block */
    _b.cursor = agx_before_block(else_block);
-   agx_else_fcmp(&_b, agx_zero(), agx_zero(), 1, AGX_FCOND_EQ, false, end_else);
+
+   if (agx_is_apple9(ctx)) {
+      agx_else_exec(&_b);
+   } else {
+      /* If the "if" fails, we fallthrough to the else */
+      if_->target = else_block;
+
+      /* We use "else_fcmp 0.0, 0.0, eq" as unconditional else, matching the
+       * blob. If it fails, we fall through to the logical end of the last
+       * else block.
+       */
+      agx_else_fcmp(&_b, agx_zero(), agx_zero(), 1, AGX_FCOND_EQ, false,
+                    end_else);
+   }
 
    ctx->after_block = agx_create_block(ctx);
 
@@ -2677,8 +2704,13 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
     * we get the lower nesting count values to ourselves.
     */
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));
-   if (ctx->total_nesting > 1)
-      agx_push_exec(&_b, 1);
+   if (ctx->total_nesting > 1) {
+      /* Apple9 has a separate loop mask, implicit outside control flow */
+      if (agx_is_apple9(ctx))
+         agx_begin_loop(&_b);
+      else
+         agx_push_exec(&_b, 1);
+   }
 
    /* Fallthrough to loop header */
    agx_block_add_successor(ctx->current_block, loop_header);
@@ -2690,7 +2722,12 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
 
    _b.cursor = agx_after_block(ctx->current_block);
    agx_jmp_exec_any(&_b, start_block);
-   agx_pop_exec(&_b, 1);
+
+   if (agx_is_apple9(ctx))
+      agx_end_loop(&_b);
+   else
+      agx_pop_exec(&_b, 1);
+
    agx_block_add_successor(ctx->current_block, loop_header);
 
    /* Pop off */
@@ -2716,7 +2753,8 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
 static void
 emit_first_cf(agx_context *ctx)
 {
-   if (ctx->any_cf)
+   /* Apple9 has no nesting counter */
+   if (ctx->any_cf || agx_is_apple9(ctx))
       return;
 
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));

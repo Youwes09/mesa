@@ -517,8 +517,8 @@ for (name, cond) in [("icmp_pred", ICOND), ("fcmp_pred", FCOND)]:
 op("if_pred", _, dests = 0, imms = [PRED, INVERT_COND], can_eliminate = False,
    schedule_class = "invalid", isa = APPLE9)
 
-# Switches to the lanes the innermost if_pred disabled
-op("else_exec", _, dests = 0, can_eliminate = False, schedule_class = "invalid",
+# Switches to the lanes the innermost if_pred disabled, at its block's start
+op("else_exec", _, dests = 0, can_eliminate = False, schedule_class = "preload",
    isa = APPLE9)
 
 # while_pred drops lanes with a false `pred` until end_loop. Polarity unverified

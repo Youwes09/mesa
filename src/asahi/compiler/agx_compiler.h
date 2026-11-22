@@ -1101,6 +1101,11 @@ instr_after_logical_end(const agx_instr *I)
    case AGX_OPCODE_WHILE_ICMP:
    case AGX_OPCODE_IF_FCMP:
    case AGX_OPCODE_WHILE_FCMP:
+   case AGX_OPCODE_IF_PRED:
+   case AGX_OPCODE_WHILE_PRED:
+   case AGX_OPCODE_BREAK_PRED:
+   case AGX_OPCODE_BEGIN_LOOP:
+   case AGX_OPCODE_END_LOOP:
    case AGX_OPCODE_STOP:
    case AGX_OPCODE_EXPORT:
       return true;
