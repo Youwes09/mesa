@@ -6,6 +6,7 @@
 
 #include "compiler/nir/nir_builder.h"
 #include "util/macros.h"
+#include "agx_compile.h"
 #include "agx_compiler.h"
 #include "nir.h"
 #include "nir_builder_opcodes.h"
@@ -34,6 +35,18 @@ def_size(nir_def *def, unsigned *size, unsigned *align,
          nir_preamble_class *class)
 {
    unsigned bit_size = MAX2(def->bit_size, 16);
+
+   *size = (bit_size * def->num_components) / 16;
+   *align = bit_size / 16;
+   *class = preamble_class(def);
+}
+
+/* Apple9 stores and reads uniforms as 32-bit words */
+static void
+def_size_apple9(nir_def *def, unsigned *size, unsigned *align,
+                nir_preamble_class *class)
+{
+   unsigned bit_size = MAX2(def->bit_size, 32);
 
    *size = (bit_size * def->num_components) / 16;
    *align = bit_size / 16;
@@ -426,8 +439,12 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 bool
 agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
 {
+   nir_opt_preamble_options options = preamble_options;
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+      options.def_size = def_size_apple9;
+
    bool progress = false;
-   NIR_PASS(progress, nir, nir_opt_preamble, &preamble_options, sizes);
+   NIR_PASS(progress, nir, nir_opt_preamble, &options, sizes);
 
    int16_t heap[512];
    memset(heap, ~0, sizeof(heap));
