@@ -20,6 +20,9 @@
  * agx_nir_lower_texture_queries leaves it to the Apple9 backend. */
 #define AGX_TEXTURE_FLAG_METADATA_QUERY (1 << 3)
 
+/* An Apple9 sample with a minimum LOD in its parameters */
+#define AGX_TEXTURE_FLAG_MIN_LOD (1 << 4)
+
 /* Texel buffers lowered to (at most) 16384x16384 2D textures */
 #define AGX_TEXTURE_BUFFER_WIDTH      16384
 #define AGX_TEXTURE_BUFFER_MAX_HEIGHT 16384
