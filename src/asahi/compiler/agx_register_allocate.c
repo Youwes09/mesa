@@ -2351,8 +2351,8 @@ agx_ra(agx_context *ctx)
    ctx->ra_error = NULL;
    copy_clobbered_sources(ctx);
 
-   bool force_spilling =
-      (agx_compiler_debug & AGX_DBG_SPILL) && ctx->key->has_scratch;
+   bool has_scratch = ctx->key->has_scratch || ctx->target.shader_sized_frame;
+   bool force_spilling = (agx_compiler_debug & AGX_DBG_SPILL) && has_scratch;
 
    /* Determine maximum possible registers. We won't exceed this! */
    unsigned max_possible_regs = ctx->target.gpr_halves;
@@ -2472,10 +2472,12 @@ agx_ra(agx_context *ctx)
    }
 
    if (spilling || remat) {
-      assert((remat || ctx->key->has_scratch) &&
-             "internal shaders are unspillable");
+      assert((remat || has_scratch) && "internal shaders are unspillable");
 
       agx_spill(ctx, max_possible_regs, remat);
+
+      /* Constrain new instructions, such as rematerialized constants */
+      agx_set_reg_constraints(ctx);
 
       if (!validate_constraint_windows(ctx, max_possible_regs)) {
          return false;

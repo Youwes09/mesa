@@ -12,6 +12,37 @@
  * spills and fills.
  */
 
+/* Indexed access reaches r0-r63 only, so it goes through the copy register */
+static void
+spill_fill_word_apple9(agx_builder *b, agx_index reg, unsigned offset_B,
+                       bool store)
+{
+   const struct agx_isa_target *t = &b->shader->target;
+   unsigned word = offset_B / 4;
+
+   if (word < (store ? 2048 : 1024)) {
+      if (store)
+         agx_stack_store(b, reg, agx_immediate(offset_B), AGX_FORMAT_I32, 1);
+      else
+         agx_stack_load_to(b, reg, agx_immediate(offset_B), AGX_FORMAT_I32, 1);
+
+      return;
+   }
+
+   agx_index index = agx_register(t->spill_index_reg, AGX_SIZE_32);
+   agx_index copy = agx_register(t->spill_copy_reg, AGX_SIZE_32);
+   agx_mov_imm_to(b, index, word);
+
+   if (store) {
+      /* Indexed stores destroy their data */
+      agx_mov_to(b, copy, reg);
+      agx_stack_store(b, copy, index, AGX_FORMAT_I32, 1);
+   } else {
+      agx_stack_load_to(b, copy, index, AGX_FORMAT_I32, 1);
+      agx_mov_to(b, reg, copy);
+   }
+}
+
 static void
 spill_fill(agx_builder *b, agx_instr *I, enum agx_size size, unsigned channels,
            unsigned component_offset_el)
@@ -47,7 +78,17 @@ spill_fill(agx_builder *b, agx_instr *I, enum agx_size size, unsigned channels,
           "RA allocates enough scratch");
 
    /* Emit the spill/fill */
-   if (I->dest[0].reg_class == RA_MEM) {
+   if (b->shader->target.isa == AGX_SHADER_ISA_APPLE9) {
+      assert(size_B >= 4 && "Apple9 has no 16-bit registers");
+      reg.size = AGX_SIZE_32;
+      reg.channels_m1 = 0;
+
+      for (unsigned w = 0; w < effective_chans; ++w) {
+         spill_fill_word_apple9(b, reg, stack_offs_B + (w * 4),
+                                I->dest[0].reg_class == RA_MEM);
+         reg.value += 2;
+      }
+   } else if (I->dest[0].reg_class == RA_MEM) {
       agx_stack_store(b, reg, agx_immediate(stack_offs_B), format, mask);
    } else {
       agx_stack_load_to(b, reg, agx_immediate(stack_offs_B), format, mask);

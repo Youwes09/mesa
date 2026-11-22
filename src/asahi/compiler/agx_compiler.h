@@ -561,8 +561,14 @@ struct agx_isa_target {
    unsigned spill_copy_reg;
    unsigned spill_swap_regs[2];
 
+   /* Reserved register for the word index of indexed spills, if needed */
+   unsigned spill_index_reg;
+
    /* Scoreboard slots for asynchronous instructions */
    unsigned scoreboard_slots;
+
+   /* Shaders can always spill, as the launch sizes the private frame */
+   bool shader_sized_frame;
 
    /* Whether agx_occupancy_for_register_count describes this ISA */
    bool occupancy_table;
