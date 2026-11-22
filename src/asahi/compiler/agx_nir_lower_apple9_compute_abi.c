@@ -322,6 +322,16 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
             nir_metadata_control_flow, NULL);
 
    nir_shader_intrinsics_pass(nir, gather_resource, nir_metadata_all, &abi);
+
+   /* Textures and samplers are in tables pointed to by the first roots */
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type == nir_instr_type_tex)
+               profile->abi = AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+         }
+      }
+   }
    qsort(abi.resources, abi.count, sizeof(abi.resources[0]), compare_resources);
 
    if (nir->info.shared_size) {

@@ -21,6 +21,7 @@
 #include "agx_compiler.h"
 #include "agx_debug.h"
 #include "agx_nir.h"
+#include "agx_nir_texture.h"
 #include "agx_opcodes.h"
 #include "glsl_types.h"
 #include "nir.h"
@@ -2609,8 +2610,14 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    }
 
    case nir_op_vec8:
-   case nir_op_vec16:
-      UNREACHABLE("should've been lowered");
+   case nir_op_vec16: {
+      /* Apple9 texture parameter bundles */
+      agx_index idx[16];
+      for (unsigned i = 0; i < srcs; ++i)
+         idx[i] = agx_alu_src_index(b, instr->src[i]);
+
+      return agx_emit_collect_to(b, dst, srcs, idx);
+   }
 
    default:
       fprintf(stderr, "Unhandled ALU op %s\n", nir_op_infos[instr->op].name);
@@ -2669,9 +2676,165 @@ agx_gather_for_nir(nir_tex_instr *tex)
    }
 }
 
+/*
+ * Apple9 cube maps: CUBE selects the face of a direction, returning the major
+ * axis with the face in the low half of the next register (mode 0), and the
+ * two other components (modes 1 and 2), from which the face coordinates are
+ * u / major + 0.5 and v / major + 0.5. Cube arrays have the face in bits 12-14
+ * of their LOD word, cube maps in its low bits and in their third word.
+ */
+static void
+agx_emit_cube_apple9(agx_builder *b, agx_index *words, bool array)
+{
+   agx_index major = agx_vec_temp(b->shader, AGX_SIZE_32, 2);
+   agx_cube_to(b, major, words[0], words[1], words[2], 0);
+
+   agx_index major_face[2];
+   agx_emit_split(b, major_face, major, 2);
+
+   agx_index rcp = agx_rcp(b, major_face[0]);
+   agx_index half = agx_mov_imm(b, 32, fui(0.5f));
+   agx_index uv[2];
+
+   for (unsigned i = 0; i < 2; ++i) {
+      uv[i] = agx_temp(b->shader, AGX_SIZE_32);
+      agx_cube_to(b, uv[i], words[0], words[1], words[2], 1 + i);
+   }
+
+   for (unsigned i = 0; i < 2; ++i)
+      words[i] = agx_ffma(b, uv[i], rcp, half);
+
+   /* Only the low half of the face's register is defined */
+   agx_index face = agx_extend_apple9(b, major_face[1], 16, false);
+
+   words[2] = face;
+   words[3] =
+      agx_or(b, words[3], array ? agx_shl32(b, face, agx_immediate(12)) : face);
+}
+
+/*
+ * Apple9 texture operations, after agx_nir_lower_texture: the parameters in
+ * backend1 are written to an export register bundle, the offset is a constant
+ * in backend2, and the texture and sampler are table indices. Fetches use
+ * sampler 0, as on Apple8, and the API samplers follow.
+ */
+static void
+agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
+{
+   agx_index texture = agx_immediate(instr->texture_index);
+   agx_index sampler = agx_immediate(instr->sampler_index + 1);
+   agx_index offset = agx_null();
+   agx_index words[16];
+   unsigned nr = 0;
+   bool fetch = instr->op == nir_texop_txf || instr->op == nir_texop_txf_ms;
+
+   for (unsigned i = 0; i < instr->num_srcs; ++i) {
+      nir_src src = instr->src[i].src;
+
+      switch (instr->src[i].src_type) {
+      case nir_tex_src_backend1:
+         /* Undefined parameter words are not written */
+         nr = nir_src_num_components(src);
+         for (unsigned c = 0; c < nr; ++c) {
+            nir_scalar s = nir_scalar_resolved(src.ssa, c);
+            words[c] = nir_def_instr_type(s.def) == nir_instr_type_undef
+                          ? agx_null()
+                          : agx_extract_nir_src(b, src, c);
+         }
+         break;
+
+      case nir_tex_src_backend2:
+         offset = agx_immediate(nir_src_as_uint(src));
+         break;
+
+      case nir_tex_src_texture_handle:
+         texture = agx_src_index(b->shader, &src);
+         break;
+
+      case nir_tex_src_sampler_handle:
+         sampler = agx_src_index(b->shader, &src);
+         break;
+
+      default:
+         UNREACHABLE("lowered by agx_nir_lower_texture");
+      }
+   }
+
+   if (fetch)
+      sampler = agx_immediate(0);
+
+   if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE && !fetch)
+      agx_emit_cube_apple9(b, words, instr->is_array);
+
+   agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, nr);
+   params.reg_class = RA_EXPORT;
+   agx_emit_collect_to(b, params, nr, words);
+
+   bool min_lod = instr->backend_flags & AGX_TEXTURE_FLAG_MIN_LOD;
+   enum agx_lod_mode lod_mode;
+
+   switch (instr->op) {
+   case nir_texop_txd:
+      lod_mode = min_lod ? AGX_LOD_MODE_LOD_GRAD_MIN : AGX_LOD_MODE_LOD_GRAD;
+      break;
+   case nir_texop_txb:
+   case nir_texop_lod:
+      lod_mode =
+         min_lod ? AGX_LOD_MODE_AUTO_LOD_BIAS_MIN : AGX_LOD_MODE_AUTO_LOD_BIAS;
+      break;
+   case nir_texop_tex:
+   case nir_texop_tg4:
+      lod_mode = nr == 2 ? AGX_LOD_MODE_AUTO_LOD : AGX_LOD_MODE_LOD_MIN;
+      break;
+   default:
+      lod_mode = AGX_LOD_MODE_LOD_MIN;
+      break;
+   }
+
+   /* Read components are written packed. Gathers write four, LOD queries two */
+   unsigned mask = nir_def_components_read(&instr->def);
+   if (instr->op == nir_texop_tg4)
+      mask = 0xf;
+   else if (instr->op == nir_texop_lod)
+      mask &= 0x3;
+
+   if (!mask)
+      mask = 1;
+
+   agx_index dst = agx_vec_temp(b->shader, AGX_SIZE_32, util_bitcount(mask));
+   agx_instr *I = agx_texture_sample_to(
+      b, dst, params, agx_null(), agx_null(), texture, sampler, offset,
+      agx_tex_dim(instr->sampler_dim, instr->is_array), lod_mode, mask,
+      !agx_is_null(offset), instr->is_shadow, instr->op == nir_texop_lod,
+      agx_gather_for_nir(instr), false);
+
+   if (fetch)
+      I->op = AGX_OPCODE_TEXTURE_LOAD;
+
+   assert(agx_channels(params) == agx_apple9_texture_params(I));
+
+   agx_index unpacked[4] = {agx_null()};
+   agx_index packed[4];
+   agx_emit_split(b, packed, dst, util_bitcount(mask));
+
+   for (unsigned c = 0; c < instr->def.num_components; ++c) {
+      unpacked[c] = (mask & BITFIELD_BIT(c))
+                       ? packed[util_bitcount(mask & BITFIELD_MASK(c))]
+                       : agx_undef(AGX_SIZE_32);
+   }
+
+   agx_emit_collect_to(b, agx_def_index(b->shader, &instr->def),
+                       instr->def.num_components, unpacked);
+}
+
 static void
 agx_emit_tex(agx_builder *b, nir_tex_instr *instr)
 {
+   if (agx_is_apple9(b->shader)) {
+      agx_emit_tex_apple9(b, instr);
+      return;
+   }
+
    agx_index coords = agx_null(), bindless = agx_immediate(0),
              texture = agx_immediate(instr->texture_index),
              sampler = agx_immediate(instr->sampler_index),
@@ -4051,6 +4214,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
       if (ctx->atomic_frame_B)
          out->apple9_compute.atomic_frame_size = 4;
+
+      /* The launch allocates the export registers the shader uses */
+      out->apple9_compute.publication_count =
+         MAX2(out->apple9_compute.publication_count,
+              DIV_ROUND_UP(ctx->export_reg_count, 2));
    } else if (ctx->scratch_size_B > 0) {
       /* Apple always allocate 40 more bytes in the entrypoint and align to 4. */
       uint64_t stack_size = align(DIV_ROUND_UP(ctx->scratch_size_B, 4) + 10, 4);
