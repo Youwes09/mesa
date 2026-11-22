@@ -81,6 +81,32 @@ static const uint8_t sample_loop_footer[] = {
 #define SAMPLE_LOOP_FOOTER_COUNT_SHIFT (4)
 /* clang-format on */
 
+/* Merge the CF binding lists from the prolog to handle cull distance */
+static void
+link_cf(struct agx_linked_shader *linked, struct agx_shader_part *main,
+        struct agx_shader_part *prolog)
+{
+   memcpy(&linked->cf, &main->info.varyings.fs, sizeof(struct agx_varyings_fs));
+
+   struct agx_varyings_fs *prolog_vary =
+      prolog ? &prolog->info.varyings.fs : NULL;
+
+   if (prolog_vary && prolog_vary->nr_bindings) {
+      assert(!prolog_vary->reads_z);
+      linked->cf.nr_cf = MAX2(linked->cf.nr_cf, prolog_vary->nr_cf);
+
+      assert(linked->cf.nr_bindings + prolog_vary->nr_bindings <=
+                ARRAY_SIZE(linked->cf.bindings) &&
+             "bounded by # of coeff registers");
+
+      memcpy(linked->cf.bindings + linked->cf.nr_bindings,
+             prolog_vary->bindings,
+             sizeof(struct agx_cf_binding) * prolog_vary->nr_bindings);
+
+      linked->cf.nr_bindings += prolog_vary->nr_bindings;
+   }
+}
+
 static void
 append(struct util_dynarray *d, const void *data, size_t size)
 {
@@ -325,7 +351,7 @@ agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
       }
 
       if (fragment)
-         memcpy(&linked->cf, &main->info.varyings.fs, sizeof(linked->cf));
+         link_cf(linked, main, prolog);
 
       return;
    }
@@ -471,27 +497,7 @@ agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
             cfg.pass_type = AGX_PASS_TYPE_OPAQUE;
       }
 
-      /* Merge the CF binding lists from the prolog to handle cull distance */
-      memcpy(&linked->cf, &main->info.varyings.fs,
-             sizeof(struct agx_varyings_fs));
-
-      struct agx_varyings_fs *prolog_vary =
-         prolog ? &prolog->info.varyings.fs : NULL;
-
-      if (prolog_vary && prolog_vary->nr_bindings) {
-         assert(!prolog_vary->reads_z);
-         linked->cf.nr_cf = MAX2(linked->cf.nr_cf, prolog_vary->nr_cf);
-
-         assert(linked->cf.nr_bindings + prolog_vary->nr_bindings <=
-                   ARRAY_SIZE(linked->cf.bindings) &&
-                "bounded by # of coeff registers");
-
-         memcpy(linked->cf.bindings + linked->cf.nr_bindings,
-                prolog_vary->bindings,
-                sizeof(struct agx_cf_binding) * prolog_vary->nr_bindings);
-
-         linked->cf.nr_bindings += prolog_vary->nr_bindings;
-      }
+      link_cf(linked, main, prolog);
 
       agx_pack(&linked->osel, OUTPUT_SELECT, cfg) {
          cfg.varyings = linked->cf.nr_bindings > 0;
