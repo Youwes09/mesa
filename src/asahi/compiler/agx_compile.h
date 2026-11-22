@@ -568,6 +568,24 @@ static const nir_shader_compiler_options agx_nir_options = {
    .io_options = nir_io_always_interpolate_convergent_fs_inputs,
 };
 
+/* Apple9 NIR options, identifying a shader by its options pointer */
+extern const nir_shader_compiler_options agx_nir_options_apple9;
+
+static inline const nir_shader_compiler_options *
+agx_nir_options_for_isa(enum agx_shader_isa isa)
+{
+   return isa == AGX_SHADER_ISA_APPLE9 ? &agx_nir_options_apple9
+                                       : &agx_nir_options;
+}
+
+/* The ISA a NIR shader is prepared for, known before the shader key exists */
+static inline enum agx_shader_isa
+agx_nir_shader_isa(const nir_shader *nir)
+{
+   return nir->options == &agx_nir_options_apple9 ? AGX_SHADER_ISA_APPLE9
+                                                  : AGX_SHADER_ISA_APPLE8;
+}
+
 /*
  * Return the standard sample positions, packed into a 32-bit word with fixed
  * point nibbles for each x/y component of the (at most 4) samples. This is
