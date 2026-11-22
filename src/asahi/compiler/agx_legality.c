@@ -744,6 +744,10 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_POP_EXEC:
       return I->nest == 1;
 
+   case AGX_OPCODE_PACK_HALF:
+      return reg32(I->dest[0]) && reg32(I->src[0]) && plain(I->src[0]) &&
+             reg32(I->src[1]) && plain(I->src[1]);
+
    case AGX_OPCODE_PACK_FORMAT:
       for (unsigned s = 0; s < 3; ++s) {
          if (!reg32(I->src[s]) || !plain(I->src[s]))
@@ -908,6 +912,11 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
 
    case AGX_OPCODE_INTERPOLATION_POSITION:
       c[D].clobber = true;
+      break;
+
+   case AGX_OPCODE_PACK_HALF:
+      /* The first conversion writes the destination before the second reads */
+      c[0].early_clobber = true;
       break;
 
    case AGX_OPCODE_FFMA:

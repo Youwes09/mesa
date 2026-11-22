@@ -490,6 +490,37 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
       bytes, 6);
 }
 
+/* Two FP32 to FP16 conversions into the low and high destination halves */
+static void
+pack_half_pair(const agx_instr *I, struct a9_packed *p)
+{
+   unsigned d = gpr(I, I->dest[0]);
+   uint8_t bytes[12];
+
+   for (unsigned h = 0; h < 2; ++h) {
+      agx_index src = I->src[h];
+      pack_assert(I, !src.abs && !src.neg);
+
+      unsigned s = gpr(I, src);
+      pack_assert(I, s != d);
+
+      uint8_t *part = bytes + 6 * h;
+      memcpy(part, (const uint8_t[]){0x01, 0x01, 0x1c, 0x81, 0x00, 0x02}, 6);
+      set_bits(part, 4, 4, d & 15);
+      set_bits(part, 22, 2, (d >> 4) & 3);
+      set_bits(part, 44, 1, d >> 6);
+      set_bits(part, 9, 6, s & 63);
+      set_bits(part, 40, 1, s >> 6);
+      set_bits(part, 34, 1, h);
+
+      bool same = agx_is_equiv(I->src[0], I->src[1]);
+      pack_compact_retain(part, retain(src) || (h == 0 && same), false);
+   }
+
+   a9_init(p, AGX_APPLE9_ENC_PACK_HALF_2X16, bytes, 12);
+   p->dependency_length = 0;
+}
+
 /* FP16 add, multiply and FMA on low halves, leaving the high half undefined */
 static void
 pack_half_alu(const agx_instr *I, struct a9_packed *p)
@@ -2656,6 +2687,10 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    case AGX_OPCODE_F32_TO_F16:
    case AGX_OPCODE_F16_TO_F32:
       pack_float_convert(I, p);
+      return;
+
+   case AGX_OPCODE_PACK_HALF:
+      pack_half_pair(I, p);
       return;
 
    case AGX_OPCODE_HADD:

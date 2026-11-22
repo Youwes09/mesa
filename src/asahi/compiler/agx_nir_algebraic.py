@@ -29,7 +29,7 @@ for s in [8, 16, 32, 64]:
 
 lower_pack = [
     (('pack_half_2x16_split', a, b),
-     ('pack_32_2x16_split', ('f2f16', a), ('f2f16', b))),
+     ('pack_32_2x16_split', ('f2f16', a), ('f2f16', b)), apple8),
 
     # We don't have 8-bit ALU, so we need to lower this. But if we lower it like
     # this, we can at least coalesce the pack_32_2x16_split and only pay the

@@ -1430,6 +1430,19 @@ TEST_F(Apple9Pack, HalfConversionsOfRegisters)
    check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03});
 }
 
+/* PACK_HALF_2X16 narrows into both halves, the high one with bit 34 */
+TEST_F(Apple9Pack, PackHalf)
+{
+   agx_instr *I = agx_pack_half_to(b, r(4), k(r(70)), r(5));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_HALF_2X16);
+   check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03, 0x41, 0x8b, 0x14, 0x81, 0x04,
+             0x02});
+
+   I = agx_pack_half_to(b, r(4), r(3), k(r(3)));
+   check(I, {0x41, 0x87, 0x14, 0x81, 0x00, 0x02, 0x41, 0x07, 0x1c, 0x81, 0x04,
+             0x02});
+}
+
 /* Private memory at a word index in a register */
 TEST_F(Apple9Pack, IndexedPrivateMemory)
 {

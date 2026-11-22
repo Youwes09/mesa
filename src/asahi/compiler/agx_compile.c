@@ -83,7 +83,6 @@ const nir_shader_compiler_options agx_nir_options_apple9 = {
    .lower_fminmax_signed_zero = true,
    .lower_fdph = true,
    .lower_ffract = true,
-   .lower_pack_half_2x16 = true,
    .lower_pack_unorm_2x16 = true,
    .lower_pack_snorm_2x16 = true,
    .lower_pack_unorm_4x8 = true,
@@ -2154,6 +2153,15 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
    case nir_op_f2f32:
       assert(src_sz == 16 && "doubles are lowered");
       return agx_f16_to_f32_to(b, dst, s0);
+
+   case nir_op_pack_half_2x16:
+      return agx_pack_half_to(
+         b, dst,
+         agx_extract_nir_src(b, instr->src[0].src, instr->src[0].swizzle[0]),
+         agx_extract_nir_src(b, instr->src[0].src, instr->src[0].swizzle[1]));
+
+   case nir_op_pack_half_2x16_split:
+      return agx_pack_half_to(b, dst, s0, s1);
 
    case nir_op_u2u8:
    case nir_op_u2u16:
