@@ -154,6 +154,13 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
 
    assert(nr_samples_shaded <= 1 && "todo: Apple9 sample loop");
 
+   /* No sample is killed yet */
+   if (fragment) {
+      uint8_t bytes[2];
+      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FOUT_KILLED_SAMPLES / 2, 0);
+      append(&d, bytes, sizeof(bytes));
+   }
+
    if (fragment && domain) {
       append_tile(&d, true, domain);
 

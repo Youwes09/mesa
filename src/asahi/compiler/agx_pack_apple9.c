@@ -1623,9 +1623,9 @@ pack_mov_imm(const agx_instr *I, struct a9_packed *p)
    unsigned dst = gpr(I, I->dest[0]);
    pack_assert(I, I->dest[0].size == AGX_SIZE_32 && I->imm <= UINT32_MAX);
 
-   if (I->imm <= 0x7f && dst < 16) {
-      const uint8_t bytes[2] = {(dst << 4) | 0x0c, I->imm};
-      a9_init(p, AGX_APPLE9_ENC_MOV_IMM_COMPACT, bytes, 2);
+   uint8_t compact[2];
+   if (agx_apple9_encode_mov_imm7(compact, dst, I->imm)) {
+      a9_init(p, AGX_APPLE9_ENC_MOV_IMM_COMPACT, compact, 2);
       return;
    }
 

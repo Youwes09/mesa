@@ -4977,6 +4977,11 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          roots * 2 + (graphics_abi ? ALIGN_POT(key->reserved_preamble, 2) : 0);
 
       NIR_PASS(_, nir, agx_nir_lower_apple9_math);
+
+      if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+         NIR_PASS(_, nir, agx_nir_lower_apple9_coverage,
+                  key->no_stop || key->secondary);
+      }
    }
 
    NIR_PASS(_, nir, nir_lower_frag_coord_to_pixel_coord);

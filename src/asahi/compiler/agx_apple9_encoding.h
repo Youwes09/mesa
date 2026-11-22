@@ -126,6 +126,17 @@ agx_apple9_encode_tile(uint8_t out[6], bool begin, unsigned control)
    memcpy(out, bytes, sizeof(bytes));
 }
 
+/* mov r0..r15 = 0..0x7f */
+static inline bool
+agx_apple9_encode_mov_imm7(uint8_t out[2], unsigned dst, unsigned value)
+{
+   if (dst >= 16 || value > 0x7f)
+      return false;
+   out[0] = (uint8_t)((dst << 4) | 0x0c);
+   out[1] = (uint8_t)value;
+   return true;
+}
+
 static inline void
 agx_apple9_encode_halt(uint8_t out[4])
 {

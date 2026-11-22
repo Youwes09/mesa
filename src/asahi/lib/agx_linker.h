@@ -26,9 +26,12 @@
  * Registers. Values cross parts in the GPRs of agx_abi.h, exactly as on
  * Apple8: attributes, vertex and instance IDs from the vertex prolog (where
  * Apple8 hardware preloads the IDs, the Apple9 prolog reads them), colours,
- * depth, stencil and sample masks into the fragment epilog. A part that does
- * not stop waits for its outstanding memory and export operations at its
- * end, so the next part finds them complete.
+ * depth, stencil and sample masks into the fragment epilog. Fragment parts
+ * also pass the samples killed so far (AGX_ABI_FOUT_KILLED_SAMPLES, cleared by
+ * the linker at the start), since Apple9 does not mask tile stores by them
+ * (agx_nir_lower_apple9_coverage). A part that does not stop waits for its
+ * outstanding memory and export operations at its end, so the next part
+ * finds them complete.
  *
  * Uniforms. Apple9 preloads no uniforms. The launch writes the six graphics
  * roots into the first 12 uniform words (agx_apple9_profile.h); the driver's
