@@ -103,6 +103,47 @@ append_halt(struct util_dynarray *d)
    append(d, bytes, sizeof(bytes));
 }
 
+/* Sample loop: r1 is the sample bit, r2 a temporary, r0 the killed samples */
+static_assert(AGX_ABI_FIN_SAMPLE_MASK == 2, "r1 known");
+static_assert(AGX_ABI_FOUT_KILLED_SAMPLES == 0, "r0 known");
+
+/* clang-format off */
+static const uint8_t apple9_sample_loop_header[] = {
+   /* mov r2 = #0xffff */
+   0x2c, 0xff, 0x02, 0x00, 0x1e, 0x0c, 0x07, 0x00,
+
+   /* and r2 = r1, r2 */
+   0x2b, 0x83, 0x17, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+   /* pcmp.cond=ult r2, #end: bits 1-6 of the end in byte 3 */
+   0x0a, 0x05, 0x22, 0x80, 0x05, 0x02,
+
+   /* push_exec.inv p0 */
+   0x0f, 0x05, 0x54, 0x21,
+
+   /* pcmp.bank=1.cond=ieq r0, r0 */
+   0x2a, 0x01, 0x23, 0x01, 0x06, 0x00, 0x07, 0x00, 0x00, 0x00,
+
+   /* break.bank=1.scopes=3 */
+   0x8f, 0x05, 0x54, 0x03, 0x00, 0x01,
+
+   /* pop_exec */
+   0x0f, 0x06, 0x04, 0x01, 0x00, 0x00,
+};
+
+#define APPLE9_SAMPLE_LOOP_END_PATCH_OFFS (18 + 3)
+
+/* ishl r1 = r1, #0x1 */
+static const uint8_t apple9_sample_loop_shift[] = {
+   0x27, 0x00, 0x54, 0x02, 0x02, 0x04, 0x04, 0x00, 0xf0, 0x11, 0x01, 0x00,
+};
+
+/* pop_loop */
+static const uint8_t apple9_pop_loop[] = {
+   0x0f, 0x06, 0x04, 0x02, 0x00, 0x00,
+};
+/* clang-format on */
+
 /* See agx_linker.h */
 void
 agx_apple9_link(struct agx_apple9_program *p, bool fragment,
@@ -152,8 +193,6 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
       zs_release |= info->apple9_zs_release;
    }
 
-   assert(nr_samples_shaded <= 1 && "todo: Apple9 sample loop");
-
    /* No sample is killed yet */
    if (fragment) {
       uint8_t bytes[2];
@@ -168,9 +207,41 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
          append_tile(&d, true, 0x800 | (writes ? 0xc : 0x8));
    }
 
-   for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
+   /* The prolog runs per pixel, the main shader and epilog per sample */
+   if (prolog)
+      append(&d, prolog->binary, prolog->info.main_size);
+
+   size_t loop_start = 0;
+   if (nr_samples_shaded > 1) {
+      uint8_t bytes[2];
+      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
+      append(&d, bytes, sizeof(bytes));
+
+      loop_start = d.size;
+      uint8_t header[sizeof(apple9_sample_loop_header)];
+      memcpy(header, apple9_sample_loop_header, sizeof(header));
+      header[APPLE9_SAMPLE_LOOP_END_PATCH_OFFS] |= 1u << nr_samples_shaded;
+      append(&d, header, sizeof(header));
+   } else if (nr_samples_shaded) {
+      uint8_t bytes[2];
+      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
+      append(&d, bytes, sizeof(bytes));
+   }
+
+   for (unsigned i = 1; i < ARRAY_SIZE(parts); ++i) {
       if (parts[i])
          append(&d, parts[i]->binary, parts[i]->info.main_size);
+   }
+
+   if (nr_samples_shaded > 1) {
+      append(&d, apple9_sample_loop_shift, sizeof(apple9_sample_loop_shift));
+
+      uint8_t jmp[10];
+      ASSERTED bool ok =
+         agx_apple9_encode_branch(jmp, true, (int64_t)loop_start - d.size);
+      assert(ok);
+      append(&d, jmp, sizeof(jmp));
+      append(&d, apple9_pop_loop, sizeof(apple9_pop_loop));
    }
 
    /* Commit the vertex outputs to their varying slots */
