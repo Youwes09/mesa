@@ -476,6 +476,9 @@ struct agx_shader_key {
     */
    bool secondary;
 
+   /* Apple9: give a compute shader the fixed graphics argument layout */
+   bool apple9_graphics_abi;
+
    union {
       struct agx_fs_shader_key fs;
    };

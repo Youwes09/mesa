@@ -49,9 +49,10 @@ bool agx_nir_lower_apple9_denorm_preserve(struct nir_shader *shader);
 bool agx_nir_lower_apple9_subgroup_denorms(struct nir_shader *shader);
 bool agx_nir_legalize_apple9_memory(struct nir_shader *nir);
 bool agx_nir_legalize_apple9_alu(struct nir_shader *nir);
-unsigned
-agx_nir_lower_apple9_compute_abi(struct nir_shader *nir,
-                                 struct agx_apple9_compute_profile *profile);
+unsigned agx_nir_lower_apple9_abi(struct nir_shader *nir, bool graphics,
+                                  struct agx_apple9_compute_profile *profile);
+bool agx_nir_preload_apple9_push(struct nir_shader *nir, unsigned first,
+                                 unsigned count);
 unsigned
 agx_apple9_shared_root(const struct agx_apple9_compute_profile *profile);
 struct nir_def *agx_nir_sincos_apple9(struct nir_builder *b, struct nir_def *x,

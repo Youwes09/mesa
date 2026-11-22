@@ -8,21 +8,8 @@
 #include "agx_compile.h"
 #include "agx_nir.h"
 
-/*
- * Apple9 compute shaders get their arguments as root words: 64-bit pointers
- * that the launch program writes to the start of the uniform file. There are
- * no other preloaded uniforms.
- *
- * With the direct ABI, the first root points to the three workgroup counts
- * and root 1 + i is the address of resource i, in the order of the compute
- * profile. With more than 18 resources, six roots point to texture, sampler
- * and buffer tables, the workgroup counts and threadgroup memory instead, and
- * buffer addresses are read from the buffer table.
- *
- * The profile maps resources to API bindings: UBO and SSBO bindings, and a
- * threadgroup memory resource whose root is a tag selecting threadgroup
- * memory. Kernel inputs, which Apple8 preloads as uniforms, are passed in
- * memory as UBO 0, aligned to 8 bytes.
+/* Arguments are 64-bit roots at the start of the uniform file, one per resource
+ * for direct compute, else six table roots. Push words follow the roots.
  */
 
 #define DESCRIPTOR_TABLE_BUFFERS_ROOT 2
@@ -59,6 +46,19 @@ lower_kernel_input(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
                                 nir_imm_int(b, 0), nir_imm_int(b, offset),
                                 .align_mul = 8, .align_offset = offset % 8,
                                 .range_base = offset, .range = size));
+   return true;
+}
+
+/* Push words follow the roots in the uniform file */
+static bool
+lower_push_word(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_load_preamble)
+      return false;
+
+   assert(nir_intrinsic_preamble_class(intr) == nir_preamble_class_general);
+   nir_intrinsic_set_base(
+      intr, nir_intrinsic_base(intr) + 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS);
    return true;
 }
 
@@ -132,9 +132,7 @@ gather_resource(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return false;
 }
 
-/* Read-only resources first, then by kind and binding, as the Apple9
- * compiler orders them.
- */
+/* Read-only resources first, then by kind and binding */
 static int
 compare_resources(const void *a_, const void *b_)
 {
@@ -212,20 +210,14 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned align_mul = atomic ? 4 : nir_intrinsic_align_mul(intr);
    unsigned align_offset = atomic ? 0 : nir_intrinsic_align_offset(intr);
 
-   /* Memory instructions scale a 32-bit index by the element size. The byte
-    * offset of an aligned access is a multiple of it, so the index is exact.
-    */
+   /* The index is scaled by the element size, which divides the offset */
    unsigned bit_size = intr->intrinsic == nir_intrinsic_store_ssbo
                           ? nir_src_bit_size(intr->src[0])
                           : intr->def.bit_size;
    unsigned shift = util_logbase2(
       MIN3(bit_size / 8, 4, nir_combined_align(align_mul, align_offset)));
 
-   /* A constant added to the byte offset goes into the instruction's byte
-    * offset, so accesses with different constants share their index. That is
-    * only exact if adding it to the 32-bit offset does not wrap, and the
-    * remaining offset is still a multiple of the element size.
-    */
+   /* Fold a constant into the byte offset if it neither wraps nor misaligns */
    uint32_t k = 0;
    if (!atomic) {
       nir_scalar s = nir_scalar_resolved(offset, 0);
@@ -304,28 +296,24 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
-/*
- * Lowers the compute ABI and fills the profile the driver launches the shader
- * with. Returns the first uniform word after the roots, where preamble
- * results may start.
- */
+/* Returns the uniform word after the roots, where push words may start */
 unsigned
-agx_nir_lower_apple9_compute_abi(nir_shader *nir,
-                                 struct agx_apple9_compute_profile *profile)
+agx_nir_lower_apple9_abi(nir_shader *nir, bool graphics,
+                         struct agx_apple9_compute_profile *profile)
 {
    struct abi abi = {.profile = profile};
    /* Precompiled profiles are copied byte for byte, padding included */
    memset(profile, 0, sizeof(*profile));
-   profile->abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
+   profile->abi = graphics ? AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES
+                           : AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
 
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_kernel_input,
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
+            graphics ? lower_push_word : lower_kernel_input,
             nir_metadata_control_flow, NULL);
 
    nir_shader_intrinsics_pass(nir, gather_resource, nir_metadata_all, &abi);
 
-   /* Textures, samplers and PBE images are in tables pointed to by the first
-    * roots
-    */
+   /* Textures, samplers and PBE images are in tables pointed to by roots */
    nir_foreach_function_impl(impl, nir) {
       nir_foreach_block(block, impl) {
          nir_foreach_instr(instr, block) {
@@ -366,9 +354,11 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
          profile->resource_write_mask |= BITFIELD_BIT(i);
    }
 
-   profile->variable_local_size = nir->info.workgroup_size_variable;
-   for (unsigned i = 0; i < 3; ++i)
-      profile->local_size[i] = nir->info.workgroup_size[i];
+   if (mesa_shader_stage_is_compute(nir->info.stage)) {
+      profile->variable_local_size = nir->info.workgroup_size_variable;
+      for (unsigned i = 0; i < 3; ++i)
+         profile->local_size[i] = nir->info.workgroup_size[i];
+   }
 
    abi.ranges = _mesa_pointer_hash_table_create(NULL);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_access,
@@ -377,6 +367,122 @@ agx_nir_lower_apple9_compute_abi(nir_shader *nir,
 
    return tables(profile) ? AGX_APPLE9_GRAPHICS_ROOT_WORDS
                           : agx_apple9_compute_preamble_base(abi.count);
+}
+
+struct preload {
+   /* 32-bit push words read by the shader */
+   BITSET_DECLARE(words, AGX_APPLE9_MAX_PUSH_WORDS);
+   unsigned first, count;
+   nir_def *values[AGX_APPLE9_MAX_PUSH_WORDS];
+};
+
+static bool
+is_push_word(nir_intrinsic_instr *intr, struct preload *p)
+{
+   if (intr->intrinsic != nir_intrinsic_load_preamble ||
+       nir_intrinsic_preamble_class(intr) != nir_preamble_class_general)
+      return false;
+
+   unsigned base = nir_intrinsic_base(intr);
+   return base >= p->first && base < p->first + p->count;
+}
+
+static bool
+gather_push_words(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   struct preload *p = data;
+   if (!is_push_word(intr, p))
+      return false;
+
+   unsigned start = nir_intrinsic_base(intr) - p->first;
+   unsigned halves = intr->def.num_components * intr->def.bit_size / 16;
+   assert(start + halves <= p->count && "push words are within the range");
+
+   for (unsigned h = start; h < start + halves; ++h)
+      BITSET_SET(p->words, h / 2);
+
+   return false;
+}
+
+/* In the preamble, push words are the values it loaded */
+static bool
+rewrite_push_words(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   struct preload *p = data;
+   if (!is_push_word(intr, p))
+      return false;
+
+   b->cursor = nir_before_instr(&intr->instr);
+   unsigned start = nir_intrinsic_base(intr) - p->first;
+   unsigned halves = intr->def.num_components * intr->def.bit_size / 16;
+   nir_def *words[AGX_APPLE9_MAX_PUSH_WORDS / 4];
+   unsigned first = start / 2, n = DIV_ROUND_UP(start + halves, 2) - first;
+
+   assert(n <= ARRAY_SIZE(words));
+   for (unsigned i = 0; i < n; ++i)
+      words[i] = p->values[first + i];
+
+   nir_def *v = nir_extract_bits(b, words, n, (start & 1) * 16,
+                                 intr->def.num_components, intr->def.bit_size);
+   nir_def_replace(&intr->def, v);
+   return true;
+}
+
+/* Load the push words read at the start of the formed preamble */
+bool
+agx_nir_preload_apple9_push(nir_shader *nir, unsigned first, unsigned count)
+{
+   assert(first % 2 == 0 && count % 2 == 0);
+   assert(count / 2 <= AGX_APPLE9_MAX_PUSH_WORDS);
+
+   struct preload *p = rzalloc(NULL, struct preload);
+   p->first = first;
+   p->count = count;
+
+   nir_shader_intrinsics_pass(nir, gather_push_words, nir_metadata_all, p);
+
+   if (BITSET_IS_EMPTY(p->words)) {
+      ralloc_free(p);
+      return false;
+   }
+
+   nir_function_impl *main = nir_shader_get_entrypoint(nir);
+   if (!main->preamble) {
+      nir_function *func = nir_function_create(nir, "@preamble");
+      func->is_preamble = true;
+      nir_function_impl_create(func);
+      main->preamble = func;
+   }
+
+   nir_function_impl *preamble = main->preamble->impl;
+   nir_builder b = nir_builder_at(nir_before_impl(preamble));
+   nir_def *push =
+      nir_load_preamble(&b, 1, 64, .base = 4 * AGX_APPLE9_PUSH_ROOT);
+
+   /* Load runs of words with vector loads */
+   unsigned w;
+   BITSET_FOREACH_SET(w, p->words, AGX_APPLE9_MAX_PUSH_WORDS) {
+      if (p->values[w])
+         continue;
+
+      unsigned n = 1;
+      while (n < 4 && BITSET_TEST(p->words, w + n))
+         ++n;
+
+      nir_def *v = nir_load_global_constant(
+         &b, n, 32, nir_iadd_imm(&b, push, w * 4), .align_mul = 4,
+         .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE);
+
+      for (unsigned i = 0; i < n; ++i) {
+         p->values[w + i] = nir_channel(&b, v, i);
+         nir_store_preamble(&b, p->values[w + i], .base = first + 2 * (w + i));
+      }
+   }
+
+   nir_function_intrinsics_pass(preamble, rewrite_push_words,
+                                nir_metadata_control_flow, p);
+   ralloc_free(p);
+   return true;
 }
 
 /* The root naming threadgroup memory */

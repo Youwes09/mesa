@@ -4807,9 +4807,6 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    /* The shader must have been prepared for the ISA it is compiled for */
    assert(apple9 == (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9));
 
-   /* Apple9 graphics stages are not compiled here yet */
-   assert(!apple9 || mesa_shader_stage_is_compute(nir->info.stage));
-
    agx_compiler_debug = agx_get_compiler_debug();
    struct agx_shader_info *info = &out->info;
 
@@ -4827,13 +4824,17 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    NIR_PASS(_, nir, agx_nir_lower_printf_buffer);
 
-   /* Apple9 compute shaders get root pointers instead of preloaded uniforms.
-    * Preamble results follow the roots.
-    */
+   /* Apple9 uniforms are the roots, then push words, then preamble results */
    unsigned reserved_preamble = key->reserved_preamble;
+   bool graphics_abi =
+      apple9 && (!mesa_shader_stage_is_compute(nir->info.stage) ||
+                 key->apple9_graphics_abi);
    if (apple9) {
+      unsigned roots =
+         agx_nir_lower_apple9_abi(nir, graphics_abi, &info->apple9_compute);
+
       reserved_preamble =
-         agx_nir_lower_apple9_compute_abi(nir, &info->apple9_compute) * 2;
+         roots * 2 + (graphics_abi ? ALIGN_POT(key->reserved_preamble, 2) : 0);
 
       NIR_PASS(_, nir, agx_nir_lower_apple9_math);
    }
@@ -4903,6 +4904,17 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                                                  : &info->texture_state_count,
       (key->secondary || !key->promote_textures) ? NULL
                                                  : &info->sampler_state_count);
+
+   /* Load the push words into the uniforms they are read from */
+   unsigned push_halves = key->secondary ? 2 * AGX_APPLE9_MAX_PUSH_WORDS
+                                         : ALIGN_POT(key->reserved_preamble, 2);
+
+   if (graphics_abi &&
+       agx_nir_preload_apple9_push(nir, 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS,
+                                   push_halves)) {
+      NIR_PASS(_, nir, agx_nir_lower_address);
+      NIR_PASS(_, nir, nir_opt_dce);
+   }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       info->varyings.fs.nr_cf = key->fs.cf_base;

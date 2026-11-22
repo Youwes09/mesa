@@ -34,6 +34,12 @@ enum agx_apple9_compute_abi {
  * after that padded window and extend through the last uniform word. */
 #define AGX_APPLE9_GRAPHICS_ROOT_WORDS 12
 
+/* Root of the push words, after the five roots of descriptor-table compute */
+#define AGX_APPLE9_PUSH_ROOT 5
+
+/* Push words a shader may read, in 32-bit words */
+#define AGX_APPLE9_MAX_PUSH_WORDS 128
+
 /* Compiler/driver policy bounds on preamble code, not hardware limits: the
  * launch record branches to the preamble and carries no size field, and
  * 8-16 KiB graphics and compute preambles ran correctly on G16. Compute
