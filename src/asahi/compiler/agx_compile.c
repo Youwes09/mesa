@@ -965,8 +965,13 @@ agx_emit_load_preamble(agx_builder *b, agx_index dst,
    unsigned base = nir_intrinsic_base(instr);
    unsigned stride = agx_size_align_16(dst.size);
 
-   for (unsigned i = 0; i < dim; ++i)
+   for (unsigned i = 0; i < dim; ++i) {
       srcs[i] = agx_uniform(base + i * stride, dst.size);
+
+      /* Few Apple9 operands take uniforms. Copy propagation refolds them */
+      if (agx_is_apple9(b->shader) && dim > 1)
+         srcs[i] = agx_mov(b, srcs[i]);
+   }
 
    return agx_emit_collect_to(b, dst, dim, srcs);
 }
