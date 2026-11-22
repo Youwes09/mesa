@@ -8,6 +8,7 @@
 
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
+#include "agx_apple9_storage.h"
 #include "agx_compile.h"
 #include "agx_compile_apple9.h"
 #include "agx_compiler.h"
@@ -233,6 +234,10 @@ enum apple9_info {
    APPLE9_INFO_LAYERS = 2,
    APPLE9_INFO_LEVELS = 3,
    APPLE9_INFO_SAMPLES = 4,
+
+   /* Texel buffers by index: RGB32 views, and swizzle at 3 bits per channel */
+   APPLE9_INFO_RGB32 = 5,
+   APPLE9_INFO_BUFFER_SWIZZLE = 6,
 };
 
 /* Size, level and sample queries, all zero for a null view */
@@ -394,9 +399,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
    if (nir_tex_instr_is_query(tex) && tex->op != nir_texop_lod)
       return false;
 
-   assert(tex->sampler_dim != GLSL_SAMPLER_DIM_BUF &&
-          "texel buffers are lowered by the driver");
-   assert(!tex->is_sparse && "sparse residency is lowered by the driver");
+   assert(tex->sampler_dim != GLSL_SAMPLER_DIM_BUF && !tex->is_sparse &&
+          "lowered by agx_nir_lower_texture_apple9");
 
    /* Don't lower twice */
    if (nir_tex_instr_src_index(tex, nir_tex_src_backend1) >= 0)
@@ -444,7 +448,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
       }
    }
 
-   if (fetch)
+   if (fetch && !(tex->backend_flags & (AGX_APPLE9_TEXTURE_FETCH_BOUNDED |
+                                        AGX_TEXTURE_FLAG_NO_CLAMP)))
       coord = apple9_bound_fetch(b, tex, coord, &lod, layer, ms);
 
    /* Native min LOD needs a bias, so implicit samples become zero-biased */
@@ -1271,10 +1276,90 @@ apple9_lower_seamful_cube(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    return true;
 }
 
+/* A texel of a buffer fetched by texture index, from its linear 2D view */
+static nir_def *
+apple9_fetch_buffer(nir_builder *b, const nir_tex_instr *buf, nir_def *index)
+{
+   nir_tex_instr *tex = nir_tex_instr_create(b->shader, 2);
+   tex->op = nir_texop_txf;
+   tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
+   tex->texture_index = buf->texture_index;
+   tex->dest_type = buf->dest_type;
+   tex->coord_components = 2;
+   tex->backend_flags = AGX_APPLE9_TEXTURE_FETCH_BOUNDED;
+   tex->src[0] = nir_tex_src_for_ssa(
+      nir_tex_src_coord,
+      nir_vec2(b, nir_umod_imm(b, index, AGX_TEXTURE_BUFFER_WIDTH),
+               nir_udiv_imm(b, index, AGX_TEXTURE_BUFFER_WIDTH)));
+   tex->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(b, 0));
+   nir_def_init(&tex->instr, &tex->def, 4, 32);
+   nir_builder_instr_insert(b, &tex->instr);
+   return &tex->def;
+}
+
+/* Texel buffers by index; RGB32 is fetched as three R32 words and swizzled */
+static bool
+apple9_lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex,
+                                UNUSED void *data)
+{
+   if (tex->sampler_dim != GLSL_SAMPLER_DIM_BUF || tex->op != nir_texop_txf ||
+       nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0)
+      return false;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *index = nir_u2u32(b, nir_get_tex_src(tex, nir_tex_src_coord));
+   nir_def *size = apple9_texture_info(b, tex, APPLE9_INFO_WIDTH);
+   nir_push_if(b, nir_ult(b, index, size));
+   nir_push_if(
+      b, nir_ine_imm(b, apple9_texture_info(b, tex, APPLE9_INFO_RGB32), 0));
+
+   nir_def *components[4];
+   nir_def *scalar_index = nir_imul_imm(b, index, 3);
+   for (unsigned c = 0; c < 3; ++c) {
+      components[c] = nir_channel(
+         b, apple9_fetch_buffer(b, tex, nir_iadd_imm(b, scalar_index, c)), 0);
+   }
+
+   bool floating = nir_alu_type_get_base_type(tex->dest_type) == nir_type_float;
+   components[3] = floating ? nir_imm_float(b, 1) : nir_imm_int(b, 1);
+
+   nir_def *swizzle = apple9_texture_info(b, tex, APPLE9_INFO_BUFFER_SWIZZLE);
+   nir_def *rgba[4];
+   for (unsigned c = 0; c < 4; ++c) {
+      nir_def *channel = nir_iand_imm(b, nir_ushr_imm(b, swizzle, c * 3), 7);
+      rgba[c] = nir_imm_int(b, 0);
+      for (unsigned j = 0; j < 4; ++j)
+         rgba[c] =
+            nir_bcsel(b, nir_ieq_imm(b, channel, j), components[j], rgba[c]);
+      rgba[c] = nir_bcsel(b, nir_ieq_imm(b, channel, PIPE_SWIZZLE_1),
+                          components[3], rgba[c]);
+   }
+
+   nir_def *rgb32 = nir_vec(b, rgba, 4);
+   nir_push_else(b, NULL);
+   nir_def *native = apple9_fetch_buffer(b, tex, index);
+   nir_pop_if(b, NULL);
+   nir_def *texel = nir_if_phi(b, rgb32, native);
+   nir_push_else(b, NULL);
+   nir_def *zero = nir_imm_ivec4(b, 0, 0, 0, 0);
+   nir_pop_if(b, NULL);
+
+   nir_def *result = nir_if_phi(b, texel, zero);
+   nir_def_replace(&tex->def,
+                   nir_trim_vector(b, result, tex->def.num_components));
+   return true;
+}
+
 static bool
 agx_nir_lower_texture_apple9(nir_shader *s)
 {
    bool progress = false;
+
+   /* Residency first: it reads the buffer and image dimensions */
+   NIR_PASS(progress, s, agx_nir_lower_apple9_sparse_residency);
+   NIR_PASS(progress, s, agx_nir_lower_apple9_texel_buffers);
+   NIR_PASS(progress, s, nir_shader_tex_pass, apple9_lower_texel_buffer_index,
+            nir_metadata_none, NULL);
 
    NIR_PASS(progress, s, nir_shader_tex_pass, apple9_flag_offsets,
             nir_metadata_all, NULL);

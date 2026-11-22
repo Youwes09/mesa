@@ -139,6 +139,7 @@ struct nir_def;
 
 bool agx_nir_lower_apple9_storage(struct nir_shader *nir);
 bool agx_nir_lower_apple9_sparse_residency(struct nir_shader *nir);
+bool agx_nir_lower_apple9_texel_buffers(struct nir_shader *nir);
 
 /* Run after agx_preprocess_nir, once storage images are in device memory */
 bool agx_nir_lower_apple9_image_barriers(struct nir_shader *nir);

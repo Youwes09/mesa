@@ -1482,6 +1482,15 @@ agx_nir_lower_apple9_image_barriers(nir_shader *nir)
    return nir_progress(true, impl, nir_metadata_control_flow);
 }
 
+/* Texel buffers by handle */
+bool
+agx_nir_lower_apple9_texel_buffers(nir_shader *nir)
+{
+   /* Bounds and RGB32 checks add control flow */
+   return nir_shader_tex_pass(nir, apple9_lower_texel_buffer, nir_metadata_none,
+                              NULL);
+}
+
 /* Storage, texel buffers and sparse residency, before agx_nir_lower_images */
 bool
 agx_nir_lower_apple9_storage(nir_shader *nir)
@@ -1491,9 +1500,7 @@ agx_nir_lower_apple9_storage(nir_shader *nir)
    /* Buffer residency lookups add control flow */
    NIR_PASS(progress, nir, agx_nir_lower_apple9_sparse_residency);
 
-   /* Texel-buffer bounds and RGB32 checks add control flow. */
-   NIR_PASS(progress, nir, nir_shader_tex_pass, apple9_lower_texel_buffer,
-            nir_metadata_none, NULL);
+   NIR_PASS(progress, nir, agx_nir_lower_apple9_texel_buffers);
 
    struct set *texture_loads = _mesa_pointer_set_create(NULL);
    apple9_texture_route_loads(nir, texture_loads);
