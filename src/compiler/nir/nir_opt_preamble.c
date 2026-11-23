@@ -277,7 +277,8 @@ can_move_instr(nir_instr *instr, opt_preamble_ctx *ctx)
        * to txd, though, because it's a common case.
        */
       if (nir_tex_instr_has_implicit_derivative(tex) &&
-          tex->op != nir_texop_tex) {
+          (tex->op != nir_texop_tex ||
+           ctx->options->keep_implicit_lod_textures)) {
          return false;
       }
       return can_move_srcs(instr, ctx);

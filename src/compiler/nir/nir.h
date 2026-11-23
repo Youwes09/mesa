@@ -7265,6 +7265,9 @@ typedef struct nir_opt_preamble_options {
    /* True if only straight-line code may move to the preamble */
    bool straight_line;
 
+   /* Keep implicit-LOD textures in the shader instead of zeroing gradients */
+   bool keep_implicit_lod_textures;
+
    /* size/align/class for load/store_preamble.
     *
     * Defs with class "general" will always be allocated as general. Other
