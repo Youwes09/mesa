@@ -12,61 +12,8 @@
 #include "nir_lower_blend.h"
 #include "util/macros.h"
 
-/*
- * Apple9 programs are linked from the same parts as Apple8 programs: a vertex
- * prolog fetching attributes before the vertex shader, and a fragment prolog
- * and epilog around the fragment shader. Every part is compiled by
- * agx_compile_shader_nir, with no_stop and the part ABI below, and the linker
- * joins them:
- *
- *    [tile open]  prolog  [sample loop {]  main  epilog  [}]
- *    [varying commits]  [tile close]  stop
- *    prolog preamble  epilog preamble  main preamble  stop
- *
- * Registers. Values cross parts in the GPRs of agx_abi.h, exactly as on
- * Apple8: attributes, vertex and instance IDs from the vertex prolog (where
- * Apple8 hardware preloads the IDs, the Apple9 prolog reads them), colours,
- * depth, stencil and sample masks into the fragment epilog. Fragment parts
- * also pass the samples killed so far (AGX_ABI_FOUT_KILLED_SAMPLES), since
- * Apple9 does not mask tile stores by them (agx_nir_lower_apple9_coverage).
- * The fragment prolog starts them, or the linker clears them if there is no
- * prolog. The epilog reads them only if agx_fs_epilog_link_info::kills says a
- * part before it may kill samples. A part that does not stop waits for its
- * outstanding memory and export operations at its end, so the next part
- * finds them complete.
- *
- * Apple9 keeps the colours in the fixed AGX_ABI_FOUT_COLOUR registers too,
- * r4 and up, with the allocator steering other values away from them so the
- * main shader computes its colours in place. Colours are mostly 4-component
- * vectors (texture results, varyings), which the allocator aligns to four
- * registers, and r0-r3 carry the killed samples, the sample of a sample loop,
- * depth and stencil, so packing them lower costs copies instead of saving
- * registers. The registers r0-r3 leave unused do not change occupancy, which
- * is full up to 52 registers (agx_performance.c).
- *
- * Uniforms. Apple9 preloads no uniforms. The launch writes the six graphics
- * roots into the first 12 uniform words (agx_apple9_profile.h); the driver's
- * push words, which Apple8 preloads into the uniform registers it reserves,
- * are in memory at AGX_APPLE9_PUSH_ROOT. Each part's preamble loads the push
- * words that part reads into uniform 24 + w, so a word is at the same uniform
- * in every part; the main shader's preamble results follow the reserved
- * push words. The launch enters the preambles, which run one after another,
- * the main shader's last; its stop starts the program. Parts use no buffer
- * table entries, so the main shader's launch profile is the program's.
- *
- * Varyings. VARY_STORE names its varying slot in the instruction, and slots
- * of user varyings depend on the fragment shader's interpolation qualifiers.
- * A vertex shader part writes its outputs in the unlinked UVS layout to
- * export registers, which stay published until the end, and records them in
- * apple9_uvs_exports; the linker commits each to its linked slot,
- * apple9_uvs_slots (agx_apple9_uvs_slots), or the same slot if NULL.
- *
- * Tile. Fragment shaders hold the tile and raster order domains from before
- * their first access to after their last, which may be in different parts,
- * so parts record what they access (apple9_tile_*) and the linker opens the
- * domains at the start and closes them at the end. Depth/stencil tests open
- * and close their own domain around the test, except in a sample loop, where
- * the linker closes it after the loop.
+/* Apple9 program linked from no_stop parts that share the agx_abi.h registers
+ * and load push words at uniform 24 + w, see agx_apple9_link.
  */
 struct agx_apple9_program {
    /* Code from malloc, starting at offset 0 */

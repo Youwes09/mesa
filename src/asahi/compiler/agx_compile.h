@@ -221,11 +221,10 @@ struct agx_shader_info {
    /* How an Apple9 compute shader is launched */
    struct agx_apple9_compute_profile apple9_compute;
 
-   /* Apple9 vertex shader parts: one plus the export register holding each
-    * UVS word, by unlinked UVS index, or zero if the word is not written. The
-    * linker commits them to their varying slots.
+   /* Apple9: one plus the binary offset of the VARY_STORE of each unlinked
+    * UVS index, or zero if unwritten. The linker relocates the slots.
     */
-   uint8_t apple9_uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
+   uint32_t apple9_vary_stores[AGX_APPLE9_MAX_UVS_SLOTS];
 
    /* Apple9 fragment parts: the TILE_ACCESS control the linked program holds
     * throughout (0x600, 0x700 with images, 0xf00 with tile coordinates) or 0.

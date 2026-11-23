@@ -262,8 +262,23 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
    }
 
    for (unsigned i = 1; i < ARRAY_SIZE(parts); ++i) {
-      if (parts[i])
-         append(&d, parts[i]->binary, parts[i]->info.main_size);
+      if (!parts[i])
+         continue;
+
+      size_t base = d.size;
+      append(&d, parts[i]->binary, parts[i]->info.main_size);
+
+      /* Commit the vertex outputs to their linked varying slots */
+      for (unsigned s = 0; uvs_slots && s < AGX_APPLE9_MAX_UVS_SLOTS; ++s) {
+         uint32_t store = parts[i]->info.apple9_vary_stores[s];
+
+         if (store) {
+            assert(store - 1 + 8 <= parts[i]->info.main_size);
+            ASSERTED bool ok = agx_apple9_relocate_vary_store(
+               (uint8_t *)d.data + base + store - 1, uvs_slots[s]);
+            assert(ok && "encodable slot");
+         }
+      }
    }
 
    if (nr_samples_shaded > 1) {
@@ -275,19 +290,6 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
       assert(ok);
       append(&d, jmp, sizeof(jmp));
       append(&d, apple9_pop_loop, sizeof(apple9_pop_loop));
-   }
-
-   /* Commit the vertex outputs to their varying slots */
-   for (unsigned i = 0; i < AGX_APPLE9_MAX_UVS_SLOTS; ++i) {
-      unsigned word = main->info.apple9_uvs_exports[i];
-
-      if (word) {
-         uint8_t bytes[8];
-         ASSERTED bool ok = agx_apple9_encode_vary_store(
-            bytes, word - 1, uvs_slots ? uvs_slots[i] : i);
-         assert(ok && "encodable slot");
-         append(&d, bytes, sizeof(bytes));
-      }
    }
 
    if (fragment) {

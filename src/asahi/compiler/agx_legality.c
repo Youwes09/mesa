@@ -860,7 +860,8 @@ apple9_instr_is_legal(const agx_instr *I)
              I->zs >= 1 && I->zs <= 3;
 
    case AGX_OPCODE_ST_VARY:
-      return is_imm(I->src[0]) && I->src[0].value < 64 &&
+      return is_imm(I->src[0]) &&
+             I->src[0].value < AGX_APPLE9_MAX_UVS_SLOTS &&
              is_export(I->src[1]) && agx_channels(I->src[1]) == 1;
 
    case AGX_OPCODE_ITER:

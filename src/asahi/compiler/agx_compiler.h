@@ -1129,7 +1129,6 @@ instr_after_logical_end(const agx_instr *I)
    case AGX_OPCODE_END_LOOP:
    case AGX_OPCODE_STOP:
    case AGX_OPCODE_EXPORT:
-   case AGX_OPCODE_PUBLISH:
       return true;
    default:
       return false;

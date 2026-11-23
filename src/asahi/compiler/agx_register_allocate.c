@@ -270,6 +270,10 @@ struct ra_ctx {
    /* GPRs that preloaded values arrive in */
    BITSET_WORD *preload_regs;
 
+   /* Export values a VARY_STORE commits, and the next export register to try */
+   BITSET_WORD *vary_exports;
+   unsigned *next_vary_export;
+
    /* For affinities */
    agx_instr **src_to_collect;
    struct phi_web_node *phi_web;
@@ -1822,19 +1826,16 @@ try_coalesce_with(struct ra_ctx *rctx, agx_index ssa, unsigned count,
    return true;
 }
 
-/*
- * Export values are written only by the instruction defining them and never
- * moved, so they are placed once, in the window their readers can name. The
- * readers' limits are on the defining instruction (agx_set_reg_constraints).
- * Export values live briefly, so the window has room unless the shader keeps
- * more of them live than the file holds, which instruction selection avoids.
+/* Export values never move, so place them once where their readers can name.
+ * Varying commits rotate through the file, reusing a register only last.
  */
 static unsigned
 pick_export_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
 {
    assert(I->op != AGX_OPCODE_PHI && "export values have no phis");
 
-   unsigned count = rctx->ncomps[I->dest[d].value];
+   unsigned ssa = I->dest[d].value;
+   unsigned count = rctx->ncomps[ssa];
    struct agx_reg_constraint c = {0, UINT16_MAX, 1};
    if (I->reg_constraints)
       c = I->reg_constraints[d];
@@ -1842,10 +1843,21 @@ pick_export_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
    unsigned first, last;
    if (constraint_window(c, count, 0, rctx->bound[RA_EXPORT], &first, &last)) {
       unsigned align = MAX2(count, c.align);
+      unsigned n = (last - first) / align + 1, start = 0;
+      bool vary = rctx->vary_exports && BITSET_TEST(rctx->vary_exports, ssa);
 
-      for (unsigned reg = first; reg <= last; reg += align) {
-         if (!BITSET_TEST_COUNT(rctx->used_regs[RA_EXPORT], reg, count))
+      if (vary)
+         start = *rctx->next_vary_export % n;
+
+      for (unsigned i = 0; i < n; ++i) {
+         unsigned reg = first + ((start + i) % n) * align;
+
+         if (!BITSET_TEST_COUNT(rctx->used_regs[RA_EXPORT], reg, count)) {
+            if (vary)
+               *rctx->next_vary_export = (start + i + 1) % n;
+
             return reg;
+         }
       }
    }
 
@@ -2751,6 +2763,8 @@ agx_ra(agx_context *ctx)
    agx_instr **src_to_collect = calloc(ctx->alloc, sizeof(agx_instr *));
    BITSET_WORD *export_targets = NULL;
    BITSET_WORD *preload_regs = BITSET_CALLOC(AGX_NUM_REGS);
+   BITSET_WORD *vary_exports = BITSET_CALLOC(ctx->alloc);
+   unsigned next_vary_export = 0;
 
    if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
       agx_foreach_instr_in_block(agx_exit_block(ctx), I) {
@@ -2772,6 +2786,9 @@ agx_ra(agx_context *ctx)
       if (I->op == AGX_OPCODE_PRELOAD) {
          BITSET_SET_COUNT(preload_regs, I->src[0].value,
                           agx_size_align_16(I->src[0].size));
+      } else if (I->op == AGX_OPCODE_ST_VARY &&
+                 I->src[1].type == AGX_INDEX_NORMAL) {
+         BITSET_SET(vary_exports, I->src[1].value);
       }
 
       /* Record tuple and export uses; all phi uses are retained separately. */
@@ -2899,6 +2916,8 @@ agx_ra(agx_context *ctx)
              .affinity_ssa = ~0u,
              .export_targets = export_targets,
              .preload_regs = preload_regs,
+             .vary_exports = vary_exports,
+             .next_vary_export = &next_vary_export,
           }))
          goto cleanup;
    }
@@ -3091,6 +3110,7 @@ cleanup:
    free(src_to_collect);
    free(export_targets);
    free(preload_regs);
+   free(vary_exports);
    free(ncomps);
    free(ncomps_unrounded);
    free(sizes);

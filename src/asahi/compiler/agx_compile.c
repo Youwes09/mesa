@@ -970,18 +970,8 @@ agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
                       nir_intrinsic_base(instr), explicit);
 }
 
-/*
- * Apple9 vertex outputs are written to export registers, which a VARY_STORE
- * commits to a varying slot. Exports stay published until the shader ends, so
- * the export values are live until then, and every UVS word is committed once
- * at the end: here for a complete shader, by the linker for a vertex shader
- * part, whose varying slots depend on the fragment shader's interpolation
- * (agx_linker.h). The index is the UVS word's unlinked index.
- *
- * The values are moved to export registers in the last block, after the
- * shader's other export use: texture and image parameter bundles must be in
- * the first 32 export registers, which varyings written earlier could fill.
- * Until then they are ordinary values, which can also be spilled.
+/* Outputs stay ordinary values until agx_commit_uvs_apple9, as texture and
+ * image bundles need the first 32 export registers.
  */
 static agx_instr *
 agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
@@ -1026,37 +1016,24 @@ agx_hold_tile_apple9(agx_context *ctx)
       agx_end_tile(&b, info->apple9_tile_domain == 0xf00 ? 0x300 : 0x20c);
 }
 
-/* Commit or publish the vertex outputs at the end of the shader */
+/* VARY_STORE frees its export register, so all outputs fit the export file */
 static void
 agx_commit_uvs_apple9(agx_context *ctx)
 {
    agx_block *exit = agx_exit_block(ctx);
-
-   agx_index pub[ARRAY_SIZE(ctx->uvs_exports)];
+   agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
 
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->uvs_exports); ++i) {
       if (agx_is_null(ctx->uvs_exports[i]))
          continue;
 
       /* A collect rather than a move, which would be propagated */
-      agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
-      pub[i] = agx_temp(ctx, AGX_SIZE_32);
-      pub[i].reg_class = RA_EXPORT;
-      agx_instr *I = agx_collect_to(&b, pub[i], 1);
+      agx_index pub = agx_temp(ctx, AGX_SIZE_32);
+      pub.reg_class = RA_EXPORT;
+      agx_instr *I = agx_collect_to(&b, pub, 1);
       I->src[0] = ctx->uvs_exports[i];
-   }
 
-   for (unsigned i = 0; i < ARRAY_SIZE(ctx->uvs_exports); ++i) {
-      if (agx_is_null(ctx->uvs_exports[i]))
-         continue;
-
-      if (ctx->key->no_stop) {
-         agx_builder b = agx_init_builder(ctx, agx_after_block(exit));
-         agx_publish(&b, pub[i], i);
-      } else {
-         agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
-         agx_st_vary(&b, agx_immediate(i), pub[i]);
-      }
+      agx_st_vary(&b, agx_immediate(i), pub);
    }
 }
 
@@ -4939,15 +4916,6 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    agx_validate(ctx, "agx_ra");
    agx_lower_64bit_postra(ctx);
-
-   /* Record where the vertex outputs of a shader part are published */
-   agx_foreach_instr_in_block_safe(agx_exit_block(ctx), I) {
-      if (I->op == AGX_OPCODE_PUBLISH) {
-         assert(I->src[0].reg_class == RA_EXPORT && I->imm < 256);
-         out->apple9_uvs_exports[I->imm] = 1 + (I->src[0].value / 2);
-         agx_remove_instruction(I);
-      }
-   }
 
    if (agx_is_apple9(ctx)) {
       /* Frames are in 16-byte units. Atomics alone only use the atomic frame */

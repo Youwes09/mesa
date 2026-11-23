@@ -57,7 +57,6 @@ agx_validate_block_form(agx_block *block)
          break;
 
       case AGX_OPCODE_EXPORT:
-      case AGX_OPCODE_PUBLISH:
          agx_validate_assert(agx_num_successors(block) == 0);
          state = AGX_BLOCK_STATE_CF;
          break;
@@ -267,7 +266,6 @@ agx_read_registers(const agx_instr *I, unsigned s)
       return agx_index_size_16(I->src[s]);
    case AGX_OPCODE_MOV:
    case AGX_OPCODE_EXPORT:
-   case AGX_OPCODE_PUBLISH:
    case AGX_OPCODE_UNIT_TEST:
       /* Tautological */
       return agx_index_size_16(I->src[0]);

@@ -115,6 +115,18 @@ agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
    return true;
 }
 
+/* Change the varying slot of an encoded VARY_STORE, keeping its wait */
+static inline bool
+agx_apple9_relocate_vary_store(uint8_t bytes[8], unsigned slot)
+{
+   if (slot >= 138)
+      return false;
+
+   bytes[4] = (bytes[4] & 0x1f) | ((slot & 7) << 5);
+   bytes[5] = (bytes[5] & 0xe0) | (slot >> 3);
+   return true;
+}
+
 /* Open (TILE_ACCESS) or close (TILE_FENCE) tile and raster order domains */
 static inline void
 agx_apple9_encode_tile(uint8_t out[6], bool begin, unsigned control)

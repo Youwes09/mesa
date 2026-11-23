@@ -510,13 +510,6 @@ op("preload", _, srcs = 1, schedule_class = "preload")
 op("export", _, dests = 0, srcs = 1, imms = [IMM], can_eliminate = False,
    schedule_class = "invalid")
 
-# Apple9: keeps a vertex output published in its export register until the end
-# of the shader part, for the linker to commit to its varying slot. The
-# immediate is the output's unlinked UVS index. Like export, it follows the
-# logical end of the exit block.
-op("publish", _, dests = 0, srcs = 1, imms = [IMM], can_eliminate = False,
-   schedule_class = "invalid", isa = APPLE9)
-
 # Pseudo-instructions to set the nesting counter. Lowers to r0l writes after RA.
 op("begin_cf", _, dests = 0, can_eliminate = False, isa = APPLE8)
 op("break", _, dests = 0, imms = [NEST, TARGET], can_eliminate = False,
