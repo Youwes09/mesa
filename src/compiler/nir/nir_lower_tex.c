@@ -158,6 +158,25 @@ lower_offset(nir_builder *b, nir_tex_instr *tex)
    return true;
 }
 
+/* Scale rectangle coordinates and derivatives, both unnormalized */
+static void
+scale_rect_srcs(nir_builder *b, nir_tex_instr *tex, nir_def *scale)
+{
+   static const nir_tex_src_type types[] = {
+      nir_tex_src_coord,
+      nir_tex_src_ddx,
+      nir_tex_src_ddy,
+   };
+
+   for (unsigned i = 0; i < ARRAY_SIZE(types); ++i) {
+      int index = nir_tex_instr_src_index(tex, types[i]);
+      if (index != -1) {
+         nir_def *src = tex->src[index].src.ssa;
+         nir_src_rewrite(&tex->src[index].src, nir_fmul(b, src, scale));
+      }
+   }
+}
+
 static void
 lower_rect(nir_builder *b, nir_tex_instr *tex)
 {
@@ -167,14 +186,7 @@ lower_rect(nir_builder *b, nir_tex_instr *tex)
    tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
 
    nir_def *txs = nir_i2f32(b, nir_get_texture_size(b, tex));
-   nir_def *scale = nir_frcp(b, txs);
-   int coord_index = nir_tex_instr_src_index(tex, nir_tex_src_coord);
-
-   if (coord_index != -1) {
-      nir_def *coords =
-         tex->src[coord_index].src.ssa;
-      nir_src_rewrite(&tex->src[coord_index].src, nir_fmul(b, coords, scale));
-   }
+   scale_rect_srcs(b, tex, nir_frcp(b, txs));
 }
 
 static void
@@ -183,14 +195,7 @@ lower_rect_tex_scale(nir_builder *b, nir_tex_instr *tex)
    b->cursor = nir_before_instr(&tex->instr);
 
    nir_def *idx = nir_imm_int(b, tex->texture_index);
-   nir_def *scale = nir_load_texture_scale(b, 32, idx);
-   int coord_index = nir_tex_instr_src_index(tex, nir_tex_src_coord);
-
-   if (coord_index != -1) {
-      nir_def *coords =
-         tex->src[coord_index].src.ssa;
-      nir_src_rewrite(&tex->src[coord_index].src, nir_fmul(b, coords, scale));
-   }
+   scale_rect_srcs(b, tex, nir_load_texture_scale(b, 32, idx));
 }
 
 static void
