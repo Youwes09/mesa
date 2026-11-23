@@ -234,11 +234,27 @@ TEST_F(InsertWaits, Apple9Exports)
    agx_index e0 = agx_export_register(0, AGX_SIZE_32);
    agx_instr *mul = agx_fmul_to(b, e0, r(1), r(2));
    agx_instr *add = agx_fadd_to(b, r(0), r(1), r(2));
-   agx_st_vary(b, agx_immediate(0), e0);
+   agx_instr *store = agx_st_vary(b, agx_immediate(0), e0);
    agx_insert_waits(b->shader);
 
-   /* r0 is not e0 */
+   /* r0 is not e0. The last VARY_STORE of e0 waits for it itself */
    EXPECT_FALSE(add->wait);
+   EXPECT_TRUE(waits(b->shader).empty());
+   EXPECT_TRUE(store->wait);
+   EXPECT_EQ(store->wait_slot, mul->scoreboard);
+}
+
+/* An export committed to two varying slots is waited for separately */
+TEST_F(InsertWaits, Apple9ExportCommittedTwice)
+{
+   agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
+   agx_index e0 = agx_export_register(0, AGX_SIZE_32);
+   agx_instr *mul = agx_fmul_to(b, e0, r(1), r(2));
+   agx_instr *first = agx_st_vary(b, agx_immediate(0), e0);
+   agx_st_vary(b, agx_immediate(1), e0);
+   agx_insert_waits(b->shader);
+
+   EXPECT_FALSE(first->wait);
    EXPECT_EQ(waits(b->shader), std::vector<unsigned>{mul->scoreboard});
 }
 

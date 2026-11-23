@@ -182,18 +182,17 @@ prior_completion(agx_context *ctx, agx_instr *I, struct slot *slots)
    return mask;
 }
 
-/* Whether a GPR is dead after an instruction, judged like the register cache
- * judges last uses for their release flags.
- */
+/* Whether a register dies after I, as the register cache sets release flags */
 static bool
-dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count)
+dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count,
+        enum ra_class cls)
 {
    if (block->divergent)
       return false;
 
    agx_foreach_reg_dest(I, d) {
       agx_index dest = I->dest[d];
-      if (dest.reg_class == RA_GPR && dest.value <= reg &&
+      if (dest.reg_class == cls && dest.value <= reg &&
           reg < dest.value + agx_index_size_16(dest))
          return true;
    }
@@ -204,18 +203,21 @@ dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count)
 
       agx_foreach_reg_src(J, s) {
          agx_index src = J->src[s];
-         if (src.reg_class == RA_GPR && src.value < reg + count &&
+         if (src.reg_class == cls && src.value < reg + count &&
              reg < src.value + agx_index_size_16(src))
             return false;
       }
 
       agx_foreach_reg_dest(J, d) {
          agx_index dest = J->dest[d];
-         if (dest.reg_class == RA_GPR && dest.value <= reg &&
+         if (dest.reg_class == cls && dest.value <= reg &&
              reg + count <= dest.value + agx_index_size_16(dest))
             return true;
       }
    }
+
+   if (cls == RA_EXPORT)
+      return true;
 
    return !BITSET_TEST_COUNT(block->reg_live_out, reg, count);
 }
@@ -223,8 +225,11 @@ dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count)
 /*
  * Apple9 instructions with a dependency field wait for one slot themselves,
  * which may take a longer form. Without dependency_retains_sources, the
- * completed operands are released, so they must die here. Export operands
- * are not tracked, so those always wait separately.
+ * completed operands are released, so they must die here. A VARY_STORE
+ * waits for its export register like that when it is the register's last
+ * reader, as Gravity's compiler commits each export (its test
+ * VaryingStoresWaitForPublicationCompletion). Other export operands always
+ * wait separately.
  */
 static bool
 apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
@@ -248,11 +253,13 @@ apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
             agx_index src = I->src[i];
             unsigned count = agx_index_size_16(src);
 
-            if (src.reg_class == RA_EXPORT) {
-               ok &= !BITSET_TEST_COUNT(s->export_writes, src.value, count);
+            if (src.reg_class == RA_EXPORT &&
+                BITSET_TEST_COUNT(s->export_writes, src.value, count)) {
+               ok &= I->op == AGX_OPCODE_ST_VARY &&
+                     dies_at(block, I, src.value, count, RA_EXPORT);
             } else if (src.reg_class == RA_GPR &&
                        BITSET_TEST_COUNT(s->writes, src.value, count)) {
-               ok &= dies_at(block, I, src.value, count);
+               ok &= dies_at(block, I, src.value, count, RA_GPR);
             }
          }
       }
