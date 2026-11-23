@@ -189,6 +189,12 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
       return load_sysval_root(b, 1, 16, &u->sample_mask);
    case nir_intrinsic_load_sample_positions_agx:
       return load_sysval_root(b, 1, 32, &u->ppp_multisamplectl);
+   case nir_intrinsic_load_samples_log2_agx:
+      /* Apple8 reads the sample count from a special register */
+      if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+         return NULL;
+
+      return load_sysval_root(b, 1, 16, &u->samples_log2);
    case nir_intrinsic_load_stat_query_address_poly:
       return load_sysval_root(
          b, 1, 64, &u->pipeline_statistics[nir_intrinsic_base(intr)]);

@@ -174,6 +174,9 @@ struct PACKED agx_draw_uniforms {
    /* Provoking vertex: 0, 1, 2 */
    uint16_t provoking_vertex;
 
+   /* log2 of the rasterized sample count, with no Apple9 special register */
+   uint16_t samples_log2;
+
    /* Mapping from varying slots written by the last vertex stage to UVS
     * indices. This mapping must be compatible with the fragment shader.
     */

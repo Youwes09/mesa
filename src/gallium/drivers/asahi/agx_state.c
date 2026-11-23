@@ -4519,6 +4519,8 @@ agx_batch_init_state(struct agx_batch *batch)
    /* Set up standard sample positions */
    batch->uniforms.ppp_multisamplectl =
       agx_default_sample_positions(batch->tilebuffer_layout.nr_samples);
+   batch->uniforms.samples_log2 =
+      util_logbase2(MAX2(batch->tilebuffer_layout.nr_samples, 1));
 }
 
 static enum agx_object_type
