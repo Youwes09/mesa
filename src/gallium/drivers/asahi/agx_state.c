@@ -2671,6 +2671,10 @@ agx_update_fs(struct agx_batch *batch)
    ctx->fs_kills_samples =
       ctx->fs->b.info.writes_sample_mask || epilog_discards || prolog_discards;
 
+   /* Apple9 epilogs mask their stores by the samples a prolog discards */
+   if (agx_is_apple9(dev))
+      link_key.epilog.fs.link.kills |= prolog_discards;
+
    if (link_key.prolog.fs.cull_distance_size)
       link_key.prolog.fs.cf_base = ctx->fs->b.info.varyings.fs.nr_cf;
 
