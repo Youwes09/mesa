@@ -676,7 +676,7 @@ apple9_instr_is_legal(const agx_instr *I)
    case AGX_OPCODE_FMUL_PERSPECTIVE:
       return reg32(I->dest[0]) && reg32(I->src[0]) && reg32(I->src[1]) &&
              plain(I->src[0]) && plain(I->src[1]) && !I->saturate &&
-             I->component < 64;
+             I->component < AGX_APPLE9_NUM_COEFFICIENTS;
 
    case AGX_OPCODE_FFMA:
       return ffma_ok(I);
@@ -864,8 +864,9 @@ apple9_instr_is_legal(const agx_instr *I)
              is_export(I->src[1]) && agx_channels(I->src[1]) == 1;
 
    case AGX_OPCODE_ITER:
-      return is_imm(I->src[0]) && I->src[0].value < 256 && I->channels == 1 &&
-             reg32(I->dest[0]) &&
+      return is_imm(I->src[0]) &&
+             I->src[0].value < AGX_APPLE9_NUM_COEFFICIENTS &&
+             I->channels == 1 && reg32(I->dest[0]) &&
              (I->interpolation == AGX_INTERPOLATION_CENTER || reg32(I->src[1]));
 
    case AGX_OPCODE_LDCF:

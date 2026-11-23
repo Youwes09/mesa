@@ -432,14 +432,14 @@ pack_float2_export(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_FLOAT2_EXPORT, bytes, 8);
 }
 
-/* fmul by 1/W, naming the coefficient slot in byte 5 */
+/* fmul by 1/W, naming the coefficient in byte 5 */
 static void
 pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
 {
    agx_index a = I->src[0], b = I->src[1];
    pack_assert(I, is_gpr(a) && is_gpr(b));
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg && !I->saturate);
-   pack_assert(I, I->component < 64);
+   pack_assert(I, I->component < AGX_APPLE9_NUM_COEFFICIENTS);
 
    unsigned dst = gpr(I, I->dest[0]), ra = gpr(I, a), rb = gpr(I, b);
    pack_assert(I, dst < 64 && ra < 64 && rb < 64);
@@ -3193,7 +3193,8 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
       /* One coefficient, at the centre or a position. Coefficient 0 is 1/W */
       agx_index cf = I->src[0];
       bool coord = I->interpolation != AGX_INTERPOLATION_CENTER;
-      pack_assert(I, is_imm(cf) && cf.value < 256 && I->channels == 1);
+      pack_assert(I, is_imm(cf) && cf.value < AGX_APPLE9_NUM_COEFFICIENTS &&
+                        I->channels == 1);
       pack_assert(I, !coord || I->interpolation == AGX_INTERPOLATION_SAMPLE ||
                         I->interpolation == AGX_INTERPOLATION_CENTROID ||
                         I->interpolation == AGX_INTERPOLATION_SAMPLE_REGISTER);

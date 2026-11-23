@@ -30,6 +30,9 @@ extern "C" {
 /* Largest export register file of any target, in 16-bit units */
 #define AGX_NUM_EXPORT_REGS (256)
 
+/* Coefficients iter can name, by a 7-bit index. Index 0 is 1/W */
+#define AGX_APPLE9_NUM_COEFFICIENTS (128)
+
 /* Largest register file of any target: the spill slots of a 32 KiB frame */
 #define AGX_NUM_MODELED_REGS_LOG2 (14)
 #define AGX_NUM_MODELED_REGS      (1 << AGX_NUM_MODELED_REGS_LOG2)
