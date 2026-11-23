@@ -8,16 +8,8 @@
 #include "agx_compile.h"
 #include "agx_nir.h"
 
-/*
- * Apple9 fragment shaders publish their coverage with each sample_mask_agx.
- * Unlike Apple8, a later write may revive a sample an earlier one killed, and
- * tile stores and depth/stencil exports are not masked by the killed samples.
- * Track the killed samples and apply them: to the live samples of every
- * coverage write, the sample masks of tile stores and depth/stencil exports,
- * and the fragment's own coverage (load_sample_mask).
- *
- * Programs linked from shader parts pass the killed samples from part to part
- * in AGX_ABI_FOUT_KILLED_SAMPLES, which the linker clears at the start.
+/* Apple9 coverage writes can revive killed samples and do not mask tile stores
+ * or depth/stencil exports, so track killed samples and apply them to all.
  */
 static nir_def *
 mask_live(nir_builder *b, nir_def *mask, nir_variable *killed)
@@ -70,7 +62,8 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_apple9_coverage(nir_shader *nir, bool linked)
+agx_nir_lower_apple9_coverage(nir_shader *nir, bool load_killed,
+                              bool export_killed)
 {
    assert(nir->info.stage == MESA_SHADER_FRAGMENT);
    nir_function_impl *impl = nir_shader_get_entrypoint(nir);
@@ -79,15 +72,16 @@ agx_nir_lower_apple9_coverage(nir_shader *nir, bool linked)
       nir_local_variable_create(impl, glsl_uint16_t_type(), "killed samples");
 
    nir_builder b = nir_builder_at(nir_before_impl(impl));
-   nir_store_var(&b, killed,
-                 linked ? nir_load_exported_agx(
-                             &b, 1, 16, .base = AGX_ABI_FOUT_KILLED_SAMPLES)
-                        : nir_imm_intN_t(&b, 0, 16),
-                 1);
+   nir_store_var(
+      &b, killed,
+      load_killed
+         ? nir_load_exported_agx(&b, 1, 16, .base = AGX_ABI_FOUT_KILLED_SAMPLES)
+         : nir_imm_intN_t(&b, 0, 16),
+      1);
 
    nir_shader_intrinsics_pass(nir, lower, nir_metadata_none, killed);
 
-   if (linked) {
+   if (export_killed) {
       b.cursor = nir_after_impl(impl);
       nir_export_agx(&b, nir_load_var(&b, killed),
                      .base = AGX_ABI_FOUT_KILLED_SAMPLES);

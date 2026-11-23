@@ -2464,6 +2464,10 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_barrier_to(b, dst, AGX_SR_HELPER_ARG_H);
 
    case nir_intrinsic_load_exported_agx:
+      if (agx_is_apple9(b->shader) && stage == MESA_SHADER_FRAGMENT &&
+          nir_intrinsic_base(instr) == AGX_ABI_FOUT_KILLED_SAMPLES)
+         b->shader->out->apple9_reads_killed = true;
+
       return agx_load_exported_to(b, dst, nir_intrinsic_base(instr),
                                   instr->def.num_components);
 
@@ -5225,9 +5229,10 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
       NIR_PASS(_, nir, agx_nir_lower_apple9_math);
 
-      if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-         NIR_PASS(_, nir, agx_nir_lower_apple9_coverage,
-                  key->no_stop || key->secondary);
+      /* Prolog and epilog builders lower their own parts */
+      if (nir->info.stage == MESA_SHADER_FRAGMENT && !key->secondary) {
+         NIR_PASS(_, nir, agx_nir_lower_apple9_coverage, key->no_stop,
+                  key->no_stop);
       }
    }
 

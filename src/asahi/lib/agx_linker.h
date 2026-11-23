@@ -27,9 +27,11 @@
  * Apple8: attributes, vertex and instance IDs from the vertex prolog (where
  * Apple8 hardware preloads the IDs, the Apple9 prolog reads them), colours,
  * depth, stencil and sample masks into the fragment epilog. Fragment parts
- * also pass the samples killed so far (AGX_ABI_FOUT_KILLED_SAMPLES, cleared by
- * the linker at the start), since Apple9 does not mask tile stores by them
- * (agx_nir_lower_apple9_coverage). A part that does not stop waits for its
+ * also pass the samples killed so far (AGX_ABI_FOUT_KILLED_SAMPLES), since
+ * Apple9 does not mask tile stores by them (agx_nir_lower_apple9_coverage).
+ * The fragment prolog starts them, or the linker clears them if there is no
+ * prolog. The epilog reads them only if agx_fs_epilog_link_info::kills says a
+ * part before it may kill samples. A part that does not stop waits for its
  * outstanding memory and export operations at its end, so the next part
  * finds them complete.
  *
@@ -315,7 +317,10 @@ struct agx_fs_epilog_link_info {
     */
    bool sample_mask_after_force_early : 1;
 
-   unsigned padding : 1;
+   /* A part before the epilog may kill samples. Drivers set it for prolog
+    * discards, and Apple9 epilogs mask their stores only if it is set.
+    */
+   bool kills : 1;
 };
 static_assert(sizeof(struct agx_fs_epilog_link_info) == 4, "packed");
 

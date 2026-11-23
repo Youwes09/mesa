@@ -756,6 +756,12 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
     */
    NIR_PASS(_, b->shader, lower_tests_zs, !key->link.already_ran_zs);
 
+   /* Apple9 masks stores by the killed samples, kept across iterations */
+   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+      NIR_PASS(_, b->shader, agx_nir_lower_apple9_coverage, key->link.kills,
+               key->link.sample_shading);
+   }
+
    b->shader->info.io_lowered = true;
    b->shader->info.fs.uses_fbfetch_output |= force_translucent;
    b->shader->info.fs.uses_sample_shading = key->link.sample_shading;
@@ -871,11 +877,48 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
+static bool
+kills_samples(nir_shader *s)
+{
+   nir_foreach_function_impl(impl, s) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            switch (intr->intrinsic) {
+            case nir_intrinsic_demote:
+            case nir_intrinsic_demote_if:
+            case nir_intrinsic_terminate:
+            case nir_intrinsic_terminate_if:
+            case nir_intrinsic_demote_samples:
+            case nir_intrinsic_sample_mask_agx:
+               return true;
+
+            case nir_intrinsic_store_output:
+               if (nir_intrinsic_io_semantics(intr).location ==
+                   FRAG_RESULT_SAMPLE_MASK)
+                  return true;
+               break;
+
+            default:
+               break;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
 bool
 agx_nir_lower_fs_output_to_epilog(nir_shader *s,
                                   struct agx_fs_epilog_link_info *out)
 {
    struct lower_epilog_ctx ctx = {.info = out};
+   out->kills =
+      agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9 && kills_samples(s);
 
    nir_shader_intrinsics_pass(s, lower_output_to_epilog,
                               nir_metadata_control_flow, &ctx);
@@ -959,6 +1002,10 @@ agx_nir_fs_prolog(nir_builder *b, const void *key_)
    NIR_PASS(_, b->shader, nir_shader_intrinsics_pass,
             lower_non_monolithic_uniforms, nir_metadata_control_flow, NULL);
    NIR_PASS(_, b->shader, lower_tests_zs, key->run_zs_tests);
+
+   /* The prolog runs first, so on Apple9 it starts the killed samples */
+   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+      NIR_PASS(_, b->shader, agx_nir_lower_apple9_coverage, false, true);
 
    b->shader->info.io_lowered = true;
 }

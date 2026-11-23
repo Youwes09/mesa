@@ -219,8 +219,15 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
       zs_release |= info->apple9_zs_release;
    }
 
-   /* No sample is killed yet */
-   if (fragment) {
+   /* An epilog that ignores the killed samples must not follow a part that
+    * kills (agx_fs_epilog_link_info::kills).
+    */
+   assert(!fragment || !epilog || epilog->info.apple9_reads_killed ||
+          (!main->info.writes_sample_mask &&
+           !(prolog && prolog->info.writes_sample_mask)));
+
+   /* No sample is killed yet, unless the prolog says so */
+   if (fragment && !prolog) {
       uint8_t bytes[2];
       agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FOUT_KILLED_SAMPLES / 2, 0);
       append(&d, bytes, sizeof(bytes));

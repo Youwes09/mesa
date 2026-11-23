@@ -53,7 +53,8 @@ unsigned agx_nir_lower_apple9_abi(struct nir_shader *nir, bool graphics,
                                   struct agx_apple9_compute_profile *profile);
 bool agx_nir_preload_apple9_push(struct nir_shader *nir, unsigned first,
                                  unsigned count);
-bool agx_nir_lower_apple9_coverage(struct nir_shader *nir, bool linked);
+bool agx_nir_lower_apple9_coverage(struct nir_shader *nir, bool load_killed,
+                                   bool export_killed);
 unsigned
 agx_apple9_shared_root(const struct agx_apple9_compute_profile *profile);
 struct nir_def *agx_nir_sincos_apple9(struct nir_builder *b, struct nir_def *x,

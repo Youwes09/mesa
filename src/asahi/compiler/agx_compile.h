@@ -236,6 +236,9 @@ struct agx_shader_info {
    /* Apple9: the linker releases the depth/stencil domain after the loop */
    bool apple9_zs_release;
 
+   /* Apple9: the part reads the samples killed by parts before it */
+   bool apple9_reads_killed;
+
    union agx_varyings varyings;
 
    /* Number of uniforms */
