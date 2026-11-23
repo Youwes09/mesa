@@ -12,7 +12,6 @@
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "util/format/u_formats.h"
-#include "agx_compile_apple9.h"
 
 /* Apple9 storage image and texel buffer descriptors: drivers fill them, and
  * agx_nir_lower_apple9_images.c reads them through texture handles.

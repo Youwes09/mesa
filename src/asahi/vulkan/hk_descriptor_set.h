@@ -11,8 +11,8 @@
 #include "hk_private.h"
 
 #include "asahi/compiler/agx_apple9_storage.h"
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "hk_device.h"
 #include "vk_descriptor_update_template.h"
 #include "vk_object.h"

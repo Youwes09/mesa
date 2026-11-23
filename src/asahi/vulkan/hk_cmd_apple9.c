@@ -1,9 +1,10 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/compiler/agx_nir.h"
 #include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_nir_apple9_tilebuffer.h"
 #include "pipe/p_defines.h"
 #include "util/u_debug.h"

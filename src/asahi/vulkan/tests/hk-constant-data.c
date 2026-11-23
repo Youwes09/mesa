@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <stdio.h>
-#include "asahi/compiler/agx_compile_apple9.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/vulkan/hk_cmd_buffer.h"
 #include "asahi/vulkan/hk_physical_device.h"
 #include "asahi/vulkan/hk_shader.h"

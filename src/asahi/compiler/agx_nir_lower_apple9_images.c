@@ -10,6 +10,7 @@
 #include "util/format/u_format.h"
 #include "util/set.h"
 #include "agx_apple9_storage.h"
+#include "agx_compile_apple9.h"
 #include "agx_nir_texture.h"
 #include "libagx.h"
 
