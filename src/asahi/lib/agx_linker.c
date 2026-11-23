@@ -219,11 +219,10 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
       zs_release |= info->apple9_zs_release;
    }
 
-   /* An epilog that ignores the killed samples must not follow a part that
-    * kills (agx_fs_epilog_link_info::kills), unless it stores nothing.
-    */
+   /* Only an epilog reading the killed samples may store after a kill */
    assert(!fragment || !epilog || epilog->info.apple9_reads_killed ||
-          !epilog->info.apple9_tile_writes ||
+          !(epilog->info.apple9_tile_writes ||
+            epilog->info.writes_sample_mask) ||
           (!main->info.apple9_kills &&
            !(prolog && prolog->info.writes_sample_mask)));
 
