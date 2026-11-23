@@ -204,6 +204,9 @@ struct hk_shader_info {
          /* Apple9: triangle merging is off for off-centre interpolation */
          bool pixel_interlock;
          bool disable_tri_merging;
+
+         /* Apple9: export depth for the epilog in Z/S feedback loop draws */
+         bool dynamic_late_zs;
       } fs;
 
       struct {

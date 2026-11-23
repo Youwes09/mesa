@@ -83,7 +83,10 @@ struct hk_fs_key {
     */
    bool force_sample_shading;
 
-   uint8_t pad[2];
+   /* Whether a depth/stencil feedback loop can be enabled at draw time */
+   bool dynamic_zs_self_dep;
+
+   uint8_t pad[1];
 };
 static_assert(sizeof(struct hk_fs_key) == 4, "packed");
 
@@ -312,12 +315,20 @@ hk_populate_vs_key(struct hk_vs_key *key,
 
 static void
 hk_populate_fs_key(struct hk_fs_key *key,
-                   const struct vk_graphics_pipeline_state *state)
+                   const struct vk_graphics_pipeline_state *state,
+                   const struct vk_features *features)
 {
    memset(key, 0, sizeof(*key));
 
-   if (state == NULL)
+   /* Pipelines allow draw-time feedback loops only with the dynamic state */
+   if (state == NULL) {
+      key->dynamic_zs_self_dep =
+         features && features->attachmentFeedbackLoopDynamicState;
       return;
+   }
+
+   key->dynamic_zs_self_dep = BITSET_TEST(
+      state->dynamic, MESA_VK_DYNAMIC_ATTACHMENT_FEEDBACK_LOOP_ENABLE);
 
    if (state->pipeline_flags &
        VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
@@ -693,9 +704,9 @@ hk_hash_graphics_state(struct vk_physical_device *device,
       struct hk_vs_key key;
       hk_populate_vs_key(&key, state);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
-   } else if (state && (stages & VK_SHADER_STAGE_FRAGMENT_BIT)) {
+   } else if (stages & VK_SHADER_STAGE_FRAGMENT_BIT) {
       struct hk_fs_key key;
-      hk_populate_fs_key(&key, state);
+      hk_populate_fs_key(&key, state, features);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
    }
 
@@ -2412,6 +2423,17 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       NIR_PASS(_, nir, agx_nir_lower_discard_zs_emit);
       NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog,
                &shader->info.fs.epilog_key);
+
+      /* Export depth for draw-time Z/S feedback loops, see hk_apple9_late_zs */
+      if (key && key->fs.dynamic_zs_self_dep && !key->fs.zs_self_dep &&
+          agx_is_apple9(&dev->dev) && !nir->info.fs.early_fragment_tests &&
+          !shader->info.fs.epilog_key.write_z) {
+         nir_builder b =
+            nir_builder_at(nir_after_impl(nir_shader_get_entrypoint(nir)));
+         nir_export_agx(&b, nir_load_frag_coord_z(&b), .base = AGX_ABI_FOUT_Z);
+         shader->info.fs.dynamic_late_zs = true;
+      }
+
       NIR_PASS(_, nir, agx_nir_lower_sample_mask);
 
       if (nir->info.fs.uses_sample_shading) {
@@ -2707,7 +2729,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
    union hk_key key_tmp, *key = NULL;
    if (sw_stage == MESA_SHADER_FRAGMENT) {
-      hk_populate_fs_key(&key_tmp.fs, state);
+      hk_populate_fs_key(&key_tmp.fs, state, vk_features);
       key = &key_tmp;
 
       nir->info.fs.uses_sample_shading |= key->fs.force_sample_shading;
@@ -3104,7 +3126,7 @@ hk_deserialize_shader(struct hk_device *dev, struct blob_reader *blob,
 }
 
 /* Version the container independently of the hardware programs it owns. */
-#define HK_SHADER_CONTAINER_VERSION 0x484b0009u
+#define HK_SHADER_CONTAINER_VERSION 0x484b000au
 
 static VkResult
 hk_deserialize_api_shader(struct vk_device *vk_dev, struct blob_reader *blob,

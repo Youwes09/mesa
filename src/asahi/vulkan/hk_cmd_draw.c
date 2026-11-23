@@ -3484,6 +3484,9 @@ hk_get_fast_linked_locked_fs(struct hk_device *dev, struct hk_shader *shader,
    struct hk_linked_shader *linked =
       hk_fast_link(dev, true, shader, prolog, epilog, key->nr_samples_shaded);
 
+   /* The epilog may write depth the main shader does not, see late_zs */
+   linked->apple9_stage.writes_depth |= key->epilog.link.write_z;
+
    struct hk_fast_link_key *key_clone =
       ralloc_memdup(shader->linked.ht, key, sizeof(*key));
 
@@ -4281,12 +4284,18 @@ hk_flush_shader_parts(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       fs && (fs->b.info.early_fragment_tests &&
              (fs->b.info.writes_sample_mask || fs->info.fs.writes_memory));
 
-   bool epilog_discards = dyn->ms.alpha_to_coverage_enable ||
+   /* Draw-time Z/S feedback loops test late, on the depth the epilog writes */
+   bool late_zs = fs && fs->info.fs.dynamic_late_zs &&
+                  (dyn->feedback_loops &
+                   (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT));
+
+   bool epilog_discards = dyn->ms.alpha_to_coverage_enable || late_zs ||
                           (fs && (fs->info.fs.epilog_key.write_z ||
                                   fs->info.fs.epilog_key.write_s));
    epilog_discards &= !nontrivial_force_early;
 
-   if (fs_dirty || IS_DIRTY(MS_ALPHA_TO_COVERAGE_ENABLE)) {
+   if (fs_dirty || IS_DIRTY(MS_ALPHA_TO_COVERAGE_ENABLE) ||
+       IS_DIRTY(ATTACHMENT_FEEDBACK_LOOP_ENABLE)) {
       desc->root.draw.no_epilog_discard = !epilog_discards ? ~0 : 0;
       desc->root_dirty = true;
    }
@@ -4463,6 +4472,7 @@ hk_flush_shader_parts(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       }
 
       key.epilog.link.already_ran_zs |= nontrivial_force_early;
+      key.epilog.link.write_z |= late_zs;
 
       /* The prolog kills samples for the API sample mask and cull distances */
       key.epilog.link.kills |= needs_prolog && prolog_discards;
