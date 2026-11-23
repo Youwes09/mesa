@@ -238,6 +238,9 @@ struct agx_shader_info {
    /* Apple9: the part reads the samples killed by parts before it */
    bool apple9_reads_killed;
 
+   /* Apple9: the main fragment shader may kill samples */
+   bool apple9_kills;
+
    /* Apple9: reads cube aliases, see AGX_APPLE9_CUBE_ALIAS_INDEX */
    bool apple9_cube_aliases;
 

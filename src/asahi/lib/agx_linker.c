@@ -223,7 +223,7 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
     * kills (agx_fs_epilog_link_info::kills).
     */
    assert(!fragment || !epilog || epilog->info.apple9_reads_killed ||
-          (!main->info.writes_sample_mask &&
+          (!main->info.apple9_kills &&
            !(prolog && prolog->info.writes_sample_mask)));
 
    /* No sample is killed yet, unless the prolog says so */

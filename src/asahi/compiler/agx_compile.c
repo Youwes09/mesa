@@ -5404,6 +5404,35 @@ agx_inline_apple9_preamble(nir_function_impl *main)
    nir_progress(true, main, nir_metadata_none);
 }
 
+/* Whether the main fragment shader may kill samples */
+static bool
+agx_apple9_may_kill(nir_shader *nir)
+{
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic == nir_intrinsic_demote_samples)
+               return true;
+
+            if (intr->intrinsic != nir_intrinsic_sample_mask_agx)
+               continue;
+
+            if (!nir_src_is_const(intr->src[0]) ||
+                !nir_src_is_const(intr->src[1]) ||
+                (nir_src_as_uint(intr->src[0]) &
+                 ~nir_src_as_uint(intr->src[1])))
+               return true;
+         }
+      }
+   }
+
+   return false;
+}
+
 void
 agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                        struct agx_shader_part *out)
@@ -5448,6 +5477,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
       /* Prolog and epilog builders lower their own parts */
       if (nir->info.stage == MESA_SHADER_FRAGMENT && !key->secondary) {
+         info->apple9_kills = agx_apple9_may_kill(nir);
          NIR_PASS(_, nir, agx_nir_lower_apple9_coverage, key->no_stop,
                   key->no_stop);
       }
