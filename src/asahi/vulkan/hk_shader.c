@@ -704,7 +704,10 @@ hk_hash_graphics_state(struct vk_physical_device *device,
       struct hk_vs_key key;
       hk_populate_vs_key(&key, state);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
-   } else if (stages & VK_SHADER_STAGE_FRAGMENT_BIT) {
+   }
+
+   /* A partition of a linked pipeline holds both stages */
+   if (stages & VK_SHADER_STAGE_FRAGMENT_BIT) {
       struct hk_fs_key key;
       hk_populate_fs_key(&key, state, features);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
