@@ -138,7 +138,10 @@ agx_set_ssbo_uniforms(struct agx_batch *batch, mesa_shader_stage stage)
          struct agx_resource *rsrc = agx_resource(sb->buffer);
 
          if (st->ssbo_writable_mask & BITFIELD_BIT(cb)) {
-            if (stage == MESA_SHADER_FRAGMENT)
+            /* The compute copy path binds the memory of textures */
+            if (rsrc->base.target != PIPE_BUFFER)
+               agx_batch_writes_raw(batch, rsrc);
+            else if (stage == MESA_SHADER_FRAGMENT)
                agx_batch_writes_fragment_range(batch, rsrc, sb->buffer_offset,
                                                sb->buffer_size);
             else
