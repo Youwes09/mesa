@@ -5337,23 +5337,18 @@ agx_stored_bits(nir_builder *b, const struct agx_stored_half *stored,
    }
 }
 
-/*
- * Run an Apple9 preamble at the start of the shader instead: the values it
- * stores are used where the shader loads them. Only preambles storing general
- * uniforms can; texture and sampler state is read from its registers.
- */
-static bool
+/* Inline a preamble, which only stores uniforms, at the start of the shader */
+static void
 agx_inline_apple9_preamble(nir_function_impl *main)
 {
    nir_function_impl *preamble = main->preamble->impl;
    nir_foreach_block(block, preamble) {
       nir_foreach_instr(instr, block) {
-         if (instr->type == nir_instr_type_intrinsic &&
-             nir_instr_as_intrinsic(instr)->intrinsic ==
-                nir_intrinsic_store_preamble &&
-             nir_intrinsic_preamble_class(nir_instr_as_intrinsic(instr)) !=
-                nir_preamble_class_general)
-            return false;
+         assert(instr->type != nir_instr_type_intrinsic ||
+                nir_instr_as_intrinsic(instr)->intrinsic !=
+                   nir_intrinsic_store_preamble ||
+                nir_intrinsic_preamble_class(nir_instr_as_intrinsic(instr)) ==
+                   nir_preamble_class_general);
       }
    }
 
@@ -5410,7 +5405,6 @@ agx_inline_apple9_preamble(nir_function_impl *main)
    }
 
    nir_progress(true, main, nir_metadata_none);
-   return true;
 }
 
 void
@@ -5577,7 +5571,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          bool inline_ = info->apple9_compute.preamble_size >
                            agx_apple9_max_preamble_bytes(compute) ||
                         info->preamble_scratch_size;
-         if (inline_ && agx_inline_apple9_preamble(main)) {
+         if (inline_) {
+            agx_inline_apple9_preamble(main);
             util_dynarray_clear(&binary);
             memset(info->apple9_vary_stores, 0,
                    sizeof(info->apple9_vary_stores));
@@ -5591,8 +5586,6 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          }
       }
 
-      assert(!info->preamble_scratch_size &&
-             "a preamble storing texture state has no private frame");
       info->apple9_compute.scratch_size = info->scratch_size;
    } else {
       nir_foreach_function_with_impl(func, impl, nir) {

@@ -449,6 +449,10 @@ agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
 
       /* Parameter-form textures cannot take implicit-LOD zero gradients */
       options.keep_implicit_lod_textures = true;
+
+      /* No texture or sampler state registers: preambles only fill uniforms */
+      options.preamble_storage_size[nir_preamble_class_image] = 0;
+      options.preamble_storage_size[nir_preamble_class_sampler] = 0;
    }
 
    bool progress = false;
