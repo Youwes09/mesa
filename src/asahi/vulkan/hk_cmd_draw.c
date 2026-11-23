@@ -2293,13 +2293,6 @@ hk_upload_tess_params(struct hk_cmd_buffer *cmd, struct poly_tess_params *out,
  * the fragment shader's flat copies of per-vertex inputs, as in its info.
  */
 struct hk_apple9_passthrough_suffix {
-   /* Triangles drawn as polygon points: the fragment shader's flat inputs,
-    * and whether it reads the polygon slot, see hk_apple9_polygon_points_gs.
-    */
-   uint64_t polygon_point_flat;
-   uint8_t polygon_points;
-   uint8_t polygon_point_slot;
-
    uint8_t per_vertex_copies;
    uint8_t per_vertex_location[HK_MAX_PER_VERTEX_COPIES];
    uint8_t per_vertex_copy_base[HK_MAX_PER_VERTEX_COPIES];
@@ -2390,13 +2383,6 @@ hk_apple9_passthrough_gs(struct nir_builder *b, const void *key)
       poly_passthrough_gs_key_size(common->xfb_info.output_count);
    struct hk_apple9_passthrough_suffix suffix;
    memcpy(&suffix, (const uint8_t *)key + key_size, sizeof(suffix));
-
-   if (suffix.polygon_points) {
-      hk_apple9_polygon_points_gs(
-         b, common, suffix.polygon_point_flat,
-         suffix.polygon_point_slot ? HK_POLYGON_POINT_SLOT : 0);
-      return;
-   }
 
    poly_nir_passthrough_gs(b, key);
    hk_apple9_write_per_vertex_copies(b->shader, &suffix);
@@ -4919,9 +4905,7 @@ hk_line_stipple_active(struct hk_cmd_buffer *cmd)
    return u_reduced_prim(prim) == MESA_PRIM_LINES;
 }
 
-/* Whether a draw draws its triangles as polygon points, through the
- * passthrough geometry shader, see hk_apple9_polygon_points_gs.
- */
+/* Whether a draw rasterizes triangles as polygon points */
 static bool
 hk_polygon_points_active(struct hk_cmd_buffer *cmd)
 {
@@ -4929,17 +4913,16 @@ hk_polygon_points_active(struct hk_cmd_buffer *cmd)
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
 
    if (!agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) ||
-       dyn->rs.polygon_mode != VK_POLYGON_MODE_POINT ||
-       gfx->shaders[MESA_SHADER_MESH])
+       dyn->rs.polygon_mode != VK_POLYGON_MODE_POINT)
       return false;
+
+   struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
+   if (mesh)
+      return hk_only_variant(mesh)->info.mesh.prim == MESA_PRIM_TRIANGLES;
 
    struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
    if (gs && !gs->is_passthrough)
-      return false;
-
-   /* Transform feedback captures the triangles */
-   if (hk_bound_sw_vs_before_gs(gfx)->info.xfb_info.output_count)
-      return false;
+      return gs->variants[HK_GS_VARIANT_RAST_POINTS].code_size != 0;
 
    enum mesa_prim prim = gfx->shaders[MESA_SHADER_TESS_EVAL]
                             ? gfx->tess.prim
@@ -5049,6 +5032,27 @@ hk_update_line_stipple(struct hk_cmd_buffer *cmd)
    }
 }
 
+/* Draw the GS rasterization program once per point a clipped triangle has */
+static void
+hk_apple9_draw_polygon_points(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+                              struct agx_draw draw)
+{
+   struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
+   unsigned points = desc->root.draw.polygon_points_active &&
+                           !cmd->state.gfx.shaders[MESA_SHADER_MESH]
+                        ? HK_PP_MAX_VERTICES
+                        : 1;
+
+   for (unsigned i = 0; i < points; ++i) {
+      if (desc->root.draw.polygon_point != i) {
+         desc->root.draw.polygon_point = i;
+         desc->root_dirty = true;
+      }
+
+      hk_apple9_draw(cmd, draw_id, draw);
+   }
+}
+
 static void
 hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
@@ -5059,7 +5063,8 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    if (!IS_SHADER_DIRTY(VERTEX) && !IS_SHADER_DIRTY(TESS_EVAL) &&
        !IS_SHADER_DIRTY(GEOMETRY) && !IS_SHADER_DIRTY(FRAGMENT) &&
-       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) && !IS_DIRTY(RS_LINE_STIPPLE_ENABLE))
+       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) && !IS_DIRTY(RS_LINE_STIPPLE_ENABLE) &&
+       !IS_DIRTY(RS_POLYGON_MODE))
       return;
 
    /* If there's an application geometry shader, there's nothing to un/bind */
@@ -5092,15 +5097,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    }
 
    /* ...or to draw triangles as polygon points */
-   if (hk_polygon_points_active(cmd)) {
-      suffix.polygon_points = true;
-      if (fs_api) {
-         const struct hk_shader *fs = hk_only_variant(fs_api);
-         suffix.polygon_point_flat = fs->info.fs.interp.flat;
-         suffix.polygon_point_slot = fs->info.fs.polygon_point_slot;
-      }
-      needed = true;
-   }
+   needed |= hk_polygon_points_active(cmd);
 
    /* ...or to write the word of stippled lines */
    if (hk_line_stipple_active(cmd)) {
@@ -5553,7 +5550,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
             draw = hk_apple9_launch_tess(cmd, draw);
          if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
             draw = hk_apple9_launch_gs(cmd, draw);
-         hk_apple9_draw(cmd, draw_id, draw);
+         hk_apple9_draw_polygon_points(cmd, draw_id, draw);
       }
       return;
    }
@@ -5778,8 +5775,14 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_shader *main = hk_only_variant(mesh);
    struct hk_shader *task_main = task ? hk_only_variant(task) : NULL;
    const struct hk_mesh_info *info = &main->info.mesh;
+   hk_update_line_stipple(cmd);
+   hk_update_polygon_points(cmd);
+   bool polygon_points = gfx->descriptors.root.draw.polygon_points_active;
+
+   /* Polygon-mode points draw every point a clipped triangle can have */
    unsigned vertices =
-      MAX2(info->max_primitives, 1) * mesa_vertices_per_prim(info->prim);
+      MAX2(info->max_primitives, 1) *
+      (polygon_points ? HK_PP_MAX_VERTICES : mesa_vertices_per_prim(info->prim));
 
    /* The rasterizing shader also writes the per-vertex input flat copies */
    const struct hk_shader *fs =
@@ -5790,8 +5793,9 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    rast_key.clip_distance_array_size = main->info.clip_distance_array_size;
    rast_key.cull_distance_array_size = main->info.cull_distance_array_size;
    rast_key.line_stipple = hk_line_stipple_active(cmd);
-   hk_update_line_stipple(cmd);
-   hk_update_polygon_points(cmd);
+   rast_key.polygon_points = polygon_points;
+   if (polygon_points)
+      rast_key.flat = fs->info.fs.interp.flat;
    rast_key.copies.count = fs->info.fs.per_vertex_copies;
    memcpy(rast_key.copies.location, fs->info.fs.per_vertex_location,
           sizeof(rast_key.copies.location));

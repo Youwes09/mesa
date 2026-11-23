@@ -90,9 +90,7 @@ struct hk_fs_key {
    /* Whether the shader may draw stippled lines, see hk_nir_line_stipple.c */
    bool line_stipple;
 
-   /* Whether the shader may draw polygon-mode points, see
-    * hk_apple9_polygon_points_gs.
-    */
+   /* Whether the shader may draw polygon-mode points */
    bool polygon_points;
 
    uint8_t pad[3];
@@ -322,10 +320,14 @@ hk_populate_vs_key(struct hk_vs_key *key,
    }
 }
 
-/* Whether draws with these shaders may draw triangles as polygon points */
+/* Whether these shaders may draw polygon points, given fillModeNonSolid */
 static bool
-hk_may_draw_polygon_points(const struct vk_graphics_pipeline_state *state)
+hk_may_draw_polygon_points(const struct vk_graphics_pipeline_state *state,
+                           const struct vk_features *features)
 {
+   if (features && !features->fillModeNonSolid)
+      return false;
+
    if (state == NULL || state->rs == NULL)
       return true;
 
@@ -355,7 +357,7 @@ hk_populate_fs_key(struct hk_fs_key *key,
 {
    memset(key, 0, sizeof(*key));
    key->line_stipple = hk_may_stipple_lines(state, features);
-   key->polygon_points = hk_may_draw_polygon_points(state);
+   key->polygon_points = hk_may_draw_polygon_points(state, features);
 
    /* Pipelines allow draw-time feedback loops only with the dynamic state */
    if (state == NULL) {
@@ -741,6 +743,14 @@ hk_hash_graphics_state(struct vk_physical_device *device,
       struct hk_vs_key key;
       hk_populate_vs_key(&key, state);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
+   }
+
+   /* Pre-rasterization stages compile what polygon-mode points need */
+   if (stages & (VK_SHADER_STAGE_VERTEX_BIT |
+                 VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+                 VK_SHADER_STAGE_GEOMETRY_BIT)) {
+      const bool polygon_points = hk_may_draw_polygon_points(state, features);
+      _mesa_blake3_update(&blake3_ctx, &polygon_points, sizeof(polygon_points));
    }
 
    /* A partition of a linked pipeline holds both stages */
@@ -1455,6 +1465,7 @@ hk_lower_per_primitive_input(nir_builder *b, nir_intrinsic_instr *intr,
    if (hk_mesh_varying_in_memory(sem.location)) {
       nir_def *record = nir_load_input(
          b, 1, 32, nir_imm_int(b, 0), .range = 1, .dest_type = nir_type_uint32,
+         .component = HK_MESH_PRIMITIVE_COMPONENT,
          .io_semantics.location = HK_MESH_PRIMITIVE_SLOT,
          .io_semantics.num_slots = 1);
       b->shader->info.inputs_read |= BITFIELD64_BIT(HK_MESH_PRIMITIVE_SLOT);
@@ -2778,13 +2789,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          hk_lower_late_division(nir);
       }
 
-      /* Polygon-mode points take their facing and primitive ID from the
-       * polygon slot, see hk_apple9_polygon_points_gs.
-       */
-      if (apple9 && key->fs.polygon_points) {
-         hk_only_variant(obj)->info.fs.polygon_point_slot =
-            hk_nir_lower_polygon_point_fs(nir, HK_POLYGON_POINT_SLOT);
-      }
+      /* Polygon-mode points read facing and primitive ID from their slot */
+      if (apple9 && key->fs.polygon_points)
+         NIR_PASS(_, nir, hk_nir_lower_polygon_point_fs, HK_POLYGON_POINT_SLOT);
 
       if (apple9)
          hk_apple9_lower_fs(nir, hk_only_variant(obj));
@@ -2826,14 +2833,23 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       struct hk_shader *count_variant = hk_count_gs_variant(obj);
 
       nir_shader *count = NULL, *rast = NULL, *pre_gs = NULL;
+      nir_shader *rast_points = NULL;
 
       /* Line strips are emitted segment by segment for line stipple */
       if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_LINE_STRIP &&
           hk_may_stipple_lines(state, vk_features))
          hk_nir_lower_gs_line_stipple(nir);
 
-      NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
-               &count_variant->info.gs);
+      /* Polygon-point triangles get their own rasterization program */
+      if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP &&
+          hk_may_draw_polygon_points(state, &dev->vk.enabled_features)) {
+         NIR_PASS(_, nir, poly_nir_lower_gs_triangles, &count, &rast,
+                  &rast_points, &pre_gs, &count_variant->info.gs,
+                  &hk_apple9_polygon_point_triangles);
+      } else {
+         NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
+                  &count_variant->info.gs);
+      }
 
       agx_preprocess_nir(count);
       agx_preprocess_nir(rast);
@@ -2844,6 +2860,14 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       shader->info.gs = count_variant->info.gs;
       main_variant->info.gs = count_variant->info.gs;
 
+      if (rast_points) {
+         agx_preprocess_nir(rast_points);
+         shader = &obj->variants[HK_GS_VARIANT_RAST_POINTS];
+         hk_lower_hw_vs(rast_points, shader, false);
+         shader->info.gs = count_variant->info.gs;
+         shader->info.gs.mode = MESA_PRIM_POINTS;
+      }
+
       struct {
          nir_shader *in;
          struct hk_shader *out;
@@ -2852,11 +2876,12 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          {pre_gs, hk_pre_gs_variant(obj)},
          {count, count_variant},
          {rast, &obj->variants[HK_GS_VARIANT_RAST]},
+         {rast_points, &obj->variants[HK_GS_VARIANT_RAST_POINTS]},
       };
 
       for (unsigned v = 0; v < ARRAY_SIZE(variants); ++v) {
          if (variants[v].in) {
-            if (variants[v].in != rast) {
+            if (variants[v].in != rast && variants[v].in != rast_points) {
                hk_lower_to_compute(dev, variants[v].in,
                                    variants[v].in == pre_gs ? 1 : 64);
             }
@@ -2872,6 +2897,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                ralloc_free(pre_gs);
                ralloc_free(count);
                ralloc_free(rast);
+               ralloc_free(rast_points);
                return result;
             }
          }
@@ -2889,13 +2915,12 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
-      /* Apple9 also layers fragment shader barycentrics, primitives
-       * generated queries and line stipple on the passthrough geometry
-       * shader, which any fragment shader may need at draw time.
-       */
-      if (apple9 && (dev->vk.enabled_features.fragmentShaderBarycentric ||
-                     dev->vk.enabled_features.primitivesGeneratedQuery ||
-                     dev->vk.enabled_features.stippledBresenhamLines)) {
+      /* Apple9 API shaders may need it for these features at draw time */
+      if (apple9 && vk_features &&
+          (dev->vk.enabled_features.fragmentShaderBarycentric ||
+           dev->vk.enabled_features.primitivesGeneratedQuery ||
+           dev->vk.enabled_features.stippledBresenhamLines ||
+           hk_may_draw_polygon_points(state, vk_features))) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
@@ -3173,7 +3198,7 @@ hk_deserialize_shader(struct hk_device *dev, struct blob_reader *blob,
 }
 
 /* Version the container independently of the hardware programs it owns. */
-#define HK_SHADER_CONTAINER_VERSION 0x484b000bu
+#define HK_SHADER_CONTAINER_VERSION 0x484b000cu
 
 static VkResult
 hk_deserialize_api_shader(struct vk_device *vk_dev, struct blob_reader *blob,

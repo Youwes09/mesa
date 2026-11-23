@@ -97,6 +97,9 @@ struct hk_mesh_info {
  */
 #define HK_MESH_PRIMITIVE_SLOT VARYING_SLOT_VAR31
 
+/* Offset component; the first two hold polygon points or the stipple word */
+#define HK_MESH_PRIMITIVE_COMPONENT 2
+
 static inline bool
 hk_mesh_varying_in_memory(unsigned slot)
 {
@@ -172,8 +175,11 @@ struct hk_mesh_rast_key {
    uint8_t clip_distance_array_size, cull_distance_array_size;
    /* Lines are stippled, see hk_nir_line_stipple.c */
    bool line_stipple;
-   uint8_t pad[1];
+   /* Triangles are drawn as polygon-mode points, see hk_nir_mesh_rast */
+   bool polygon_points;
    struct hk_per_vertex_copies copies;
+   /* With polygon points, the fragment shader's flat inputs */
+   uint64_t flat;
 };
 
 void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
@@ -224,11 +230,6 @@ struct hk_shader_info {
 
          /* Apple9: export depth for the epilog in Z/S feedback loop draws */
          bool dynamic_late_zs;
-
-         /* Apple9: the shader reads the polygon slot of polygon-mode points,
-          * see hk_nir_lower_polygon_point_fs.
-          */
-         bool polygon_point_slot;
       } fs;
 
       struct {
@@ -352,6 +353,9 @@ enum hk_gs_variant {
    /* Pre-GS compute shader */
    HK_GS_VARIANT_PRE,
 
+   /* Polygon-point rasterization VS, empty unless triangles may draw so */
+   HK_GS_VARIANT_RAST_POINTS,
+
    HK_GS_VARIANTS,
 };
 
@@ -361,6 +365,7 @@ static const char *hk_gs_variant_name[] = {
    [HK_GS_VARIANT_MAIN] = "Main",
    [HK_GS_VARIANT_COUNT] = "Count",
    [HK_GS_VARIANT_PRE] = "Pre-GS",
+   [HK_GS_VARIANT_RAST_POINTS] = "Rasterization (polygon points)",
 };
 /* clang-format on */
 

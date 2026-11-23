@@ -1906,9 +1906,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * all 32 API input locations without increasing the producer budget.
     */
    props->maxFragmentInputComponents = 128;
-   /* Polygon-mode points are drawn in software with the point size the
-    * shader wrote, see hk_apple9_polygon_points_gs.
-    */
+   /* Software polygon-mode points, see hk_apple9_polygon_point_triangles */
    props->polygonModePointSize = true;
    /* Byte-count draws use a GPU conversion to the ordinary indirect path.
     * Qualified on G16; retain the existing exposure on older generations.

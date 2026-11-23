@@ -181,7 +181,7 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
             {
                nir_def *t = nir_fdiv(b, da, nir_fsub(b, da, dc));
                nir_def *m = nir_load_var(b, out_n);
-               pp_list_store(b, out, m, nir_flrp(b, a, c, t));
+               pp_list_store(b, out, m, nir_ffma(b, nir_fsub(b, c, a), t, a));
                nir_store_var(b, out_n, nir_iadd_imm(b, m, 1), 1);
             }
             nir_pop_if(b, NULL);
@@ -304,14 +304,23 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
             bool flat = (info->flat & BITFIELD64_BIT(loc)) ||
                         loc == VARYING_SLOT_LAYER ||
                         loc == VARYING_SLOT_VIEWPORT;
-            nir_def *value;
-            if (flat) {
-               value = pp_select(b, provoking, vals[s]);
-            } else {
-               value = nir_fadd(
+            nir_def *value = pp_select(b, provoking, vals[s]);
+            if (!flat) {
+               nir_def *smooth = nir_fadd(
                   b, nir_fmul(b, vals[s][0], nir_channel(b, w, 0)),
                   nir_fadd(b, nir_fmul(b, vals[s][1], nir_channel(b, w, 1)),
                            nir_fmul(b, vals[s][2], nir_channel(b, w, 2))));
+
+               /* Flat at draw time */
+               if (info->flat_mask) {
+                  nir_def *bit = nir_i2b(
+                     b, nir_u2u32(b, nir_iand_imm(
+                                        b, nir_ushr_imm(b, info->flat_mask, loc),
+                                        1)));
+                  smooth = nir_bcsel(b, bit, value, smooth);
+               }
+
+               value = smooth;
             }
             for (unsigned c = 0; c < comps; ++c) {
                nir_store_output(b, nir_channel(b, value, c), nir_imm_int(b, 0),
@@ -349,90 +358,112 @@ hk_apple9_pp_emit_triangle(nir_builder *b, const struct hk_pp_info *info,
 #undef FLAG
 }
 
-/*
- * The passthrough geometry shader of a triangle draw under polygon mode
- * POINT: every triangle of the vertex or evaluation shader is drawn as the
- * points of its clipped polygon, with the point size the shader wrote
- * (polygonModePointSize).
- */
-struct pp_passthrough {
-   uint64_t outputs;
-   unsigned start, step;
+/* Polygon-mode points of GS triangle strips, one draw per clipped vertex */
+struct pp_triangle {
+   const struct poly_gs_rast_triangle *tri;
+   nir_def *odd;
 };
 
 static nir_def *
-pp_load_input(nir_builder *b, void *data, unsigned vertex, unsigned location,
-              unsigned offset, unsigned component, unsigned comps,
-              nir_alu_type type)
+pp_load_triangle(nir_builder *b, void *data, unsigned vertex,
+                 unsigned location, unsigned offset, unsigned component,
+                 unsigned comps, nir_alu_type type)
 {
-   const struct pp_passthrough *pp = data;
+   const struct pp_triangle *pp = data;
+   unsigned slot = location + offset;
 
-   /* Points without a written size have size 1 */
-   if (location == VARYING_SLOT_PSIZ && !(pp->outputs & VARYING_BIT_PSIZ))
-      return nir_imm_float(b, 1.0);
+   if (!(pp->tri->outputs & BITFIELD64_BIT(slot))) {
+      /* Points without a written size have size 1 */
+      return location == VARYING_SLOT_PSIZ ? nir_imm_float(b, 1.0)
+                                           : nir_imm_zero(b, comps, 32);
+   }
 
-   bool clip = location == VARYING_SLOT_CLIP_DIST0;
-   return nir_load_per_vertex_input(
-      b, comps, 32, nir_imm_int(b, pp->start + vertex * pp->step),
-      nir_imm_int(b, offset), .component = component,
-      .dest_type = nir_alu_type_get_base_type(type) | 32,
-      .io_semantics = {.location = location, .num_slots = clip ? 2 : 1});
+   /* Odd strip triangles are wound (1, 0, 2) */
+   nir_def *value = nir_load_var(b, pp->tri->vertex[vertex][slot]);
+   if (vertex < 2) {
+      value = nir_bcsel(b, pp->odd,
+                        nir_load_var(b, pp->tri->vertex[vertex ^ 1][slot]),
+                        value);
+   }
+
+   value = nir_pad_vector_imm_int(b, value, 0, 4);
+   return nir_channels(b, value, BITFIELD_RANGE(component, comps));
 }
 
-void
-hk_apple9_polygon_points_gs(nir_builder *b,
-                            const struct poly_passthrough_gs_key *key,
-                            uint64_t flat, unsigned face_slot)
+static void
+pp_emit(nir_builder *b, const struct poly_gs_rast_triangle *tri, void *data)
 {
    nir_shader *s = b->shader;
-   uint64_t outputs =
-      key->outputs & ~(VARYING_BIT_BOUNDING_BOX0 | VARYING_BIT_BOUNDING_BOX1);
+   uint64_t outputs = tri->outputs &
+                      ~(VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
+                        VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1 |
+                        VARYING_BIT_PRIMITIVE_ID | VARYING_BIT_BOUNDING_BOX0 |
+                        VARYING_BIT_BOUNDING_BOX1 | VARYING_BIT_CULL_PRIMITIVE);
 
-   s->info.stage = MESA_SHADER_GEOMETRY;
-   s->info.inputs_read = outputs;
-   s->info.outputs_written = (outputs & ~VARYING_BIT_PRIMITIVE_ID) |
-                             VARYING_BIT_PSIZ |
-                             (face_slot ? BITFIELD64_BIT(face_slot) : 0);
-   s->info.clip_distance_array_size = key->clip_distance_array_size;
-   s->info.cull_distance_array_size = key->cull_distance_array_size;
-   s->info.gs.input_primitive = key->prim;
-   s->info.gs.output_primitive = MESA_PRIM_POINTS;
-   s->info.gs.vertices_in = mesa_vertices_per_prim(key->prim);
-   s->info.gs.vertices_out = HK_PP_MAX_VERTICES;
-   s->info.gs.invocations = 1;
-   s->info.gs.active_stream_mask = 1;
-
-   unsigned components[VARYING_SLOT_MAX];
-   for (unsigned i = 0; i < VARYING_SLOT_MAX; ++i)
-      components[i] = key->output_components[i];
+   unsigned components[VARYING_SLOT_MAX] = {0};
+   u_foreach_bit64(slot, outputs) {
+      components[slot] =
+         glsl_get_vector_elements(tri->vertex[2][slot]->type);
+   }
    components[VARYING_SLOT_PSIZ] = 1;
 
    struct hk_pp_info info = {
-      .clip = key->clip_distance_array_size,
-      .cull = key->cull_distance_array_size,
-      .outputs = (outputs | VARYING_BIT_PSIZ) &
-                 ~(VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
-                   VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1 |
-                   VARYING_BIT_PRIMITIVE_ID),
+      .clip = s->info.clip_distance_array_size,
+      .cull = s->info.cull_distance_array_size,
+      .outputs = outputs | VARYING_BIT_PSIZ,
       .output_components = components,
-      .flat = flat,
-      .face_slot = face_slot,
+      .flat_mask = tri->flat_mask,
+      .face_slot = HK_POLYGON_POINT_SLOT,
    };
 
-   struct pp_passthrough pp = {
-      .outputs = outputs,
-      .start = 0,
-      .step = key->prim == MESA_PRIM_TRIANGLES_ADJACENCY ? 2 : 1,
-   };
+   struct pp_triangle pp = {.tri = tri, .odd = tri->odd};
 
-   /* Triangles provoke from their first or last vertex */
+   /* Strip triangle i provokes from vertex i, or i + 2 */
+   nir_def *last = nir_ieq_imm(
+      b, hk_nir_load_root(b, 1, 16, hk_root_descriptor_offset(draw.provoking)),
+      2);
    nir_def *provoking =
-      nir_bcsel(b, nir_ine_imm(b, nir_load_provoking_last(b), 0),
-                nir_imm_int(b, 2), nir_imm_int(b, 0));
-   hk_apple9_pp_emit_triangle(b, &info, pp_load_input, &pp, provoking,
-                              nir_load_primitive_id(b), NULL);
-   nir_progress(true, b->impl, nir_metadata_none);
+      nir_bcsel(b, last, nir_imm_int(b, 2),
+                nir_bcsel(b, tri->odd, nir_imm_int(b, 1), nir_imm_int(b, 0)));
+
+   nir_def *prim = tri->primitive_id;
+   if (tri->outputs & VARYING_BIT_PRIMITIVE_ID) {
+      nir_def *ids[3];
+      for (unsigned i = 0; i < 3; ++i) {
+         ids[i] = pp_load_triangle(b, &pp, i, VARYING_SLOT_PRIMITIVE_ID, 0, 0, 1,
+                                   nir_type_uint32);
+      }
+      prim = pp_select(b, provoking, ids);
+   }
+
+   /* Output vertices completing no triangle draw their point behind the eye */
+   nir_def *point = hk_nir_load_root(
+      b, 1, 32, hk_root_descriptor_offset(draw.polygon_point));
+   nir_def *only =
+      nir_bcsel(b, tri->complete, point, nir_imm_int(b, HK_PP_MAX_VERTICES));
+
+   hk_apple9_pp_emit_triangle(b, &info, pp_load_triangle, &pp, provoking, prim,
+                              only);
+
+   s->info.outputs_written =
+      (tri->outputs & ~(VARYING_BIT_PRIMITIVE_ID | VARYING_BIT_BOUNDING_BOX0 |
+                        VARYING_BIT_BOUNDING_BOX1 | VARYING_BIT_CULL_PRIMITIVE)) |
+      VARYING_BIT_POS | VARYING_BIT_PSIZ | BITFIELD64_BIT(HK_POLYGON_POINT_SLOT);
 }
+
+static nir_def *
+pp_writes_xfb(nir_builder *b, void *data)
+{
+   return nir_ieq_imm(
+      b,
+      hk_nir_load_root(b, 1, 32, hk_root_descriptor_offset(draw.polygon_point)),
+      0);
+}
+
+const struct poly_gs_rast_triangles hk_apple9_polygon_point_triangles = {
+   .emit = pp_emit,
+   .writes_xfb = pp_writes_xfb,
+};
 
 /* Read facing and primitive ID from the polygon slot in polygon-point draws */
 static bool

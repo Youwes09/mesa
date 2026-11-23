@@ -702,7 +702,11 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
         dyn->ia.primitive_topology !=
            VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA))
       UNSUPPORTED("unsupported viewport, scissor or topology state");
-   enum mesa_prim gs_prim = mesh        ? hk_only_variant(mesh)->info.mesh.prim
+   /* Polygon-mode points draw points, see hk_apple9_polygon_point_triangles */
+   enum mesa_prim gs_prim = mesh && gfx->descriptors.root.draw
+                                       .polygon_points_active
+                               ? MESA_PRIM_POINTS
+                            : mesh ? hk_only_variant(mesh)->info.mesh.prim
                             : gs        ? shaders[0]->info.gs.mode
                             : tes       ? gfx->tess.prim
                             : adjacency ? u_reduced_prim(api_prim)
@@ -996,9 +1000,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    record->depth_face[0] = record->depth_face[1] =
       (agx_pack_line_width(dyn->rs.line.width) << 8) | (depth_compare << 24) |
       ((depth_test && dyn->ds.depth.write_enable) ? 0 : (1 << 21)) |
-      /* Polygon-mode points are drawn as points, see
-       * hk_apple9_polygon_points_gs.
-       */
+      /* Polygon points draw points, see hk_apple9_polygon_point_triangles */
       ((gfx->descriptors.root.draw.polygon_points_active ? VK_POLYGON_MODE_FILL
                                                          : dyn->rs.polygon_mode)
        << 18);

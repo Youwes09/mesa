@@ -18,8 +18,9 @@ struct hk_pp_info {
    /* Slots to emit besides position and clip/cull distances. */
    uint64_t outputs;
    const unsigned *output_components;
-   /* Flat inputs of the fragment shader. */
+   /* Flat FS inputs, and a 64-bit mask of those flat at draw time or NULL */
    uint64_t flat;
+   nir_def *flat_mask;
    /* The polygon slot (back-facing, primitive ID), or 0. */
    unsigned face_slot;
 };
@@ -38,17 +39,13 @@ void hk_apple9_pp_emit_triangle(struct nir_builder *b,
                                 nir_def *provoking, nir_def *prim,
                                 nir_def *only);
 
-/* The passthrough geometry shader drawing triangles as polygon points */
-void hk_apple9_polygon_points_gs(struct nir_builder *b,
-                                 const struct poly_passthrough_gs_key *key,
-                                 uint64_t flat, unsigned face_slot);
+/* Polygon-point GS rasterization, drawn HK_PP_MAX_VERTICES times per draw */
+extern const struct poly_gs_rast_triangles hk_apple9_polygon_point_triangles;
 
 /* Read the facing and primitive ID of polygon points from the polygon slot */
 bool hk_nir_lower_polygon_point_fs(nir_shader *fs, unsigned slot);
 
-/* The polygon slot: the polygon's back-facing and primitive ID. Producers
- * cannot write the last generic slot (the output limit stops before it), and
- * it shares the slot of the line stipple word, as a draw draws lines or
- * points.
+/* Back-facing and primitive ID, in the generic slot producers cannot reach.
+ * A draw has lines or points, never both, so the line stipple word shares it.
  */
 #define HK_POLYGON_POINT_SLOT VARYING_SLOT_VAR31
