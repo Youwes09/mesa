@@ -88,6 +88,7 @@ hk_apple9_pack_sampled_image(struct hk_device *dev, void *out,
             struct agx_texture_packed null;
             agx_set_null_texture(&null);
             agx_apple9_set_null_texture(part->texture);
+            agx_apple9_set_null_texture(part->cube_alias);
             hk_apple9_texture_info(part->texture_info, &null);
             if (view) {
                part->base_level = view->vk.base_mip_level;

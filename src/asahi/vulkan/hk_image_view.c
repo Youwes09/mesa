@@ -30,6 +30,9 @@ enum hk_desc_usage {
    HK_DESC_USAGE_BG_EOT,
    HK_DESC_USAGE_LAYERED_BG_EOT,
    HK_DESC_USAGE_EMRT,
+
+   /* A sampled cube view's 2D array alias, see agx_apple9_layout.h */
+   HK_DESC_USAGE_CUBE_ALIAS,
 };
 
 static bool
@@ -208,8 +211,10 @@ alias_width_el(struct hk_image_view *view, unsigned view_plane,
    bool internal =
       view->vk.create_flags & VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA;
 
-   if (layout->tiling != AIL_TILING_GPU ||
-       (usage == HK_DESC_USAGE_SAMPLED && !internal))
+   bool sampled =
+      usage == HK_DESC_USAGE_SAMPLED || usage == HK_DESC_USAGE_CUBE_ALIAS;
+
+   if (layout->tiling != AIL_TILING_GPU || (sampled && !internal))
       return width_el;
 
    unsigned padded_el = MAX2(width_el, layout->stride_el[level]);
@@ -606,6 +611,15 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
          part->min_lod_uint16 = min_lod;
          agx_apple9_translate_texture(part->texture, tex);
          hk_apple9_texture_info(part->texture_info, tex);
+      }
+
+      /* Seamful samples of cubes read the faces as layers of the alias */
+      if (view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
+          view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
+         struct agx_texture_packed alias;
+         pack_texture(view, p, HK_DESC_USAGE_CUBE_ALIAS, &alias);
+         agx_apple9_translate_texture(view->planes[p].apple9_sampled.cube_alias,
+                                      &alias);
       }
    }
 

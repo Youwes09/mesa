@@ -89,7 +89,8 @@ struct hk_apple9_image_part {
    uint16_t min_lod_fp16, min_lod_uint16;
    uint8_t pad0[16];
    uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
-   uint8_t pad1[32];
+   /* 2D array alias of cube views (agx_apple9_layout.h), zero otherwise */
+   uint8_t cube_alias[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
 };
 static_assert(sizeof(struct hk_apple9_image_part) == 128, "128-byte record");
 static_assert(offsetof(struct hk_apple9_image_part, residency_lo) ==
@@ -102,6 +103,10 @@ static_assert(offsetof(struct hk_apple9_image_part, texture) ==
                  AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
                     AGX_APPLE9_TEXTURE_TABLE_STRIDE,
               "native texture entry is where register indices expect it");
+static_assert(offsetof(struct hk_apple9_image_part, cube_alias) ==
+                 offsetof(struct hk_apple9_image_part, texture) +
+                    AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET,
+              "cube alias where the compiler reads it");
 
 struct hk_apple9_sampler_part {
    /* Same layout as the per-draw runtime sampler record. */

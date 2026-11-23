@@ -203,6 +203,7 @@ check(void)
    struct agx_texture_packed tex;
    agx_set_null_texture(&tex);
    agx_apple9_translate_texture(null.texture, &tex);
+   agx_apple9_translate_texture(null.cube_alias, &tex);
    hk_apple9_texture_info(null.texture_info, &tex);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, info, &null,
                        sizeof(null)));
