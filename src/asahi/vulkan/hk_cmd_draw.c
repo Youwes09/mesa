@@ -4464,6 +4464,9 @@ hk_flush_shader_parts(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
       key.epilog.link.already_ran_zs |= nontrivial_force_early;
 
+      /* The prolog kills samples for the API sample mask and cull distances */
+      key.epilog.link.kills |= needs_prolog && prolog_discards;
+
       struct hk_rendering_state *render = &cmd->state.gfx.render;
       for (uint32_t i = 0; i < render->color_att_count; i++) {
          key.epilog.rt_formats[i] =
