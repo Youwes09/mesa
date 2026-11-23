@@ -20,6 +20,7 @@
 #include "agx_usc.h"
 #include "agx_uvs.h"
 
+#include "hk_apple9_polygon_points.h"
 #include "hk_buffer.h"
 #include "hk_cmd_buffer.h"
 #include "hk_device.h"
@@ -2292,6 +2293,13 @@ hk_upload_tess_params(struct hk_cmd_buffer *cmd, struct poly_tess_params *out,
  * the fragment shader's flat copies of per-vertex inputs, as in its info.
  */
 struct hk_apple9_passthrough_suffix {
+   /* Triangles drawn as polygon points: the fragment shader's flat inputs,
+    * and whether it reads the polygon slot, see hk_apple9_polygon_points_gs.
+    */
+   uint64_t polygon_point_flat;
+   uint8_t polygon_points;
+   uint8_t polygon_point_slot;
+
    uint8_t per_vertex_copies;
    uint8_t per_vertex_location[HK_MAX_PER_VERTEX_COPIES];
    uint8_t per_vertex_copy_base[HK_MAX_PER_VERTEX_COPIES];
@@ -2377,13 +2385,20 @@ hk_apple9_write_per_vertex_copies(
 static void
 hk_apple9_passthrough_gs(struct nir_builder *b, const void *key)
 {
-   poly_nir_passthrough_gs(b, key);
-
    const struct poly_passthrough_gs_key *common = key;
    size_t key_size =
       poly_passthrough_gs_key_size(common->xfb_info.output_count);
    struct hk_apple9_passthrough_suffix suffix;
    memcpy(&suffix, (const uint8_t *)key + key_size, sizeof(suffix));
+
+   if (suffix.polygon_points) {
+      hk_apple9_polygon_points_gs(
+         b, common, suffix.polygon_point_flat,
+         suffix.polygon_point_slot ? HK_POLYGON_POINT_SLOT : 0);
+      return;
+   }
+
+   poly_nir_passthrough_gs(b, key);
    hk_apple9_write_per_vertex_copies(b->shader, &suffix);
 
    if (suffix.line_stipple) {
@@ -4904,6 +4919,99 @@ hk_line_stipple_active(struct hk_cmd_buffer *cmd)
    return u_reduced_prim(prim) == MESA_PRIM_LINES;
 }
 
+/* Whether a draw draws its triangles as polygon points, through the
+ * passthrough geometry shader, see hk_apple9_polygon_points_gs.
+ */
+static bool
+hk_polygon_points_active(struct hk_cmd_buffer *cmd)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+
+   if (!agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) ||
+       dyn->rs.polygon_mode != VK_POLYGON_MODE_POINT ||
+       gfx->shaders[MESA_SHADER_MESH])
+      return false;
+
+   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
+   if (gs && !gs->is_passthrough)
+      return false;
+
+   /* Transform feedback captures the triangles */
+   if (hk_bound_sw_vs_before_gs(gfx)->info.xfb_info.output_count)
+      return false;
+
+   enum mesa_prim prim = gfx->shaders[MESA_SHADER_TESS_EVAL]
+                            ? gfx->tess.prim
+                            : vk_topology_to_mesa(dyn->ia.primitive_topology);
+   return u_reduced_prim(prim) == MESA_PRIM_TRIANGLES;
+}
+
+/* The rasterization state polygon points apply themselves */
+static void
+hk_update_polygon_points(struct hk_cmd_buffer *cmd)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+   struct hk_descriptor_state *desc = &gfx->descriptors;
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+   uint32_t active = hk_polygon_points_active(cmd);
+
+   if (desc->root.draw.polygon_points_active != active) {
+      desc->root.draw.polygon_points_active = active;
+      desc->root_dirty = true;
+   }
+
+   if (!active)
+      return;
+
+   VkFormat depth = gfx->render.depth_att.vk_format;
+   bool force_unorm =
+      dyn->rs.depth_bias.representation ==
+      VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+   bool float_depth = !force_unorm && (depth == VK_FORMAT_D32_SFLOAT ||
+                                       depth == VK_FORMAT_D32_SFLOAT_S8_UINT);
+
+   struct agx_apple9_polygon_point_params params = {
+      .flags =
+         ((dyn->rs.cull_mode & VK_CULL_MODE_FRONT_BIT)
+             ? AGX_APPLE9_PP_CULL_FRONT
+             : 0) |
+         ((dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT) ? AGX_APPLE9_PP_CULL_BACK
+                                                      : 0) |
+         (dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE
+             ? AGX_APPLE9_PP_FRONT_CCW
+             : 0) |
+         (vk_rasterization_state_depth_clip_enable(&dyn->rs)
+             ? AGX_APPLE9_PP_DEPTH_CLIP
+             : 0) |
+         (dyn->rs.depth_bias.enable ? AGX_APPLE9_PP_DEPTH_BIAS : 0) |
+         (float_depth ? AGX_APPLE9_PP_DEPTH_BIAS_FLOAT : 0),
+      .bias_constant = dyn->rs.depth_bias.constant_factor,
+      .bias_slope = dyn->rs.depth_bias.slope_factor,
+      .bias_clamp = dyn->rs.depth_bias.clamp,
+      .bias_unit = depth == VK_FORMAT_D16_UNORM ? 0x1p-16 : 0x1p-24,
+   };
+
+   float viewport[4] = {0};
+   if (dyn->vp.viewport_count) {
+      const VkViewport *vp = &dyn->vp.viewports[0];
+      params.depth_range = vp->maxDepth - vp->minDepth;
+      viewport[0] = vp->width * 0.5f;
+      viewport[1] = vp->height * 0.5f;
+      viewport[2] = vp->x + vp->width * 0.5f;
+      viewport[3] = vp->y + vp->height * 0.5f;
+   }
+
+   if (memcmp(&desc->root.draw.polygon_points, &params, sizeof(params)) ||
+       memcmp(desc->root.draw.polygon_points_viewport, viewport,
+              sizeof(viewport))) {
+      desc->root.draw.polygon_points = params;
+      memcpy(desc->root.draw.polygon_points_viewport, viewport,
+             sizeof(viewport));
+      desc->root_dirty = true;
+   }
+}
+
 /* The stipple pattern, and viewport transforms when stippling lines */
 static void
 hk_update_line_stipple(struct hk_cmd_buffer *cmd)
@@ -4966,7 +5074,8 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       needed |= gfx->pg_query[i] != 0;
 
    /* ...or to give the fragment shader flat copies of per-vertex inputs */
-   struct hk_apple9_passthrough_suffix suffix = {0};
+   struct hk_apple9_passthrough_suffix suffix;
+   memset(&suffix, 0, sizeof(suffix));
    struct hk_api_shader *fs_api = gfx->shaders[MESA_SHADER_FRAGMENT];
    if (agx_is_apple9(&dev->dev) && fs_api) {
       const struct hk_shader *fs = hk_only_variant(fs_api);
@@ -4980,6 +5089,17 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
       needed |= suffix.per_vertex_copies || suffix.per_vertex_bary[0] ||
                 suffix.per_vertex_bary[1];
+   }
+
+   /* ...or to draw triangles as polygon points */
+   if (hk_polygon_points_active(cmd)) {
+      suffix.polygon_points = true;
+      if (fs_api) {
+         const struct hk_shader *fs = hk_only_variant(fs_api);
+         suffix.polygon_point_flat = fs->info.fs.interp.flat;
+         suffix.polygon_point_slot = fs->info.fs.polygon_point_slot;
+      }
+      needed = true;
    }
 
    /* ...or to write the word of stippled lines */
@@ -5142,6 +5262,7 @@ hk_flush_gfx_state(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    /* TODO: Try to reduce draw overhead of this */
    hk_handle_passthrough_gs(cmd, draw);
    hk_update_line_stipple(cmd);
+   hk_update_polygon_points(cmd);
 
    hk_flush_shaders(cmd);
 
@@ -5391,6 +5512,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
          hk_apple9_merge_tess_info(cmd);
       hk_handle_passthrough_gs(cmd, draw_);
       hk_update_line_stipple(cmd);
+      hk_update_polygon_points(cmd);
       hk_flush_shaders(cmd);
       if (cmd->state.gfx.descriptors.push_dirty)
          hk_cmd_buffer_flush_push_descriptors(cmd, &cmd->state.gfx.descriptors);
@@ -5669,6 +5791,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    rast_key.cull_distance_array_size = main->info.cull_distance_array_size;
    rast_key.line_stipple = hk_line_stipple_active(cmd);
    hk_update_line_stipple(cmd);
+   hk_update_polygon_points(cmd);
    rast_key.copies.count = fs->info.fs.per_vertex_copies;
    memcpy(rast_key.copies.location, fs->info.fs.per_vertex_location,
           sizeof(rast_key.copies.location));

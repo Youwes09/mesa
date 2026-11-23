@@ -38,6 +38,7 @@ hk_files = files(
   'hk_instance.c',
   'hk_instance.h',
   'hk_nir_lower_descriptors.c',
+  'hk_apple9_polygon_points.c',
   'hk_nir_line_stipple.c',
   'hk_nir_lower_mesh.c',
   'hk_physical_device.c',

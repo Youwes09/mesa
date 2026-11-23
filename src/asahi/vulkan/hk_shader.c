@@ -28,6 +28,7 @@
 
 #include "asahi/libagx/mesh.h"
 #include "agx_bo.h"
+#include "hk_apple9_polygon_points.h"
 #include "hk_cmd_buffer.h"
 #include "hk_descriptor_set_layout.h"
 #include "hk_device.h"
@@ -88,8 +89,15 @@ struct hk_fs_key {
 
    /* Whether the shader may draw stippled lines, see hk_nir_line_stipple.c */
    bool line_stipple;
+
+   /* Whether the shader may draw polygon-mode points, see
+    * hk_apple9_polygon_points_gs.
+    */
+   bool polygon_points;
+
+   uint8_t pad[3];
 };
-static_assert(sizeof(struct hk_fs_key) == 4, "packed");
+static_assert(sizeof(struct hk_fs_key) == 8, "packed");
 
 struct hk_vs_key {
    struct agx_velem_key attribs[32];
@@ -314,6 +322,17 @@ hk_populate_vs_key(struct hk_vs_key *key,
    }
 }
 
+/* Whether draws with these shaders may draw triangles as polygon points */
+static bool
+hk_may_draw_polygon_points(const struct vk_graphics_pipeline_state *state)
+{
+   if (state == NULL || state->rs == NULL)
+      return true;
+
+   return state->rs->polygon_mode == VK_POLYGON_MODE_POINT ||
+          BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_POLYGON_MODE);
+}
+
 /* Whether these shaders may stipple lines, which only Apple9 exposes */
 static bool
 hk_may_stipple_lines(const struct vk_graphics_pipeline_state *state,
@@ -336,6 +355,7 @@ hk_populate_fs_key(struct hk_fs_key *key,
 {
    memset(key, 0, sizeof(*key));
    key->line_stipple = hk_may_stipple_lines(state, features);
+   key->polygon_points = hk_may_draw_polygon_points(state);
 
    /* Pipelines allow draw-time feedback loops only with the dynamic state */
    if (state == NULL) {
@@ -2758,6 +2778,14 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          hk_lower_late_division(nir);
       }
 
+      /* Polygon-mode points take their facing and primitive ID from the
+       * polygon slot, see hk_apple9_polygon_points_gs.
+       */
+      if (apple9 && key->fs.polygon_points) {
+         hk_only_variant(obj)->info.fs.polygon_point_slot =
+            hk_nir_lower_polygon_point_fs(nir, HK_POLYGON_POINT_SLOT);
+      }
+
       if (apple9)
          hk_apple9_lower_fs(nir, hk_only_variant(obj));
 
@@ -3145,7 +3173,7 @@ hk_deserialize_shader(struct hk_device *dev, struct blob_reader *blob,
 }
 
 /* Version the container independently of the hardware programs it owns. */
-#define HK_SHADER_CONTAINER_VERSION 0x484b000au
+#define HK_SHADER_CONTAINER_VERSION 0x484b000bu
 
 static VkResult
 hk_deserialize_api_shader(struct vk_device *vk_dev, struct blob_reader *blob,

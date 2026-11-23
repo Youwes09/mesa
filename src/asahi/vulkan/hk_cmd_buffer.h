@@ -136,6 +136,11 @@ struct hk_root_descriptor_table {
          /* Per-viewport (scale.xy, offset.xy) for line stipple, or 0 */
          uint64_t stipple_viewports;
 
+         /* Apple9 polygon-mode points, see hk_apple9_pp_emit_triangle */
+         struct agx_apple9_polygon_point_params polygon_points;
+         float polygon_points_viewport[4];
+         uint32_t polygon_points_active;
+
          /* Mapping from varying slots written by the last vertex stage to UVS
           * indices. This mapping must be compatible with the fragment shader.
           */

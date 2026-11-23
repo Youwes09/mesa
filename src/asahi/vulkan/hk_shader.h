@@ -224,6 +224,11 @@ struct hk_shader_info {
 
          /* Apple9: export depth for the epilog in Z/S feedback loop draws */
          bool dynamic_late_zs;
+
+         /* Apple9: the shader reads the polygon slot of polygon-mode points,
+          * see hk_nir_lower_polygon_point_fs.
+          */
+         bool polygon_point_slot;
       } fs;
 
       struct {

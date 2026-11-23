@@ -996,7 +996,12 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    record->depth_face[0] = record->depth_face[1] =
       (agx_pack_line_width(dyn->rs.line.width) << 8) | (depth_compare << 24) |
       ((depth_test && dyn->ds.depth.write_enable) ? 0 : (1 << 21)) |
-      (dyn->rs.polygon_mode << 18);
+      /* Polygon-mode points are drawn as points, see
+       * hk_apple9_polygon_points_gs.
+       */
+      ((gfx->descriptors.root.draw.polygon_points_active ? VK_POLYGON_MODE_FILL
+                                                         : dyn->rs.polygon_mode)
+       << 18);
    for (unsigned face = 0; face < 2; ++face) {
       const struct vk_stencil_test_face_state *st =
          face ? &dyn->ds.stencil.back : &dyn->ds.stencil.front;
