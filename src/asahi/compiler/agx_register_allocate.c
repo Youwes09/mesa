@@ -567,7 +567,24 @@ collect_affinity(struct ra_ctx *rctx, unsigned ssa)
 {
    unsigned want = ~0u;
    agx_instr *collect = rctx->src_to_collect[ssa];
-   if (collect && collect->op == AGX_OPCODE_COLLECT) {
+
+   /* Values exported at the end of a shader part want their ABI register */
+   if (collect && collect->op == AGX_OPCODE_EXPORT &&
+       collect->src[0].reg_class == RA_GPR)
+      return collect->imm;
+
+   /* Likewise vectors whose first channel is exported */
+   if (collect && collect->op == AGX_OPCODE_SPLIT &&
+       collect->dest[0].type == AGX_INDEX_NORMAL &&
+       collect->dest[0].reg_class == RA_GPR) {
+      agx_instr *exp = rctx->src_to_collect[collect->dest[0].value];
+      if (exp && exp->op == AGX_OPCODE_EXPORT)
+         return exp->imm;
+   }
+
+   /* Export bundles are written by moves, so sources need not be contiguous */
+   if (collect && collect->op == AGX_OPCODE_COLLECT &&
+       collect->dest[0].reg_class == RA_GPR) {
       unsigned ours = ~0u;
       agx_foreach_ssa_src(collect, s) {
          if (collect->src[s].value == ssa) {
@@ -1890,7 +1907,8 @@ pick_regs(struct ra_ctx *rctx, agx_instr *I, unsigned d)
    }
 
    /* Try to allocate sources of collects contiguously */
-   if (collect_use && collect_use->op == AGX_OPCODE_COLLECT) {
+   if (collect_use && collect_use->op == AGX_OPCODE_COLLECT &&
+       collect_use->dest[0].reg_class == RA_GPR) {
       agx_instr *collect = collect_use;
 
       assert(count == align && "collect sources are scalar");
