@@ -2362,12 +2362,79 @@ hk_apple9_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
    return true;
 }
 
+/* VK_EXT_depth_clip_control: one final position store with z += c (w - z) */
+static bool
+hk_apple9_lower_clip_z(nir_shader *nir)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   nir_builder b = nir_builder_create(impl);
+   nir_variable *pos = NULL;
+   nir_intrinsic_instr *first = NULL;
+
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr_safe(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         if (intr->intrinsic != nir_intrinsic_store_output ||
+             nir_intrinsic_io_semantics(intr).location != VARYING_SLOT_POS)
+            continue;
+
+         assert(nir_src_bit_size(intr->src[0]) == 32 && "position is FP32");
+         if (!pos) {
+            pos = nir_local_variable_create(impl, glsl_vec4_type(), "pos");
+            first = intr;
+         }
+
+         b.cursor = nir_before_instr(instr);
+         unsigned c = nir_intrinsic_component(intr);
+         nir_def *value = intr->src[0].ssa;
+         nir_def *comps[4];
+         for (unsigned i = 0; i < 4; ++i) {
+            comps[i] = i >= c && i - c < value->num_components
+                          ? nir_channel(&b, value, i - c)
+                          : nir_undef(&b, 1, 32);
+         }
+
+         nir_store_var(&b, pos, nir_vec(&b, comps, 4),
+                       nir_intrinsic_write_mask(intr) << c);
+
+         if (intr != first)
+            nir_instr_remove(instr);
+      }
+   }
+
+   if (!pos)
+      return nir_no_progress(impl);
+
+   /* The shader's stores are complete at its end */
+   nir_io_semantics sem = nir_intrinsic_io_semantics(first);
+   unsigned base = nir_intrinsic_base(first);
+   nir_instr_remove(&first->instr);
+
+   b.cursor = nir_after_impl(impl);
+   nir_def *value = nir_load_var(&b, pos);
+   nir_def *z = nir_channel(&b, value, 2);
+   nir_def *w = nir_channel(&b, value, 3);
+   nir_def *c = nir_load_clip_z_coeff(&b);
+   nir_def *new_z =
+      nir_ffma_weak(&b, nir_fneg(&b, z), c, nir_ffma_weak(&b, w, c, z));
+   nir_store_output(&b, nir_vector_insert_imm(&b, value, new_z, 2),
+                    nir_imm_int(&b, 0), .base = base, .write_mask = 0xf,
+                    .src_type = nir_type_float32, .io_semantics = sem);
+
+   nir_progress(true, impl, nir_metadata_none);
+   NIR_PASS(_, nir, nir_lower_vars_to_ssa);
+   return true;
+}
+
 static void
 hk_lower_hw_vs(nir_shader *nir, struct hk_shader *shader, bool kill_psiz)
 {
    /* VK_EXT_depth_clip_control: Apple9 clips depth to [0, w] */
    if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
-      NIR_PASS(_, nir, nir_lower_clip_halfz_dynamic);
+      NIR_PASS(_, nir, hk_apple9_lower_clip_z);
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_clip_z_coeff,
                nir_metadata_control_flow, NULL);
    }
