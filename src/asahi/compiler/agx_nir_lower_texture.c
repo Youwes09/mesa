@@ -558,8 +558,9 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
             nir_ffma(b, nir_channel(b, f, 2 + i), rcp, nir_imm_float(b, 0.5f));
       }
 
+      /* The comparator goes in word 2, as the face is in the LOD word */
       nir_def *w3 = words[3] == undef ? zero : words[3];
-      words[2] = face;
+      words[2] = tex->is_shadow ? nir_f2f32(b, comparator) : face;
       words[3] = nir_ior(b, w3, array ? nir_ishl_imm(b, face, 12) : face);
 
       /* Apple9 cube filtering clamps at the edges of the selected face.
