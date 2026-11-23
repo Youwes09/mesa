@@ -620,14 +620,13 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
       as_array->backend_flags |= AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
       nir_def *alt_words = nir_vec(b, alt, 4);
 
-      /* The alias of the cube view */
+      /* The cube view's alias; clone sources are rewritten once inserted */
       int handle =
          nir_tex_instr_src_index(as_array, nir_tex_src_texture_handle);
+      nir_def *alias = NULL;
       if (handle >= 0) {
-         nir_def *alias =
-            nir_iadd_imm(b, as_array->src[handle].src.ssa,
-                         AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
-         nir_src_rewrite(&as_array->src[handle].src, alias);
+         alias = nir_iadd_imm(b, as_array->src[handle].src.ssa,
+                              AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
       } else {
          assert(nir_tex_instr_src_index(as_array, nir_tex_src_texture_offset) <
                    0 &&
@@ -642,6 +641,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
          &as_array->src[nir_tex_instr_src_index(as_array, nir_tex_src_backend1)]
              .src,
          alt_words);
+      if (alias)
+         nir_src_rewrite(&as_array->src[handle].src, alias);
       nir_push_else(b, NULL);
       nir_instr_remove(&tex->instr);
       nir_builder_instr_insert(b, &tex->instr);
