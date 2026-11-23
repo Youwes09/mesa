@@ -1294,20 +1294,10 @@ agx_clear(struct pipe_context *pctx, unsigned buffers,
 
    unsigned fastclear = buffers & ~(batch->draw | batch->load);
    unsigned slowclear = buffers & ~fastclear;
-   /* The generated background/partial-load entry reloads attachments. Color
-    * clears must therefore execute as ordinary Mesa fragment draws. Depth and
-    * stencil keep their fixed-function fast-clear path. */
-   if (agx_apple9_direct_render_enabled(agx_device(pctx->screen))) {
-      unsigned color_fast = fastclear & PIPE_CLEAR_COLOR;
-      slowclear |= color_fast;
-      fastclear &= ~color_fast;
-      /* A fast depth/stencil clear needs a render with a draw in its VDM
-       * stream: it needs the graphics package, and a render whose stream is
-       * empty is never submitted (agx_flush_batch). Without one yet, clear
-       * with a draw. */
-      if (!batch->apple9_render_initialized || !batch->apple9_vdm_draws)
-         slowclear |= fastclear;
-   }
+   /* Apple9 never submits a render without draws, so clear with a draw */
+   if (agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
+       (!batch->apple9_render_initialized || !batch->apple9_vdm_draws))
+      slowclear |= fastclear;
 
    assert(scissor_state == NULL &&
           "we don't support pipe_caps.clear_scissored");
