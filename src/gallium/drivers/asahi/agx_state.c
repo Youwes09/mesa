@@ -3339,9 +3339,7 @@ agx_launch_internal(struct agx_batch *batch, struct agx_grid grid,
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
 
-   if (agx_apple9_compute_enabled(dev)) {
-      UNREACHABLE("Apple9 requires native code for internal compute launches");
-   }
+   assert(!agx_is_apple9(dev) && "see agx_apple9_launch_compute");
 
    uint32_t *out = (uint32_t *)batch->cdm.current;
 
@@ -6918,7 +6916,8 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       if (!agx_apple9_prepare_draw(dev, &batch->pipeline_pool,
                                    &batch->apple9_context_pool, &pipeline,
                                    record, previous)) {
-         UNREACHABLE("Failed to encode Apple9 draw state");
+         mesa_loge("Apple9: could not prepare the state of a draw");
+         return;
       }
       batch->apple9_previous_draw = *record;
       ++batch->apple9_draw_count;
