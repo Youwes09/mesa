@@ -2568,8 +2568,10 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    assert(!nir_alu_instr_is_signed_zero_preserve(alu) &&
           "should've been lowered");
 
-   assert((alu->def.bit_size == 16) ==
-             (alu->op == nir_op_fmin || alu->op == nir_op_fmax) &&
+   /* Apple9 flushes FP32 results in agx_nir_lower_apple9_denorms instead */
+   assert((agx_is_apple9(b->shader) ||
+           (alu->def.bit_size == 16) ==
+              (alu->op == nir_op_fmin || alu->op == nir_op_fmax)) &&
           "fp32 should be lowered");
 
    bool fmax = alu->op == nir_op_fmax || alu->op == nir_op_fmax_agx;
@@ -4172,8 +4174,12 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    /* Lower fmin/fmax before optimizing preambles so we can see across uniform
     * expressions. Do it after nir_opt_reassociate because nir_opt_reassociate
     * should work on unlowered fmin/fmax.
+    *
+    * Apple9 flushes min/max where needed, in agx_nir_lower_apple9_denorms.
     */
-   NIR_PASS(_, nir, agx_nir_lower_fminmax);
+   bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
+   if (!apple9)
+      NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
    /* Force preamble generation for internal shaders since hk's meta copies
     * depend on it for correctness with imgwblk intrinsics.
@@ -4217,7 +4223,8 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * GLES.
     */
    NIR_PASS(_, nir, nir_opt_algebraic_late);
-   NIR_PASS(_, nir, agx_nir_lower_fminmax);
+   if (!apple9)
+      NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
    /* Fuse add/sub/multiplies/shifts after running opt_algebraic_late to fuse
     * isub but before shifts are lowered.
