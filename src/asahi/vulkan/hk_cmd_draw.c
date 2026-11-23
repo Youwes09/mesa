@@ -3144,8 +3144,12 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    if (!batch)
       hk_tess_batch_flush(cmd);
 
+   /* The stage before the GS: the API VS linked with its prolog, or the TES */
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
-   hk_apple9_dispatch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX],
+   hk_apple9_dispatch_prerast(cmd, vs,
+                              vs->info.stage == MESA_SHADER_VERTEX
+                                 ? gfx->linked[MESA_SHADER_VERTEX]
+                                 : vs->only_linked,
                               grid_vs);
    cmd->tess_batch.capture = NULL;
 
