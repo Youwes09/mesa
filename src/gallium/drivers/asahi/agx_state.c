@@ -6912,7 +6912,9 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          memcpy(util_dynarray_grow_bytes(&batch->scissor, 1, sizeof(scissor)),
                 &scissor, sizeof(scissor));
       }
-      record->reads_tile = pipeline.fragment->reads_tile;
+      /* Logic ops read the destination in the epilog, like blending */
+      record->reads_tile =
+         pipeline.fragment->reads_tile || ctx->blend->key.logicop_enable;
       record->uses_discard = pipeline.fragment->uses_discard;
       record->writes_depth = pipeline.fragment->writes_depth;
       record->disable_tri_merging = pipeline.fragment->disable_tri_merging;
