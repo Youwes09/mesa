@@ -1011,11 +1011,11 @@ apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
       break;
 
    case AGX_OPCODE_STACK_STORE:
-      if (I->src[1].type == AGX_INDEX_IMMEDIATE)
-         return false;
-
-      c[D].max = c[D + 1].max = r63;
+      /* The data is clobbered, and indexed stores reach r0-r63 only */
       c[D].clobber = true;
+
+      if (I->src[1].type != AGX_INDEX_IMMEDIATE)
+         c[D].max = c[D + 1].max = r63;
       break;
 
    case AGX_OPCODE_ATOMIC:
