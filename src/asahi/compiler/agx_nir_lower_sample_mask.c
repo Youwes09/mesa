@@ -151,9 +151,19 @@ run_tests_after_last_discard(nir_builder *b)
             nir_def *live = nir_ixor(b, killed, all_samples);
 
             nir_def *testing = nir_load_shader_part_tests_zs_agx(b);
-            nir_def *affected = nir_ior(b, testing, killed);
 
-            nir_sample_mask_agx(b, affected, live);
+            if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+               /* A test ends ZS testing, so only kill if a later part tests */
+               nir_push_if(b, nir_ine_imm(b, testing, 0));
+               nir_sample_mask_agx(b, all_samples, live);
+               nir_push_else(b, NULL);
+               nir_sample_mask_agx(b, killed, nir_imm_intN_t(b, 0, 16));
+               nir_pop_if(b, NULL);
+            } else {
+               nir_def *affected = nir_ior(b, testing, killed);
+               nir_sample_mask_agx(b, affected, live);
+            }
+
             nir_instr_remove(&intr->instr);
             return;
          } else {
@@ -169,8 +179,17 @@ run_tests_after_last_discard(nir_builder *b)
           * If we're not testing, this turns into sample_mask(0, ~0) which is a
           * no-op.
           */
-         nir_sample_mask_agx(b, nir_load_shader_part_tests_zs_agx(b),
-                             nir_imm_intN_t(b, ALL_SAMPLES, 16));
+         nir_def *testing = nir_load_shader_part_tests_zs_agx(b);
+         nir_def *all_samples = nir_imm_intN_t(b, ALL_SAMPLES, 16);
+
+         /* As above, Apple9 only tests here if no later part does */
+         if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+            nir_push_if(b, nir_ine_imm(b, testing, 0));
+            nir_sample_mask_agx(b, all_samples, all_samples);
+            nir_pop_if(b, NULL);
+         } else {
+            nir_sample_mask_agx(b, testing, all_samples);
+         }
          return;
       }
    }
@@ -217,7 +236,11 @@ agx_nir_lower_sample_mask(nir_shader *shader)
       return nir_no_progress(impl);
    }
 
-   nir_progress(true, impl, nir_metadata_control_flow);
+   /* Apple9 tests may be placed in new control flow */
+   nir_progress(true, impl,
+                agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9
+                   ? nir_metadata_none
+                   : nir_metadata_control_flow);
 
    nir_shader_intrinsics_pass(shader, lower_discard_to_sample_mask_0,
                               nir_metadata_control_flow, NULL);
