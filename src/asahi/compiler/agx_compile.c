@@ -5378,6 +5378,10 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                glsl_get_natural_size_align_bytes);
       NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
                nir_var_function_temp, ~0);
+
+      /* Arrays left in variables are indexed directly, so make them SSA */
+      NIR_PASS(_, nir, nir_split_array_vars, nir_var_function_temp);
+      NIR_PASS(_, nir, nir_lower_vars_to_ssa);
    }
 
    /* Apple9 accesses threadgroup and private memory in words */
