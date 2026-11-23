@@ -630,8 +630,23 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
          nir_tex_instr_src_index(as_array, nir_tex_src_texture_handle);
       nir_def *alias = NULL;
       if (handle >= 0) {
-         alias = nir_iadd_imm(b, as_array->src[handle].src.ssa,
-                              AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
+         /* A bindless handle stays one, for the driver's handle lowering */
+         nir_def *h = as_array->src[handle].src.ssa;
+         nir_instr *hi = nir_def_instr(h);
+         nir_intrinsic_instr *bindless =
+            hi->type == nir_instr_type_intrinsic ? nir_instr_as_intrinsic(hi)
+                                                 : NULL;
+
+         if (bindless &&
+             bindless->intrinsic == nir_intrinsic_bindless_image_agx) {
+            alias = nir_bindless_image_agx(
+               b,
+               nir_iadd_imm(b, bindless->src[0].ssa,
+                            AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET),
+               .desc_set = nir_intrinsic_desc_set(bindless));
+         } else {
+            alias = nir_iadd_imm(b, h, AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
+         }
       } else {
          assert(nir_tex_instr_src_index(as_array, nir_tex_src_texture_offset) <
                    0 &&
