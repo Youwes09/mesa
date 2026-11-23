@@ -626,6 +626,62 @@ agx_optimizer_signext(agx_context *ctx, agx_instr **defs, agx_instr *I)
    }
 }
 
+/* The 32-bit constant an operand holds, if it is one */
+static bool
+const_operand(agx_instr **defs, agx_index x, uint32_t *value)
+{
+   if (x.type == AGX_INDEX_IMMEDIATE) {
+      *value = x.value;
+      return !x.abs && !x.neg;
+   }
+
+   if (x.type != AGX_INDEX_NORMAL || x.size != AGX_SIZE_32 || x.abs || x.neg)
+      return false;
+
+   agx_instr *def = defs[x.value];
+   if (!def || def->op != AGX_OPCODE_MOV_IMM)
+      return false;
+
+   *value = def->imm;
+   return true;
+}
+
+/* Fold Apple9 constant bitfield extracts, inserts and bitops into moves */
+static void
+agx_optimizer_fold_apple9(agx_instr **defs, agx_instr *I)
+{
+   uint32_t a, b, v;
+
+   if (I->dest[0].size != AGX_SIZE_32)
+      return;
+
+   if (I->op == AGX_OPCODE_BFEIL) {
+      if (!agx_is_equiv(I->src[0], agx_zero()) ||
+          !const_operand(defs, I->src[1], &a) ||
+          I->src[2].type != AGX_INDEX_IMMEDIATE || I->src[2].value >= 32)
+         return;
+
+      uint32_t mask = I->bfi_mask ? BITFIELD_MASK(I->bfi_mask) : ~0u;
+      v = (a >> I->src[2].value) & mask;
+   } else if (I->op == AGX_OPCODE_BITOP) {
+      if (!const_operand(defs, I->src[0], &a) ||
+          !const_operand(defs, I->src[1], &b))
+         return;
+
+      v = 0;
+      for (unsigned bit = 0; bit < 32; ++bit) {
+         unsigned row = ((a >> bit) & 1) | (((b >> bit) & 1) << 1);
+         v |= ((I->truth_table >> row) & 1) << bit;
+      }
+   } else {
+      return;
+   }
+
+   I->op = AGX_OPCODE_MOV_IMM;
+   I->nr_srcs = 0;
+   I->imm = v;
+}
+
 void
 agx_optimizer_forward(agx_context *ctx)
 {
@@ -640,6 +696,9 @@ agx_optimizer_forward(agx_context *ctx)
 
       /* Optimize moves */
       agx_optimizer_copyprop(ctx, defs, I);
+
+      if (ctx->target.isa == AGX_SHADER_ISA_APPLE9)
+         agx_optimizer_fold_apple9(defs, I);
 
       /* Propagate fmov down */
       if (info.is_float || I->op == AGX_OPCODE_FCMPSEL ||
