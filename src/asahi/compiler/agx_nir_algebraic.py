@@ -156,6 +156,13 @@ for bits in range(1, 32):
          ('ubitfield_extract', a, b, bits), apple9),
     ])
 
+# Apple9 logic ops take 8-bit constants, so wider low masks are extracts
+for bits in range(9, 32):
+    fuse_ubfe.extend([
+        (('iand', 'a@32', (1 << bits) - 1),
+         ('ubitfield_extract', a, 0, bits), apple9),
+    ])
+
 # (x * y) + s = (x * y) + (s << 0)
 def imad(x, y, z):
     return ('imadshl_agx', x, y, z, 0)
