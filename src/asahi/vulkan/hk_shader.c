@@ -722,12 +722,10 @@ hk_hash_graphics_state(struct vk_physical_device *device,
    _mesa_blake3_final(&blake3_ctx, blake3_out);
 }
 
-/* Apple9 has no bounds_agx; it selects with a generic comparison. */
 static nir_def *
-bounds_check(nir_builder *b, nir_def *data, nir_def *offs, nir_def *bound,
-             bool apple9)
+bounds_check(nir_builder *b, nir_def *data, nir_def *offs, nir_def *bound)
 {
-   if (!apple9 && data->bit_size == 32 && data->num_components == 1) {
+   if (data->bit_size == 32 && data->num_components == 1) {
       return nir_bounds_agx(b, data, offs, bound);
    } else {
       /* TODO: Optimize */
@@ -922,7 +920,6 @@ hk_apple9_vectorize_cb(unsigned align_mul, unsigned align_offset,
 
 struct hk_bounded_lowering {
    bool soft_fault;
-   bool apple9;
    /* Merged vector loads are checked per component (bounds_checked_modes). */
    bool per_component;
 };
@@ -994,8 +991,7 @@ lower_load_global_constant_offset_instr(nir_builder *b,
             nir_scalar_is_const(offs)
                ? nir_imm_int(b, nir_scalar_as_uint(offs) + (c + 1) * byte_size)
                : nir_iadd_imm(b, offset, (c + 1) * byte_size);
-         comps[c] =
-            bounds_check(b, nir_channel(b, val, c), end, bound, opts->apple9);
+         comps[c] = bounds_check(b, nir_channel(b, val, c), end, bound);
       }
       val = nir_vec(b, comps, intrin->def.num_components);
    } else if (intrin->intrinsic == nir_intrinsic_load_global_constant_bounded) {
@@ -1009,11 +1005,10 @@ lower_load_global_constant_offset_instr(nir_builder *b,
           * the offset down would let loads past a short range through
           * (robustness2 uniform_buffer len_4..len_60).
           */
-         val =
-            bounds_check(b, val, nir_imm_int(b, offs_imm), bound, opts->apple9);
+         val = bounds_check(b, val, nir_imm_int(b, offs_imm), bound);
       } else {
          offset = nir_iadd_imm(b, offset, load_size);
-         val = bounds_check(b, val, offset, bound, opts->apple9);
+         val = bounds_check(b, val, offset, bound);
       }
    }
 
@@ -1028,7 +1023,6 @@ hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault, bool apple9)
 {
    struct hk_bounded_lowering bounded = {
       .soft_fault = soft_fault,
-      .apple9 = apple9,
       .per_component = apple9,
    };
    return nir_shader_intrinsics_pass(nir,

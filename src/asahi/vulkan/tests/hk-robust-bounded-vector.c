@@ -24,9 +24,28 @@ fold(nir_shader *nir)
    } while (progress);
 }
 
+/* Resolve a constant-folded bounds_agx as the backend's select would */
+static nir_scalar
+resolve_bounds(nir_scalar s, bool *zero)
+{
+   *zero = false;
+   if (!nir_scalar_is_alu(s) || nir_scalar_alu_op(s) != nir_op_bounds_agx)
+      return s;
+   nir_scalar offs = nir_scalar_chase_alu_src(s, 1);
+   nir_scalar bound = nir_scalar_chase_alu_src(s, 2);
+   if (!nir_scalar_is_const(offs) || !nir_scalar_is_const(bound))
+      return s;
+   *zero = nir_scalar_as_uint(offs) > nir_scalar_as_uint(bound);
+   return nir_scalar_chase_alu_src(s, 0);
+}
+
 static bool
 is_loaded_channel(nir_scalar s, unsigned c)
 {
+   bool zero;
+   s = resolve_bounds(s, &zero);
+   if (zero)
+      return false;
    if (!nir_scalar_is_intrinsic(s) || s.comp != c)
       return false;
    nir_intrinsic_op op = nir_scalar_intrinsic_op(s);
@@ -87,7 +106,9 @@ check(unsigned components, unsigned offset, unsigned bound, bool dynamic,
       if (in_bounds) {
          CHECK(is_loaded_channel(s, c));
       } else {
-         CHECK(nir_scalar_is_const(s) && nir_scalar_as_uint(s) == 0);
+         bool zero;
+         nir_scalar r = resolve_bounds(s, &zero);
+         CHECK(zero || (nir_scalar_is_const(r) && nir_scalar_as_uint(r) == 0));
       }
    }
    ralloc_free(b.shader);
