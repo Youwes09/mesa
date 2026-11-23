@@ -4928,7 +4928,16 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       agx_print_shader(ctx, stdout);
 
    agx_set_reg_constraints(ctx);
-   AGX_PASS(ctx, agx_ra);
+
+   /* The spiller always fits, so allocation only fails on a compiler bug */
+   if (!agx_ra(ctx)) {
+      fprintf(stderr, "agx: register allocation failed: %s\n",
+              ctx->ra_error ? ctx->ra_error : "no reason given");
+      agx_print_shader(ctx, stderr);
+      abort();
+   }
+
+   agx_validate(ctx, "agx_ra");
    agx_lower_64bit_postra(ctx);
 
    /* Record where the vertex outputs of a shader part are published */
