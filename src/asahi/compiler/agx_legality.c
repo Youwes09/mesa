@@ -487,9 +487,11 @@ local_ok(const agx_instr *I)
        !plain(index))
       return false;
 
+   /* Threadgroup memory has no floating-point addition */
    if (atomic) {
       bool cmpxchg = I->atomic_opc == AGX_ATOMIC_OPC_CMPXCHG;
-      return reg32(I->dest[0]) && vec32(I->src[0], cmpxchg ? 2 : 1);
+      return reg32(I->dest[0]) && vec32(I->src[0], cmpxchg ? 2 : 1) &&
+             I->atomic_opc != AGX_ATOMIC_OPC_FADD;
    }
 
    return I->format == AGX_FORMAT_I32 && I->mask == 1 &&

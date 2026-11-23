@@ -1967,6 +1967,8 @@ atomic_op(const agx_instr *I)
       return 0x11;
    case AGX_ATOMIC_OPC_CMPXCHG:
       return 0x12;
+   case AGX_ATOMIC_OPC_FADD:
+      return 0x13;
    case AGX_ATOMIC_OPC_IMAX:
       return 0x14;
    case AGX_ATOMIC_OPC_IMIN:
