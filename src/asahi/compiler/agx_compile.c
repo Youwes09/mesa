@@ -763,7 +763,8 @@ agx_emit_load_vary_apple9(agx_builder *b, agx_index dest,
                           enum agx_interpolation interp, agx_index sample)
 {
    unsigned components = instr->num_components;
-   assert(I.type == AGX_INDEX_IMMEDIATE && "Apple9 has no indirect inputs");
+   assert(I.type == AGX_INDEX_IMMEDIATE &&
+          "lowered by agx_nir_lower_apple9_indirect_io");
 
    agx_index position = agx_zero();
    if (interp == AGX_INTERPOLATION_SAMPLE) {
@@ -5144,6 +5145,10 @@ agx_preprocess_nir(nir_shader *nir)
       return;
 
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
+
+   /* Apple9 names varyings in instructions */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9 && nir->info.io_lowered)
+      NIR_PASS(_, nir, agx_nir_lower_apple9_indirect_io);
 
    /* Lower large arrays to scratch and small to csel. Apple9 has fewer GPRs */
    unsigned scratch_threshold =

@@ -53,6 +53,7 @@ unsigned agx_nir_lower_apple9_abi(struct nir_shader *nir, bool graphics,
                                   struct agx_apple9_compute_profile *profile);
 bool agx_nir_preload_apple9_push(struct nir_shader *nir, unsigned first,
                                  unsigned count);
+bool agx_nir_lower_apple9_indirect_io(struct nir_shader *nir);
 bool agx_nir_lower_apple9_coverage(struct nir_shader *nir, bool load_killed,
                                    bool export_killed);
 unsigned
