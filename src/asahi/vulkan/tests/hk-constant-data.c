@@ -31,7 +31,7 @@ fold(nir_shader *nir)
  */
 static bool
 addresses(mesa_shader_stage stage, unsigned bits, unsigned components,
-          unsigned offset, bool root_uniform)
+          unsigned offset)
 {
    nir_builder b = nir_builder_init_simple_shader(stage, &agx_nir_options,
                                                   "constant_data_address");
@@ -43,8 +43,7 @@ addresses(mesa_shader_stage stage, unsigned bits, unsigned components,
                                       .range = 240, .align_mul = bits / 8);
    nir_store_global(&b, value, nir_imm_int64(&b, 0x5000), .align_mul = 4,
                     .write_mask = BITFIELD_MASK(components));
-   CHECK(hk_nir_lower_descriptors(b.shader, &vk_robustness_disabled, 0, NULL,
-                                  root_uniform));
+   CHECK(hk_nir_lower_descriptors(b.shader, &vk_robustness_disabled, 0, NULL));
    b.cursor = nir_before_impl(b.impl);
    nir_def_rewrite_uses(index, nir_imm_int(&b, offset));
 
@@ -68,19 +67,8 @@ addresses(mesa_shader_stage stage, unsigned bits, unsigned components,
          if (instr->type != nir_instr_type_intrinsic)
             continue;
          nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         if (root_uniform && intr->intrinsic == nir_intrinsic_load_ubo) {
-            CHECK(nir_intrinsic_access(intr) & ACCESS_CAN_SPECULATE);
-            CHECK(nir_src_is_const(intr->src[0]) &&
-                  nir_src_as_uint(intr->src[0]) == 0);
-            CHECK(nir_src_is_const(intr->src[1]));
-            CHECK(nir_src_as_uint(intr->src[1]) ==
-                  hk_root_descriptor_offset(constant_data) + stage * 8);
-            b.cursor = nir_before_instr(instr);
-            nir_def_replace(&intr->def, nir_imm_int64(&b, 0x200000));
-            ++roots;
-         } else if (!root_uniform &&
-                    intr->intrinsic == nir_intrinsic_load_global_constant &&
-                    nir_src_is_const(intr->src[0])) {
+         if (intr->intrinsic == nir_intrinsic_load_global_constant &&
+             nir_src_is_const(intr->src[0])) {
             CHECK(nir_src_as_uint(intr->src[0]) ==
                   0x100000 + hk_root_descriptor_offset(constant_data) +
                      stage * 8);
@@ -162,8 +150,8 @@ extract(bool mutable, bool dynamic)
          CHECK(data[2 * i] == i * 73 + 19);
          CHECK(data[2 * i + 1] == i * 31 + 7);
       }
-      CHECK(hk_nir_lower_descriptors(b.shader, &vk_robustness_disabled, 0, NULL,
-                                     true));
+      CHECK(
+         hk_nir_lower_descriptors(b.shader, &vk_robustness_disabled, 0, NULL));
    }
    nir_validate_shader(b.shader, "constant data extraction");
    ralloc_free(b.shader);
@@ -256,8 +244,7 @@ main(void)
       for (unsigned bits = 8; ok && bits <= 64; bits *= 2)
          for (unsigned n = 1; ok && n <= 4; n *= 2)
             for (unsigned i = 0; ok && i < ARRAY_SIZE(offsets); ++i)
-               for (unsigned uniform = 0; ok && uniform < 2; ++uniform)
-                  ok = addresses(stage, bits, n, offsets[i], uniform);
+               ok = addresses(stage, bits, n, offsets[i]);
    glsl_type_singleton_decref();
    return ok ? 0 : 1;
 }

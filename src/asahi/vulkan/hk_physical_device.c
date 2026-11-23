@@ -1448,7 +1448,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       .EXT_image_view_min_lod = true,
       .KHR_compute_shader_derivatives = true,
       .EXT_blend_operation_advanced = true,
-      /* Deferred shaders compile vertex fetch for the bound input state. */
+      /* The vertex prolog fetches attributes for the bound input state */
       .EXT_vertex_input_dynamic_state = true,
       .EXT_extended_dynamic_state3 = true,
       .EXT_graphics_pipeline_library = true,
@@ -1609,8 +1609,6 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       KEEP(globalPriorityQuery),
       KEEP(shaderFloatControls2),
       KEEP(bresenhamLines),
-      /* Emulated in the fragment shader, see hk_apple9_lower_line_stipple_fs. */
-      .stippledBresenhamLines = true,
       KEEP(dynamicRenderingLocalRead),
       KEEP(samplerYcbcrConversion),
       KEEP(indexTypeUint8),
@@ -1694,8 +1692,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       KEEP(vertexInputDynamicState),
       KEEP(graphicsPipelineLibrary),
       KEEP(shaderObject),
-      /* Blend, sample and vertex state specialise deferred shaders at draw
-       * time; rasterizer state is emitted per draw. */
+      /* Blend, sample and vertex state key the prolog and epilog */
       KEEP(extendedDynamicState3TessellationDomainOrigin),
       KEEP(extendedDynamicState3DepthClampEnable),
       KEEP(extendedDynamicState3PolygonMode),
@@ -1712,7 +1709,6 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       KEEP(extendedDynamicState3SampleLocationsEnable),
       KEEP(extendedDynamicState3ProvokingVertexMode),
       KEEP(extendedDynamicState3LineRasterizationMode),
-      .extendedDynamicState3LineStippleEnable = true,
       .extendedDynamicState3DepthClipNegativeOneToOne = true,
       /* 2D views clamp gradient samples in hardware; other implicit samples
        * select the clamped LOD explicitly, without anisotropy. */
@@ -1892,7 +1888,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * and count against the API output limit, so do not reserve them twice.
     * Their rasterizer copies share the ordinary varying exports.
     */
-   const unsigned outputs = HK_APPLE9_OUTPUT_COMPONENTS;
+   const unsigned outputs = AGX_APPLE9_MAX_VARYING_COMPONENTS - 2;
    props->maxVertexOutputComponents = outputs;
    props->maxTessellationEvaluationOutputComponents = outputs;
    props->maxGeometryOutputComponents = outputs;
@@ -1907,13 +1903,6 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * all 32 API input locations without increasing the producer budget.
     */
    props->maxFragmentInputComponents = 128;
-   /* Polygon points are drawn as real points by the software polygon stage,
-    * which forwards the last pre-rasterization stage's PointSize. Draws it
-    * cannot take keep the hardware polygon mode with size 1: transform
-    * feedback, interfaces without room for the point size and polygon slot,
-    * and geometry or mesh shaders outside its limits.
-    */
-   props->polygonModePointSize = true;
    /* Byte-count draws use a GPU conversion to the ordinary indirect path.
     * Qualified on G16; retain the existing exposure on older generations.
     */

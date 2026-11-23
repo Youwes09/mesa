@@ -123,6 +123,9 @@ struct hk_root_descriptor_table {
           */
          float depth_clamp[2];
 
+         /* Apple9 depth_clip_control: 1/2 maps [-w, w] to [0, w], 0 keeps z */
+         float clip_z_coeff;
+
          /* Mapping from varying slots written by the last vertex stage to UVS
           * indices. This mapping must be compatible with the fragment shader.
           */
@@ -153,7 +156,7 @@ struct hk_root_descriptor_table {
 
 /* Bumped whenever hk_root_descriptor_table offsets change: compiled shaders
  * bake them, so pipeline and disk cache keys include it. */
-#define HK_ROOT_LAYOUT_VERSION 5
+#define HK_ROOT_LAYOUT_VERSION 6
 
 /* helper macro for computing root descriptor byte offsets */
 #define hk_root_descriptor_offset(member)                                      \
@@ -298,9 +301,6 @@ struct hk_rendering_state {
    struct hk_attachment depth_att;
    struct hk_attachment stencil_att;
 
-   /* Immutable inputs shared by this render's background/store helpers. */
-   uint64_t apple9_arguments, apple9_sysvals;
-
    struct agx_tilebuffer_layout tilebuffer;
    struct hk_render_registers cr;
 
@@ -340,36 +340,14 @@ struct hk_graphics_state {
    uint32_t shaders_dirty;
    struct hk_api_shader *shaders[MESA_SHADER_MESH + 1];
 
-   /* Graphics shaders bound through the API. On Apple9, deferred shaders are
-    * resolved from these into concrete variants in shaders[] at draw time.
-    */
-   struct hk_api_shader *apple9_api[HK_APPLE9_GFX_STAGES];
-
-   /* Last resolution of apple9_api, reused while none of the graphics key's
-    * inputs change. render_gen counts render pass instances. */
-   struct {
-      bool valid;
-      /* Whether it counted fragment invocations for an active query. */
-      bool fs_statistics;
-      /* Whether the resolution exported depth late for a depth/stencil
-       * feedback loop that the draw could write. */
-      bool late_zs;
-      uint32_t render_gen;
-      struct hk_api_shader *api[HK_APPLE9_GFX_STAGES];
-      struct hk_api_shader *out[HK_APPLE9_GFX_STAGES];
-   } apple9_resolved;
+   /* Render pass instances so far */
    uint32_t render_gen;
 
    /* The current draw is a last-provoking fan unrolled to triangles. */
    bool apple9_fan_unrolled;
-   /* The bound vertex shader writes barycentric weights for this draw, a
-    * non-indexed triangle list, without the passthrough geometry shader. */
-   bool apple9_weights_by_vs;
-   /* The bound passthrough geometry shader continues line stipple, see
-    * hk_apple9_line_stipple_gs. */
-   bool apple9_stipple_gs;
-   /* The bound passthrough geometry shader draws polygon points. */
-   bool apple9_polygon_points;
+
+   /* Rasterizes the bound mesh shader's records, see hk_nir_mesh_rast */
+   struct hk_api_shader *mesh_rast;
 
    /* Vertex buffers */
    struct hk_addr_range vb[AGX_MAX_VBUFS];
@@ -410,21 +388,6 @@ struct hk_graphics_state {
 
    /* Apple9 packed sample positions of the current draw. */
    uint32_t apple9_sample_positions;
-   /* The runtime sysval block of the last draw and the per-draw inputs it
-    * was built from, see hk_apple9_upload_textures. */
-   uint64_t apple9_sysvals;
-   float apple9_sysvals_blend_constants[4];
-   uint32_t apple9_sysvals_color_write_enables;
-   uint32_t apple9_sysvals_positions;
-   bool apple9_sysvals_first_fan;
-   uint32_t apple9_sysvals_line_stipple;
-   struct agx_apple9_polygon_point_params apple9_sysvals_polygon_points;
-   float apple9_sysvals_viewports[HK_MAX_VIEWPORTS][4];
-
-   /* Attachment metadata is immutable command-pool data. Keep its compact
-    * input key outside render state so identical later renders can share it. */
-   uint64_t apple9_render_sysvals;
-   uint32_t apple9_render_dimensions[HK_MAX_RTS][5];
 
    struct hk_index_buffer_state index;
    enum agx_primitive topology;
@@ -697,11 +660,8 @@ struct hk_tess_fold {
 };
 
 enum hk_upload_last {
-   HK_UPLOAD_LAST_DRAW_PARAMS,
-   HK_UPLOAD_LAST_VERTEX_BUFFERS,
    HK_UPLOAD_LAST_VERTEX_TABLE,
    HK_UPLOAD_LAST_FRAGMENT_TABLE,
-   HK_UPLOAD_LAST_RENDER_PARAMS,
    HK_UPLOAD_LAST_COUNT,
 };
 
@@ -770,21 +730,18 @@ struct hk_cmd_buffer {
       uint32_t render_gen;
       uint32_t first_vertex, base_instance;
       struct agx_apple9_render_pipeline pipeline;
-      struct hk_shader *fragment;
+      struct hk_shader *shader[2];
+      struct hk_linked_shader *linked[2];
    } apple9_draw_state;
 
    /* The last linked Apple9 (vertex, fragment) pair, by program id: shader
-    * objects pair stages only at draw time, so link once per change. */
+    * objects pair stages only at draw time, so link once per change. The
+    * stages hold the pair's varying layout and coefficient tables. */
+   struct agx_apple9_render_stage apple9_stage[2];
    struct agx_apple9_render_pipeline apple9_linked;
    /* Stage-derived PPP bytes of apple9_linked (agx_apple9_build_ppp_static). */
    uint8_t apple9_ppp_static[AGX_APPLE9_PPP_STATIC_SIZE];
    uint64_t apple9_linked_id[2];
-
-   /* The null fragment stage carrying the vertex stage's varying layout,
-    * for the vertex program apple9_null_fs_vertex_id. */
-   struct agx_apple9_render_stage apple9_null_fs;
-   uint64_t apple9_null_fs_vertex_id;
-   bool apple9_null_fs_trivial;
 
    /* List of all recorded control streams */
    struct list_head control_streams;
@@ -947,10 +904,8 @@ hk_bound_hw_vs(struct hk_graphics_state *gfx)
    struct hk_api_shader *tes = gfx->shaders[MESA_SHADER_TESS_EVAL];
    struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
 
-   struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
-
-   if (mesh)
-      return &mesh->variants[HK_MESH_VARIANT_RAST];
+   if (gfx->shaders[MESA_SHADER_MESH])
+      return &gfx->mesh_rast->variants[HK_VS_VARIANT_HW];
    else if (gs)
       return &gs->variants[HK_GS_VARIANT_RAST];
    else if (tes)
@@ -965,7 +920,9 @@ hk_bound_sw_vs(struct hk_graphics_state *gfx)
    struct hk_api_shader *vs = gfx->shaders[MESA_SHADER_VERTEX];
    struct hk_shader *hw_vs = hk_bound_hw_vs(gfx);
 
-   if (hw_vs == &vs->variants[HK_VS_VARIANT_HW])
+   /* The vertex shader rasterizing mesh records is linked like one */
+   if (gfx->shaders[MESA_SHADER_MESH] ||
+       hw_vs == &vs->variants[HK_VS_VARIANT_HW])
       return hw_vs;
    else
       return &vs->variants[HK_VS_VARIANT_SW];
@@ -1473,21 +1430,17 @@ hk_dispatch_with_local_size(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    hk_dispatch_with_usc(dev, cs, &s->b.info, usc, grid, local_size);
 }
 
-/* Buffers bound for software pre-rasterization kernels, which read the
- * graphics descriptors and the draw's vertex input tables.
- */
-struct hk_apple9_prerast_bindings {
-   uint64_t draw_params;
-   uint64_t vertex_buffers;
-};
-
 /* Native grid counts are threads; indirect grids point to group counts. */
 void hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                         struct agx_shader_body *body,
                         const struct agx_apple9_compute_profile *profile,
                         struct agx_grid grid, uint64_t root, uint64_t push,
-                        const struct hk_shader *shader,
-                        const struct hk_apple9_prerast_bindings *prerast);
+                        const struct hk_shader *shader);
+
+uint64_t hk_apple9_push_words(struct hk_cmd_buffer *cmd,
+                              const struct hk_shader *s,
+                              const struct hk_linked_shader *linked,
+                              uint64_t root);
 
 void hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
                          enum agx_barrier barrier, enum libagx_program idx,
@@ -1503,10 +1456,10 @@ void agx_fill_velem_keys(const struct vk_vertex_input_state *vi,
 
 struct agx_robustness hk_prolog_robustness(struct hk_device *dev);
 
-void hk_apple9_tile_helpers_finish(struct hk_device *dev);
-struct hk_bg_eot hk_apple9_build_bg_eot(struct hk_cmd_buffer *cmd,
-                                        const VkRenderingInfo *info, bool store,
-                                        bool partial, bool incomplete);
+struct agx_bg_eot_key;
+struct hk_bg_eot hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd,
+                                         const VkRenderingInfo *info,
+                                         struct agx_bg_eot_key *key);
 
 bool hk_apple9_pin_entry(void *allocator, struct agx_shader_body *body);
 void hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd);
@@ -1557,12 +1510,8 @@ hk_apple9_draw_state_reusable(const struct hk_cmd_buffer *cmd,
 bool hk_apple9_reads_draw_id(const struct hk_graphics_state *gfx);
 void hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     struct agx_draw draw);
-struct hk_apple9_prerast_bindings
-hk_apple9_draw_bindings(struct hk_cmd_buffer *cmd, struct agx_draw draw);
 void hk_apple9_compute_sysvals(struct hk_device *dev, void *out);
-bool hk_apple9_upload_textures(struct hk_cmd_buffer *cmd,
-                               const struct hk_shader *shader, bool graphics,
-                               bool first_fan, bool lines, uint64_t *textures,
+void hk_apple9_upload_textures(struct hk_cmd_buffer *cmd, uint64_t *textures,
                                uint64_t *samplers, uint64_t *sysvals);
 
 /* Discard retained CPU storage of an initial command buffer. */

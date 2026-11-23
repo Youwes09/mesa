@@ -41,7 +41,7 @@ main(void)
    static const uint8_t binary[] = {0};
    struct agx_apple9_render_stage stage = {.binary = binary, .binary_size = 1};
    cmd->apple9_draw_state.valid = true;
-   cmd->apple9_draw_state.fragment = &fragment;
+   cmd->apple9_draw_state.shader[1] = &fragment;
    cmd->apple9_draw_state.pipeline = (struct agx_apple9_render_pipeline){
       .vertex = &stage,
       .fragment = &stage,

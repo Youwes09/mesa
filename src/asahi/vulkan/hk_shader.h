@@ -32,9 +32,6 @@
 
 #include "vk_shader.h"
 
-#define HK_APPLE9_DRAW_PARAMS_BINDING    65
-#define HK_APPLE9_VERTEX_BUFFERS_BINDING 66
-
 struct hk_physical_device;
 struct hk_pipeline_compilation_ctx;
 struct vk_descriptor_set_layout;
@@ -92,10 +89,7 @@ struct hk_mesh_info {
    uint32_t group_stride_B;
    uint16_t max_vertices, max_primitives;
    uint8_t prim;
-   /* The rasterizing vertex shader draws HK_PP_MAX_VERTICES points per
-    * triangle for polygon mode POINT. */
-   uint8_t polygon_points;
-   uint8_t _pad[6];
+   uint8_t _pad[7];
 };
 
 /* Fragment shaders read user per-primitive varyings from the output records,
@@ -172,33 +166,17 @@ hk_per_vertex_copies_used(const struct hk_per_vertex_copies *map)
    return map->count || map->bary[0] || map->bary[1];
 }
 
-struct hk_pp_info;
-nir_shader *hk_nir_mesh_rast(const nir_shader *mesh,
-                             const struct hk_mesh_info *info,
-                             const struct hk_per_vertex_copies *copies,
-                             const struct hk_pp_info *polygon_points,
-                             bool point_size);
-
-/* Line stipple takes two generic varying slots of the last
- * pre-rasterization stage: a flat start and counter, and a noperspective
- * axis point. HK_APPLE9_OUTPUT_COMPONENTS matches the advertised output limit.
- */
-#define HK_APPLE9_STIPPLE_COMPONENTS 5
-#define HK_APPLE9_OUTPUT_COMPONENTS  (AGX_APPLE9_MAX_VARYING_COMPONENTS - 2)
-
-struct hk_apple9_stipple_slots {
-   unsigned start, axis;
+/* Draw-time mesh record rasterizer, built with hk_meta_shader */
+struct hk_mesh_rast_key {
+   struct hk_mesh_info info;
+   uint8_t clip_distance_array_size, cull_distance_array_size;
+   uint8_t pad[2];
+   struct hk_per_vertex_copies copies;
 };
 
-struct hk_apple9_stipple_slots
-hk_apple9_line_stipple_slots(const nir_shader *last, const nir_shader *fs);
+void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
 
 struct hk_shader_info {
-   uint8_t apple9_render_targets;
-   /* Fragment shaders: stippled lines rasterize with the first vertex
-    * provoking whatever the API mode, which no other input observes. */
-   bool apple9_line_stipple_first;
-   struct agx_apple9_compute_profile apple9;
    union {
       struct {
          uint32_t attribs_read;
@@ -217,18 +195,15 @@ struct hk_shader_info {
          bool early_fragment_tests;
          bool writes_memory;
 
-         /* Per-vertex inputs and barycentrics written by the passthrough
-          * GS, as in struct hk_per_vertex_copies. */
+         /* Apple9: flat copies, as in struct hk_per_vertex_copies */
          uint8_t per_vertex_copies;
          uint8_t per_vertex_location[HK_MAX_PER_VERTEX_COPIES];
          uint8_t per_vertex_copy_base[HK_MAX_PER_VERTEX_COPIES];
          uint8_t per_vertex_bary[2];
-         /* Varying slot of the vertex-stage line stipple start, or 0. */
-         uint8_t line_stipple_start;
-         /* Polygon mode POINT is drawn by the software polygon stage, and
-          * the varying slot of the polygon's facing, or 0 when unread. */
-         bool polygon_points;
-         uint8_t polygon_face_slot;
+
+         /* Apple9: triangle merging is off for off-centre interpolation */
+         bool pixel_interlock;
+         bool disable_tri_merging;
       } fs;
 
       struct {
@@ -263,10 +238,6 @@ struct hk_shader_info {
    uint8_t clip_distance_array_size;
    uint8_t cull_distance_array_size;
    uint8_t set_count;
-   /* Apple9: cull distances are published as one flat mask per vertex, which
-    * a geometry stage must combine over each primitive, rather than as
-    * interpolated per-plane values. See hk_apple9_compile_vertex_culls. */
-   bool cull_mask;
 
    /* XXX: is there a less goofy way to do this? I really don't want dynamic
     * allocation here.
@@ -307,25 +278,11 @@ struct hk_shader {
    const void *data_ptr;
    uint32_t data_size;
 
-   /* BO for older GPUs; borrowed from apple9_body on G16. */
+   /* Preamble and constant data on Apple8, constant data on Apple9 */
    struct agx_bo *bo;
-   struct agx_shader_body *apple9_body;
 
-   /* G16 compute: launch program template, built once at upload from the
-    * profile and preamble address and patched per dispatch. NULL falls back
-    * to building the program every dispatch. */
+   /* Apple9 compute launch template, patched per dispatch, or NULL */
    struct agx_apple9_launch_template *apple9_launch;
-   /* G16 graphics: launch templates per tile allocation and sample count,
-    * built on first use. NULL builds every launch. */
-   struct agx_apple9_stage_launch_cache *apple9_stage_launch;
-   /* G16 graphics: device-unique id of this compiled stage, so consecutive
-    * draws with the same shaders reuse launches and coefficient tables (see
-    * agx_apple9_prepare_draw_alloc). Zero disables the reuse. */
-   uint64_t apple9_program_id;
-   /* G16 graphics: the native stage description, built once at upload and
-    * linked by pointer at draw time. */
-   struct agx_apple9_render_stage apple9_stage;
-   struct hk_descriptor_allocation apple9_coefficients;
 
    /* Cache of fast linked variants */
    struct {
@@ -373,16 +330,6 @@ enum hk_gs_variant {
    HK_GS_VARIANTS,
 };
 
-enum hk_mesh_variant {
-   /* Compute kernel writing the output records */
-   HK_MESH_VARIANT_MAIN,
-
-   /* Hardware vertex shader rasterizing the records */
-   HK_MESH_VARIANT_RAST,
-
-   HK_MESH_VARIANTS,
-};
-
 /* clang-format off */
 static const char *hk_gs_variant_name[] = {
    [HK_GS_VARIANT_RAST] = "Rasterization",
@@ -403,9 +350,6 @@ hk_num_variants(mesa_shader_stage stage)
    case MESA_SHADER_GEOMETRY:
       return HK_GS_VARIANTS;
 
-   case MESA_SHADER_MESH:
-      return HK_MESH_VARIANTS;
-
    default:
       return 1;
    }
@@ -416,12 +360,6 @@ hk_num_variants(mesa_shader_stage stage)
  * multiple hardware hk_shader's, built at shader compile time. This complexity
  * is required to efficiently implement the legacy geometry pipeline.
  */
-/* Graphics stages of an Apple9 draw-time variant, indexed by stage. Compute
- * is never among them. */
-#define HK_APPLE9_GFX_STAGES (MESA_SHADER_MESH + 1)
-
-struct hk_apple9_deferred;
-
 enum hk_pre_raster_reads {
    /* Sampled, storage or input-attachment images: may alias attachments. */
    HK_READS_IMAGES = BITFIELD_BIT(0),
@@ -470,37 +408,12 @@ struct hk_api_shader {
     * This is upload metadata and does not change the compiled program. */
    uint64_t push_constant_mask;
 
-   /* Apple9 graphics shaders whose key depends on state that is dynamic or
-    * unknown at compile time keep their NIR and are compiled at draw time,
-    * together with the other bound stages. Their variants are unused.
-    */
-   struct hk_apple9_deferred *apple9_deferred;
-
    /* Immutable after compilation/cache reload; avoids walking variants at
     * every shader bind, including shaders with no constant data. */
    uint64_t constant_data_addr;
 
    struct hk_shader variants[];
 };
-
-struct vk_graphics_pipeline_state;
-
-VkResult hk_apple9_resolve_graphics(
-   struct hk_device *dev, struct hk_api_shader *const api[HK_APPLE9_GFX_STAGES],
-   const struct vk_graphics_pipeline_state *state,
-   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES], bool fs_statistics);
-
-void hk_apple9_precompile_init(struct hk_device *dev);
-void hk_apple9_precompile_finish(struct hk_device *dev);
-
-bool hk_apple9_deferred_sample_shading(const struct hk_api_shader *fs);
-bool hk_apple9_deferred_zs_self_dep(const struct hk_api_shader *fs);
-struct vk_depth_stencil_state;
-bool hk_apple9_zs_writes(const struct vk_depth_stencil_state *ds,
-                         VkImageAspectFlags aspects);
-
-void hk_apple9_variants_finish(struct hk_device *dev);
-void hk_apple9_bodies_finish(struct hk_device *dev);
 
 bool hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault,
                                    bool apple9);
@@ -521,8 +434,6 @@ hk_variant_name(struct hk_api_shader *obj, struct hk_shader *variant)
    } else if (obj->vk.stage == MESA_SHADER_GEOMETRY) {
       assert(i < ARRAY_SIZE(hk_gs_variant_name));
       return hk_gs_variant_name[i];
-   } else if (obj->vk.stage == MESA_SHADER_MESH) {
-      return i == HK_MESH_VARIANT_RAST ? "Rasterization" : "Main";
    } else {
       assert(i < 2);
       return i == HK_VS_VARIANT_SW ? "Software" : "Hardware";
@@ -601,6 +512,10 @@ hk_pre_gs_variant(struct hk_api_shader *obj)
 struct hk_linked_shader {
    struct agx_linked_shader b;
 
+   /* Apple9: the program as draws launch it, see hk_cmd_apple9.c */
+   struct agx_apple9_render_stage apple9_stage;
+   struct agx_apple9_stage_launch_cache apple9_launch;
+
    /* True if the VS prolog uses software indexing, either for geom/tess or
     * adjacency primitives.
     */
@@ -646,10 +561,11 @@ hk_buffer_addr_format(VkPipelineRobustnessBufferBehaviorEXT robustness)
 bool hk_lower_uvs_index(nir_shader *s, mesa_shader_stage sw_stage,
                         unsigned nr_vbos);
 
-bool hk_nir_lower_descriptors(
-   nir_shader *nir, const struct vk_pipeline_robustness_state *rs,
-   uint32_t set_layout_count,
-   struct vk_descriptor_set_layout *const *set_layouts, bool root_uniform);
+bool
+hk_nir_lower_descriptors(nir_shader *nir,
+                         const struct vk_pipeline_robustness_state *rs,
+                         uint32_t set_layout_count,
+                         struct vk_descriptor_set_layout *const *set_layouts);
 
 VkResult hk_compile_shader(struct hk_device *dev,
                            struct vk_shader_compile_info *info,
@@ -669,45 +585,15 @@ const nir_shader_compiler_options *
 hk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
                    UNUSED const struct vk_pipeline_robustness_state *rs);
 
-/* Core pipelines specialize immutable vertex and attachment state. Descriptor
- * contents, draw parameters and blend constants remain GPU data. */
-struct hk_apple9_graphics_key {
-   struct agx_apple9_vertex_layout vertex;
-   struct agx_apple9_blend blend[8];
-   uint32_t targets;
-   /* Fragment output location written to each color attachment. */
-   uint8_t color_map[8];
-   /* VK_EXT_depth_clip_control: clip-space depth ranges over [-w, w]. */
-   bool clip_negative_one_to_one;
-   /* sampleShadingEnable: shade and interpolate per sample. */
-   bool sample_shading;
-   /* The depth/stencil attachment is also read as an input attachment. */
-   bool zs_self_dep;
-   /* No fragment-invocation statistics query is active: omit the counter
-    * (hk_apple9_lower_fs_statistics). Draw-time variants only; pipelines
-    * compiled with their state keep it. */
-   bool no_fs_statistics;
-   /* stippledLineEnable: lines measure a stipple counter in the fragment
-    * shader, see hk_apple9_lower_line_stipple_fs. */
-   bool line_stipple;
-   /* Polygon mode POINT: triangles may be drawn by the software polygon
-    * stage, see hk_apple9_polygon_point_gs. */
-   bool polygon_points;
-   /* A passthrough geometry shader rasterizing for a vertex stage that
-    * publishes interpolated cull planes, see hk_apple9_compile_vertex_culls.
-    * Otherwise geometry shaders publish one flat primitive cull mask. */
-   bool gs_cull_planes;
-};
-
-VkResult hk_apple9_compile_internal_gs(struct hk_device *dev, nir_shader *nir,
-                                       const uint64_t fs_interp[2],
-                                       bool cull_mask,
-                                       struct hk_api_shader **out);
-
 struct hk_api_shader *hk_meta_shader(struct hk_device *dev,
                                      hk_internal_builder_t builder, void *data,
                                      size_t data_size);
 
-VkResult hk_apple9_create_null_fs(struct hk_device *dev,
-                                  const VkAllocationCallbacks *alloc,
-                                  bool sample_mask, struct hk_api_shader **out);
+struct agx_shader_part *hk_get_prolog_epilog(struct hk_device *dev, void *data,
+                                             size_t data_size,
+                                             hk_internal_builder_t builder,
+                                             bool preprocess_nir, bool stop,
+                                             unsigned cf_base);
+
+struct nir_def *hk_nir_load_root(struct nir_builder *b, unsigned num_components,
+                                 unsigned bit_size, unsigned offset);

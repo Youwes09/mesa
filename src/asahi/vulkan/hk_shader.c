@@ -20,7 +20,6 @@
 #include "agx_helpers.h"
 #include "agx_nir_lower_vbo.h"
 #include "glsl_types.h"
-#include "hk_apple9_polygon_points.h"
 #include "hk_instance.h"
 #include "libagx.h"
 #include "nir.h"
@@ -76,11 +75,6 @@
 #include "util/u_debug.h"
 #include "vulkan/vulkan_core.h"
 
-/* Set while a pipeline-time eager variant compiles on this thread. */
-static _Thread_local bool hk_apple9_eager_compile;
-/* Resolve a variant into the pipeline cache only, see hk_apple9_eager_variant. */
-static _Thread_local bool hk_apple9_precompile;
-
 struct hk_fs_key {
    bool zs_self_dep;
 
@@ -135,10 +129,6 @@ hk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
 {
    struct hk_physical_device *pdev =
       container_of(vk_pdev, struct hk_physical_device, vk);
-
-   /* Apple9 graphics stages are still compiled by agx_compile_apple9_* */
-   if (stage != MESA_SHADER_COMPUTE)
-      return &agx_nir_options;
 
    return agx_nir_options_for_isa(agx_gather_device_key(&pdev->dev).shader_isa);
 }
@@ -368,55 +358,6 @@ hk_make_feature_key(const struct vk_features *feats)
           ((!feats || feats->minLod) ? HK_FEAT_MIN_LOD : 0);
 }
 
-static bool
-hk_apple9_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
-                             UNUSED void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_load_clip_z_coeff)
-      return false;
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def_replace(&intr->def, nir_imm_float(b, 0.5));
-   return true;
-}
-
-/* Route fragment outputs to the color attachments naming their locations. */
-static bool
-hk_apple9_remap_fs_output(nir_builder *b, nir_intrinsic_instr *intr, void *data)
-{
-   const uint8_t *map = data;
-   if (intr->intrinsic != nir_intrinsic_store_output)
-      return false;
-   nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
-   if (sem.location < FRAG_RESULT_DATA0 || sem.dual_source_blend_index)
-      return false;
-   unsigned location = sem.location - FRAG_RESULT_DATA0;
-   unsigned rt = 0;
-   while (rt < 8 && map[rt] != location)
-      ++rt;
-   if (rt == 8) {
-      nir_instr_remove(&intr->instr);
-      return true;
-   }
-   if (rt == location)
-      return false;
-   sem.location = FRAG_RESULT_DATA0 + rt;
-   nir_intrinsic_set_io_semantics(intr, sem);
-   return true;
-}
-
-static void
-hk_apple9_remap_fs_outputs(nir_shader *nir, const uint8_t map[8])
-{
-   bool identity = true;
-   for (unsigned rt = 0; rt < 8; ++rt)
-      identity &= map[rt] == rt;
-   if (identity)
-      return;
-   nir_shader_intrinsics_pass(nir, hk_apple9_remap_fs_output,
-                              nir_metadata_control_flow, (void *)map);
-   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
-}
-
 /* Pipeline sample shading shades each sample, so interpolate every non-flat
  * input at its sample, as FragCoord already is through its sample position.
  * Apple9 interpolates explicitly and does not move pixel or centroid
@@ -458,9 +399,8 @@ hk_apple9_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
 static nir_def *
 hk_apple9_rasterized_prim(nir_builder *b)
 {
-   const unsigned offset = hk_root_descriptor_offset(draw.rasterized_prim);
-   return nir_load_ubo(b, 1, 16, nir_imm_int(b, 0), nir_imm_int(b, offset),
-                       .align_mul = 2, .range_base = offset, .range = 2);
+   return hk_nir_load_root(b, 1, 16,
+                           hk_root_descriptor_offset(draw.rasterized_prim));
 }
 
 static nir_def *
@@ -581,12 +521,12 @@ hk_barycentric_for_coord(nir_builder *b, nir_intrinsic_instr *intr)
 }
 
 static bool
-hk_apple9_lower_per_vertex_copies(nir_shader *fs, uint64_t producer_outputs,
+hk_apple9_lower_per_vertex_copies(nir_shader *fs,
                                   struct hk_per_vertex_copies *map)
 {
    memset(map, 0, sizeof(*map));
    nir_function_impl *impl = nir_shader_get_entrypoint(fs);
-   uint64_t used = fs->info.inputs_read | producer_outputs;
+   uint64_t used = fs->info.inputs_read;
    bool bary[2] = {false, false};
 
    nir_foreach_block(block, impl) {
@@ -728,389 +668,6 @@ hk_apple9_interpolates_off_center(nir_shader *nir)
    return false;
 }
 
-/* The one-hot barycentric weights of a vertex of a non-indexed triangle list:
- * its corner is its index within the draw, modulo 3.
- */
-static void
-hk_apple9_write_vertex_weights(nir_shader *vs,
-                               const struct hk_per_vertex_copies *map)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(vs);
-   nir_builder b = nir_builder_at(nir_after_impl(impl));
-   /* The draw parameters hold the first vertex, as for load_first_vertex,
-    * which the root lowering has already replaced. */
-   nir_def *first = nir_load_ubo(
-      &b, 1, 32, nir_imm_int(&b, HK_APPLE9_DRAW_PARAMS_BINDING),
-      nir_imm_int(&b, 0), .align_mul = 4, .range_base = 0, .range = 4);
-   nir_def *corner =
-      nir_umod_imm(&b, nir_isub(&b, nir_load_vertex_id(&b), first), 3);
-   nir_def *weights = nir_vec3(&b, nir_b2f32(&b, nir_ieq_imm(&b, corner, 0)),
-                               nir_b2f32(&b, nir_ieq_imm(&b, corner, 1)),
-                               nir_b2f32(&b, nir_ieq_imm(&b, corner, 2)));
-   for (unsigned m = 0; m < 2; ++m) {
-      if (!map->bary[m])
-         continue;
-      unsigned slot = VARYING_SLOT_VAR0 + map->bary[m] - 1;
-      nir_store_output(&b, weights, nir_imm_int(&b, 0), .write_mask = 0x7,
-                       .src_type = nir_type_float32,
-                       .io_semantics.location = slot,
-                       .io_semantics.num_slots = 1);
-      vs->info.outputs_written |= BITFIELD64_BIT(slot);
-   }
-   nir_progress(true, impl, nir_metadata_control_flow);
-}
-
-/*
- * Line stipple. The last pre-rasterization stage exports two slots. The flat
- * start slot holds a segment's first vertex in window space, snapped to the
- * vertex grid, and the stipple counter there: zero for independent segments,
- * the length of the strip so far where a geometry stage continues one. The
- * noperspective axis slot holds the vertex's own window position, which
- * interpolates to a point on the ideal line. The fragment's counter is the
- * start's counter plus its distance from the start along the major axis, and
- * the interpolated point decides that axis: a wide line's fragments lie off
- * the line, where comparing the fragment's own distances could pick the wrong
- * one. The window transform is the vertex's own viewport's, from the runtime
- * sysvals.
- */
-/* Record the stage's latest position and viewport index outputs in
- * variables, for the stipple start written after them. */
-struct hk_apple9_stipple_tap {
-   nir_variable *pos, *viewport;
-};
-
-static struct hk_apple9_stipple_tap
-hk_apple9_tap_position(nir_shader *s)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(s);
-   nir_builder b = nir_builder_at(nir_before_impl(impl));
-   struct hk_apple9_stipple_tap tap = {
-      .pos = nir_local_variable_create(impl, glsl_vec4_type(), "stipple_pos"),
-      .viewport =
-         nir_local_variable_create(impl, glsl_uint_type(), "stipple_viewport"),
-   };
-   nir_store_var(&b, tap.pos, nir_imm_vec4(&b, 0.0, 0.0, 0.0, 1.0), 0xf);
-   nir_store_var(&b, tap.viewport, nir_imm_int(&b, 0), 1);
-
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         if (intr->intrinsic != nir_intrinsic_store_output)
-            continue;
-         unsigned location = nir_intrinsic_io_semantics(intr).location;
-         b.cursor = nir_after_instr(instr);
-         nir_def *value = intr->src[0].ssa;
-         if (location == VARYING_SLOT_POS) {
-            nir_def *v = nir_load_var(&b, tap.pos);
-            unsigned first = nir_intrinsic_component(intr);
-            u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
-               v = nir_vector_insert_imm(&b, v, nir_channel(&b, value, c),
-                                         first + c);
-            }
-            nir_store_var(&b, tap.pos, v, 0xf);
-         } else if (location == VARYING_SLOT_VIEWPORT) {
-            nir_store_var(&b, tap.viewport, nir_channel(&b, value, 0), 1);
-         }
-      }
-   }
-   return tap;
-}
-
-/* The snapped window position of the tapped vertex, in its own viewport. */
-static nir_def *
-hk_apple9_stipple_window(nir_builder *b, struct hk_apple9_stipple_tap tap)
-{
-   nir_def *p = nir_load_var(b, tap.pos);
-   /* Vertices behind the eye clip the segment, where the counter's start is
-    * implementation-dependent; keep the divide finite. */
-   nir_def *w = nir_fmax(b, nir_channel(b, p, 3), nir_imm_float(b, 0x1p-16));
-   nir_def *ndc = nir_fdiv(b, nir_trim_vector(b, p, 2), w);
-   nir_def *index =
-      nir_umin(b, nir_load_var(b, tap.viewport),
-               nir_imm_int(b, AGX_APPLE9_VIEWPORT_TABLE_COUNT - 1));
-   nir_def *transform = nir_load_ubo(
-      b, 4, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-      nir_iadd_imm(b, nir_imul_imm(b, index, 16),
-                   AGX_APPLE9_VIEWPORT_TABLE_OFFSET),
-      .align_mul = 16, .range_base = AGX_APPLE9_VIEWPORT_TABLE_OFFSET,
-      .range = AGX_APPLE9_VIEWPORT_TABLE_COUNT * 16);
-   return agx_nir_line_stipple_snap(
-      b, nir_ffma(b, ndc, nir_channels(b, transform, 0x3),
-                  nir_channels(b, transform, 0xc)));
-}
-
-/* The start slot holds the segment's first vertex and the stipple counter
- * there; the axis slot the vertex's own position. */
-static void
-hk_apple9_store_line_stipple(nir_builder *b, nir_shader *s,
-                             struct hk_apple9_stipple_slots slots,
-                             nir_def *start, nir_def *base, nir_def *window)
-{
-   nir_store_output(
-      b, nir_vec3(b, nir_channel(b, start, 0), nir_channel(b, start, 1), base),
-      nir_imm_int(b, 0), .write_mask = 0x7, .src_type = nir_type_float32,
-      .io_semantics.location = slots.start, .io_semantics.num_slots = 1);
-   nir_store_output(b, window, nir_imm_int(b, 0), .write_mask = 0x3,
-                    .src_type = nir_type_float32,
-                    .io_semantics.location = slots.axis,
-                    .io_semantics.num_slots = 1);
-   s->info.outputs_written |=
-      BITFIELD64_BIT(slots.start) | BITFIELD64_BIT(slots.axis);
-}
-
-/* Vertex and evaluation shaders: every vertex starts its segment, with the
- * counter at zero. Strips continue in the passthrough geometry shader. */
-static void
-hk_apple9_write_line_stipple_start(nir_shader *vs,
-                                   struct hk_apple9_stipple_slots slots)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(vs);
-   struct hk_apple9_stipple_tap tap = hk_apple9_tap_position(vs);
-   nir_builder b = nir_builder_at(nir_after_impl(impl));
-   nir_def *window = hk_apple9_stipple_window(&b, tap);
-   hk_apple9_store_line_stipple(&b, vs, slots, window, nir_imm_float(&b, 0.0),
-                                window);
-   nir_progress(true, impl, nir_metadata_none);
-   NIR_PASS(_, vs, nir_lower_vars_to_ssa);
-}
-
-/*
- * Geometry shaders emitting line strips: the counter continues along each
- * output strip and restarts at EndPrimitive. A segment's flat values come
- * from its provoking vertex, so under the first-vertex mode each vertex
- * carries its own position and counter, and under the last-vertex mode the
- * previous vertex's.
- */
-static void
-hk_apple9_write_gs_line_stipple(nir_shader *gs,
-                                struct hk_apple9_stipple_slots slots)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(gs);
-   struct hk_apple9_stipple_tap tap = hk_apple9_tap_position(gs);
-   nir_builder b = nir_builder_at(nir_before_impl(impl));
-   nir_variable *prev =
-      nir_local_variable_create(impl, glsl_vec_type(2), "stipple_prev");
-   nir_variable *prev_base =
-      nir_local_variable_create(impl, glsl_float_type(), "stipple_prev_base");
-   nir_variable *have_prev =
-      nir_local_variable_create(impl, glsl_bool_type(), "stipple_have_prev");
-   nir_store_var(&b, prev, nir_imm_vec2(&b, 0.0, 0.0), 0x3);
-   nir_store_var(&b, prev_base, nir_imm_float(&b, 0.0), 1);
-   nir_store_var(&b, have_prev, nir_imm_false(&b), 1);
-
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         b.cursor = nir_before_instr(instr);
-         if (intr->intrinsic == nir_intrinsic_end_primitive ||
-             intr->intrinsic == nir_intrinsic_end_primitive_with_counter) {
-            nir_store_var(&b, have_prev, nir_imm_false(&b), 1);
-            continue;
-         }
-         if (intr->intrinsic != nir_intrinsic_emit_vertex &&
-             intr->intrinsic != nir_intrinsic_emit_vertex_with_counter)
-            continue;
-         nir_def *window = hk_apple9_stipple_window(&b, tap);
-         nir_def *had = nir_load_var(&b, have_prev);
-         nir_def *p = nir_load_var(&b, prev);
-         nir_def *pb = nir_load_var(&b, prev_base);
-         nir_def *d = nir_fabs(&b, nir_fsub(&b, window, p));
-         nir_def *base = nir_bcsel(&b, had,
-                                   nir_fadd(&b, pb,
-                                            nir_fmax(&b, nir_channel(&b, d, 0),
-                                                     nir_channel(&b, d, 1))),
-                                   nir_imm_float(&b, 0.0));
-         nir_def *last =
-            nir_iand(&b, had, nir_ine_imm(&b, nir_load_provoking_last(&b), 0));
-         hk_apple9_store_line_stipple(&b, gs, slots,
-                                      nir_bcsel(&b, last, p, window),
-                                      nir_bcsel(&b, last, pb, base), window);
-         nir_store_var(&b, prev, window, 0x3);
-         nir_store_var(&b, prev_base, base, 1);
-         nir_store_var(&b, have_prev, nir_imm_true(&b), 1);
-      }
-   }
-   nir_progress(true, impl, nir_metadata_none);
-   NIR_PASS(_, gs, nir_lower_vars_to_ssa);
-}
-
-static void
-hk_apple9_lower_line_stipple_fs(nir_shader *fs,
-                                struct hk_apple9_stipple_slots slots)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(fs);
-   nir_builder b = nir_builder_at(nir_before_impl(impl));
-   nir_def *line = nir_load_input(
-      &b, 3, 32, nir_imm_int(&b, 0), .dest_type = nir_type_float32,
-      .io_semantics = {.location = slots.start, .num_slots = 1});
-   nir_def *start = nir_trim_vector(&b, line, 2);
-   nir_def *bary = nir_load_barycentric_pixel(
-      &b, 32, .interp_mode = INTERP_MODE_NOPERSPECTIVE);
-   nir_def *on_line = nir_load_interpolated_input(
-      &b, 2, 32, bary, nir_imm_int(&b, 0), .dest_type = nir_type_float32,
-      .io_semantics = {.location = slots.axis, .num_slots = 1});
-   nir_def *axis = nir_fabs(&b, nir_fsub(&b, on_line, start));
-   nir_def *x_major =
-      nir_fge(&b, nir_channel(&b, axis, 0), nir_channel(&b, axis, 1));
-   nir_def *pixel = nir_fadd_imm(
-      &b, nir_u2f32(&b, nir_u2u32(&b, nir_load_pixel_coord(&b))), 0.5);
-   nir_def *d = nir_fabs(&b, nir_fsub(&b, pixel, start));
-   nir_def *counter =
-      nir_f2u32(&b, nir_fadd(&b, nir_channel(&b, line, 2),
-                             nir_bcsel(&b, x_major, nir_channel(&b, d, 0),
-                                       nir_channel(&b, d, 1))));
-   agx_nir_line_stipple_test(&b, counter);
-   nir_progress(true, impl, nir_metadata_control_flow);
-   nir_shader_gather_info(fs, impl);
-}
-
-/* Generic varying components a shader stores (outputs) or loads (inputs),
- * per slot and component, 64-bit values counting twice. Indirectly addressed
- * arrays count their whole slots. Clip and cull distances are ordinary output
- * components here, as in the API limit.
- */
-static unsigned
-hk_apple9_generic_components(const nir_shader *s, bool outputs)
-{
-   uint8_t mask[32] = {0};
-   nir_foreach_function_impl(impl, s) {
-      nir_foreach_block(block, impl) {
-         nir_foreach_instr(instr, block) {
-            if (instr->type != nir_instr_type_intrinsic)
-               continue;
-            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-            unsigned bits, comps;
-            switch (intr->intrinsic) {
-            case nir_intrinsic_store_output:
-            case nir_intrinsic_store_per_vertex_output:
-            case nir_intrinsic_store_per_primitive_output:
-               if (!outputs)
-                  continue;
-               bits = nir_src_bit_size(intr->src[0]);
-               comps = nir_intrinsic_write_mask(intr);
-               break;
-            case nir_intrinsic_load_input:
-            case nir_intrinsic_load_interpolated_input:
-            case nir_intrinsic_load_per_vertex_input:
-            case nir_intrinsic_load_per_primitive_input:
-               if (outputs)
-                  continue;
-               bits = intr->def.bit_size;
-               comps = BITFIELD_MASK(intr->def.num_components);
-               break;
-            default:
-               continue;
-            }
-            nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
-            if (sem.location < VARYING_SLOT_VAR0 ||
-                sem.location >= VARYING_SLOT_VAR0 + 32)
-               continue;
-            unsigned slot = sem.location - VARYING_SLOT_VAR0;
-            uint32_t m = comps << nir_intrinsic_component(intr);
-            if (bits == 64) {
-               uint32_t wide = 0;
-               u_foreach_bit(c, m)
-                  wide |= 3u << (2 * c);
-               m = wide;
-            }
-            if (sem.num_slots > 1) {
-               for (unsigned i = 0; i < sem.num_slots && slot + i < 32; ++i)
-                  mask[slot + i] = 0xf;
-            } else {
-               for (unsigned i = 0; m && slot + i < 32; ++i, m >>= 4)
-                  mask[slot + i] |= m & 0xf;
-            }
-         }
-      }
-   }
-   unsigned total = 0;
-   for (unsigned i = 0; i < 32; ++i)
-      total += util_bitcount(mask[i]);
-   if (outputs) {
-      total +=
-         s->info.clip_distance_array_size + s->info.cull_distance_array_size;
-   }
-   return total;
-}
-
-/* The stipple slots: the highest two generic slots neither stage uses,
- * provided the four stipple components fit beside both the last stage's
- * outputs and the fragment shader's inputs within the API output limit.
- * Otherwise zero: the line is drawn unstippled, a known limitation.
- */
-struct hk_apple9_stipple_slots
-hk_apple9_line_stipple_slots(const nir_shader *last, const nir_shader *fs)
-{
-   struct hk_apple9_stipple_slots slots = {0};
-   unsigned used_components = MAX2(hk_apple9_generic_components(last, true),
-                                   hk_apple9_generic_components(fs, false));
-   if (used_components + HK_APPLE9_STIPPLE_COMPONENTS >
-       HK_APPLE9_OUTPUT_COMPONENTS)
-      return slots;
-   uint64_t used = last->info.outputs_written | fs->info.inputs_read;
-   for (int k = 31; k >= 0 && !slots.axis; --k) {
-      unsigned slot = VARYING_SLOT_VAR0 + k;
-      if (used & BITFIELD64_BIT(slot))
-         continue;
-      if (slots.start)
-         slots.axis = slot;
-      else
-         slots.start = slot;
-   }
-   if (!slots.axis)
-      slots.start = 0;
-   return slots;
-}
-
-/*
- * Polygon points are rasterized as points: their hardware facing is always
- * front and their hardware primitive ID counts points. When the fragment
- * shader reads either, a flat uvec2 slot carries the polygon's (back-facing,
- * primitive ID). Vertex and evaluation shaders write (0, ~0): front, and the
- * rasterizer's own primitive ID; the software polygon stage writes the
- * polygon's values.
- */
-static bool
-hk_apple9_lower_polygon_slot(nir_builder *b, nir_intrinsic_instr *intr,
-                             void *data)
-{
-   unsigned slot = *(const unsigned *)data;
-   bool face = intr->intrinsic == nir_intrinsic_load_front_face;
-   bool prim =
-      intr->intrinsic == nir_intrinsic_load_input &&
-      nir_intrinsic_io_semantics(intr).location == VARYING_SLOT_PRIMITIVE_ID;
-   if (!face && !prim)
-      return false;
-   b->cursor = nir_after_instr(&intr->instr);
-   nir_def *v =
-      nir_load_input(b, 2, 32, nir_imm_int(b, 0), .dest_type = nir_type_uint32,
-                     .io_semantics = {.location = slot, .num_slots = 1});
-   if (face) {
-      nir_def_replace(&intr->def, nir_ieq_imm(b, nir_channel(b, v, 0), 0));
-   } else {
-      nir_def *id = nir_channel(b, v, 1);
-      nir_def *sel = nir_bcsel(b, nir_ieq_imm(b, id, ~0u), &intr->def, id);
-      nir_def_rewrite_uses_after(&intr->def, sel);
-   }
-   return true;
-}
-
-static void
-hk_apple9_write_polygon_slot(nir_shader *s, unsigned slot)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(s);
-   nir_builder b = nir_builder_at(nir_after_impl(impl));
-   nir_store_output(&b, nir_imm_ivec2(&b, 0, ~0), nir_imm_int(&b, 0),
-                    .write_mask = 0x3, .src_type = nir_type_uint32,
-                    .io_semantics = {.location = slot, .num_slots = 1});
-   s->info.outputs_written |= BITFIELD64_BIT(slot);
-   nir_progress(true, impl, nir_metadata_control_flow);
-}
-
 static void
 hk_apple9_write_primitive_id(nir_shader *s)
 {
@@ -1124,256 +681,6 @@ hk_apple9_write_primitive_id(nir_shader *s)
    nir_progress(true, impl, nir_metadata_control_flow);
 }
 
-/* Decide whether a pipeline's polygon-mode points use the software stage:
- * its rasterized points publish the stage's outputs, clip and cull distances
- * included, the polygon slot when the fragment shader reads facing or the
- * primitive ID, point size and any layer or viewport word, within the
- * varying bank. Returns the polygon slot through face_slot (0 if unread).
- */
-static bool
-hk_apple9_polygon_point_budget(const nir_shader *last, const nir_shader *fs,
-                               uint64_t reserved, unsigned *face_slot)
-{
-   *face_slot = 0;
-   unsigned generic = MAX2(hk_apple9_generic_components(last, true),
-                           hk_apple9_generic_components(fs, false));
-   bool reads_face =
-      BITSET_TEST(fs->info.system_values_read, SYSTEM_VALUE_FRONT_FACE) ||
-      (fs->info.inputs_read & VARYING_BIT_PRIMITIVE_ID);
-   /* The vertex shader rasterizing mesh records always writes the layer. */
-   bool layer = (last->info.outputs_written &
-                 (VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT)) ||
-                last->info.stage == MESA_SHADER_MESH;
-   if (generic + 2 * reads_face + 1 + layer > AGX_APPLE9_MAX_VARYING_COMPONENTS)
-      return false;
-   if (reads_face) {
-      uint64_t used =
-         last->info.outputs_written | fs->info.inputs_read | reserved;
-      for (int k = 31; k >= 0 && !*face_slot; --k) {
-         if (!(used & BITFIELD64_BIT(VARYING_SLOT_VAR0 + k)))
-            *face_slot = VARYING_SLOT_VAR0 + k;
-      }
-      if (!*face_slot)
-         return false;
-   }
-   return true;
-}
-
-/* Whether a draw with this depth/stencil state can write the depth or
- * stencil aspects present. A depth/stencil feedback loop needs late tests
- * only then: an early test that writes nothing leaves the attachment the
- * fragment shader reads unchanged (turnip applies the same condition). */
-bool
-hk_apple9_zs_writes(const struct vk_depth_stencil_state *ds,
-                    VkImageAspectFlags aspects)
-{
-   if (!ds)
-      return true;
-   struct vk_depth_stencil_state opt = *ds;
-   opt.stencil.write_enable = true;
-   vk_optimize_depth_stencil_state(&opt, aspects, true);
-   return opt.depth.write_enable || opt.stencil.write_enable;
-}
-
-static void
-hk_apple9_graphics_key(struct hk_apple9_graphics_key *key,
-                       const struct vk_graphics_pipeline_state *state)
-{
-   memset(key, 0, sizeof(*key));
-   key->vertex.draw_params_ubo = HK_APPLE9_DRAW_PARAMS_BINDING;
-   key->vertex.buffer_descriptor_ubo = HK_APPLE9_VERTEX_BUFFERS_BINDING;
-   /* Strides are always read from the bound buffer table, which supports
-    * VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE without recompilation. */
-   key->vertex.dynamic_stride = true;
-   /* Vulkan enables every clip distance the shader writes. */
-   key->vertex.clip_distance_enable = 0xff;
-   key->blend[0].samples = 1;
-   for (unsigned rt = 0; rt < ARRAY_SIZE(key->color_map); ++rt)
-      key->color_map[rt] = rt;
-   if (!state)
-      return;
-   if (state->cal) {
-      for (unsigned rt = 0; rt < ARRAY_SIZE(key->color_map); ++rt)
-         key->color_map[rt] = state->cal->color_map[rt];
-   }
-   key->clip_negative_one_to_one =
-      state->vp && state->vp->depth_clip_negative_one_to_one;
-   key->sample_shading = state->ms && state->ms->sample_shading_enable;
-   /* Draw-time resolution passes the flag only for loops the draw can
-    * write; a pipeline compiled with static state applies the test here. */
-   key->zs_self_dep =
-      (state->pipeline_flags &
-       VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT) &&
-      hk_apple9_zs_writes(
-         state->ds,
-         (state->rp && state->rp->depth_attachment_format != VK_FORMAT_UNDEFINED
-             ? VK_IMAGE_ASPECT_DEPTH_BIT
-             : 0) |
-            (state->rp &&
-                   state->rp->stencil_attachment_format != VK_FORMAT_UNDEFINED
-                ? VK_IMAGE_ASPECT_STENCIL_BIT
-                : 0));
-   key->line_stipple = state->rs && state->rs->line.stipple.enable;
-   key->polygon_points =
-      state->rs && state->rs->polygon_mode == VK_POLYGON_MODE_POINT;
-   if (state->ia) {
-      enum mesa_prim prim =
-         u_reduced_prim(vk_topology_to_mesa(state->ia->primitive_topology));
-      key->polygon_points &=
-         prim != MESA_PRIM_POINTS && prim != MESA_PRIM_LINES;
-   }
-
-   if (state->ia) {
-      key->vertex.rasterize_points =
-         state->ia->primitive_topology == MESA_PRIM_POINTS;
-      key->vertex.ignore_point_size = !key->vertex.rasterize_points;
-   }
-   if (state->vi) {
-      for (unsigned a = 0; a < 16; ++a) {
-         if (!(state->vi->attributes_valid & BITFIELD_BIT(a)))
-            continue;
-         const struct vk_vertex_attribute_state *attr =
-            &state->vi->attributes[a];
-         const struct vk_vertex_binding_state *binding =
-            &state->vi->bindings[attr->binding];
-         key->vertex.format[a] = vk_format_to_pipe_format(attr->format);
-         key->vertex.offset[a] = attr->offset;
-         key->vertex.buffer[a] = attr->binding;
-         /* A zero instance divisor repeats the first instance's element. */
-         key->vertex.divisor[a] =
-            binding->input_rate != VK_VERTEX_INPUT_RATE_INSTANCE ? 0
-            : binding->divisor ? binding->divisor
-                               : AGX_APPLE9_VERTEX_DIVISOR_ZERO;
-      }
-   }
-   key->targets = state->rp ? state->rp->color_attachment_count : 0;
-   for (unsigned rt = 0; rt < MAX2(MIN2(key->targets, 8), 1); ++rt) {
-      struct agx_apple9_blend *blend = &key->blend[rt];
-      blend->format =
-         rt < key->targets
-            ? vk_format_to_pipe_format(state->rp->color_attachment_formats[rt])
-            : PIPE_FORMAT_NONE;
-      blend->color_attachment_unused = blend->format == PIPE_FORMAT_NONE;
-      blend->sample_mask_single_sample = true;
-      blend->dynamic_sample_positions = true;
-      /* A shader-triggered early test (memory writes, discard or depth/stencil
-       * writes with early fragment tests) tests the rasterizer's depth, which
-       * the hardware clamps to [0, 1]. Clipping keeps it within the viewport's
-       * depth range unless depth clamp is enabled, so only then is a clamped
-       * depth export needed. The export tests the shader's interpolated
-       * frag_coord.z, which differs from the rasterizer's depth by a few ULPs:
-       * an EQUAL pass after a depth prepass without such a shader would fail
-       * (Zink EEVEE's G-buffer pass). Draw-time variants see the current
-       * dynamic state; pipelines with dynamic depth clamp keep the export. */
-      blend->clamp_early_depth =
-         !state->rs || state->rs->depth_clamp_enable ||
-         BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_DEPTH_CLAMP_ENABLE);
-      blend->early_depth_clamp_ubo = 0;
-      blend->early_depth_clamp_offset_B =
-         hk_root_descriptor_offset(draw.depth_clamp);
-      blend->samples = state->ms ? state->ms->rasterization_samples : 1;
-      blend->rgb_src = blend->alpha_src = PIPE_BLENDFACTOR_ONE;
-      blend->rgb_dst = blend->alpha_dst = PIPE_BLENDFACTOR_ZERO;
-      blend->rgb_func = blend->alpha_func = PIPE_BLEND_ADD;
-      if (state->ms) {
-         blend->disabled_samples = ~state->ms->sample_mask;
-         blend->alpha_to_coverage = state->ms->alpha_to_coverage_enable;
-         blend->alpha_to_one = state->ms->alpha_to_one_enable;
-      }
-      if (state->cb && rt < state->cb->attachment_count) {
-         const struct vk_color_blend_attachment_state *cb =
-            &state->cb->attachments[rt];
-         blend->dynamic_enable =
-            BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_CB_COLOR_WRITE_ENABLES);
-         blend->colormask =
-            (blend->dynamic_enable ||
-             (state->cb->color_write_enables & BITFIELD_BIT(rt)))
-               ? cb->write_mask
-               : 0;
-         blend->logicop_enable = state->cb->logic_op_enable;
-         blend->logicop_func = vk_logic_op_to_pipe(state->cb->logic_op);
-         if (cb->blend_enable && cb->color_blend_op >= VK_BLEND_OP_ZERO_EXT) {
-            /* Advanced equations are blended in the shader from the tile. */
-            blend->advanced_mode =
-               vk_advanced_blend_op_to_pipe(cb->color_blend_op);
-            blend->advanced_overlap =
-               vk_blend_overlap_to_pipe(cb->blend_overlap);
-            blend->src_premultiplied = cb->src_premultiplied;
-            blend->dst_premultiplied = cb->dst_premultiplied;
-         } else if (cb->blend_enable) {
-            blend->rgb_src =
-               vk_blend_factor_to_pipe(cb->src_color_blend_factor);
-            blend->rgb_dst =
-               vk_blend_factor_to_pipe(cb->dst_color_blend_factor);
-            blend->alpha_src =
-               vk_blend_factor_to_pipe(cb->src_alpha_blend_factor);
-            blend->alpha_dst =
-               vk_blend_factor_to_pipe(cb->dst_alpha_blend_factor);
-            blend->rgb_func = vk_blend_op_to_pipe(cb->color_blend_op);
-            blend->alpha_func = vk_blend_op_to_pipe(cb->alpha_blend_op);
-         }
-      }
-   }
-}
-
-static bool
-hk_apple9_partial_stages(VkShaderStageFlags stages)
-{
-   return !(stages & VK_SHADER_STAGE_FRAGMENT_BIT) ||
-          !(stages &
-            (VK_SHADER_STAGE_VERTEX_BIT |
-             VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
-             VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_MESH_BIT_EXT));
-}
-
-/* Dynamic states read by the Apple9 graphics key. */
-static const enum mesa_vk_dynamic_graphics_state hk_apple9_keyed_dynamic[] = {
-   MESA_VK_DYNAMIC_VI,
-   MESA_VK_DYNAMIC_MS_RASTERIZATION_SAMPLES,
-   MESA_VK_DYNAMIC_MS_SAMPLE_MASK,
-   MESA_VK_DYNAMIC_MS_ALPHA_TO_COVERAGE_ENABLE,
-   MESA_VK_DYNAMIC_MS_ALPHA_TO_ONE_ENABLE,
-   MESA_VK_DYNAMIC_CB_LOGIC_OP_ENABLE,
-   MESA_VK_DYNAMIC_CB_LOGIC_OP,
-   MESA_VK_DYNAMIC_CB_ATTACHMENT_COUNT,
-   MESA_VK_DYNAMIC_CB_BLEND_ENABLES,
-   MESA_VK_DYNAMIC_CB_BLEND_EQUATIONS,
-   MESA_VK_DYNAMIC_CB_WRITE_MASKS,
-   MESA_VK_DYNAMIC_VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE,
-   MESA_VK_DYNAMIC_COLOR_ATTACHMENT_MAP,
-   MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE,
-   MESA_VK_DYNAMIC_RS_POLYGON_MODE,
-};
-
-/* With unused attachments, a render's tile layout can differ from the one
- * pipeline formats imply: a null view occupies one word whatever the
- * pipeline format, and an attachment the pipeline leaves undefined occupies
- * its view's size. Such fragment shaders take their layout from the render.
- */
-static bool
-hk_apple9_color_layout_varies(const struct vk_graphics_pipeline_state *state,
-                              const struct vk_features *features)
-{
-   if (!state || !state->rp || !features ||
-       !features->dynamicRenderingUnusedAttachments)
-      return false;
-   for (unsigned rt = 0; rt < state->rp->color_attachment_count; ++rt) {
-      VkFormat format = state->rp->color_attachment_formats[rt];
-      if (format == VK_FORMAT_UNDEFINED ||
-          agx_apple9_color_words(vk_format_to_pipe_format(format)) != 1)
-         return true;
-   }
-   return false;
-}
-
-static void
-hk_apple9_graphics_key_device(struct hk_apple9_graphics_key *key,
-                              const struct vk_graphics_pipeline_state *state,
-                              const struct hk_physical_device *pdev)
-{
-   hk_apple9_graphics_key(key, state);
-}
-
 static void
 hk_hash_graphics_state(struct vk_physical_device *device,
                        const struct vk_graphics_pipeline_state *state,
@@ -1382,27 +689,6 @@ hk_hash_graphics_state(struct vk_physical_device *device,
 {
    struct mesa_blake3 blake3_ctx;
    _mesa_blake3_init(&blake3_ctx);
-   struct hk_physical_device *pdev =
-      container_of(device, struct hk_physical_device, vk);
-   if (agx_is_apple9(&pdev->dev) && state) {
-      struct hk_apple9_graphics_key key;
-      hk_apple9_graphics_key_device(&key, state, pdev);
-      _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
-
-      /* Deferred shaders differ from precompiled ones for the same key. */
-      uint32_t deferral =
-         (!state->vi << 0) | (!state->rp << 1) | (!state->ms << 2) |
-         (!state->cb << 3) |
-         (!!(state->pipeline_flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)
-          << 31) |
-         (hk_apple9_partial_stages(stages) << 30) |
-         (hk_apple9_color_layout_varies(state, features) << 29);
-      for (unsigned i = 0; i < ARRAY_SIZE(hk_apple9_keyed_dynamic); ++i) {
-         if (BITSET_TEST(state->dynamic, hk_apple9_keyed_dynamic[i]))
-            deferral |= BITFIELD_BIT(4 + i);
-      }
-      _mesa_blake3_update(&blake3_ctx, &deferral, sizeof(deferral));
-   }
    if (state && (stages & VK_SHADER_STAGE_VERTEX_BIT)) {
       struct hk_vs_key key;
       hk_populate_vs_key(&key, state);
@@ -2297,10 +1583,8 @@ hk_lower_per_primitive_input(nir_builder *b, nir_intrinsic_instr *intr,
          .io_semantics.num_slots = 1);
       b->shader->info.inputs_read |= BITFIELD64_BIT(HK_MESH_PRIMITIVE_SLOT);
 
-      unsigned params_offset = hk_root_descriptor_offset(draw.mesh_params);
-      nir_def *params = nir_load_ubo(
-         b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, params_offset),
-         .align_mul = 8, .range_base = params_offset, .range = 8);
+      nir_def *params = hk_nir_load_root(
+         b, 1, 64, hk_root_descriptor_offset(draw.mesh_params));
       nir_def *outputs = nir_load_global(
          b, 1, 64,
          nir_iadd_imm(b, params, offsetof(struct libagx_mesh_params, outputs)),
@@ -2491,8 +1775,8 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       NIR_PASS(_, nir, agx_nir_lower_custom_border);
    }
 
-   NIR_PASS(_, nir, hk_nir_lower_descriptors, rs, set_layout_count, set_layouts,
-            agx_is_apple9(&dev->dev));
+   NIR_PASS(_, nir, hk_nir_lower_descriptors, rs, set_layout_count,
+            set_layouts);
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
             nir_address_format_64bit_global);
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_ssbo,
@@ -2622,9 +1906,13 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-               agx_is_apple9(&dev->dev) ? hk_apple9_lower_layer_viewport_fs
-                                        : lower_viewport_fs,
+      if (agx_is_apple9(&dev->dev)) {
+         NIR_PASS(_, nir, nir_shader_intrinsics_pass,
+                  hk_apple9_lower_layer_viewport_fs, nir_metadata_control_flow,
+                  NULL);
+      }
+
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_viewport_fs,
                nir_metadata_control_flow, NULL);
    }
 
@@ -2634,9 +1922,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       /* Storage-image queries read the descriptor, sampled ones metadata */
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
 
-      /* Graphics stages are still compiled by agx_compile_apple9_* */
-      if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
-         NIR_PASS(_, nir, agx_nir_lower_texture);
+      NIR_PASS(_, nir, agx_nir_lower_texture);
    } else {
       NIR_PASS(_, nir, agx_nir_lower_texture);
    }
@@ -2678,310 +1964,11 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
 #define HK_APPLE9_BODY_SLAB_USABLE                                             \
    (HK_APPLE9_BODY_SLAB_SIZE - HK_APPLE9_BODY_TAIL)
 
-struct hk_apple9_body_slab {
-   struct agx_bo *bo;
-   struct util_vma_heap heap;
-   struct list_head link;
-   unsigned live, cached;
-};
-
-struct hk_apple9_body {
-   blake3_hash hash;
-   uint64_t size, alloc_size, cache_charge;
-   struct hk_apple9_body_slab *slab;
-   struct agx_shader_body base;
-   struct list_head link;
-};
-
-static uint32_t
-hk_apple9_body_hash(const void *key)
-{
-   const struct hk_apple9_body *body = key;
-   return _mesa_hash_data(body->hash, sizeof(body->hash));
-}
-
-static bool
-hk_apple9_body_equal(const void *a, const void *b)
-{
-   const struct hk_apple9_body *x = a, *y = b;
-   return x->size == y->size && !memcmp(x->hash, y->hash, sizeof(x->hash));
-}
-
-/* Heap and cache bookkeeping share apple9_bodies.lock. Body contents are
- * immutable before publication. Entry teardown releases its lock before this
- * callback, and BO release happens after dropping the body-cache lock. */
-static void
-hk_apple9_body_destroy(struct agx_device *adev, struct agx_shader_body *base)
-{
-   struct hk_device *dev = container_of(adev, struct hk_device, dev);
-   struct hk_apple9_body *body =
-      container_of(base, struct hk_apple9_body, base);
-   struct hk_apple9_body_slab *slab = body->slab;
-   bool release_bo = !slab;
-   if (slab) {
-      simple_mtx_lock(&dev->apple9_bodies.lock);
-      util_vma_heap_free(
-         &slab->heap,
-         base->addr - slab->bo->va->addr + HK_APPLE9_BODY_ALIGNMENT,
-         body->alloc_size);
-      assert(slab->live);
-      if (--slab->live == 0) {
-         assert(!slab->cached);
-         list_del(&slab->link);
-         util_vma_heap_finish(&slab->heap);
-         free(slab);
-         release_bo = true;
-      }
-      simple_mtx_unlock(&dev->apple9_bodies.lock);
-   }
-   if (release_bo)
-      agx_bo_unreference(adev, base->bo);
-   free(body);
-}
-
-/* Offset zero is valid storage, but the VMA allocator uses it as failure.
- * Bias its offsets by one alignment unit and undo the bias for GPU addresses. */
-static bool
-hk_apple9_body_alloc(struct hk_device *dev, struct hk_apple9_body *body)
-{
-   uint64_t offset = 0;
-   struct agx_bo *bo = NULL;
-   struct agx_bo *failed_bo = NULL;
-   body->alloc_size = ALIGN_POT(body->size, HK_APPLE9_BODY_ALIGNMENT);
-   if (body->alloc_size <= HK_APPLE9_BODY_SLAB_USABLE) {
-      simple_mtx_lock(&dev->apple9_bodies.lock);
-      list_for_each_entry(struct hk_apple9_body_slab, slab,
-                          &dev->apple9_bodies.slabs, link) {
-         offset = util_vma_heap_alloc(&slab->heap, body->alloc_size,
-                                      HK_APPLE9_BODY_ALIGNMENT);
-         if (offset) {
-            body->slab = slab;
-            break;
-         }
-      }
-      if (!body->slab) {
-         struct hk_apple9_body_slab *slab = calloc(1, sizeof(*slab));
-         if (slab) {
-            slab->bo =
-               agx_bo_create(&dev->dev, HK_APPLE9_BODY_SLAB_SIZE, 0,
-                             AGX_BO_EXEC | AGX_BO_LOW_VA, "Apple9 shader slab");
-            /* Map once before another uploader can reserve a slice. */
-            if (slab->bo && agx_bo_map(slab->bo)) {
-               util_vma_heap_init(&slab->heap, HK_APPLE9_BODY_ALIGNMENT,
-                                  slab->bo->size - HK_APPLE9_BODY_TAIL);
-               slab->heap.alloc_high = false;
-               offset = util_vma_heap_alloc(&slab->heap, body->alloc_size,
-                                            HK_APPLE9_BODY_ALIGNMENT);
-               assert(offset);
-               list_addtail(&slab->link, &dev->apple9_bodies.slabs);
-               body->slab = slab;
-            } else {
-               failed_bo = slab->bo;
-               free(slab);
-            }
-         }
-      }
-      if (body->slab) {
-         body->slab->live++;
-         bo = body->slab->bo;
-         offset -= HK_APPLE9_BODY_ALIGNMENT;
-      }
-      simple_mtx_unlock(&dev->apple9_bodies.lock);
-      agx_bo_unreference(&dev->dev, failed_bo);
-   } else {
-      bo = agx_bo_create(&dev->dev, body->alloc_size, 0,
-                         AGX_BO_EXEC | AGX_BO_LOW_VA, "Apple9 shader");
-   }
-   if (!bo)
-      return false;
-   body->base = (struct agx_shader_body){
-      .bo = bo,
-      .addr = bo->va->addr + offset,
-      .refcnt = 1,
-      .destroy = hk_apple9_body_destroy,
-   };
-   /* Keep the previous page-rounded admission policy as well as a separate
-    * bound on actual backing retained by cached bodies. */
-   body->cache_charge =
-      body->slab ? ALIGN_POT(body->size, AIL_PAGESIZE) : bo->size;
-   return true;
-}
-
-static void
-hk_apple9_body_uncache(struct hk_device *dev, struct hk_apple9_body *body)
-{
-   dev->apple9_bodies.count--;
-   dev->apple9_bodies.bytes -= body->cache_charge;
-   if (!body->slab || --body->slab->cached == 0)
-      dev->apple9_bodies.backing_bytes -= body->base.bo->size;
-}
-
-static struct agx_shader_body *
-hk_apple9_body_upload(struct hk_device *dev, const struct hk_shader *shader)
-{
-   uint64_t data_offset =
-      ALIGN_POT((uint64_t)shader->code_size, HK_MIN_UBO_ALIGNMENT);
-   uint64_t size = data_offset + shader->data_size;
-   if (!size || size > SIZE_MAX - (HK_APPLE9_BODY_ALIGNMENT - 1))
-      return NULL;
-   struct hk_apple9_body key = {.size = size};
-   blake3_hasher hash;
-   blake3_hasher_init(&hash);
-   blake3_hasher_update(&hash, &shader->code_size, sizeof(shader->code_size));
-   blake3_hasher_update(&hash, shader->code_ptr, shader->code_size);
-   blake3_hasher_update(&hash, shader->data_ptr, shader->data_size);
-   blake3_hasher_finalize(&hash, key.hash, sizeof(key.hash));
-
-   simple_mtx_lock(&dev->apple9_bodies.lock);
-   if (!dev->apple9_bodies.ht) {
-      dev->apple9_bodies.ht = _mesa_hash_table_create(NULL, hk_apple9_body_hash,
-                                                      hk_apple9_body_equal);
-      list_inithead(&dev->apple9_bodies.lru);
-   }
-   struct hash_entry *entry =
-      dev->apple9_bodies.ht
-         ? _mesa_hash_table_search(dev->apple9_bodies.ht, &key)
-         : NULL;
-   if (entry) {
-      struct hk_apple9_body *body = entry->data;
-      list_move_to(&body->link, &dev->apple9_bodies.lru);
-      agx_shader_body_reference(&body->base);
-      simple_mtx_unlock(&dev->apple9_bodies.lock);
-      return &body->base;
-   }
-   simple_mtx_unlock(&dev->apple9_bodies.lock);
-
-   struct hk_apple9_body *body = malloc(sizeof(*body));
-   if (!body)
-      return NULL;
-   *body = key;
-   if (!hk_apple9_body_alloc(dev, body)) {
-      free(body);
-      return NULL;
-   }
-   struct agx_bo *bo = body->base.bo;
-   void *map = agx_bo_map(bo);
-   if (!map) {
-      agx_shader_body_unreference(&dev->dev, &body->base);
-      return NULL;
-   }
-   uint64_t offset = body->base.addr - bo->va->addr;
-   map = (char *)map + offset;
-   memset(map, 0, body->alloc_size);
-   memcpy(map, shader->code_ptr, shader->code_size);
-   if (shader->data_size)
-      memcpy((char *)map + data_offset, shader->data_ptr, shader->data_size);
-
-   struct list_head evicted;
-   list_inithead(&evicted);
-   simple_mtx_lock(&dev->apple9_bodies.lock);
-   if (dev->apple9_bodies.ht && bo->size <= HK_APPLE9_BODY_CACHE_BYTES &&
-       !_mesa_hash_table_search(dev->apple9_bodies.ht, body) &&
-       _mesa_hash_table_insert(dev->apple9_bodies.ht, body, body)) {
-      agx_shader_body_reference(&body->base);
-      list_add(&body->link, &dev->apple9_bodies.lru);
-      dev->apple9_bodies.count++;
-      dev->apple9_bodies.bytes += body->cache_charge;
-      if (!body->slab || body->slab->cached++ == 0)
-         dev->apple9_bodies.backing_bytes += bo->size;
-      while (dev->apple9_bodies.count > HK_APPLE9_BODY_CACHE_SIZE ||
-             dev->apple9_bodies.bytes > HK_APPLE9_BODY_CACHE_BYTES ||
-             dev->apple9_bodies.backing_bytes > HK_APPLE9_BODY_CACHE_BYTES) {
-         struct hk_apple9_body *old = list_last_entry(
-            &dev->apple9_bodies.lru, struct hk_apple9_body, link);
-         list_del(&old->link);
-         _mesa_hash_table_remove_key(dev->apple9_bodies.ht, old);
-         hk_apple9_body_uncache(dev, old);
-         list_addtail(&old->link, &evicted);
-      }
-   }
-   simple_mtx_unlock(&dev->apple9_bodies.lock);
-   list_for_each_entry_safe(struct hk_apple9_body, old, &evicted, link) {
-      list_del(&old->link);
-      agx_shader_body_unreference(&dev->dev, &old->base);
-   }
-   /* A concurrent identical upload, oversized body or failed cache insertion
-    * leaves the caller owning a valid body without a cache reference. */
-   return &body->base;
-}
-
-void
-hk_apple9_bodies_finish(struct hk_device *dev)
-{
-   if (!dev->apple9_bodies.ht)
-      return;
-   list_for_each_entry_safe(struct hk_apple9_body, body,
-                            &dev->apple9_bodies.lru, link) {
-      list_del(&body->link);
-      hk_apple9_body_uncache(dev, body);
-      agx_shader_body_unreference(&dev->dev, &body->base);
-   }
-   _mesa_hash_table_destroy(dev->apple9_bodies.ht, NULL);
-   dev->apple9_bodies.ht = NULL;
-   assert(!dev->apple9_bodies.count && !dev->apple9_bodies.bytes &&
-          !dev->apple9_bodies.backing_bytes);
-}
-
-/* The native description of an uploaded G16 graphics stage. */
-static void
-hk_apple9_init_render_stage(struct hk_shader *s)
-{
-   bool fragment = s->info.stage == MESA_SHADER_FRAGMENT;
-   const struct agx_shader_info *i = &s->b.info;
-   struct agx_apple9_render_stage stage = {
-      .program_id = s->apple9_program_id,
-      .bo = s->bo,
-      .body = s->apple9_body,
-      .binary = s->code_ptr,
-      .binary_size = i->binary_size,
-      .preamble_offset = i->apple9_preamble_offset,
-      .preamble_size = i->apple9_preamble_size,
-      .publication_count = i->apple9_publication_count,
-      .publication_count_valid = true,
-      .scratch_size = i->scratch_size,
-      .atomic_frame_size = i->apple9_atomic_frame_size,
-      .resource_count = i->apple9_resource_count,
-      .resource_ssbo_mask = i->apple9_resource_ssbo_mask,
-      .resource_write_mask = i->apple9_resource_write_mask,
-      .position_components = fragment ? 0 : 4,
-      .varying_components = i->apple9_varyings.count,
-      .varyings = i->apple9_varyings,
-      .apple9_linear_mask = i->apple9_linear_mask,
-      .apple9_flat_mask = i->apple9_flat_mask,
-      .apple9_reads_z = i->apple9_reads_z,
-      .reads_primitive_id = i->apple9_reads_primitive_id,
-      .reads_point_coord = i->apple9_reads_point_coord,
-      .barycentric_mask = i->apple9_barycentric_mask,
-      .per_vertex_count = i->apple9_per_vertex_count,
-      .writes_point_size = i->apple9_writes_point_size,
-      .writes_layer_viewport = i->writes_layer_viewport,
-      .clip_distance_count = i->apple9_clip_distance_count,
-      .render_targets = s->info.apple9_render_targets,
-      .launch_cache = s->apple9_stage_launch,
-      .texture_mask = i->apple9_texture_mask,
-      .sampler_mask = i->apple9_sampler_mask,
-      .image_mask = i->apple9_image_mask,
-      .uses_texel_fetch = i->apple9_uses_texel_fetch,
-      .reads_tile = i->apple9_reads_tile,
-      .uses_discard = i->apple9_uses_discard,
-      .writes_depth = i->depth_layout != FRAG_DEPTH_LAYOUT_UNCHANGED,
-      .disable_tri_merging = i->disable_tri_merging,
-      .pixel_interlock = i->apple9_pixel_interlock,
-   };
-   memcpy(stage.resource_binding, i->apple9_resource_binding,
-          sizeof(stage.resource_binding));
-   memcpy(stage.per_vertex, i->apple9_per_vertex, sizeof(stage.per_vertex));
-   /* Every uploaded graphics stage has an id; without one, consecutive draws
-    * silently stop reusing launches and coefficient tables. */
-   assert(!s->bo || stage.program_id);
-   s->apple9_stage = stage;
-}
-
 static VkResult
 hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
 {
    /* Apple9 preambles are in the linked program; upload constant data only */
-   if (agx_is_apple9(&dev->dev) && shader->b.info.apple9_compute.abi) {
+   if (agx_is_apple9(&dev->dev)) {
       assert(!shader->b.info.rodata.size_16 && "no uniform preloads");
 
       if (shader->data_size) {
@@ -2999,7 +1986,16 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
       }
 
       if (!shader->linked.ht) {
-         shader->only_linked = hk_fast_link(dev, false, shader, NULL, NULL, 0);
+         /* Hardware VS read IDs from a prolog; API ones link theirs per draw */
+         struct agx_shader_part *prolog = NULL;
+         if (shader->b.info.stage == MESA_SHADER_VERTEX) {
+            struct agx_vs_prolog_key key = {.hw = true, .static_vi = true};
+            prolog = hk_get_prolog_epilog(dev, &key, sizeof(key),
+                                          agx_nir_vs_prolog, false, false, 0);
+         }
+
+         shader->only_linked =
+            hk_fast_link(dev, false, shader, prolog, NULL, 0);
          if (!shader->only_linked->b.bo)
             return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       }
@@ -3020,55 +2016,6 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
       return VK_SUCCESS;
    }
 
-   if (agx_is_apple9(&dev->dev)) {
-      agx_apple9_dump_info(&shader->b.info);
-      if (!shader->code_size || (shader->info.stage == MESA_SHADER_COMPUTE &&
-                                 agx_is_shader_empty(&shader->b)))
-         return VK_SUCCESS;
-      shader->apple9_body = hk_apple9_body_upload(dev, shader);
-      if (!shader->apple9_body)
-         return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-      shader->bo = shader->apple9_body->bo;
-      if (shader->data_size)
-         shader->data_addr =
-            shader->apple9_body->addr +
-            ALIGN_POT((uint64_t)shader->code_size, HK_MIN_UBO_ALIGNMENT);
-      if (shader->info.stage == MESA_SHADER_COMPUTE) {
-         const struct agx_apple9_compute_profile *p = &shader->info.apple9;
-         struct agx_apple9_launch_template *t = malloc(sizeof(*t));
-         if (t && agx_apple9_compute_launch_template(
-                     t, p, dev->dev.shader_base,
-                     p->preamble_size
-                        ? shader->apple9_body->addr + p->preamble_offset
-                        : 0))
-            shader->apple9_launch = t;
-         else
-            free(t);
-      } else {
-         shader->apple9_program_id =
-            p_atomic_inc_return(&dev->apple9_last_program_id);
-         shader->apple9_stage_launch =
-            malloc(sizeof(*shader->apple9_stage_launch));
-         if (shader->apple9_stage_launch)
-            agx_apple9_stage_launch_cache_init(shader->apple9_stage_launch);
-         hk_apple9_init_render_stage(shader);
-         if (shader->info.stage == MESA_SHADER_FRAGMENT) {
-            simple_mtx_lock(&dev->usc_heap_lock);
-            bool allocated = hk_usc_heap_alloc(
-               &dev->usc_heap,
-               agx_apple9_coefficients_size(&shader->apple9_stage), 64,
-               &shader->apple9_coefficients);
-            simple_mtx_unlock(&dev->usc_heap_lock);
-            if (!allocated)
-               return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-            agx_apple9_init_coefficients(
-               &dev->dev, &shader->apple9_stage,
-               (struct agx_ptr){.cpu = shader->apple9_coefficients.map,
-                                .gpu = shader->apple9_coefficients.addr});
-         }
-      }
-      return VK_SUCCESS;
-   }
    if (shader->b.info.has_preamble || shader->b.info.rodata.size_16 ||
        shader->data_size) {
       /* TODO: Do we wnat to compact? Revisit when we rework prolog/epilogs. */
@@ -3136,43 +2083,6 @@ hk_init_link_ht(struct hk_shader *shader, mesa_shader_stage sw_stage)
 
    return (shader->linked.ht == NULL) ? VK_ERROR_OUT_OF_HOST_MEMORY
                                       : VK_SUCCESS;
-}
-
-static nir_intrinsic_instr *
-hk_apple9_handle_intrinsic(nir_tex_instr *tex, unsigned sampler)
-{
-   int src = nir_tex_instr_src_index(
-      tex, sampler ? nir_tex_src_sampler_handle : nir_tex_src_texture_handle);
-   if (src < 0)
-      return NULL;
-   nir_instr *instr = nir_def_instr(tex->src[src].src.ssa);
-   if (instr->type != nir_instr_type_intrinsic)
-      return NULL;
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-   return intr->intrinsic == (sampler ? nir_intrinsic_bindless_sampler_agx
-                                      : nir_intrinsic_bindless_image_agx)
-             ? intr
-             : NULL;
-}
-
-/* Address a descriptor relative to the USC aperture that holds G16
- * descriptor memory, see hk_apple9_image_part. */
-static void
-hk_apple9_use_descriptor_handle(nir_builder *b, nir_tex_instr *tex,
-                                unsigned sampler)
-{
-   int src = nir_tex_instr_src_index(
-      tex, sampler ? nir_tex_src_sampler_handle : nir_tex_src_texture_handle);
-   nir_intrinsic_instr *handle = hk_apple9_handle_intrinsic(tex, sampler);
-   b->cursor = nir_before_instr(&tex->instr);
-   unsigned set = nir_intrinsic_desc_set(handle);
-   unsigned root = hk_root_descriptor_offset(sets) + set * sizeof(uint64_t);
-   nir_def *base =
-      nir_load_ubo(b, 1, 32, nir_imm_int(b, 0), nir_imm_int(b, root),
-                   .align_mul = 8, .range_base = root, .range = 4);
-   /* Texture and sampler handles address their record part directly. */
-   nir_def *offset = handle->src[0].ssa;
-   nir_src_rewrite(&tex->src[src].src, nir_iadd(b, base, offset));
 }
 
 /* Which memory a shader reads, from its intrinsics: texture and image
@@ -3326,43 +2236,6 @@ hk_nir_push_constant_mask(const nir_shader *nir)
 }
 
 #ifndef NDEBUG
-/* hk_apple9_lower_roots replaces load_root_agx with a load of root_desc_addr
- * from UBO 0. Recover that identity on a clone so the final-NIR check sees
- * both indirect root loads and direct UBO 0 reads. Other loaded pointers
- * still stop the address walk. The NIR passed to the backend is untouched.
- */
-static bool
-hk_debug_restore_root(nir_builder *b, nir_intrinsic_instr *intr, void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_load_ubo)
-      return false;
-
-   bool *unknown = data;
-   if (!nir_src_is_const(intr->src[0])) {
-      *unknown = true;
-      return false;
-   }
-   if (nir_src_as_uint(intr->src[0]) != 0)
-      return false;
-
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def *root = nir_load_root_agx(b);
-   nir_def *value;
-   if (intr->num_components == 1 && intr->def.bit_size == 64 &&
-       nir_src_is_const(intr->src[1]) &&
-       nir_src_as_uint(intr->src[1]) ==
-          hk_root_descriptor_offset(root_desc_addr)) {
-      value = root;
-   } else {
-      nir_def *offset = nir_u2u64(b, intr->src[1].ssa);
-      value = nir_load_global_constant(
-         b, intr->num_components, intr->def.bit_size, nir_iadd(b, root, offset),
-         .align_mul = nir_intrinsic_align_mul(intr),
-         .align_offset = nir_intrinsic_align_offset(intr));
-   }
-   nir_def_replace(&intr->def, value);
-   return true;
-}
 
 /* Geometry lowering introduces application-memory address phis and vector
  * expressions which the early root walk conservatively calls unknown. They
@@ -3418,15 +2291,9 @@ hk_nir_final_push_constant_mask(const nir_shader *nir)
 {
    nir_shader *copy = nir_shader_clone(NULL, nir);
    assert(copy);
-   bool unknown = false;
-   NIR_PASS(_, copy, nir_shader_intrinsics_pass, hk_debug_restore_root,
-            nir_metadata_control_flow, &unknown);
-   /* Fold only the newly introduced integer conversions/adds, so direct
-    * constant UBO offsets remain recognizable to the conservative walk. */
-   NIR_PASS(_, copy, nir_opt_constant_folding);
    NIR_PASS(_, copy, nir_shader_intrinsics_pass, hk_debug_exclude_non_root_load,
             nir_metadata_control_flow, NULL);
-   uint64_t mask = unknown ? UINT64_MAX : hk_nir_push_constant_mask(copy);
+   uint64_t mask = hk_nir_push_constant_mask(copy);
    ralloc_free(copy);
    return mask;
 }
@@ -3505,39 +2372,6 @@ hk_nir_pre_raster_reads(const nir_shader *nir)
    return reads;
 }
 
-static bool
-hk_apple9_texture_bindings(nir_shader *nir)
-{
-   /* Every sampled descriptor is read through its memory (a descriptor
-    * handle): native records live in set memory, written at update time, so
-    * draws and dispatches build no texture/sampler tables and update-after-
-    * bind needs nothing extra. The handle and the descriptor-record reads are
-    * uniform and hoisted to the preamble. */
-   nir_builder b = nir_builder_create(nir_shader_get_entrypoint(nir));
-   nir_foreach_block(block, nir_shader_get_entrypoint(nir)) {
-      nir_foreach_instr(instr, block) {
-         if (instr->type != nir_instr_type_tex)
-            continue;
-         nir_tex_instr *tex = nir_instr_as_tex(instr);
-         for (unsigned sampler = 0; sampler < 2; ++sampler) {
-            tex->backend_flags &= ~HK_APPLE9_TEX_DESCRIPTOR_HANDLE;
-            if (nir_tex_instr_src_index(
-                   tex, sampler ? nir_tex_src_sampler_handle
-                                : nir_tex_src_texture_handle) < 0)
-               continue;
-            if (!hk_apple9_handle_intrinsic(tex, sampler))
-               return false;
-            hk_apple9_use_descriptor_handle(&b, tex, sampler);
-         }
-      }
-   }
-   /* Handle loads were added and sources removed: liveness is stale. */
-   nir_progress(true, nir_shader_get_entrypoint(nir),
-                nir_metadata_control_flow);
-   nir_opt_dce(nir);
-   return true;
-}
-
 /* An early depth/stencil test updates the attachment before the fragment
  * shader runs, and the shader's input-attachment reads then observe this
  * fragment's own write. With a depth/stencil feedback loop, export the
@@ -3574,91 +2408,27 @@ hk_apple9_clamp_depth_export(nir_builder *b, nir_intrinsic_instr *intr,
        nir_intrinsic_io_semantics(intr).location != FRAG_RESULT_DEPTH)
       return false;
    b->cursor = nir_before_instr(&intr->instr);
-   unsigned offset = hk_root_descriptor_offset(draw.depth_clamp);
    nir_def *range =
-      nir_load_ubo(b, 2, 32, nir_imm_int(b, 0), nir_imm_int(b, offset),
-                   .align_mul = 4, .range_base = offset, .range = 8);
+      hk_nir_load_root(b, 2, 32, hk_root_descriptor_offset(draw.depth_clamp));
    nir_def *z = intr->src[0].ssa;
    nir_def *clamped = nir_fmin(b, nir_fmax(b, z, nir_channel(b, range, 0)),
                                nir_channel(b, range, 1));
-   unsigned never = hk_root_descriptor_offset(draw.force_never_in_shader);
-   nir_def *fail =
-      nir_load_ubo(b, 1, 16, nir_imm_int(b, 0), nir_imm_int(b, never),
-                   .align_mul = 2, .range_base = never, .range = 2);
+   nir_def *fail = hk_nir_load_root(
+      b, 1, 16, hk_root_descriptor_offset(draw.force_never_in_shader));
    nir_src_rewrite(&intr->src[0], nir_bcsel(b, nir_ine_imm(b, fail, 0),
                                             nir_imm_float(b, 2.0), clamped));
    return true;
 }
 
-/* The Apple9 argument table carries one UBO pointing at Honeykrisp's
- * root descriptor table. Descriptor sets remain GPU addresses loaded from
- * that table; descriptor contents are never baked into compiled shaders. */
-static bool
-hk_apple9_lower_roots(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+/* Load a field of the root table, see hk_root_descriptor_offset */
+nir_def *
+hk_nir_load_root(nir_builder *b, unsigned num_components, unsigned bit_size,
+                 unsigned offset)
 {
-   if (intr->intrinsic == nir_intrinsic_load_depth_never_agx) {
-      unsigned offset = hk_root_descriptor_offset(draw.force_never_in_shader);
-      b->cursor = nir_before_instr(&intr->instr);
-      nir_def_replace(&intr->def,
-                      nir_load_ubo(b, 1, intr->def.bit_size, nir_imm_int(b, 0),
-                                   nir_imm_int(b, offset), .align_mul = 2,
-                                   .range_base = offset, .range = 2));
-      return true;
-   }
-   if (intr->intrinsic == nir_intrinsic_load_draw_id) {
-      unsigned offset = hk_root_descriptor_offset(draw.draw_id);
-      b->cursor = nir_before_instr(&intr->instr);
-      nir_def_replace(
-         &intr->def,
-         nir_load_ubo(b, 1, 32, nir_imm_int(b, 0), nir_imm_int(b, offset),
-                      .align_mul = 4, .range_base = offset, .range = 4));
-      return true;
-   }
-   if (intr->intrinsic == nir_intrinsic_load_base_vertex ||
-       intr->intrinsic == nir_intrinsic_load_first_vertex ||
-       intr->intrinsic == nir_intrinsic_load_base_instance) {
-      unsigned offset =
-         intr->intrinsic == nir_intrinsic_load_base_instance ? 4 : 0;
-      b->cursor = nir_before_instr(&intr->instr);
-      nir_def *value =
-         nir_load_ubo(b, 1, 32, nir_imm_int(b, HK_APPLE9_DRAW_PARAMS_BINDING),
-                      nir_imm_int(b, offset), .align_mul = 4,
-                      .range_base = offset, .range = 4);
-      nir_def_replace(&intr->def, value);
-      return true;
-   }
-   if (intr->intrinsic == nir_intrinsic_load_from_texture_handle_agx) {
-      if (nir_def_instr(intr->src[0].ssa)->type != nir_instr_type_intrinsic)
-         return false;
-      nir_intrinsic_instr *handle = nir_def_as_intrinsic(intr->src[0].ssa);
-      if (handle->intrinsic != nir_intrinsic_bindless_image_agx)
-         return false;
-      b->cursor = nir_before_instr(&intr->instr);
-      unsigned slot = offsetof(struct hk_root_descriptor_table, sets) +
-                      nir_intrinsic_desc_set(handle) * sizeof(uint64_t);
-      nir_def *set =
-         nir_load_ubo(b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, slot),
-                      .align_mul = 8, .range_base = slot, .range = 8);
-      nir_def_replace(&intr->def,
-                      nir_iadd(b, set, nir_u2u64(b, handle->src[0].ssa)));
-      return true;
-   }
-
-   unsigned offset;
-   if (intr->intrinsic == nir_intrinsic_load_root_agx)
-      offset = offsetof(struct hk_root_descriptor_table, root_desc_addr);
-   else if (intr->intrinsic == nir_intrinsic_load_descriptor_set_agx)
-      offset = offsetof(struct hk_root_descriptor_table, sets) +
-               nir_intrinsic_desc_set(intr) * sizeof(uint64_t);
-   else
-      return false;
-
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def *ptr =
-      nir_load_ubo(b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, offset),
-                   .align_mul = 8, .range_base = offset, .range = 8);
-   nir_def_replace(&intr->def, ptr);
-   return true;
+   return nir_load_global_constant(
+      b, num_components, bit_size,
+      nir_iadd_imm(b, nir_load_root_agx(b), offset), .align_mul = bit_size / 8,
+      .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE);
 }
 
 static bool
@@ -3709,9 +2479,30 @@ kill_psiz_write(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
+static bool
+hk_apple9_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
+                             UNUSED void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_load_clip_z_coeff)
+      return false;
+
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def_replace(
+      &intr->def,
+      hk_nir_load_root(b, 1, 32, hk_root_descriptor_offset(draw.clip_z_coeff)));
+   return true;
+}
+
 static void
 hk_lower_hw_vs(nir_shader *nir, struct hk_shader *shader, bool kill_psiz)
 {
+   /* VK_EXT_depth_clip_control: Apple9 clips depth to [0, w] */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
+      NIR_PASS(_, nir, nir_lower_clip_halfz_dynamic);
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_clip_z_coeff,
+               nir_metadata_control_flow, NULL);
+   }
+
    /* Point size must be clamped, excessively large points don't render
     * properly on G13.
     *
@@ -3756,6 +2547,25 @@ hk_copy_shader_constant_data(struct hk_device *dev, struct hk_shader *shader,
    }
 
    return VK_SUCCESS;
+}
+
+/* Software stages run as compute, at their compiled workgroup size */
+static void
+hk_lower_to_compute(struct hk_device *dev, nir_shader *nir, unsigned local_size)
+{
+   if (agx_is_apple9(&dev->dev)) {
+      nir->info.workgroup_size_variable = false;
+      nir->info.workgroup_size[0] = local_size;
+      nir->info.workgroup_size[1] = nir->info.workgroup_size[2] = 1;
+   } else if (nir->info.stage != MESA_SHADER_VERTEX &&
+              nir->info.stage != MESA_SHADER_TESS_EVAL) {
+      /* Apple8 compiles the other software stages as they are */
+      return;
+   }
+
+   nir->info.stage = MESA_SHADER_COMPUTE;
+   memset(&nir->info.cs, 0, sizeof(nir->info.cs));
+   nir->xfb_info = NULL;
 }
 
 static VkResult
@@ -3818,6 +2628,11 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
             util_last_bit(nir->info.patch_outputs_written);
          shader->info.tess.tcs_output_stride = poly_tcs_output_stride(nir);
       } else {
+         /* Apple9 counts tessellated primitives per draw: publish patch ID */
+         if (agx_is_apple9(&dev->dev) && hw &&
+             !(nir->info.outputs_written & VARYING_BIT_PRIMITIVE_ID))
+            hk_apple9_write_primitive_id(nir);
+
          /* This destroys info so it needs to happen after the gather */
          NIR_PASS(_, nir, poly_nir_lower_tes, hw);
       }
@@ -3837,18 +2652,10 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
          hk_lower_hw_vs(nir, shader, kill_psiz);
       } else {
          NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
-         nir->info.stage = MESA_SHADER_COMPUTE;
-         memset(&nir->info.cs, 0, sizeof(nir->info.cs));
-         nir->xfb_info = NULL;
+         hk_lower_to_compute(dev, nir, 64);
       }
-   }
-
-   if (agx_is_apple9(&dev->dev)) {
-      const char *reason = NULL;
-      if (!agx_nir_lower_apple9_runtime_sampler_state(nir, &reason)) {
-         ralloc_free(nir);
-         return vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT, "%s", reason);
-      }
+   } else if (sw_stage == MESA_SHADER_TESS_CTRL) {
+      hk_lower_to_compute(dev, nir, nir->info.tess.tcs_vertices_out);
    }
 
    unsigned root = 0;
@@ -3878,7 +2685,11 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
    struct agx_shader_key backend_key = {
       .reserved_preamble = root + (4 * (1 + set_count)),
       .dev = agx_gather_device_key(&dev->dev),
-      .no_stop = nir->info.stage == MESA_SHADER_FRAGMENT,
+
+      /* Fast linking adds the stop, for FS and Apple9 VS */
+      .no_stop =
+         nir->info.stage == MESA_SHADER_FRAGMENT ||
+         (agx_is_apple9(&dev->dev) && nir->info.stage == MESA_SHADER_VERTEX),
       .has_scratch = !nir->info.internal,
       .promote_constants = true,
       .promote_textures = true,
@@ -3942,206 +2753,21 @@ static const struct vk_shader_ops hk_shader_ops;
 static void
 hk_destroy_linked_shader(struct hk_device *dev, struct hk_linked_shader *linked)
 {
+   if (agx_is_apple9(&dev->dev))
+      agx_apple9_stage_launch_cache_finish(&linked->apple9_launch);
+
    agx_bo_unreference(&dev->dev, linked->b.bo);
    ralloc_free(linked);
 }
-
-#define HK_APPLE9_CACHED_VARIANTS_PER_SOURCE 64
-
-struct hk_apple9_cached_variant {
-   struct hk_apple9_cached_variant *next;
-   struct vk_pipeline_cache_object *object;
-};
-
-/* Serialized NIR after API lowering, before key-dependent compilation.
- * Precompile jobs hold references, so a shader can be destroyed while its
- * variants are still queued. */
-struct hk_apple9_nir {
-   uint32_t refs;
-   uint32_t size;
-   alignas(8) uint8_t data[];
-};
-
-static struct hk_apple9_nir *
-hk_apple9_nir_create(const void *data, size_t size)
-{
-   if (size > UINT32_MAX)
-      return NULL;
-   struct hk_apple9_nir *nir = malloc(sizeof(*nir) + MAX2(size, 1));
-   if (!nir)
-      return NULL;
-   nir->refs = 1;
-   nir->size = size;
-   memcpy(nir->data, data, size);
-   return nir;
-}
-
-static struct hk_apple9_nir *
-hk_apple9_nir_ref(struct hk_apple9_nir *nir)
-{
-   p_atomic_inc(&nir->refs);
-   return nir;
-}
-
-static void
-hk_apple9_nir_unref(struct hk_apple9_nir *nir)
-{
-   if (nir && p_atomic_dec_zero(&nir->refs))
-      free(nir);
-}
-
-struct hk_apple9_deferred {
-   struct hk_apple9_nir *nir;
-   uint32_t next_stage_mask;
-   uint32_t set_layout_count;
-   /* Static pipeline sample shading, which has no dynamic state. */
-   bool sample_shading;
-   /* Static depth/stencil feedback loop. The dynamic form reaches draw-time
-    * variants through the dynamic feedback-loop state instead. */
-   bool zs_self_dep;
-   /* Vertex shader whose pipeline disables vertex input robustness. */
-   bool vertex_unbounded;
-   /* Color attachments the pipeline leaves undefined; writes are discarded
-    * even when the render binds an image there. */
-   uint8_t undefined_colors;
-   /* A missing fragment stage needs a generated cull-distance consumer. */
-   bool cull_distance;
-   /* VkPipelineCache serializes these API shaders. Retain the variants seen
-    * with this source so application-managed caches include draw-time work.
-    * The list owns only serialized bytes, never other API shader objects. */
-   simple_mtx_t variant_lock;
-   struct hk_apple9_cached_variant *variants;
-   unsigned variant_count;
-};
-
-static void
-hk_apple9_remember_variant(struct hk_device *dev, struct hk_api_shader *api,
-                           struct vk_pipeline_cache_object *object)
-{
-   struct hk_apple9_deferred *d = api->apple9_deferred;
-   struct hk_apple9_cached_variant *evicted = NULL;
-   simple_mtx_lock(&d->variant_lock);
-   for (struct hk_apple9_cached_variant **p = &d->variants; *p;
-        p = &(*p)->next) {
-      if ((*p)->object == object) {
-         struct hk_apple9_cached_variant *v = *p;
-         *p = v->next;
-         v->next = d->variants;
-         d->variants = v;
-         simple_mtx_unlock(&d->variant_lock);
-         return;
-      }
-   }
-   struct hk_apple9_cached_variant *v = malloc(sizeof(*v));
-   if (v) {
-      v->object = vk_pipeline_cache_object_ref(object);
-      v->next = d->variants;
-      d->variants = v;
-      if (d->variant_count == HK_APPLE9_CACHED_VARIANTS_PER_SOURCE) {
-         struct hk_apple9_cached_variant **tail = &d->variants;
-         while ((*tail)->next)
-            tail = &(*tail)->next;
-         evicted = *tail;
-         *tail = NULL;
-      } else {
-         ++d->variant_count;
-      }
-   }
-   simple_mtx_unlock(&d->variant_lock);
-   /* Cache serialization takes the runtime-cache lock before variant_lock.
-    * A last unref takes that cache lock, so eviction must happen outside. */
-   if (evicted) {
-      vk_pipeline_cache_object_unref(&dev->vk, evicted->object);
-      free(evicted);
-   }
-}
-
-static bool
-hk_apple9_serialize_variants(struct hk_apple9_deferred *d, struct blob *blob)
-{
-   intptr_t count_at = blob_reserve_uint32(blob);
-   if (count_at < 0)
-      return false;
-   uint32_t count = 0;
-   struct hk_apple9_cached_variant
-      *variants[HK_APPLE9_CACHED_VARIANTS_PER_SOURCE];
-   simple_mtx_lock(&d->variant_lock);
-   for (struct hk_apple9_cached_variant *v = d->variants; v; v = v->next) {
-      assert(count < ARRAY_SIZE(variants));
-      variants[count++] = v;
-   }
-   /* Import remembers each entry at the head: write oldest first to preserve
-    * recency when an application cache is loaded in another process. */
-   for (unsigned i = count; i > 0; --i) {
-      struct hk_apple9_cached_variant *v = variants[i - 1];
-      struct vk_raw_data_cache_object *raw =
-         container_of(v->object, struct vk_raw_data_cache_object, base);
-      assert(v->object->key_size == BLAKE3_OUT_LEN);
-      if (raw->data_size > UINT32_MAX) {
-         blob->out_of_memory = true;
-         break;
-      }
-      blob_write_bytes(blob, v->object->key_data, BLAKE3_OUT_LEN);
-      blob_write_uint32(blob, raw->data_size);
-      blob_write_bytes(blob, raw->data, raw->data_size);
-   }
-   simple_mtx_unlock(&d->variant_lock);
-   blob_overwrite_uint32(blob, count_at, count);
-   return !blob->out_of_memory;
-}
-
-static bool
-hk_apple9_deserialize_variants(struct hk_device *dev, struct hk_api_shader *api,
-                               struct blob_reader *blob)
-{
-   uint32_t count = blob_read_uint32(blob);
-   if (blob->overrun ||
-       count > (blob->end - blob->current) / (BLAKE3_OUT_LEN + 4))
-      return false;
-   for (unsigned i = 0; i < count; ++i) {
-      const void *key = blob_read_bytes(blob, BLAKE3_OUT_LEN);
-      uint32_t size = blob_read_uint32(blob);
-      const void *data = blob_read_bytes(blob, size);
-      if (blob->overrun || !size)
-         return false;
-      if (!dev->vk.mem_cache)
-         continue;
-      struct vk_pipeline_cache_object *object =
-         vk_pipeline_cache_create_and_insert_object(
-            dev->vk.mem_cache, key, BLAKE3_OUT_LEN, data, size,
-            &vk_raw_data_cache_object_ops);
-      if (object) {
-         hk_apple9_remember_variant(dev, api, object);
-         vk_pipeline_cache_object_unref(&dev->vk, object);
-      }
-   }
-   return true;
-}
-
-static void hk_apple9_forget_deferred(struct hk_device *dev,
-                                      struct hk_api_shader *obj);
 
 static void
 hk_shader_destroy(struct hk_device *dev, struct hk_shader *s)
 {
    free((void *)s->code_ptr);
    free((void *)s->data_ptr);
-   if (s->apple9_body)
-      agx_shader_body_unreference(&dev->dev, s->apple9_body);
-   else
-      agx_bo_unreference(&dev->dev, s->bo);
-   if (s->apple9_coefficients.size) {
-      simple_mtx_lock(&dev->usc_heap_lock);
-      hk_usc_heap_free(&dev->usc_heap, &s->apple9_coefficients);
-      simple_mtx_unlock(&dev->usc_heap_lock);
-   }
+   agx_bo_unreference(&dev->dev, s->bo);
    free(s->apple9_launch);
    s->apple9_launch = NULL;
-   if (s->apple9_stage_launch) {
-      agx_apple9_stage_launch_cache_finish(s->apple9_stage_launch);
-      free(s->apple9_stage_launch);
-      s->apple9_stage_launch = NULL;
-   }
 
    simple_mtx_destroy(&s->linked.lock);
 
@@ -4164,22 +2790,6 @@ hk_api_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
    struct hk_api_shader *obj =
       container_of(vk_shader, struct hk_api_shader, vk);
 
-   if (obj->apple9_deferred) {
-      hk_apple9_forget_deferred(dev, obj);
-      struct hk_apple9_cached_variant *v = obj->apple9_deferred->variants;
-      while (v) {
-         struct hk_apple9_cached_variant *next = v->next;
-         vk_pipeline_cache_object_unref(&dev->vk, v->object);
-         free(v);
-         v = next;
-      }
-      simple_mtx_destroy(&obj->apple9_deferred->variant_lock);
-      hk_apple9_nir_unref(obj->apple9_deferred->nir);
-      free(obj->apple9_deferred);
-      vk_shader_free(&dev->vk, pAllocator, &obj->vk);
-      return;
-   }
-
    hk_foreach_variant(obj, shader) {
       hk_shader_destroy(dev, shader);
    }
@@ -4187,50 +2797,51 @@ hk_api_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
    vk_shader_free(&dev->vk, pAllocator, &obj->vk);
 }
 
-struct hk_apple9_graphics_key;
-
-/* Without a fragment stage nothing reads the rasterized varyings: keep only
- * the outputs the fixed-function rasterizer consumes, as other drivers do when
- * linking a position-only pre-rasterization stage. */
-static bool
-hk_apple9_strip_unread_output(nir_builder *b, nir_intrinsic_instr *intr,
-                              UNUSED void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_store_output)
-      return false;
-   switch (nir_intrinsic_io_semantics(intr).location) {
-   case VARYING_SLOT_POS:
-   case VARYING_SLOT_PSIZ:
-   case VARYING_SLOT_CLIP_DIST0:
-   case VARYING_SLOT_CLIP_DIST1:
-   case VARYING_SLOT_CULL_DIST0:
-   case VARYING_SLOT_CULL_DIST1:
-   case VARYING_SLOT_LAYER:
-   case VARYING_SLOT_VIEWPORT:
-   case VARYING_SLOT_PRIMITIVE_SHADING_RATE:
-      return false;
-   default:
-      nir_instr_remove(&intr->instr);
-      return true;
-   }
-}
-
+/* The task and mesh lowering divides workgroup IDs by the grid size after
+ * agx_preprocess_nir lowered integer division, so lower it again.
+ */
 static void
-hk_apple9_strip_unread_outputs(nir_shader *nir)
+hk_lower_task_mesh_division(nir_shader *nir)
 {
-   if (!nir_shader_intrinsics_pass(nir, hk_apple9_strip_unread_output,
-                                   nir_metadata_control_flow, NULL))
-      return;
-   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
-   NIR_PASS(_, nir, nir_opt_dce);
-   NIR_PASS(_, nir, nir_opt_dead_cf);
+   nir_lower_idiv_options idiv_options = {.allow_fp16 = true};
+
+   NIR_PASS(_, nir, nir_opt_idiv_const, 16);
+   NIR_PASS(_, nir, nir_lower_idiv, &idiv_options);
+   NIR_PASS(_, nir, agx_nir_lower_accurate_frcp);
 }
 
-static VkResult hk_apple9_compile_graphics(
-   struct hk_device *dev, uint32_t count, struct vk_shader_compile_info *infos,
-   const struct vk_graphics_pipeline_state *state,
-   const struct hk_apple9_graphics_key *key_in, const uint64_t *fs_interp,
-   const VkAllocationCallbacks *alloc, struct vk_shader **out);
+/* Apple9 FS lowering: barycentrics, per-vertex inputs and hardware quirks */
+static void
+hk_apple9_lower_fs(nir_shader *nir, struct hk_shader *shader)
+{
+   struct hk_per_vertex_copies copies;
+   if (hk_apple9_lower_per_vertex_copies(nir, &copies)) {
+      shader->info.fs.per_vertex_copies = copies.count;
+      memcpy(shader->info.fs.per_vertex_location, copies.location,
+             sizeof(copies.location));
+      memcpy(shader->info.fs.per_vertex_copy_base, copies.copy_base,
+             sizeof(copies.copy_base));
+      memcpy(shader->info.fs.per_vertex_bary, copies.bary, sizeof(copies.bary));
+   }
+
+   NIR_PASS(_, nir, hk_apple9_lower_api_vertex_order);
+
+   /* Shading per sample interpolates at the sample */
+   if (nir->info.fs.uses_sample_shading) {
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass,
+               hk_apple9_lower_bary_to_sample, nir_metadata_control_flow, NULL);
+   }
+
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_clamp_depth_export,
+            nir_metadata_control_flow, NULL);
+
+   shader->info.fs.pixel_interlock = nir->info.fs.pixel_interlock_ordered ||
+                                     nir->info.fs.pixel_interlock_unordered;
+
+   /* Merged triangles share interpolation, wrong away from the pixel centre */
+   shader->info.fs.disable_tri_merging = nir->info.fs.uses_sample_shading ||
+                                         hk_apple9_interpolates_off_center(nir);
+}
 
 VkResult
 hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
@@ -4241,30 +2852,10 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 {
    VkResult result;
    enum hk_feature_key features = hk_make_feature_key(vk_features);
+   bool apple9 = agx_is_apple9(&dev->dev);
 
    /* We consume the NIR, regardless of success or failure */
    nir_shader *nir = info->nir;
-   if (agx_is_apple9(&dev->dev) && info->stage == MESA_SHADER_GEOMETRY) {
-      /* Internal geometry shaders, such as the transform feedback
-       * passthrough, use the Apple9 geometry pipeline.
-       */
-      if (!nir->info.io_lowered) {
-         hk_lower_nir(dev, nir, info->robustness, false, info->set_layout_count,
-                      info->set_layouts, features);
-      }
-      struct vk_shader_compile_info gs_info = *info;
-      struct vk_shader *out = NULL;
-      VkResult result = hk_apple9_compile_graphics(
-         dev, 1, &gs_info, state, NULL, NULL, pAllocator, &out);
-      *shader_out = out ? container_of(out, struct hk_api_shader, vk) : NULL;
-      return result;
-   }
-   if (agx_is_apple9(&dev->dev) && info->stage != MESA_SHADER_COMPUTE) {
-      ralloc_free(nir);
-      return vk_errorf(
-         dev, VK_ERROR_FEATURE_NOT_PRESENT,
-         "Apple9 Honeykrisp currently supports compute shaders only");
-   }
 
    size_t size = sizeof(struct hk_api_shader) +
                  sizeof(struct hk_shader) * hk_num_variants(info->stage);
@@ -4288,6 +2879,12 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                    info->set_layouts, features);
    }
 
+   /* Apple9 renders track what their stages read and write, see hk_queue */
+   if (apple9) {
+      obj->writes_memory = nir->info.writes_memory;
+      obj->pre_raster_reads = hk_nir_pre_raster_reads(nir);
+   }
+
    mesa_shader_stage sw_stage = nir->info.stage;
 
    union hk_key key_tmp, *key = NULL;
@@ -4297,15 +2894,19 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       nir->info.fs.uses_sample_shading |= key->fs.force_sample_shading;
 
-      /* Force late-Z for Z/S self-deps. TODO: There's probably a less silly way
-       * to do this.
-       */
-      if (key->fs.zs_self_dep) {
+      /* Force late-Z for Z/S self-deps; Apple9 exports depth for that */
+      if (key->fs.zs_self_dep && apple9) {
+         hk_apple9_late_zs(nir);
+      } else if (key->fs.zs_self_dep) {
+         /* TODO: There's probably a less silly way to do this. */
          nir_builder b =
             nir_builder_at(nir_before_impl(nir_shader_get_entrypoint(nir)));
          nir_discard_if(&b, nir_imm_false(&b));
          nir->info.fs.uses_discard = true;
       }
+
+      if (apple9)
+         hk_apple9_lower_fs(nir, hk_only_variant(obj));
 
       NIR_PASS(_, nir, agx_nir_lower_sample_intrinsics, false);
    } else if (sw_stage == MESA_SHADER_VERTEX) {
@@ -4313,6 +2914,29 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       key = &key_tmp;
    } else if (sw_stage == MESA_SHADER_TESS_CTRL) {
       NIR_PASS(_, nir, poly_nir_lower_tcs, true);
+   } else if (sw_stage == MESA_SHADER_MESH) {
+      /* Mesh shaders run as compute; hk_nir_mesh_rast rasterizes records */
+      struct hk_shader *shader = hk_only_variant(obj);
+      hk_mesh_gather_info(nir, &shader->info.mesh);
+      shader->info.clip_distance_array_size =
+         nir->info.clip_distance_array_size;
+      shader->info.cull_distance_array_size =
+         nir->info.cull_distance_array_size;
+
+      hk_nir_lower_mesh_main(nir, &shader->info.mesh);
+      hk_lower_task_mesh_division(nir);
+      nir->info.stage = MESA_SHADER_COMPUTE;
+      memset(&nir->info.cs, 0, sizeof(nir->info.cs));
+      nir->xfb_info = NULL;
+   } else if (sw_stage == MESA_SHADER_TASK) {
+      struct hk_shader *shader = hk_only_variant(obj);
+      shader->info.task.payload_B = nir->info.task_payload_size;
+      shader->info.task.max_mesh_groups = hk_nir_task_mesh_bound(nir);
+
+      hk_nir_lower_task_main(nir);
+      hk_lower_task_mesh_division(nir);
+      nir->info.stage = MESA_SHADER_COMPUTE;
+      memset(&nir->info.cs, 0, sizeof(nir->info.cs));
    }
 
    /* Compile all variants up front */
@@ -4346,6 +2970,11 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       for (unsigned v = 0; v < ARRAY_SIZE(variants); ++v) {
          if (variants[v].in) {
+            if (variants[v].in != rast) {
+               hk_lower_to_compute(dev, variants[v].in,
+                                   variants[v].in == pre_gs ? 1 : 64);
+            }
+
             result =
                hk_compile_nir(dev, pAllocator, variants[v].in, info->flags,
                               info->robustness, NULL, features, variants[v].out,
@@ -4371,6 +3000,15 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
        * shader for the purpose. Update the next_stage mask accordingly.
        */
       if (nir->xfb_info != NULL) {
+         next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
+      }
+
+      /* Apple9 also layers fragment shader barycentrics and primitives
+       * generated queries on the passthrough geometry shader, which any
+       * fragment shader may need at draw time.
+       */
+      if (apple9 && (dev->vk.enabled_features.fragmentShaderBarycentric ||
+                     dev->vk.enabled_features.primitivesGeneratedQuery)) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
@@ -4409,7 +3047,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                   shader->info.vs.attrib_components_read);
 
          if (sw_stage == MESA_SHADER_VERTEX) {
-            shader->info.vs.use_prolog = !(key && key->vs.skip_prolog);
+            /* Apple9 VS read vertex and instance IDs from the prolog */
+            shader->info.vs.use_prolog =
+               apple9 || !(key && key->vs.skip_prolog);
             shader->info.vs.attribs_read =
                nir->info.inputs_read >> VERT_ATTRIB_GENERIC0;
 
@@ -4506,2294 +3146,6 @@ nir_opts(nir_shader *nir, void *data)
    } while (progress);
 }
 
-/* Count fragment shader invocations for pipeline statistics queries. The
- * counter is behind a uniform test of the active query flags, so draws
- * without the query issue no atomics. With the query active, one lane adds
- * the wave's count: an atomic per fragment on the single counter serialized
- * every fragment of the draw, halving frame rates in games that keep
- * statistics queries open (Unigine Heaven through DXVK).
- */
-static void
-hk_apple9_lower_fs_statistics(nir_shader *nir)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
-   nir_builder b = nir_builder_at(nir_before_impl(impl));
-   unsigned offset = hk_root_descriptor_offset(draw.pipeline_stats_flags);
-   nir_def *flags =
-      nir_load_ubo(&b, 1, 32, nir_imm_int(&b, 0), nir_imm_int(&b, offset),
-                   .align_mul = 4, .range_base = offset, .range = 4);
-   /* The branches are uniform and usually not taken: keep if-conversion
-    * from hoisting the coverage read and ballot into every invocation. */
-   nir_if *active = nir_push_if(
-      &b, nir_test_mask(
-             &b, flags,
-             VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT));
-   active->control = nir_selection_control_dont_flatten;
-   {
-      nir_def *helper = nir_load_helper_invocation(&b, 1);
-      nir_def *lanes = nir_ballot(&b, 1, 32, nir_inot(&b, helper));
-      nir_if *counted = nir_push_if(&b, nir_inot(&b, helper));
-      counted->control = nir_selection_control_dont_flatten;
-      nir_push_if(&b, nir_elect(&b, 1));
-      nir_def *addr = nir_load_stat_query_address_poly(
-         &b, .base = PIPE_STAT_QUERY_PS_INVOCATIONS);
-      nir_global_atomic(&b, 32, addr, nir_bit_count(&b, lanes),
-                        .atomic_op = nir_atomic_op_iadd);
-      nir_pop_if(&b, NULL);
-      nir_pop_if(&b, NULL);
-   }
-   nir_pop_if(&b, NULL);
-   nir_progress(true, impl, nir_metadata_none);
-   NIR_PASS(_, nir, hk_lower_uvs_index, MESA_SHADER_FRAGMENT, 0);
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_roots,
-            nir_metadata_control_flow, NULL);
-}
-
-/* Draw parameters come from the Apple9 draw-parameter UBO; the geometry
- * pipeline's poly sysvals live in the root table. Lower the former first so
- * hk_lower_uvs_index only sees the table-backed values.
- */
-static void
-hk_apple9_lower_prerast_sysvals(nir_shader *nir, mesa_shader_stage sw_stage)
-{
-   NIR_PASS(_, nir, poly_nir_lower_sysvals);
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_roots,
-            nir_metadata_control_flow, NULL);
-   NIR_PASS(_, nir, hk_lower_uvs_index, sw_stage, 0);
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_roots,
-            nir_metadata_control_flow, NULL);
-}
-
-static VkResult
-hk_apple9_finish_shader(struct hk_device *dev, struct hk_shader *shader,
-                        const nir_shader *nir)
-{
-   shader->code_ptr = shader->b.binary;
-   shader->code_size = shader->b.info.binary_size;
-   shader->info.clip_distance_array_size = nir->info.clip_distance_array_size;
-   shader->info.cull_distance_array_size = nir->info.cull_distance_array_size;
-   VkResult result = hk_copy_shader_constant_data(dev, shader, nir);
-   return result == VK_SUCCESS ? hk_upload_shader(dev, shader) : result;
-}
-
-/* Compile a software pre-rasterization stage (vertex shader feeding a
- * geometry shader, or one of the geometry shader's compute variants) as an
- * Apple9 compute kernel. Does not take ownership of nir.
- */
-static VkResult
-hk_apple9_compile_prerast(struct hk_device *dev, nir_shader *nir,
-                          struct hk_shader *shader, unsigned local_size,
-                          const char **reason)
-{
-   nir->info.stage = MESA_SHADER_COMPUTE;
-   memset(&nir->info.cs, 0, sizeof(nir->info.cs));
-   nir->info.workgroup_size_variable = false;
-   nir->info.workgroup_size[0] = local_size;
-   nir->info.workgroup_size[1] = nir->info.workgroup_size[2] = 1;
-   nir->xfb_info = NULL;
-   hk_apple9_lower_prerast_sysvals(nir, MESA_SHADER_COMPUTE);
-   NIR_PASS(_, nir, nir_opt_dce);
-   NIR_PASS(_, nir, nir_opt_dead_cf);
-   NIR_PASS(_, nir, nir_opt_dce);
-
-   hk_assert_final_push_mask(nir, shader);
-   bool empty = true;
-   nir_foreach_block(block, nir_shader_get_entrypoint(nir))
-      empty &= exec_list_is_empty(&block->instr_list);
-   if (empty) {
-      shader->b.info.stats.instrs = 1;
-      return VK_SUCCESS;
-   }
-
-   if (!agx_compile_apple9_tiny(nir, &shader->b, &shader->info.apple9,
-                                reason)) {
-      /* Static GS topology can leave the main program with nothing to store:
-       * like an empty program, there is nothing to run. */
-      if (*reason == agx_apple9_compute_without_effects) {
-         memset(&shader->b, 0, sizeof(shader->b));
-         memset(&shader->info.apple9, 0, sizeof(shader->info.apple9));
-         shader->b.info.stats.instrs = 1;
-         *reason = NULL;
-         return VK_SUCCESS;
-      }
-      return vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   }
-   return hk_apple9_finish_shader(dev, shader, nir);
-}
-
-static bool
-hk_apple9_lower_sw_vertex_zero_base(nir_builder *b, nir_intrinsic_instr *intr,
-                                    UNUSED void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_load_vertex_id_zero_base)
-      return false;
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def_replace(&intr->def,
-                   nir_channel(b, nir_load_global_invocation_id(b, 32), 0));
-   return true;
-}
-
-/* The vertex shader in front of a geometry shader pulls its attributes and
- * indices in software, writing outputs to the vertex output buffer.
- */
-static VkResult
-hk_apple9_compile_sw_vs(struct hk_device *dev, nir_shader *nir,
-                        const struct agx_apple9_vertex_layout *layout,
-                        struct hk_shader *shader, const char **reason)
-{
-   if (!agx_nir_lower_apple9_vertex_inputs(nir, layout, true)) {
-      *reason = "unsupported software vertex input";
-      return vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   }
-   uint64_t outputs = nir->info.outputs_written;
-   NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
-   NIR_PASS(_, nir, poly_nir_lower_sw_vs);
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-            hk_apple9_lower_sw_vertex_zero_base, nir_metadata_control_flow,
-            NULL);
-   VkResult result = hk_apple9_compile_prerast(dev, nir, shader, 64, reason);
-   shader->b.info.outputs = outputs;
-   return result;
-}
-
-static void
-hk_apple9_gather_tess_info(struct hk_shader *shader, const nir_shader *nir)
-{
-   shader->info.tess.info.ccw = nir->info.tess.ccw;
-   shader->info.tess.info.points = nir->info.tess.point_mode;
-   shader->info.tess.info.spacing = nir->info.tess.spacing;
-   shader->info.tess.info.mode = nir->info.tess._primitive_mode;
-}
-
-/* Tessellation control shaders run as compute kernels with one workgroup per
- * patch and one thread per output vertex, writing the patch buffer read by
- * the tessellator. Does not take ownership of nir.
- */
-static VkResult
-hk_apple9_compile_tcs(struct hk_device *dev, nir_shader *nir,
-                      struct hk_shader *shader, const char **reason)
-{
-   hk_apple9_gather_tess_info(shader, nir);
-   NIR_PASS(_, nir, poly_nir_lower_tcs, true);
-   shader->info.tess.tcs_output_patch_size = nir->info.tess.tcs_vertices_out;
-   shader->info.tess.tcs_per_vertex_outputs = poly_tcs_per_vertex_outputs(nir);
-   shader->info.tess.tcs_nr_patch_outputs =
-      util_last_bit(nir->info.patch_outputs_written);
-   shader->info.tess.tcs_output_stride = poly_tcs_output_stride(nir);
-   return hk_apple9_compile_prerast(dev, nir, shader,
-                                    nir->info.tess.tcs_vertices_out, reason);
-}
-
-/* Cull distances reach the fragment shader as one linear value per plane,
- * zero where the distance is negative, when the interface has room for them:
- * that needs no geometry stage. Interfaces at the publication limit instead
- * publish one flat word of negative-plane bits per vertex, and a geometry
- * stage combines it over each primitive's vertices (hk_handle_passthrough_gs);
- * points use it directly. Sets *cull_mask to the transport used.
- */
-static bool
-hk_apple9_compile_vertex_culls(nir_shader *nir,
-                               const struct agx_apple9_vertex_layout *vertex,
-                               struct agx_shader_part *out, bool *cull_mask,
-                               const char **reason)
-{
-   struct agx_apple9_vertex_layout layout = *vertex;
-   layout.cull_distance_mask = *cull_mask = false;
-   if (!nir->info.cull_distance_array_size)
-      return agx_compile_apple9_vertex_inputs(nir, &layout, out, reason);
-
-   nir_shader *planes = nir_shader_clone(ralloc_parent(nir), nir);
-   if (agx_compile_apple9_vertex_inputs(planes, &layout, out, NULL)) {
-      nir_shader_replace(nir, planes);
-      return true;
-   }
-   ralloc_free(planes);
-   free(out->binary);
-   memset(out, 0, sizeof(*out));
-   layout.cull_distance_mask = *cull_mask = true;
-   return agx_compile_apple9_vertex_inputs(nir, &layout, out, reason);
-}
-
-/* Evaluation shaders run as the hardware vertex program over the tessellated
- * domain, and as a software vertex program when a geometry shader or
- * transform feedback follows. Does not take ownership of nir.
- */
-static VkResult
-hk_apple9_compile_tes(struct hk_device *dev, nir_shader *nir,
-                      const struct agx_apple9_vertex_layout *vertex,
-                      struct hk_api_shader *obj, VkShaderStageFlags next,
-                      const char **reason)
-{
-   struct hk_shader *hw = &obj->variants[HK_VS_VARIANT_HW];
-   struct hk_shader *sw = &obj->variants[HK_VS_VARIANT_SW];
-   hk_apple9_gather_tess_info(hw, nir);
-   hk_apple9_gather_tess_info(sw, nir);
-   sw->info.set_count = hw->info.set_count;
-   sw->info.clip_distance_array_size = nir->info.clip_distance_array_size;
-   sw->info.cull_distance_array_size = nir->info.cull_distance_array_size;
-
-   /* The software variant feeds a geometry stage: the application's, or a
-    * passthrough for transform feedback or a cull mask. */
-   nir_shader *clone = nir_shader_clone(NULL, nir);
-
-   struct agx_apple9_vertex_layout layout = *vertex;
-   layout.rasterize_points = nir->info.tess.point_mode;
-   layout.ignore_point_size = !layout.rasterize_points;
-   NIR_PASS(_, nir, poly_nir_lower_tes, true);
-   hk_apple9_lower_prerast_sysvals(nir, MESA_SHADER_TESS_EVAL);
-   bool cull_mask;
-   hk_assert_final_push_mask(nir, hw);
-   if (!hk_apple9_compile_vertex_culls(nir, &layout, &hw->b, &cull_mask,
-                                       reason)) {
-      ralloc_free(clone);
-      return vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   }
-   hw->info.cull_mask = sw->info.cull_mask = cull_mask;
-
-   VkResult result = VK_SUCCESS;
-   if ((next & VK_SHADER_STAGE_GEOMETRY_BIT) || clone->xfb_info || cull_mask) {
-      if (clone->xfb_info) {
-         memcpy(&sw->info.xfb_info, clone->xfb_info,
-                nir_xfb_info_size(clone->xfb_info->output_count));
-         typed_memcpy(sw->info.xfb_stride, clone->info.xfb_stride, 4);
-      }
-      NIR_PASS(_, clone, poly_nir_lower_tes, false);
-      uint64_t outputs = clone->info.outputs_written;
-      NIR_PASS(_, clone, poly_nir_lower_vs_before_gs);
-      result = hk_apple9_compile_prerast(dev, clone, sw, 64, reason);
-      sw->b.info.outputs = outputs;
-   }
-   ralloc_free(clone);
-   if (result != VK_SUCCESS)
-      return result;
-   return hk_apple9_finish_shader(dev, hw, nir);
-}
-
-/* Application geometry shaders emitting triangle strips under polygon mode
- * POINT: every output store is tapped into the current vertex, the strip's two
- * previous vertices are kept, and each completed triangle is drawn as points
- * by hk_apple9_pp_emit_triangle instead of being emitted.
- */
-struct hk_gs_pp {
-   /* Per slot (clip/cull distances per element), the strip's two previous
-    * vertices and the current one, as 32-bit words. */
-   nir_variable *v[3][VARYING_SLOT_MAX + 8];
-   nir_def *odd;
-};
-
-static unsigned
-hk_gs_pp_key(unsigned location, unsigned offset)
-{
-   return location == VARYING_SLOT_CLIP_DIST0 ? VARYING_SLOT_MAX + offset
-                                              : location;
-}
-
-static nir_def *
-hk_gs_pp_load(nir_builder *b, void *data, unsigned vertex, unsigned location,
-              unsigned offset, unsigned component, unsigned comps,
-              nir_alu_type type)
-{
-   struct hk_gs_pp *pp = data;
-   unsigned k = hk_gs_pp_key(location, offset);
-   /* Odd strip triangles are wound (i + 1, i, i + 2). */
-   nir_def *value;
-   if (vertex == 2) {
-      value = nir_load_var(b, pp->v[2][k]);
-   } else {
-      nir_def *a = nir_load_var(b, pp->v[vertex][k]);
-      nir_def *c = nir_load_var(b, pp->v[vertex ^ 1][k]);
-      value = nir_bcsel(b, pp->odd, c, a);
-   }
-   return nir_channels(b, value, BITFIELD_RANGE(component, comps));
-}
-
-/* Whether a geometry shader's triangle strips can be drawn as polygon
- * points: constant-offset 32-bit stream-0 outputs and an output count within
- * the geometry shader's vertex limit. */
-static bool
-hk_apple9_gs_polygon_points_ok(const nir_shader *gs)
-{
-   if (gs->info.gs.output_primitive != MESA_PRIM_TRIANGLE_STRIP)
-      return false;
-   unsigned per_triangle = 3 + 3 + gs->info.clip_distance_array_size;
-   unsigned triangles =
-      gs->info.gs.vertices_out > 2 ? gs->info.gs.vertices_out - 2 : 0;
-   if (triangles * per_triangle > 1024)
-      return false;
-   nir_foreach_function_impl(impl, gs) {
-      nir_foreach_block(block, impl) {
-         nir_foreach_instr(instr, block) {
-            if (instr->type != nir_instr_type_intrinsic)
-               continue;
-            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-            if (intr->intrinsic != nir_intrinsic_store_output)
-               continue;
-            if (!nir_src_is_const(intr->src[1]) ||
-                nir_src_bit_size(intr->src[0]) != 32 ||
-                nir_intrinsic_io_semantics(intr).gs_streams ||
-                nir_intrinsic_io_semantics(intr).location >= VARYING_SLOT_MAX)
-               return false;
-         }
-      }
-   }
-   return true;
-}
-
-static void
-hk_apple9_lower_gs_polygon_points(nir_shader *gs, struct hk_pp_info info,
-                                  bool point_size)
-{
-   assert(hk_apple9_gs_polygon_points_ok(gs));
-   unsigned per_triangle = 3 + 3 + info.clip;
-   unsigned triangles =
-      gs->info.gs.vertices_out > 2 ? gs->info.gs.vertices_out - 2 : 0;
-
-   nir_function_impl *impl = nir_shader_get_entrypoint(gs);
-   unsigned components[VARYING_SLOT_MAX] = {0};
-   uint64_t written = 0;
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         if (intr->intrinsic != nir_intrinsic_store_output)
-            continue;
-         unsigned loc = nir_intrinsic_io_semantics(intr).location;
-         written |= BITFIELD64_BIT(loc);
-         components[loc] = MAX2(
-            components[loc], nir_intrinsic_component(intr) +
-                                util_last_bit(nir_intrinsic_write_mask(intr)));
-      }
-   }
-
-   struct hk_gs_pp pp = {0};
-   nir_builder b = nir_builder_at(nir_before_impl(impl));
-   for (unsigned k = 0; k < VARYING_SLOT_MAX + 8; ++k) {
-      bool used =
-         k < VARYING_SLOT_MAX
-            ? (written & BITFIELD64_BIT(k)) && k != VARYING_SLOT_CLIP_DIST0
-            : (written & VARYING_BIT_CLIP_DIST0) &&
-                 k - VARYING_SLOT_MAX < DIV_ROUND_UP(info.clip + info.cull, 4);
-      if (!used)
-         continue;
-      for (unsigned i = 0; i < 3; ++i) {
-         pp.v[i][k] = nir_local_variable_create(impl, glsl_uvec4_type(), NULL);
-         nir_store_var(&b, pp.v[i][k], nir_imm_ivec4(&b, 0, 0, 0, 0), 0xf);
-      }
-   }
-   nir_variable *count =
-      nir_local_variable_create(impl, glsl_uint_type(), "pp_strip");
-   nir_store_var(&b, count, nir_imm_int(&b, 0), 1);
-
-   info.outputs =
-      written & ~(VARYING_BIT_CLIP_DIST0 | VARYING_BIT_CLIP_DIST1 |
-                  VARYING_BIT_CULL_DIST0 | VARYING_BIT_CULL_DIST1 |
-                  VARYING_BIT_PRIMITIVE_ID | VARYING_BIT_BOUNDING_BOX0 |
-                  VARYING_BIT_BOUNDING_BOX1);
-   /* Without polygonModePointSize, polygon points have size 1. */
-   if (!point_size)
-      info.outputs &= ~VARYING_BIT_PSIZ;
-   info.output_components = components;
-
-   /* Collect first: the triangle emission adds control flow and its own
-    * emit_vertex intrinsics. */
-   struct util_dynarray todo;
-   util_dynarray_init(&todo, NULL);
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_op op = nir_instr_as_intrinsic(instr)->intrinsic;
-         if (op == nir_intrinsic_store_output ||
-             op == nir_intrinsic_emit_vertex ||
-             op == nir_intrinsic_end_primitive)
-            util_dynarray_append(&todo, nir_instr_as_intrinsic(instr));
-      }
-   }
-   util_dynarray_foreach(&todo, nir_intrinsic_instr *, it) {
-      nir_intrinsic_instr *intr = *it;
-      nir_instr *instr = &intr->instr;
-      b.cursor = nir_before_instr(instr);
-      switch (intr->intrinsic) {
-      case nir_intrinsic_store_output: {
-         unsigned k = hk_gs_pp_key(nir_intrinsic_io_semantics(intr).location,
-                                   nir_src_as_uint(intr->src[1]));
-         if (!pp.v[2][k]) {
-            nir_instr_remove(instr);
-            break;
-         }
-         unsigned first = nir_intrinsic_component(intr);
-         nir_def *value = nir_load_var(&b, pp.v[2][k]);
-         u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
-            value = nir_vector_insert_imm(
-               &b, value, nir_channel(&b, intr->src[0].ssa, c), first + c);
-         }
-         nir_store_var(&b, pp.v[2][k], value, 0xf);
-         nir_instr_remove(instr);
-         break;
-      }
-      case nir_intrinsic_end_primitive:
-         nir_store_var(&b, count, nir_imm_int(&b, 0), 1);
-         nir_instr_remove(instr);
-         break;
-      case nir_intrinsic_emit_vertex: {
-         nir_def *n = nir_load_var(&b, count);
-         nir_push_if(&b, nir_uge_imm(&b, n, 2));
-         {
-            pp.odd = nir_ine_imm(&b, nir_iand_imm(&b, n, 1), 0);
-            /* Strip triangle i provokes from vertex i, or i + 2. */
-            nir_def *last = nir_ine_imm(&b, nir_load_provoking_last(&b), 0);
-            nir_def *provoking = nir_bcsel(
-               &b, last, nir_imm_int(&b, 2),
-               nir_bcsel(&b, pp.odd, nir_imm_int(&b, 1), nir_imm_int(&b, 0)));
-            hk_apple9_pp_emit_triangle(&b, &info, hk_gs_pp_load, &pp, provoking,
-                                       nir_load_primitive_id(&b), NULL);
-         }
-         nir_pop_if(&b, NULL);
-         for (unsigned k = 0; k < VARYING_SLOT_MAX + 8; ++k) {
-            if (!pp.v[2][k])
-               continue;
-            nir_store_var(&b, pp.v[0][k], nir_load_var(&b, pp.v[1][k]), 0xf);
-            nir_store_var(&b, pp.v[1][k], nir_load_var(&b, pp.v[2][k]), 0xf);
-         }
-         nir_store_var(&b, count, nir_iadd_imm(&b, n, 1), 1);
-         nir_instr_remove(instr);
-         break;
-      }
-      default:
-         break;
-      }
-   }
-   util_dynarray_fini(&todo);
-
-   gs->info.gs.output_primitive = MESA_PRIM_POINTS;
-   gs->info.gs.vertices_out = MAX2(triangles * per_triangle, 1);
-   gs->info.outputs_written &= ~VARYING_BIT_PRIMITIVE_ID;
-   if (!point_size)
-      gs->info.outputs_written &= ~VARYING_BIT_PSIZ;
-   if (info.face_slot)
-      gs->info.outputs_written |= BITFIELD64_BIT(info.face_slot);
-   nir_progress(true, impl, nir_metadata_none);
-   NIR_PASS(_, gs, nir_lower_vars_to_ssa);
-}
-
-/* Geometry shaders run as compute kernels writing an output vertex buffer,
- * followed by an ordinary hardware vertex program that rasterizes it.
- * Does not take ownership of nir.
- */
-
-static VkResult
-hk_apple9_compile_gs(struct hk_device *dev, nir_shader *nir,
-                     const struct agx_apple9_vertex_layout *vertex,
-                     bool cull_mask, struct hk_api_shader *obj,
-                     const char **reason)
-{
-   struct hk_shader *rast_shader = &obj->variants[HK_GS_VARIANT_RAST];
-   nir_shader *count = NULL, *rast = NULL, *pre = NULL;
-   struct poly_gs_info info = {0};
-   if (cull_mask)
-      NIR_PASS(_, nir, poly_nir_lower_gs_cull_mask, &count, &rast, &pre, &info);
-   else
-      NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre, &info);
-
-   hk_foreach_variant(obj, variant) {
-      variant->info.gs = info;
-      variant->info.set_count = rast_shader->info.set_count;
-   }
-
-   VkResult result =
-      hk_apple9_compile_prerast(dev, nir, hk_main_gs_variant(obj), 64, reason);
-   if (result == VK_SUCCESS && count)
-      result = hk_apple9_compile_prerast(dev, count, hk_count_gs_variant(obj),
-                                         64, reason);
-   if (result == VK_SUCCESS && pre)
-      result =
-         hk_apple9_compile_prerast(dev, pre, hk_pre_gs_variant(obj), 1, reason);
-   if (result == VK_SUCCESS) {
-      struct agx_apple9_vertex_layout layout = *vertex;
-      layout.cull_distance_mask = cull_mask;
-      layout.rasterize_points = info.mode == MESA_PRIM_POINTS;
-      layout.ignore_point_size = !layout.rasterize_points;
-      hk_apple9_lower_prerast_sysvals(rast, MESA_SHADER_GEOMETRY);
-      hk_assert_final_push_mask(rast, rast_shader);
-      if (agx_compile_apple9_vertex_inputs(rast, &layout, &rast_shader->b,
-                                           reason))
-         result = hk_apple9_finish_shader(dev, rast_shader, rast);
-      else
-         result = vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   }
-
-   ralloc_free(count);
-   ralloc_free(rast);
-   ralloc_free(pre);
-   return result;
-}
-
-/* Mesh shaders run as compute kernels writing records, which a generated
- * vertex shader rasterizes.
- */
-static VkResult
-hk_apple9_compile_mesh(struct hk_device *dev, nir_shader *nir,
-                       const struct agx_apple9_vertex_layout *vertex,
-                       bool clip_negative_one_to_one,
-                       const struct hk_per_vertex_copies *copies,
-                       struct hk_apple9_stipple_slots stipple,
-                       const struct hk_pp_info *polygon_points, bool point_size,
-                       struct hk_api_shader *obj, const char **reason)
-{
-   struct hk_shader *main = &obj->variants[HK_MESH_VARIANT_MAIN];
-   struct hk_shader *rast = &obj->variants[HK_MESH_VARIANT_RAST];
-   struct hk_mesh_info info;
-   hk_mesh_gather_info(nir, &info);
-   info.polygon_points = polygon_points != NULL;
-
-   hk_foreach_variant(obj, variant) {
-      variant->info.mesh = info;
-      variant->info.set_count = main->info.set_count;
-   }
-
-   nir_shader *rast_nir =
-      hk_nir_mesh_rast(nir, &info, copies, polygon_points, point_size);
-
-   hk_nir_lower_mesh_main(nir, &info);
-   nir->info.stage = MESA_SHADER_COMPUTE;
-   memset(&nir->info.cs, 0, sizeof(nir->info.cs));
-   nir->xfb_info = NULL;
-   hk_apple9_lower_prerast_sysvals(nir, MESA_SHADER_COMPUTE);
-   NIR_PASS(_, nir, nir_opt_dce);
-   VkResult result = VK_SUCCESS;
-   hk_assert_final_push_mask(nir, main);
-   if (!agx_compile_apple9_tiny(nir, &main->b, &main->info.apple9, reason))
-      result = vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   else
-      result = hk_apple9_finish_shader(dev, main, nir);
-
-   if (result == VK_SUCCESS) {
-      struct agx_apple9_vertex_layout layout = *vertex;
-      layout.rasterize_points =
-         info.prim == MESA_PRIM_POINTS || info.polygon_points;
-      layout.ignore_point_size = !layout.rasterize_points;
-      if (stipple.start)
-         hk_apple9_write_line_stipple_start(rast_nir, stipple);
-      hk_apple9_lower_prerast_sysvals(rast_nir, MESA_SHADER_VERTEX);
-      /* The generated vertex shader writes the rasterized position. */
-      if (clip_negative_one_to_one) {
-         NIR_PASS(_, rast_nir, nir_lower_clip_halfz_dynamic);
-         NIR_PASS(_, rast_nir, nir_shader_intrinsics_pass,
-                  hk_apple9_lower_clip_z_coeff, nir_metadata_control_flow,
-                  NULL);
-      }
-      hk_assert_final_push_mask(rast_nir, rast);
-      if (agx_compile_apple9_vertex_inputs(rast_nir, &layout, &rast->b, reason))
-         result = hk_apple9_finish_shader(dev, rast, rast_nir);
-      else
-         result = vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   }
-
-   ralloc_free(rast_nir);
-   return result;
-}
-
-/* Task shaders run as compute kernels writing their payloads and the grids of
- * mesh workgroups they launch.
- */
-static VkResult
-hk_apple9_compile_task(struct hk_device *dev, nir_shader *nir,
-                       struct hk_shader *shader, const char **reason)
-{
-   shader->info.task.payload_B = nir->info.task_payload_size;
-   shader->info.task.max_mesh_groups = hk_nir_task_mesh_bound(nir);
-   hk_nir_lower_task_main(nir);
-   nir->info.stage = MESA_SHADER_COMPUTE;
-   memset(&nir->info.cs, 0, sizeof(nir->info.cs));
-   hk_apple9_lower_prerast_sysvals(nir, MESA_SHADER_COMPUTE);
-   NIR_PASS(_, nir, nir_opt_dce);
-   hk_assert_final_push_mask(nir, shader);
-   if (!agx_compile_apple9_tiny(nir, &shader->b, &shader->info.apple9, reason))
-      return vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-   return hk_apple9_finish_shader(dev, shader, nir);
-}
-
-static void
-hk_apple9_lower_primitive_fs(nir_shader *nir)
-{
-   if (!nir_shader_intrinsics_pass(nir, hk_lower_per_primitive_input,
-                                   nir_metadata_control_flow, NULL))
-      return;
-
-   /* Layer reads introduced by primitive lowering use the same
-    * fixed-function layer source as ordinary fragment inputs. */
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-            hk_apple9_lower_layer_viewport_fs, nir_metadata_control_flow, NULL);
-
-   /* This NIR has already been preprocessed. The new input/record loads only
-    * need dead-code cleanup and refreshed IO metadata before linking; the
-    * backend performs ordinary algebraic/scalar cleanup later. Re-running
-    * agx_preprocess_nir would nest the non-idempotent helper-write guards. */
-   NIR_PASS(_, nir, nir_opt_dce);
-   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
-}
-
-/* fs_interp optionally gives the {flat, linear} input masks of the fragment
- * shader consuming a separately compiled last pre-rasterization stage. */
-static VkResult
-hk_apple9_compile_graphics_path(struct hk_device *dev, uint32_t count,
-                                struct vk_shader_compile_info *infos,
-                                const struct vk_graphics_pipeline_state *state,
-                                const struct hk_apple9_graphics_key *key_in,
-                                const uint64_t *fs_interp,
-                                const VkAllocationCallbacks *alloc,
-                                struct vk_shader **out)
-{
-   VkResult result = VK_SUCCESS;
-   struct hk_apple9_graphics_key key;
-   if (key_in)
-      key = *key_in;
-   else
-      hk_apple9_graphics_key_device(&key, state, hk_device_physical(dev));
-   struct agx_apple9_varying_layout varyings = {0};
-   const char *reason = NULL;
-   simple_mtx_t *lock = agx_get_compiler_debug()
-                           ? &hk_device_physical(dev)->debug_compile_lock
-                           : NULL;
-   if (lock)
-      simple_mtx_lock(lock);
-
-   memset(out, 0, count * sizeof(*out));
-   for (unsigned i = 0; i < count; ++i) {
-      if (infos[i].stage != MESA_SHADER_FRAGMENT)
-         continue;
-      hk_apple9_lower_primitive_fs(infos[i].nir);
-   }
-
-   /* Per-vertex inputs are read as flat copies, written by the passthrough
-    * geometry shader of vertex-shader pipelines, or by the vertex shader
-    * rasterizing mesh records.
-    */
-   struct hk_per_vertex_copies per_vertex = {0};
-   bool copies_from_gs = false;
-   struct hk_apple9_stipple_slots stipple = {0};
-   bool stipple_first = false;
-   bool polygon_points = false;
-   unsigned polygon_face_slot = 0;
-   mesa_shader_stage polygon_stage = MESA_SHADER_NONE;
-   mesa_shader_stage stipple_stage = MESA_SHADER_NONE;
-   bool tes_primitive_id = false;
-   {
-      nir_shader *pre_nir = NULL, *fs_nir = NULL;
-      nir_shader *stage_nir[MESA_VULKAN_SHADER_STAGES] = {NULL};
-      bool other = false;
-      for (unsigned i = 0; i < count; ++i) {
-         stage_nir[infos[i].stage] = infos[i].nir;
-         if (infos[i].stage == MESA_SHADER_VERTEX ||
-             infos[i].stage == MESA_SHADER_MESH)
-            pre_nir = infos[i].nir;
-         else if (infos[i].stage == MESA_SHADER_FRAGMENT)
-            fs_nir = infos[i].nir;
-         else if (infos[i].stage != MESA_SHADER_TASK)
-            other = true;
-      }
-      /* After tessellation without a geometry shader, the fragment shader's
-       * primitive ID is the patch ID, numbered per instance. The hardware
-       * counts the tessellated triangles of the whole draw instead, so the
-       * evaluation shader publishes its own primitive ID (the patch ID) as
-       * the flat varying the fragment shader then reads, as RADV's
-       * export_prim_id does. */
-      tes_primitive_id =
-         stage_nir[MESA_SHADER_TESS_EVAL] && !stage_nir[MESA_SHADER_GEOMETRY] &&
-         fs_nir && (fs_nir->info.inputs_read & VARYING_BIT_PRIMITIVE_ID) &&
-         !(stage_nir[MESA_SHADER_TESS_EVAL]->info.outputs_written &
-           VARYING_BIT_PRIMITIVE_ID);
-      if (pre_nir && fs_nir && !other &&
-          hk_apple9_lower_per_vertex_copies(
-             fs_nir, pre_nir->info.outputs_written, &per_vertex))
-         copies_from_gs = pre_nir->info.stage == MESA_SHADER_VERTEX;
-
-      /* Stippled lines measure their counter from the segment start the last
-       * pre-rasterization stage exports: a vertex shader, an evaluation shader
-       * drawing isolines, or a geometry shader emitting line strips. */
-      nir_shader *last = NULL;
-      if (stage_nir[MESA_SHADER_GEOMETRY]) {
-         if (stage_nir[MESA_SHADER_GEOMETRY]->info.gs.output_primitive ==
-             MESA_PRIM_LINE_STRIP)
-            last = stage_nir[MESA_SHADER_GEOMETRY];
-      } else if (stage_nir[MESA_SHADER_TESS_EVAL]) {
-         nir_shader *tes = stage_nir[MESA_SHADER_TESS_EVAL];
-         nir_shader *tcs = stage_nir[MESA_SHADER_TESS_CTRL];
-         enum tess_primitive_mode mode = tes->info.tess._primitive_mode;
-         if (mode == TESS_PRIMITIVE_UNSPECIFIED && tcs)
-            mode = tcs->info.tess._primitive_mode;
-         bool points =
-            tes->info.tess.point_mode || (tcs && tcs->info.tess.point_mode);
-         if (mode == TESS_PRIMITIVE_ISOLINES && !points)
-            last = tes;
-      } else if (pre_nir && pre_nir->info.stage == MESA_SHADER_VERTEX) {
-         last = pre_nir;
-      } else if (pre_nir && pre_nir->info.stage == MESA_SHADER_MESH &&
-                 pre_nir->info.mesh.primitive_type == MESA_PRIM_LINES) {
-         /* Mesh lines are independent: the generated rasterizing vertex
-          * shader exports the start as a vertex shader does. */
-         last = pre_nir;
-      }
-      if (key.line_stipple && last && fs_nir) {
-         stipple = hk_apple9_line_stipple_slots(last, fs_nir);
-         if (stipple.start) {
-            stipple_stage = last->info.stage;
-         } else {
-            static bool warned;
-            if (!warned) {
-               mesa_logw(
-                  "Apple9: line stipple is ignored when the last "
-                  "pre-rasterization stage uses more than %u of %u "
-                  "output components or 31 generic slots",
-                  HK_APPLE9_OUTPUT_COMPONENTS - HK_APPLE9_STIPPLE_COMPONENTS,
-                  HK_APPLE9_OUTPUT_COMPONENTS);
-               warned = true;
-            }
-         }
-         if (stipple.start) {
-            hk_apple9_lower_line_stipple_fs(fs_nir, stipple);
-            /* The stipple start needs the segment's first vertex. Under the
-             * last-vertex mode it can still provoke when no input the
-             * application can see is taken from the provoking vertex: no
-             * flat varyings, viewport index or layer. Primitive ID is not
-             * taken from a vertex. */
-            const uint64_t provoked = VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT |
-                                      BITFIELD64_RANGE(VARYING_SLOT_COL0, 2) |
-                                      BITFIELD64_RANGE(VARYING_SLOT_BFC0, 2) |
-                                      BITFIELD64_RANGE(VARYING_SLOT_TEX0, 8) |
-                                      BITFIELD64_BIT(VARYING_SLOT_FOGC) |
-                                      BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32);
-            uint64_t flat = fs_nir->info.inputs_read &
-                            ~(fs_nir->info.perspective_varyings |
-                              fs_nir->info.linear_varyings) &
-                            ~BITFIELD64_BIT(stipple.start);
-            /* Geometry shaders choose the start for either mode. */
-            stipple_first = stipple_stage != MESA_SHADER_GEOMETRY &&
-                            stipple_stage != MESA_SHADER_MESH &&
-                            !(flat & provoked) &&
-                            !(last->info.outputs_written &
-                              (VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT));
-         }
-      }
-
-      /* Polygon-mode points take the software polygon stage when the last
-       * pre-rasterization stage's outputs fit: after a vertex or evaluation
-       * shader, inside a geometry shader emitting triangle strips, or in the
-       * vertex shader rasterizing mesh triangles. Otherwise they keep the
-       * hardware polygon mode, a known limitation. */
-      nir_shader *mesh_nir = stage_nir[MESA_SHADER_MESH];
-      nir_shader *pp_last =
-         mesh_nir
-            ? (mesh_nir->info.mesh.primitive_type == MESA_PRIM_TRIANGLES &&
-                     !hk_per_vertex_copies_used(&per_vertex)
-                  ? mesh_nir
-                  : NULL)
-         : stage_nir[MESA_SHADER_GEOMETRY]
-            ? (hk_apple9_gs_polygon_points_ok(stage_nir[MESA_SHADER_GEOMETRY])
-                  ? stage_nir[MESA_SHADER_GEOMETRY]
-                  : NULL)
-         : stage_nir[MESA_SHADER_TESS_EVAL] ? stage_nir[MESA_SHADER_TESS_EVAL]
-                                            : stage_nir[MESA_SHADER_VERTEX];
-      if (key.polygon_points && pp_last && fs_nir) {
-         uint64_t reserved = 0;
-         if (stipple.start) {
-            reserved =
-               BITFIELD64_BIT(stipple.start) | BITFIELD64_BIT(stipple.axis);
-         }
-         if (mesh_nir)
-            reserved |= BITFIELD64_BIT(HK_MESH_PRIMITIVE_SLOT);
-         polygon_points = hk_apple9_polygon_point_budget(
-            pp_last, fs_nir, reserved, &polygon_face_slot);
-         if (polygon_points)
-            polygon_stage = pp_last->info.stage;
-         if (polygon_points && polygon_face_slot) {
-            NIR_PASS(_, fs_nir, nir_shader_intrinsics_pass,
-                     hk_apple9_lower_polygon_slot, nir_metadata_control_flow,
-                     &polygon_face_slot);
-            nir_shader_gather_info(fs_nir, nir_shader_get_entrypoint(fs_nir));
-         }
-         if (!polygon_points) {
-            static bool warned;
-            if (!warned) {
-               mesa_logw("Apple9: polygon mode POINT keeps the hardware path "
-                         "(size 1) when the stage's outputs leave no room for "
-                         "point size and facing");
-               warned = true;
-            }
-         }
-      }
-   }
-
-   if (fs_interp) {
-      key.vertex.outputs_flat = fs_interp[0];
-      key.vertex.outputs_linear = fs_interp[1];
-   }
-   if (key.targets > 8) {
-      reason = "more than eight color targets";
-      result = vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-      goto done;
-   }
-   for (unsigned i = 0; i < count; ++i) {
-      if (infos[i].stage == MESA_SHADER_COMPUTE) {
-         reason = "compute shaders are compiled separately";
-         result = vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
-         goto done;
-      }
-      if (infos[i].stage == MESA_SHADER_FRAGMENT) {
-         key.vertex.outputs_flat = infos[i].nir->info.inputs_read &
-                                   ~(infos[i].nir->info.perspective_varyings |
-                                     infos[i].nir->info.linear_varyings);
-         key.vertex.outputs_linear = infos[i].nir->info.linear_varyings;
-      }
-   }
-
-   /* Tessellation modes may be declared by either tessellation stage, as
-    * HLSL declares them on the control shader. Rasterization of the
-    * evaluation shader's output depends on them.
-    */
-   nir_shader *tcs_nir = NULL, *tes_nir = NULL;
-   for (unsigned i = 0; i < count; ++i) {
-      if (infos[i].stage == MESA_SHADER_TESS_CTRL)
-         tcs_nir = infos[i].nir;
-      else if (infos[i].stage == MESA_SHADER_TESS_EVAL)
-         tes_nir = infos[i].nir;
-   }
-   if (tcs_nir && tes_nir) {
-      tes_nir->info.tess.point_mode |= tcs_nir->info.tess.point_mode;
-      tes_nir->info.tess.ccw |= tcs_nir->info.tess.ccw;
-      if (tes_nir->info.tess.spacing == TESS_SPACING_UNSPECIFIED)
-         tes_nir->info.tess.spacing = tcs_nir->info.tess.spacing;
-      if (tes_nir->info.tess._primitive_mode == TESS_PRIMITIVE_UNSPECIFIED)
-         tes_nir->info.tess._primitive_mode =
-            tcs_nir->info.tess._primitive_mode;
-   }
-
-   bool has_fragment = false;
-   for (unsigned i = 0; i < count; ++i)
-      has_fragment |= infos[i].stage == MESA_SHADER_FRAGMENT;
-
-   /* The last pre-rasterization stage maps [-w, w] depth to [0, w]. */
-   mesa_shader_stage last_prerast = MESA_SHADER_NONE;
-   for (unsigned i = 0; i < count; ++i) {
-      if (infos[i].stage == MESA_SHADER_VERTEX ||
-          infos[i].stage == MESA_SHADER_TESS_EVAL ||
-          infos[i].stage == MESA_SHADER_GEOMETRY)
-         last_prerast = MAX2(last_prerast, (int)infos[i].stage);
-      else if (infos[i].stage == MESA_SHADER_MESH)
-         last_prerast = MESA_SHADER_MESH;
-   }
-
-   /* Compile the producer first, independent of the API stage-array order. */
-   static const mesa_shader_stage order[] = {
-      MESA_SHADER_VERTEX,   MESA_SHADER_TESS_CTRL, MESA_SHADER_TESS_EVAL,
-      MESA_SHADER_GEOMETRY, MESA_SHADER_TASK,      MESA_SHADER_MESH,
-      MESA_SHADER_FRAGMENT,
-   };
-   for (unsigned pass = 0; pass < ARRAY_SIZE(order); ++pass) {
-      mesa_shader_stage stage = order[pass];
-      for (unsigned i = 0; i < count; ++i) {
-         if (infos[i].stage != stage)
-            continue;
-         size_t size = sizeof(struct hk_api_shader) +
-                       hk_num_variants(stage) * sizeof(struct hk_shader);
-         struct hk_api_shader *obj =
-            vk_shader_zalloc(&dev->vk, &hk_shader_ops, stage, alloc, size);
-         if (!obj) {
-            result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-            goto done;
-         }
-         out[i] = &obj->vk;
-         hk_foreach_variant(obj, variant) {
-            simple_mtx_init(&variant->linked.lock, mtx_plain);
-            variant->info.stage = stage;
-            variant->b.info.stats.instrs = 1;
-         }
-         struct hk_shader *shader = &obj->variants[0];
-         nir_shader *nir = infos[i].nir;
-         obj->writes_memory = nir->info.writes_memory;
-         obj->pre_raster_reads = hk_nir_pre_raster_reads(nir);
-         obj->reads_draw_id = hk_nir_reads_draw_id(nir);
-         obj->push_constant_mask = hk_nir_push_constant_mask(nir);
-#ifndef NDEBUG
-         hk_foreach_variant(obj, variant)
-            variant->debug_owner = obj;
-#endif
-         shader->info.set_count = infos[i].set_layout_count;
-         shader->info.apple9_render_targets = key.targets;
-         shader->info.apple9_line_stipple_first =
-            stage == MESA_SHADER_FRAGMENT && stipple_first;
-         if (!hk_apple9_texture_bindings(nir) ||
-             !agx_nir_lower_apple9_runtime_sampler_state(nir, &reason)) {
-            reason = reason ?: "texture operation without a descriptor handle";
-            result = vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                               "Apple9 graphics textures: %s", reason);
-            goto done;
-         }
-         NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_roots,
-                  nir_metadata_control_flow, NULL);
-         if (key.clip_negative_one_to_one && stage == last_prerast) {
-            NIR_PASS(_, nir, nir_lower_clip_halfz_dynamic);
-            NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-                     hk_apple9_lower_clip_z_coeff, nir_metadata_control_flow,
-                     NULL);
-         }
-         /* Shadow and depth-prepass draws: a vertex shader rasterized without
-          * a fragment stage computes only what the rasterizer reads. */
-         if (stage == MESA_SHADER_VERTEX && stage == last_prerast &&
-             !has_fragment && !nir->xfb_info &&
-             !(infos[i].next_stage_mask &
-               (VK_SHADER_STAGE_GEOMETRY_BIT |
-                VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)) &&
-             !hk_per_vertex_copies_used(&per_vertex))
-            hk_apple9_strip_unread_outputs(nir);
-
-         if (stage == MESA_SHADER_VERTEX) {
-            /* Native vertex pulling indexes attributes by API location. */
-            nir_foreach_function_impl(impl, nir) {
-               nir_foreach_block(block, impl) {
-                  nir_foreach_instr(instr, block) {
-                     if (instr->type != nir_instr_type_intrinsic)
-                        continue;
-                     nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-                     if (intr->intrinsic == nir_intrinsic_load_input) {
-                        unsigned loc =
-                           nir_intrinsic_io_semantics(intr).location;
-                        nir_intrinsic_set_base(intr,
-                                               loc - VERT_ATTRIB_GENERIC0);
-                     }
-                  }
-               }
-            }
-            if (stipple_stage == MESA_SHADER_VERTEX)
-               hk_apple9_write_line_stipple_start(nir, stipple);
-            if (polygon_stage == MESA_SHADER_VERTEX && polygon_face_slot)
-               hk_apple9_write_polygon_slot(nir, polygon_face_slot);
-            /* Transform feedback and flat copies of per-vertex inputs are
-             * layered on a passthrough geometry shader, which consumes the
-             * software vertex shader.
-             */
-            /* The software variant feeds a geometry stage: the
-             * application's, or a passthrough. A cull mask also needs one,
-             * which is known once the hardware variant is compiled. */
-            bool sw_needed = (infos[i].next_stage_mask &
-                              (VK_SHADER_STAGE_GEOMETRY_BIT |
-                               VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)) ||
-                             nir->xfb_info ||
-                             hk_per_vertex_copies_used(&per_vertex) ||
-                             stipple_stage == MESA_SHADER_VERTEX ||
-                             polygon_stage == MESA_SHADER_VERTEX;
-            struct hk_shader *sw = &obj->variants[HK_VS_VARIANT_SW];
-            nir_shader *sw_nir = NULL;
-            if (sw_needed || nir->info.cull_distance_array_size) {
-               sw->info.set_count = shader->info.set_count;
-               sw->info.clip_distance_array_size =
-                  nir->info.clip_distance_array_size;
-               sw->info.cull_distance_array_size =
-                  nir->info.cull_distance_array_size;
-               if (nir->xfb_info) {
-                  assert(nir->xfb_info->output_count <
-                         ARRAY_SIZE(sw->info.xfb_outputs));
-                  memcpy(&sw->info.xfb_info, nir->xfb_info,
-                         nir_xfb_info_size(nir->xfb_info->output_count));
-                  typed_memcpy(sw->info.xfb_stride, nir->info.xfb_stride, 4);
-               }
-               sw_nir = nir_shader_clone(NULL, nir);
-            }
-            /* Without per-vertex inputs, the hardware vertex shader writes
-             * the one-hot barycentric weights itself, so non-indexed
-             * triangle lists need no passthrough geometry shader. */
-            if (!per_vertex.count && hk_per_vertex_copies_used(&per_vertex))
-               hk_apple9_write_vertex_weights(nir, &per_vertex);
-            bool cull_mask;
-            hk_assert_final_push_mask(nir, shader);
-            if (!hk_apple9_compile_vertex_culls(nir, &key.vertex, &shader->b,
-                                                &cull_mask, &reason)) {
-               ralloc_free(sw_nir);
-               reason = reason ?: "unsupported vertex NIR";
-               result = vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                                  "Apple9 vertex: %s", reason);
-               goto done;
-            }
-            shader->info.cull_mask = sw->info.cull_mask = cull_mask;
-            if (sw_needed || cull_mask) {
-               result = hk_apple9_compile_sw_vs(dev, sw_nir, &key.vertex, sw,
-                                                &reason);
-            }
-            ralloc_free(sw_nir);
-            if (result != VK_SUCCESS)
-               goto done;
-            varyings = shader->b.info.apple9_varyings;
-         } else if (stage == MESA_SHADER_TESS_CTRL) {
-            result = hk_apple9_compile_tcs(dev, nir, shader, &reason);
-            if (result != VK_SUCCESS)
-               goto done;
-            continue;
-         } else if (stage == MESA_SHADER_TESS_EVAL) {
-            if (stipple_stage == MESA_SHADER_TESS_EVAL)
-               hk_apple9_write_line_stipple_start(nir, stipple);
-            if (polygon_stage == MESA_SHADER_TESS_EVAL && polygon_face_slot)
-               hk_apple9_write_polygon_slot(nir, polygon_face_slot);
-            if (tes_primitive_id)
-               hk_apple9_write_primitive_id(nir);
-            result =
-               hk_apple9_compile_tes(dev, nir, &key.vertex, obj,
-                                     infos[i].next_stage_mask |
-                                        (polygon_stage == MESA_SHADER_TESS_EVAL
-                                            ? VK_SHADER_STAGE_GEOMETRY_BIT
-                                            : 0),
-                                     &reason);
-            if (result != VK_SUCCESS)
-               goto done;
-            varyings = shader->b.info.apple9_varyings;
-            continue;
-         } else if (stage == MESA_SHADER_GEOMETRY) {
-            if (stipple_stage == MESA_SHADER_GEOMETRY)
-               hk_apple9_write_gs_line_stipple(nir, stipple);
-            if (polygon_stage == MESA_SHADER_GEOMETRY) {
-               struct hk_pp_info info = {
-                  .clip = nir->info.clip_distance_array_size,
-                  .cull = nir->info.cull_distance_array_size,
-                  .flat = key.vertex.outputs_flat,
-                  .face_slot = polygon_face_slot,
-               };
-               hk_apple9_lower_gs_polygon_points(
-                  nir, info,
-                  hk_device_physical(dev)->vk.properties.polygonModePointSize);
-            }
-            result = hk_apple9_compile_gs(dev, nir, &key.vertex,
-                                          !key.gs_cull_planes, obj, &reason);
-            if (result != VK_SUCCESS)
-               goto done;
-            varyings = shader->b.info.apple9_varyings;
-            continue;
-         } else if (stage == MESA_SHADER_TASK) {
-            result = hk_apple9_compile_task(dev, nir, shader, &reason);
-            if (result != VK_SUCCESS)
-               goto done;
-            continue;
-         } else if (stage == MESA_SHADER_MESH) {
-            struct hk_pp_info pp = {
-               .clip = nir->info.clip_distance_array_size,
-               .cull = nir->info.cull_distance_array_size,
-               .flat = key.vertex.outputs_flat,
-               .face_slot = polygon_face_slot,
-            };
-            result = hk_apple9_compile_mesh(
-               dev, nir, &key.vertex, key.clip_negative_one_to_one, &per_vertex,
-               stipple_stage == MESA_SHADER_MESH
-                  ? stipple
-                  : (struct hk_apple9_stipple_slots){0},
-               polygon_stage == MESA_SHADER_MESH ? &pp : NULL,
-               hk_device_physical(dev)->vk.properties.polygonModePointSize, obj,
-               &reason);
-            if (result != VK_SUCCESS)
-               goto done;
-            varyings =
-               obj->variants[HK_MESH_VARIANT_RAST].b.info.apple9_varyings;
-            continue;
-         } else {
-            shader->info.fs.interp.linear = key.vertex.outputs_linear;
-            shader->info.fs.interp.flat = key.vertex.outputs_flat;
-            shader->info.fs.line_stipple_start = stipple.start;
-            shader->info.fs.polygon_points = polygon_points;
-            shader->info.fs.polygon_face_slot = polygon_face_slot;
-            if (copies_from_gs) {
-               shader->info.fs.per_vertex_copies = per_vertex.count;
-               memcpy(shader->info.fs.per_vertex_bary, per_vertex.bary,
-                      sizeof(per_vertex.bary));
-            }
-            memcpy(shader->info.fs.per_vertex_location, per_vertex.location,
-                   sizeof(per_vertex.location));
-            memcpy(shader->info.fs.per_vertex_copy_base, per_vertex.copy_base,
-                   sizeof(per_vertex.copy_base));
-            /* The statistics counter is the only memory write or wave-wide
-             * operation of many shaders, but it runs only while a query is
-             * active and counts correctly in merged waves. Keep triangle
-             * merging unless the shader itself requires disabling it. */
-            bool tri_merging = true;
-            if (!nir->info.internal) {
-               if (key.zs_self_dep)
-                  hk_apple9_late_zs(nir);
-               nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
-               tri_merging =
-                  !nir->info.uses_wide_subgroup_intrinsics &&
-                  !nir->info.fs.needs_coarse_quad_helper_invocations &&
-                  !nir->info.writes_memory && !key.sample_shading &&
-                  !hk_apple9_interpolates_off_center(nir);
-               if (!key.no_fs_statistics)
-                  hk_apple9_lower_fs_statistics(nir);
-               NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-                        hk_apple9_clamp_depth_export, nir_metadata_control_flow,
-                        NULL);
-            }
-            shader->info.fs.writes_memory = nir->info.writes_memory;
-            shader->info.fs.early_fragment_tests =
-               nir->info.fs.early_fragment_tests;
-            if (key.sample_shading) {
-               nir->info.fs.uses_sample_shading = true;
-               NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-                        hk_apple9_lower_bary_to_sample,
-                        nir_metadata_control_flow, NULL);
-            }
-            NIR_PASS(_, nir, hk_apple9_lower_api_vertex_order);
-            hk_apple9_remap_fs_outputs(nir, key.color_map);
-            /* The passthrough geometry shader produces the flat copies, and
-             * per-vertex inputs read only through copies are not rasterized.
-             * The mesh rasterization shader's layout already has the copies.
-             */
-            for (unsigned j = 0; copies_from_gs && j < per_vertex.count; ++j) {
-               unsigned source = VARYING_SLOT_VAR0 + per_vertex.location[j];
-               if (!(nir->info.inputs_read & BITFIELD64_BIT(source)) &&
-                   varyings.mask[source]) {
-                  varyings.count -= util_bitcount(varyings.mask[source]);
-                  varyings.mask[source] = 0;
-                  varyings.group[source] = 0;
-               }
-            }
-            for (unsigned j = 0; copies_from_gs && j < per_vertex.count; ++j) {
-               for (unsigned k = 0; k < 3; ++k) {
-                  unsigned slot =
-                     VARYING_SLOT_VAR0 + per_vertex.copy_base[j] + k;
-                  if (!varyings.mask[slot]) {
-                     varyings.mask[slot] = 0xf;
-                     varyings.group[slot] = 1;
-                     varyings.count += 4;
-                  }
-               }
-            }
-            for (unsigned m = 0; copies_from_gs && m < 2; ++m) {
-               unsigned slot = VARYING_SLOT_VAR0 + per_vertex.bary[m] - 1;
-               if (per_vertex.bary[m] && !varyings.mask[slot]) {
-                  varyings.mask[slot] = 0x7;
-                  varyings.group[slot] = m ? 2 : 0;
-                  varyings.count += 3;
-               }
-            }
-            hk_assert_final_push_mask(nir, shader);
-            if (!agx_compile_apple9_fragment_mrt(nir, &varyings, key.blend,
-                                                 key.targets, &shader->b,
-                                                 &reason)) {
-               reason = reason ?: "unsupported fragment NIR";
-               result = vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                                  "Apple9 fragment: %s", reason);
-               goto done;
-            }
-            /* hk's decision covers the backend's reasons for the shader as
-             * written (before the statistics counter, which counts correctly
-             * in merged waves) and adds sample shading and off-centre
-             * interpolation, which the backend can't see. */
-            shader->b.info.disable_tri_merging = !tri_merging;
-         }
-         shader->code_ptr = shader->b.binary;
-         shader->code_size = shader->b.info.binary_size;
-         shader->info.clip_distance_array_size =
-            nir->info.clip_distance_array_size;
-         shader->info.cull_distance_array_size =
-            nir->info.cull_distance_array_size;
-         result = hk_copy_shader_constant_data(dev, shader, nir);
-         if (result == VK_SUCCESS)
-            result = hk_upload_shader(dev, shader);
-         if (result != VK_SUCCESS)
-            goto done;
-      }
-   }
-
-done:
-   if (result != VK_SUCCESS && agx_get_compiler_debug())
-      mesa_loge("hk: Apple9 graphics compilation failed: %s",
-                reason ?: vk_Result_to_str(result));
-   if (lock)
-      simple_mtx_unlock(lock);
-   for (unsigned i = 0; i < count; ++i) {
-      ralloc_free(infos[i].nir);
-      if (result != VK_SUCCESS && out[i]) {
-         hk_api_shader_destroy(&dev->vk, out[i], alloc);
-         out[i] = NULL;
-      } else if (out[i]) {
-         hk_api_shader_init_constant_data(
-            container_of(out[i], struct hk_api_shader, vk));
-      }
-   }
-   return result;
-}
-
-/* Whether a vertex shader's pipeline disables vertex input robustness, so
- * its attribute fetches may skip bounds checks. robustBufferAccess,
- * robustness2 and VK_EXT_pipeline_robustness all resolve into the stage's
- * vertex_inputs behaviour; shader objects take the device default. */
-static bool
-hk_apple9_vertex_unbounded(const struct vk_shader_compile_info *info)
-{
-   return info->robustness &&
-          info->robustness->vertex_inputs ==
-             VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT;
-}
-
-static VkResult
-hk_apple9_compile_graphics(struct hk_device *dev, uint32_t count,
-                           struct vk_shader_compile_info *infos,
-                           const struct vk_graphics_pipeline_state *state,
-                           const struct hk_apple9_graphics_key *key_in,
-                           const uint64_t *fs_interp,
-                           const VkAllocationCallbacks *alloc,
-                           struct vk_shader **out)
-{
-   assert(count <= HK_APPLE9_GFX_STAGES);
-   struct hk_apple9_graphics_key key;
-   if (key_in) {
-      key = *key_in;
-   } else {
-      hk_apple9_graphics_key_device(&key, state, hk_device_physical(dev));
-      for (unsigned i = 0; i < count; ++i) {
-         if (infos[i].stage == MESA_SHADER_VERTEX)
-            key.vertex.unbounded = hk_apple9_vertex_unbounded(&infos[i]);
-      }
-   }
-
-   memset(out, 0, count * sizeof(*out));
-   return hk_apple9_compile_graphics_path(dev, count, infos, state, &key,
-                                          fs_interp, alloc, out);
-}
-
-/* Even without an API fragment shader, the pipeline sample mask controls
- * depth/stencil writes and occlusion. Keep the empty program independent of
- * pipeline state by reading the normal draw root table.
- */
-static nir_shader *
-hk_apple9_null_fs_nir(bool sample_mask)
-{
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT,
-                                                  &agx_nir_options, "empty FS");
-   /* With a full API sample mask the program has no work at all: no
-    * coverage, no root reads, as Metal's empty fragment program. */
-   if (!sample_mask)
-      return b.shader;
-   const unsigned mask_offset = hk_root_descriptor_offset(draw.api_sample_mask);
-   nir_def *mask =
-      nir_load_ubo(&b, 1, 16, nir_imm_int(&b, 0), nir_imm_int(&b, mask_offset),
-                   .align_mul = 2, .range_base = mask_offset, .range = 2);
-   nir_demote_samples(&b, nir_inot(&b, mask));
-   return b.shader;
-}
-
-VkResult
-hk_apple9_create_null_fs(struct hk_device *dev,
-                         const VkAllocationCallbacks *alloc, bool sample_mask,
-                         struct hk_api_shader **out)
-{
-   struct vk_shader_compile_info info = {
-      .nir = hk_apple9_null_fs_nir(sample_mask),
-      .robustness = &vk_robustness_disabled,
-      .stage = MESA_SHADER_FRAGMENT,
-   };
-   struct vk_shader *shader = NULL;
-   VkResult result = hk_apple9_compile_graphics(dev, 1, &info, NULL, NULL, NULL,
-                                                alloc, &shader);
-   *out = shader ? container_of(shader, struct hk_api_shader, vk) : NULL;
-   return result;
-}
-
-/* Internal geometry shaders, such as the transform feedback passthrough,
- * rasterize into the bound fragment shader's interpolation layout.
- */
-VkResult
-hk_apple9_compile_internal_gs(struct hk_device *dev, nir_shader *nir,
-                              const uint64_t fs_interp[2], bool cull_mask,
-                              struct hk_api_shader **out)
-{
-   const struct vk_pipeline_robustness_state rs = {
-      .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED_EXT,
-      .storage_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-      .uniform_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-      .vertex_inputs = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-   };
-   hk_lower_nir(dev, nir, &rs, false, 0, NULL, 0);
-   struct vk_shader_compile_info info = {
-      .stage = MESA_SHADER_GEOMETRY,
-      .nir = nir,
-      .robustness = &rs,
-   };
-   struct hk_apple9_graphics_key key;
-   hk_apple9_graphics_key_device(&key, NULL, hk_device_physical(dev));
-   key.gs_cull_planes = !cull_mask;
-   struct vk_shader *shader = NULL;
-   VkResult result = hk_apple9_compile_graphics(dev, 1, &info, NULL, &key,
-                                                fs_interp, NULL, &shader);
-   *out = shader ? container_of(shader, struct hk_api_shader, vk) : NULL;
-   return result;
-}
-
-/* Why an Apple9 graphics compile waits for draw-time state. */
-enum hk_apple9_deferral {
-   HK_APPLE9_COMPILE_NOW,
-   /* State that keys the compile is dynamic, belongs to another pipeline
-    * library, or is absent. */
-   HK_APPLE9_DEFER_STATE,
-   /* The pipeline's state is complete, but the compile still waits for the
-    * draw: the fragment stage is linked then (the null one for a depth-only
-    * pipeline, or one without blend state), or a render with unused
-    * attachments can lay its tiles out differently
-    * (hk_apple9_color_layout_varies). Its own variant is resolved at
-    * creation. */
-   HK_APPLE9_DEFER_COMPLETE,
-};
-
-/* Apple9 graphics shaders specialise on state that the common AGX path
- * handles with prologs and epilogs: vertex formats, blending, attachment
- * formats and multisampling. When that state is dynamic, belongs to another
- * pipeline library, or is absent for shader objects, compile at draw time.
- */
-static enum hk_apple9_deferral
-hk_apple9_needs_deferral(uint32_t count,
-                         const struct vk_shader_compile_info *infos,
-                         const struct vk_graphics_pipeline_state *state,
-                         const struct vk_features *features)
-{
-   if (!state)
-      return HK_APPLE9_DEFER_STATE;
-
-   /* Library stages link with stages compiled elsewhere, whose interfaces
-    * and state are known only when the pipeline is bound. */
-   if (state->pipeline_flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)
-      return HK_APPLE9_DEFER_STATE;
-
-   /* Stages compiled apart from the rest of their pipeline, as fast-linked
-    * libraries are, cannot agree on the varying layout until they are
-    * linked. Pipelines without a fragment shader link the null one then;
-    * such a whole pipeline (a depth-only pass) has the rest of its state. */
-   VkShaderStageFlags compiled = 0;
-   for (uint32_t i = 0; i < count; ++i)
-      compiled |= mesa_to_vk_shader_stage(infos[i].stage);
-   bool no_fragment = false;
-   if (hk_apple9_partial_stages(compiled)) {
-      if ((compiled & VK_SHADER_STAGE_FRAGMENT_BIT) || !state->rp || !state->ms)
-         return HK_APPLE9_DEFER_STATE;
-      no_fragment = true;
-   }
-
-   for (unsigned i = 0; i < ARRAY_SIZE(hk_apple9_keyed_dynamic); ++i) {
-      if (BITSET_TEST(state->dynamic, hk_apple9_keyed_dynamic[i]))
-         return HK_APPLE9_DEFER_STATE;
-   }
-
-   /* A depth/stencil feedback loop keys on whether the draw can write depth
-    * or stencil (hk_apple9_zs_writes): dynamic state decides at draw time. */
-   if (state->pipeline_flags &
-       VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT) {
-      static const enum mesa_vk_dynamic_graphics_state ds_writes[] = {
-         MESA_VK_DYNAMIC_DS_DEPTH_TEST_ENABLE,
-         MESA_VK_DYNAMIC_DS_DEPTH_WRITE_ENABLE,
-         MESA_VK_DYNAMIC_DS_DEPTH_COMPARE_OP,
-         MESA_VK_DYNAMIC_DS_STENCIL_TEST_ENABLE,
-         MESA_VK_DYNAMIC_DS_STENCIL_OP,
-         MESA_VK_DYNAMIC_DS_STENCIL_WRITE_MASK,
-      };
-      for (unsigned i = 0; i < ARRAY_SIZE(ds_writes); ++i) {
-         if (BITSET_TEST(state->dynamic, ds_writes[i]))
-            return HK_APPLE9_DEFER_STATE;
-      }
-   }
-
-   for (uint32_t i = 0; i < count; ++i) {
-      if (infos[i].stage == MESA_SHADER_VERTEX && !state->vi)
-         return HK_APPLE9_DEFER_STATE;
-      /* Without color attachments there is no blend state to key on. */
-      if (infos[i].stage == MESA_SHADER_FRAGMENT &&
-          (!state->rp || !state->ms ||
-           (!state->cb && state->rp->color_attachment_count)))
-         return HK_APPLE9_DEFER_STATE;
-   }
-   if (no_fragment || !state->cb)
-      return HK_APPLE9_DEFER_COMPLETE;
-   if (hk_apple9_color_layout_varies(state, features))
-      return HK_APPLE9_DEFER_COMPLETE;
-   return HK_APPLE9_COMPILE_NOW;
-}
-
-static VkResult hk_apple9_defer_graphics(
-   struct hk_device *dev, uint32_t count, struct vk_shader_compile_info *infos,
-   const struct vk_graphics_pipeline_state *state,
-   const VkAllocationCallbacks *alloc, struct vk_shader **out);
-
-/* Debug only: a vertex shader writing zero to every generic varying a
- * fragment shader reads. Offline replay never links a fragment shader
- * compiled apart from its vertex shader; pairing it with this stub reaches
- * the backend with a matching varying layout. */
-static nir_shader *
-hk_apple9_stub_vs_nir(uint64_t inputs)
-{
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX,
-                                                  &agx_nir_options, "stub VS");
-   nir_def *zero = nir_imm_vec4(&b, 0.0, 0.0, 0.0, 1.0);
-   uint64_t written = VARYING_BIT_POS;
-   u_foreach_bit64(slot, inputs) {
-      if (slot >= VARYING_SLOT_VAR0 && slot < VARYING_SLOT_VAR0 + 32)
-         written |= BITFIELD64_BIT(slot);
-   }
-   u_foreach_bit64(slot, written) {
-      nir_store_output(
-         &b, zero, nir_imm_int(&b, 0), .base = 0, .write_mask = 0xf,
-         .component = 0, .src_type = nir_type_float32,
-         .io_semantics.location = slot, .io_semantics.num_slots = 1);
-   }
-   b.shader->info.outputs_written = written;
-   return b.shader;
-}
-
-static __thread bool hk_apple9_eager_busy;
-
-/* Compile a deferred pipeline's variant when it is created, as a draw would:
- * for pipelines whose state is complete (HK_APPLE9_DEFER_COMPLETE), and,
- * with HK_APPLE9_EAGER_VARIANTS for debugging, for every deferred pipeline, so
- * offline replay that never draws reaches the backend. State the pipeline
- * leaves dynamic takes simple defaults, so that variant can differ from the
- * one a real draw selects.
- *
- * With precompile, the variant is queued for a low-priority thread that
- * compiles it into the disk cache only: pipeline creation does not wait, a
- * pipeline an application creates but never draws costs no resident program
- * or serialized copy, and its first draw loads instead of compiling.
- */
-static void
-hk_apple9_eager_variant(struct hk_device *dev, uint32_t count,
-                        struct vk_shader *const *shaders,
-                        const struct vk_graphics_pipeline_state *pstate,
-                        bool precompile)
-{
-   struct hk_api_shader *api[HK_APPLE9_GFX_STAGES] = {NULL};
-   if (hk_apple9_eager_busy)
-      return;
-   for (uint32_t i = 0; i < count; ++i)
-      api[shaders[i]->stage] =
-         container_of(shaders[i], struct hk_api_shader, vk);
-
-   /* A fragment shader compiled alone: pair it with a stub vertex shader. */
-   struct hk_api_shader *stub = NULL;
-   if (!api[MESA_SHADER_VERTEX] && !api[MESA_SHADER_MESH] &&
-       api[MESA_SHADER_FRAGMENT] &&
-       api[MESA_SHADER_FRAGMENT]->apple9_deferred &&
-       !(pstate &&
-         (pstate->pipeline_flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR))) {
-      const struct hk_apple9_deferred *d =
-         api[MESA_SHADER_FRAGMENT]->apple9_deferred;
-      struct blob_reader reader;
-      blob_reader_init(&reader, d->nir->data, d->nir->size);
-      nir_shader *fs = nir_deserialize(NULL, &agx_nir_options, &reader);
-      if (fs) {
-         struct vk_shader_compile_info info = {
-            .stage = MESA_SHADER_VERTEX,
-            .nir = hk_apple9_stub_vs_nir(fs->info.inputs_read),
-            .next_stage_mask = VK_SHADER_STAGE_FRAGMENT_BIT,
-            .robustness = &vk_robustness_disabled,
-         };
-         ralloc_free(fs);
-         struct vk_shader *vs = NULL;
-         hk_apple9_eager_busy = true;
-         if (hk_apple9_defer_graphics(dev, 1, &info, NULL, NULL, &vs) ==
-             VK_SUCCESS)
-            stub = container_of(vs, struct hk_api_shader, vk);
-         hk_apple9_eager_busy = false;
-         api[MESA_SHADER_VERTEX] = stub;
-      }
-   }
-   if ((!api[MESA_SHADER_VERTEX] && !api[MESA_SHADER_MESH]) ||
-       (pstate &&
-        (pstate->pipeline_flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)))
-      return;
-
-   struct vk_vertex_input_state vi = {.bindings_valid = 1};
-   vi.bindings[0].stride = 16;
-   vi.attributes_valid = BITFIELD_MASK(MESA_VK_MAX_VERTEX_ATTRIBUTES);
-   for (unsigned a = 0; a < MESA_VK_MAX_VERTEX_ATTRIBUTES; ++a)
-      vi.attributes[a].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-   struct vk_input_assembly_state ia = {
-      .primitive_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-   };
-   struct vk_viewport_state vp = {.viewport_count = 1, .scissor_count = 1};
-   struct vk_multisample_state ms = {
-      .rasterization_samples = VK_SAMPLE_COUNT_1_BIT,
-      .sample_mask = 0xffff,
-   };
-   struct vk_render_pass_state rp = {
-      .color_attachment_count = 1,
-      .color_attachment_formats = {VK_FORMAT_R8G8B8A8_UNORM},
-   };
-   struct vk_color_blend_state cb = {0};
-   struct vk_color_attachment_location_state cal;
-   for (unsigned rt = 0; rt < MESA_VK_MAX_COLOR_ATTACHMENTS; ++rt) {
-      cb.attachments[rt].write_mask = 0xf;
-      cal.color_map[rt] = rt;
-   }
-
-   struct vk_graphics_pipeline_state state = {
-      .vi = pstate && pstate->vi ? pstate->vi : &vi,
-      .ia = pstate && pstate->ia ? pstate->ia : &ia,
-      .vp = pstate && pstate->vp ? pstate->vp : &vp,
-      .ms = pstate && pstate->ms ? pstate->ms : &ms,
-      .rp = pstate && pstate->rp ? pstate->rp : &rp,
-      .cal = pstate && pstate->cal ? pstate->cal : &cal,
-      /* As draws resolve: rasterization state, but no depth/stencil state. */
-      .rs = pstate ? pstate->rs : NULL,
-      .pipeline_flags = pstate ? pstate->pipeline_flags : 0,
-   };
-   if (pstate && pstate->cb) {
-      state.cb = pstate->cb;
-   } else {
-      cb.attachment_count = state.rp->color_attachment_count;
-      state.cb = &cb;
-   }
-   BITSET_SET(state.dynamic, MESA_VK_DYNAMIC_CB_COLOR_WRITE_ENABLES);
-
-   struct hk_api_shader *variant[HK_APPLE9_GFX_STAGES];
-   hk_apple9_eager_compile = true;
-   hk_apple9_precompile = precompile;
-   /* Warm the variant draws use outside statistics queries. */
-   if (hk_apple9_resolve_graphics(dev, api, &state, variant, false) !=
-          VK_SUCCESS &&
-       !precompile)
-      mesa_loge("hk: compiling a graphics variant ahead of use failed");
-   hk_apple9_precompile = false;
-   hk_apple9_eager_compile = false;
-   if (stub)
-      hk_api_shader_destroy(&dev->vk, &stub->vk, NULL);
-}
-
-static VkResult
-hk_apple9_defer_graphics(struct hk_device *dev, uint32_t count,
-                         struct vk_shader_compile_info *infos,
-                         const struct vk_graphics_pipeline_state *state,
-                         const VkAllocationCallbacks *alloc,
-                         struct vk_shader **out)
-{
-   VkResult result = VK_SUCCESS;
-   memset(out, 0, count * sizeof(*out));
-
-   for (uint32_t i = 0; i < count; ++i) {
-      size_t size = sizeof(struct hk_api_shader) +
-                    hk_num_variants(infos[i].stage) * sizeof(struct hk_shader);
-      struct hk_api_shader *obj = vk_shader_zalloc(&dev->vk, &hk_shader_ops,
-                                                   infos[i].stage, alloc, size);
-      struct hk_apple9_deferred *deferred = calloc(1, sizeof(*deferred));
-      if (!obj || !deferred) {
-         if (obj)
-            vk_shader_free(&dev->vk, alloc, &obj->vk);
-         free(deferred);
-         result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-         break;
-      }
-
-      struct blob blob;
-      blob_init(&blob);
-      nir_serialize(&blob, infos[i].nir, false);
-      if (blob.out_of_memory) {
-         blob_finish(&blob);
-         vk_shader_free(&dev->vk, alloc, &obj->vk);
-         free(deferred);
-         result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-         break;
-      }
-      deferred->nir = hk_apple9_nir_create(blob.data, blob.size);
-      blob_finish(&blob);
-      if (!deferred->nir) {
-         vk_shader_free(&dev->vk, alloc, &obj->vk);
-         free(deferred);
-         result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-         break;
-      }
-      deferred->next_stage_mask = infos[i].next_stage_mask;
-      deferred->set_layout_count = infos[i].set_layout_count;
-      deferred->cull_distance =
-         infos[i].nir->info.cull_distance_array_size != 0;
-      deferred->sample_shading =
-         state && state->ms && state->ms->sample_shading_enable;
-      deferred->vertex_unbounded = infos[i].stage == MESA_SHADER_VERTEX &&
-                                   hk_apple9_vertex_unbounded(&infos[i]);
-      deferred->zs_self_dep =
-         state &&
-         (state->pipeline_flags &
-          VK_PIPELINE_CREATE_2_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT);
-      if (infos[i].stage == MESA_SHADER_FRAGMENT && state && state->rp) {
-         for (unsigned rt = 0; rt < MIN2(state->rp->color_attachment_count, 8);
-              ++rt) {
-            if (state->rp->color_attachment_formats[rt] == VK_FORMAT_UNDEFINED)
-               deferred->undefined_colors |= BITFIELD_BIT(rt);
-         }
-      }
-      obj->apple9_deferred = deferred;
-      simple_mtx_init(&deferred->variant_lock, mtx_plain);
-      obj->writes_memory = infos[i].nir->info.writes_memory;
-      obj->pre_raster_reads = hk_nir_pre_raster_reads(infos[i].nir);
-      obj->reads_draw_id = hk_nir_reads_draw_id(infos[i].nir);
-      obj->push_constant_mask = hk_nir_push_constant_mask(infos[i].nir);
-      out[i] = &obj->vk;
-   }
-
-   for (uint32_t i = 0; i < count; ++i)
-      ralloc_free(infos[i].nir);
-
-   if (result != VK_SUCCESS) {
-      for (uint32_t i = 0; i < count; ++i) {
-         if (out[i])
-            hk_api_shader_destroy(&dev->vk, out[i], alloc);
-      }
-      memset(out, 0, count * sizeof(*out));
-   }
-   return result;
-}
-
-bool
-hk_apple9_deferred_sample_shading(const struct hk_api_shader *fs)
-{
-   return fs && fs->apple9_deferred && fs->apple9_deferred->sample_shading;
-}
-
-/* Whether the fragment shader's pipeline declared a depth/stencil feedback
- * loop; draw-time resolution applies hk_apple9_zs_writes to it. */
-bool
-hk_apple9_deferred_zs_self_dep(const struct hk_api_shader *fs)
-{
-   return fs && fs->apple9_deferred && fs->apple9_deferred->zs_self_dep;
-}
-
-struct hk_apple9_variant {
-   struct hk_api_shader *api[HK_APPLE9_GFX_STAGES];
-   struct hk_apple9_graphics_key key;
-   struct hk_api_shader *shaders[HK_APPLE9_GFX_STAGES];
-   /* Keep the serialized object in the device's weak pipeline cache for the
-    * lifetime of the live variant. The disk cache outlives both. */
-   struct vk_pipeline_cache_object *cache_object;
-
-   /* Signalled once the compile finished; result holds its outcome. The
-    * variant is in the table from the start, so threads that need it wait
-    * for this compile while others look up and compile variants freely. */
-   struct util_queue_fence ready;
-   VkResult result;
-};
-
-static uint32_t
-hk_apple9_variant_hash(const void *key)
-{
-   return _mesa_hash_data(key, offsetof(struct hk_apple9_variant, shaders));
-}
-
-static bool
-hk_apple9_variant_equal(const void *a, const void *b)
-{
-   return !memcmp(a, b, offsetof(struct hk_apple9_variant, shaders));
-}
-
-static void
-hk_apple9_variant_destroy(struct hk_device *dev, struct hk_apple9_variant *v)
-{
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-      if (v->shaders[s])
-         hk_api_shader_destroy(&dev->vk, &v->shaders[s]->vk, NULL);
-   }
-   util_queue_fence_destroy(&v->ready);
-   if (v->cache_object)
-      vk_pipeline_cache_object_unref(&dev->vk, v->cache_object);
-   free(v);
-}
-
-static bool
-hk_apple9_remove_generic_output(nir_builder *b, nir_intrinsic_instr *intr,
-                                UNUSED void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_store_output ||
-       nir_intrinsic_io_semantics(intr).location < VARYING_SLOT_VAR0)
-      return false;
-   nir_instr_remove(&intr->instr);
-   return true;
-}
-
-/* Draw-time variants persist through the device pipeline cache (and so the
- * disk cache), as API shaders do through the runtime. The key covers every
- * input of the variant compile: the deferred stages exactly as the compile
- * reads them, the resolved graphics key, the device features shaders lower
- * against, and the compiler flags (debug, drirc, soft faults, environment
- * knobs).
- */
-static bool
-hk_apple9_variant_cache_key(
-   struct hk_device *dev, struct hk_api_shader *const api[HK_APPLE9_GFX_STAGES],
-   const struct hk_apple9_graphics_key *key, blake3_hash out)
-{
-   struct mesa_blake3 ctx;
-   _mesa_blake3_init(&ctx);
-   static const char tag[] = "hk-apple9-variant-v3";
-   _mesa_blake3_update(&ctx, tag, sizeof(tag));
-   /* The UUID covers the driver build ID, root layout and compiler flags,
-    * including when these entries travel inside an application cache. */
-   const struct vk_properties *props = &dev->vk.physical->properties;
-   _mesa_blake3_update(&ctx, props->pipelineCacheUUID, VK_UUID_SIZE);
-   _mesa_blake3_update(&ctx, &props->shaderBinaryVersion,
-                       sizeof(props->shaderBinaryVersion));
-   _mesa_blake3_update(&ctx, &dev->dev.chip, sizeof(dev->dev.chip));
-   const uint64_t flags =
-      hk_physical_device_compiler_flags(hk_device_physical(dev));
-   _mesa_blake3_update(&ctx, &flags, sizeof(flags));
-   const enum hk_feature_key features =
-      hk_make_feature_key(&dev->vk.enabled_features);
-   _mesa_blake3_update(&ctx, &features, sizeof(features));
-   _mesa_blake3_update(&ctx, key, sizeof(*key));
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-      const uint32_t present = api[s] != NULL;
-      _mesa_blake3_update(&ctx, &present, sizeof(present));
-      if (!present)
-         continue;
-      const struct hk_apple9_deferred *d = api[s]->apple9_deferred;
-      if (!d)
-         return false;
-      const uint64_t size = d->nir->size;
-      const uint32_t fields[] = {d->next_stage_mask,  d->set_layout_count,
-                                 d->sample_shading,   d->zs_self_dep,
-                                 d->undefined_colors, d->cull_distance};
-      _mesa_blake3_update(&ctx, &size, sizeof(size));
-      _mesa_blake3_update(&ctx, d->nir->data, d->nir->size);
-      _mesa_blake3_update(&ctx, fields, sizeof(fields));
-   }
-   _mesa_blake3_final(&ctx, out);
-   return true;
-}
-
-static void
-hk_apple9_variant_cache_store(struct hk_device *dev, const unsigned *stages,
-                              unsigned count, struct vk_shader *const *compiled,
-                              struct blob *blob)
-{
-   blob_write_uint32(blob, 0x484b5602);
-   blob_write_bytes(blob, dev->vk.physical->properties.pipelineCacheUUID,
-                    VK_UUID_SIZE);
-   blob_write_uint32(blob, dev->vk.physical->properties.shaderBinaryVersion);
-   blob_write_uint32(blob, count);
-   for (unsigned i = 0; i < count; ++i) {
-      blob_write_uint32(blob, stages[i]);
-      intptr_t size_at = blob_reserve_uint32(blob);
-      const size_t start = blob->size;
-      if (size_at < 0 ||
-          !compiled[i]->ops->serialize(&dev->vk, compiled[i], blob)) {
-         blob->out_of_memory = true;
-         return;
-      }
-      if (blob->size - start > UINT32_MAX) {
-         blob->out_of_memory = true;
-         return;
-      }
-      blob_overwrite_uint32(blob, size_at, blob->size - start);
-   }
-}
-
-/* Returns the number of stages loaded into out, or 0 on a miss. */
-static unsigned
-hk_apple9_variant_cache_load(struct hk_device *dev, const void *data,
-                             size_t size, uint32_t expected_stages,
-                             unsigned *stages, struct vk_shader **out)
-{
-   for (unsigned i = 0; i < HK_APPLE9_GFX_STAGES; ++i)
-      out[i] = NULL;
-   struct blob_reader blob;
-   blob_reader_init(&blob, data, size);
-   const uint32_t magic = blob_read_uint32(&blob);
-   uint8_t uuid[VK_UUID_SIZE];
-   blob_copy_bytes(&blob, uuid, sizeof(uuid));
-   const uint32_t version = blob_read_uint32(&blob);
-   const unsigned count = blob_read_uint32(&blob);
-   if (blob.overrun || magic != 0x484b5602 ||
-       memcmp(uuid, dev->vk.physical->properties.pipelineCacheUUID,
-              sizeof(uuid)) ||
-       version != dev->vk.physical->properties.shaderBinaryVersion ||
-       count == 0 || count != util_bitcount(expected_stages))
-      return 0;
-   uint32_t remaining = expected_stages;
-   unsigned i;
-   for (i = 0; i < count; ++i) {
-      stages[i] = blob_read_uint32(&blob);
-      const uint32_t len = blob_read_uint32(&blob);
-      const uint8_t *bytes = blob_read_bytes(&blob, len);
-      if (blob.overrun || stages[i] >= HK_APPLE9_GFX_STAGES ||
-          stages[i] == MESA_SHADER_COMPUTE ||
-          !(remaining & BITFIELD_BIT(stages[i])) || !len)
-         break;
-      remaining &= ~BITFIELD_BIT(stages[i]);
-      struct blob_reader stage;
-      blob_reader_init(&stage, bytes, len);
-      if (dev->vk.shader_ops->deserialize(&dev->vk, &stage, version, NULL,
-                                          &out[i]) != VK_SUCCESS ||
-          !out[i] || out[i]->stage != stages[i] || stage.overrun ||
-          stage.current != stage.end)
-         break;
-      /* Persistent draw variants contain compiled realizations only. Let the
-       * one driver deserializer own the container format, then check the kind. */
-      struct hk_api_shader *api =
-         container_of(out[i], struct hk_api_shader, vk);
-      if (api->apple9_deferred)
-         break;
-   }
-   if (i == count && !remaining && blob.current == blob.end)
-      return count;
-   for (unsigned j = 0; j <= i && j < count; ++j) {
-      if (out[j])
-         hk_api_shader_destroy(&dev->vk, out[j], NULL);
-      out[j] = NULL;
-   }
-   return 0;
-}
-
-/* What a draw-time variant compiles from, per stage: NULL nir for a stage the
- * draw does not bind. */
-struct hk_apple9_variant_stage {
-   struct hk_apple9_nir *nir;
-   uint32_t next_stage_mask;
-   uint32_t set_layout_count;
-};
-
-/* Compile the programs of a variant. On success, compiled[i] holds the
- * program of stages[i] for i < *count_out; on failure nothing is returned. */
-static VkResult
-hk_apple9_compile_variant(
-   struct hk_device *dev,
-   const struct hk_apple9_variant_stage src[HK_APPLE9_GFX_STAGES],
-   const struct hk_apple9_graphics_key *key,
-   struct vk_shader *compiled[HK_APPLE9_GFX_STAGES],
-   unsigned stages[HK_APPLE9_GFX_STAGES], unsigned *count_out)
-{
-   struct vk_shader_compile_info infos[HK_APPLE9_GFX_STAGES];
-   unsigned count = 0;
-   VkResult result = VK_SUCCESS;
-   *count_out = 0;
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-      if (!src[s].nir)
-         continue;
-      struct blob_reader reader;
-      blob_reader_init(&reader, src[s].nir->data, src[s].nir->size);
-      nir_shader *nir = nir_deserialize(NULL, &agx_nir_options, &reader);
-      if (!nir) {
-         result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-         break;
-      }
-      infos[count] = (struct vk_shader_compile_info){
-         .stage = s,
-         .nir = nir,
-         .next_stage_mask = src[s].next_stage_mask,
-         .robustness = &vk_robustness_disabled,
-         .set_layout_count = src[s].set_layout_count,
-      };
-      stages[count++] = s;
-   }
-   const bool has_fs = src[MESA_SHADER_FRAGMENT].nir != NULL;
-
-   /* Without a fragment shader nothing reads the generic varyings of a
-    * vertex-only draw: drop them so their stores and the arithmetic feeding
-    * them die. The variant is keyed on the bound stages, so the fragment
-    * shader is known absent for every draw that uses it. Transform feedback
-    * still captures them. This runs before the cull-distance null program
-    * below is linked: it reads nothing, but as a consumer it would otherwise
-    * keep every generic output.
-    */
-   if (result == VK_SUCCESS && !has_fs && count == 1 &&
-       infos[0].stage == MESA_SHADER_VERTEX && !infos[0].nir->xfb_info) {
-      nir_shader *vs = infos[0].nir;
-      if (nir_shader_intrinsics_pass(vs, hk_apple9_remove_generic_output,
-                                     nir_metadata_control_flow, NULL)) {
-         NIR_PASS(_, vs, nir_opt_dce);
-         nir_shader_gather_info(vs, nir_shader_get_entrypoint(vs));
-      }
-   }
-
-   /* Cull distances are applied by the fragment program, so a draw without
-    * one links an empty program to the last pre-rasterization stage. */
-   if (result == VK_SUCCESS && !has_fs && count &&
-       infos[count - 1].nir->info.cull_distance_array_size) {
-      infos[count] = (struct vk_shader_compile_info){
-         .stage = MESA_SHADER_FRAGMENT,
-         .nir = hk_apple9_null_fs_nir(true),
-         .robustness = &vk_robustness_disabled,
-      };
-      stages[count++] = MESA_SHADER_FRAGMENT;
-   }
-
-   if (result != VK_SUCCESS) {
-      for (unsigned i = 0; i < count; ++i)
-         ralloc_free(infos[i].nir);
-      return result;
-   }
-   /* A draw-time compile stalls the recording thread: let its register
-    * allocation use one helper thread. Precompiles run on low-priority
-    * threads and stay serial so bulk compiles don't oversubscribe the CPU. */
-   agx_apple9_set_parallel_ra(!hk_apple9_eager_compile);
-   result = hk_apple9_compile_graphics_path(dev, count, infos, NULL, key, NULL,
-                                            NULL, compiled);
-   agx_apple9_set_parallel_ra(false);
-   if (result != VK_SUCCESS) {
-      for (unsigned i = 0; i < count; ++i) {
-         if (compiled[i])
-            hk_api_shader_destroy(&dev->vk, compiled[i], NULL);
-         compiled[i] = NULL;
-      }
-      return result;
-   }
-   *count_out = count;
-   return VK_SUCCESS;
-}
-
-/* A queued precompile holds its own references to the stage NIR, so the
- * pipeline can be destroyed before the job runs. */
-struct hk_apple9_precompile_job {
-   struct hk_device *dev;
-   blake3_hash cache_key;
-   struct hk_apple9_graphics_key key;
-   struct hk_apple9_variant_stage src[HK_APPLE9_GFX_STAGES];
-};
-
-static void
-hk_apple9_precompile_execute(void *data, void *gdata, int thread_index)
-{
-   struct hk_apple9_precompile_job *job = data;
-   struct hk_device *dev = job->dev;
-   if (p_atomic_read(&dev->apple9_precompile.abort))
-      return;
-
-   /* A draw, or an earlier run, may have compiled it already. */
-   struct vk_pipeline_cache_object *object = vk_pipeline_cache_lookup_object(
-      dev->vk.mem_cache, job->cache_key, sizeof(job->cache_key),
-      &vk_raw_data_cache_object_ops, NULL);
-   if (object) {
-      vk_pipeline_cache_object_unref(&dev->vk, object);
-      return;
-   }
-
-   struct vk_shader *compiled[HK_APPLE9_GFX_STAGES] = {NULL};
-   unsigned stages[HK_APPLE9_GFX_STAGES];
-   unsigned count;
-   hk_apple9_eager_compile = true;
-   VkResult result = hk_apple9_compile_variant(dev, job->src, &job->key,
-                                               compiled, stages, &count);
-   hk_apple9_eager_compile = false;
-   if (result != VK_SUCCESS)
-      return;
-
-   /* Only the disk cache keeps it: the first draw loads it from there. */
-   struct blob blob;
-   blob_init(&blob);
-   hk_apple9_variant_cache_store(dev, stages, count, compiled, &blob);
-   if (!blob.out_of_memory) {
-      object = vk_pipeline_cache_create_and_insert_object(
-         dev->vk.mem_cache, job->cache_key, sizeof(job->cache_key), blob.data,
-         blob.size, &vk_raw_data_cache_object_ops);
-      if (object)
-         vk_pipeline_cache_object_unref(&dev->vk, object);
-   }
-   blob_finish(&blob);
-   for (unsigned i = 0; i < count; ++i)
-      hk_api_shader_destroy(&dev->vk, compiled[i], NULL);
-}
-
-static void
-hk_apple9_precompile_cleanup(void *data, void *gdata, int thread_index)
-{
-   struct hk_apple9_precompile_job *job = data;
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s)
-      hk_apple9_nir_unref(job->src[s].nir);
-   free(job);
-}
-
-/* Compile a variant into the pipeline cache on a low-priority thread, so
- * pipeline creation does not wait for it. A draw that needs the variant
- * before the job runs compiles it itself, and the job then finds it cached. */
-static void
-hk_apple9_queue_precompile(struct hk_device *dev,
-                           const struct hk_apple9_variant *search)
-{
-   if (!dev->apple9_precompile.ready)
-      return;
-   struct hk_apple9_precompile_job *job = calloc(1, sizeof(*job));
-   if (!job)
-      return;
-   if (!hk_apple9_variant_cache_key(dev, search->api, &search->key,
-                                    job->cache_key)) {
-      free(job);
-      return;
-   }
-   job->dev = dev;
-   job->key = search->key;
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-      const struct hk_api_shader *api = search->api[s];
-      if (!api)
-         continue;
-      const struct hk_apple9_deferred *d = api->apple9_deferred;
-      job->src[s] = (struct hk_apple9_variant_stage){
-         .nir = hk_apple9_nir_ref(d->nir),
-         .next_stage_mask = d->next_stage_mask,
-         .set_layout_count = d->set_layout_count,
-      };
-   }
-   util_queue_add_job(&dev->apple9_precompile.queue, job, NULL,
-                      hk_apple9_precompile_execute,
-                      hk_apple9_precompile_cleanup, 0);
-}
-
-void
-hk_apple9_precompile_init(struct hk_device *dev)
-{
-   /* Without a disk cache, a draw could not load a precompiled variant. */
-   if (!dev->vk.mem_cache || !dev->vk.physical->disk_cache)
-      return;
-   /* One thread: each precompile thread compiles in its own glibc malloc
-    * arena, which keeps its freed pages for the life of the process (two
-    * threads left a cold ER replay 43 MiB larger on the mini), and trimming
-    * them takes the application's arena lock too (14-16 ms against a game's
-    * heap). One thread drains ER's 3,009 precompiles (32 s of CPU) well within
-    * its two-minute load; a draw that outruns the queue compiles itself. */
-   const unsigned threads = 1;
-   dev->apple9_precompile.ready = util_queue_init(
-      &dev->apple9_precompile.queue, "hk_precomp", 32, threads,
-      UTIL_QUEUE_INIT_RESIZE_IF_FULL | UTIL_QUEUE_INIT_USE_MINIMUM_PRIORITY,
-      NULL);
-}
-
-void
-hk_apple9_precompile_finish(struct hk_device *dev)
-{
-   if (!dev->apple9_precompile.ready)
-      return;
-   /* Queued jobs are dropped, not compiled: their cleanup still runs. */
-   p_atomic_set(&dev->apple9_precompile.abort, true);
-   util_queue_finish(&dev->apple9_precompile.queue);
-   util_queue_destroy(&dev->apple9_precompile.queue);
-   dev->apple9_precompile.ready = false;
-}
-
-VkResult
-hk_apple9_resolve_graphics(
-   struct hk_device *dev, struct hk_api_shader *const api[HK_APPLE9_GFX_STAGES],
-   const struct vk_graphics_pipeline_state *state,
-   struct hk_api_shader *out[HK_APPLE9_GFX_STAGES], bool fs_statistics)
-{
-   struct hk_apple9_variant search;
-   memset(&search, 0, sizeof(search));
-   memcpy(search.api, api, sizeof(search.api));
-   hk_apple9_graphics_key_device(&search.key, state, hk_device_physical(dev));
-   search.key.no_fs_statistics = !fs_statistics;
-   const struct hk_api_shader *vs = api[MESA_SHADER_VERTEX];
-   search.key.vertex.unbounded =
-      vs && vs->apple9_deferred && vs->apple9_deferred->vertex_unbounded;
-   const struct hk_api_shader *fs = api[MESA_SHADER_FRAGMENT];
-   if (fs && fs->apple9_deferred) {
-      u_foreach_bit(rt, fs->apple9_deferred->undefined_colors)
-         search.key.blend[rt].color_attachment_unused = true;
-   }
-
-   /* A precompile neither finds nor publishes a live variant: it queues a
-    * compile into the pipeline cache, which the first draw loads from. */
-   if (hk_apple9_precompile) {
-      hk_apple9_queue_precompile(dev, &search);
-      return VK_SUCCESS;
-   }
-
-   struct hk_apple9_variant *v;
-
-retry:
-   simple_mtx_lock(&dev->apple9_variants.lock);
-   if (!dev->apple9_variants.ht) {
-      dev->apple9_variants.ht = _mesa_hash_table_create(
-         NULL, hk_apple9_variant_hash, hk_apple9_variant_equal);
-   }
-   struct hash_entry *entry =
-      dev->apple9_variants.ht
-         ? _mesa_hash_table_search(dev->apple9_variants.ht, &search)
-         : NULL;
-   if (entry) {
-      v = entry->data;
-      if (!util_queue_fence_is_signalled(&v->ready)) {
-         simple_mtx_unlock(&dev->apple9_variants.lock);
-         util_queue_fence_wait(&v->ready);
-         goto retry;
-      }
-      if (v->result != VK_ERROR_OUT_OF_HOST_MEMORY &&
-          v->result != VK_ERROR_OUT_OF_DEVICE_MEMORY) {
-         VkResult result = v->result;
-         if (result == VK_SUCCESS)
-            memcpy(out, v->shaders, sizeof(v->shaders));
-         simple_mtx_unlock(&dev->apple9_variants.lock);
-         return result;
-      }
-
-      /* Retry temporary allocation failures in place. Other recording threads
-       * may still be waiting on this fence, so removing/freeing the entry is
-       * unsafe. Claim the next compile while holding the table lock.
-       */
-      util_queue_fence_reset(&v->ready);
-      simple_mtx_unlock(&dev->apple9_variants.lock);
-      goto compile;
-   }
-   if (!dev->apple9_variants.ht) {
-      simple_mtx_unlock(&dev->apple9_variants.lock);
-      return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-   }
-
-   /* Publish the variant before compiling, then compile without the lock:
-    * a draw-time compile takes up to a second, and other recording threads
-    * must not block on it for unrelated variants. */
-   v = calloc(1, sizeof(*v));
-   if (!v) {
-      simple_mtx_unlock(&dev->apple9_variants.lock);
-      return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-   }
-   memcpy(v, &search, offsetof(struct hk_apple9_variant, shaders));
-   util_queue_fence_init(&v->ready);
-   util_queue_fence_reset(&v->ready);
-   _mesa_hash_table_insert(dev->apple9_variants.ht, v, v);
-   simple_mtx_unlock(&dev->apple9_variants.lock);
-
-compile:;
-   blake3_hash cache_key;
-   const bool cacheable =
-      dev->vk.mem_cache &&
-      hk_apple9_variant_cache_key(dev, api, &search.key, cache_key);
-   struct vk_shader *cached[HK_APPLE9_GFX_STAGES];
-   unsigned cached_stages[HK_APPLE9_GFX_STAGES];
-   unsigned cached_count = 0;
-   struct vk_pipeline_cache_object *cache_object = NULL;
-   if (cacheable) {
-      uint32_t expected_stages = 0;
-      const struct hk_apple9_deferred *last = NULL;
-      for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-         if (api[s]) {
-            expected_stages |= BITFIELD_BIT(s);
-            if (s != MESA_SHADER_FRAGMENT)
-               last = api[s]->apple9_deferred;
-         }
-      }
-      if (!api[MESA_SHADER_FRAGMENT] && last && last->cull_distance)
-         expected_stages |= BITFIELD_BIT(MESA_SHADER_FRAGMENT);
-      cache_object = vk_pipeline_cache_lookup_object(
-         dev->vk.mem_cache, cache_key, sizeof(cache_key),
-         &vk_raw_data_cache_object_ops, NULL);
-      if (cache_object) {
-         struct vk_raw_data_cache_object *raw =
-            container_of(cache_object, struct vk_raw_data_cache_object, base);
-         cached_count = hk_apple9_variant_cache_load(
-            dev, raw->data, raw->data_size, expected_stages, cached_stages,
-            cached);
-         if (!cached_count) {
-            vk_pipeline_cache_object_unref(&dev->vk, cache_object);
-            cache_object = NULL;
-         }
-      }
-   }
-   if (cached_count) {
-      for (unsigned i = 0; i < cached_count; ++i) {
-         v->shaders[cached_stages[i]] =
-            container_of(cached[i], struct hk_api_shader, vk);
-      }
-      memcpy(out, v->shaders, sizeof(v->shaders));
-      v->cache_object = cache_object;
-      for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s)
-         if (api[s])
-            hk_apple9_remember_variant(dev, api[s], cache_object);
-      simple_mtx_lock(&dev->apple9_variants.lock);
-      v->result = VK_SUCCESS;
-      util_queue_fence_signal(&v->ready);
-      simple_mtx_unlock(&dev->apple9_variants.lock);
-      return VK_SUCCESS;
-   }
-
-   struct hk_apple9_variant_stage src[HK_APPLE9_GFX_STAGES] = {0};
-   VkResult result = VK_SUCCESS;
-   for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s) {
-      if (!api[s])
-         continue;
-      const struct hk_apple9_deferred *d = api[s]->apple9_deferred;
-      if (!d) {
-         /* Draw-time variants recompile every stage of the draw. */
-         result = vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                            "Apple9: deferred and precompiled stages mixed");
-         break;
-      }
-      src[s] = (struct hk_apple9_variant_stage){
-         .nir = d->nir,
-         .next_stage_mask = d->next_stage_mask,
-         .set_layout_count = d->set_layout_count,
-      };
-   }
-
-   struct vk_shader *compiled[HK_APPLE9_GFX_STAGES] = {NULL};
-   unsigned stages[HK_APPLE9_GFX_STAGES];
-   unsigned count = 0;
-   if (result == VK_SUCCESS) {
-      result = hk_apple9_compile_variant(dev, src, &search.key, compiled,
-                                         stages, &count);
-   }
-
-   /* Keep permanent failures, but allow a later caller to retry an allocation
-    * failure once temporary memory pressure has passed. */
-   if (result == VK_SUCCESS) {
-      if (cacheable) {
-         struct blob blob;
-         blob_init(&blob);
-         hk_apple9_variant_cache_store(dev, stages, count, compiled, &blob);
-         if (!blob.out_of_memory) {
-            cache_object = vk_pipeline_cache_create_and_insert_object(
-               dev->vk.mem_cache, cache_key, sizeof(cache_key), blob.data,
-               blob.size, &vk_raw_data_cache_object_ops);
-         }
-         blob_finish(&blob);
-      }
-      for (unsigned i = 0; i < count; ++i) {
-         v->shaders[stages[i]] =
-            container_of(compiled[i], struct hk_api_shader, vk);
-      }
-      memcpy(out, v->shaders, sizeof(v->shaders));
-   }
-   if (result != VK_SUCCESS && cache_object) {
-      vk_pipeline_cache_object_unref(&dev->vk, cache_object);
-      cache_object = NULL;
-   }
-   v->cache_object = cache_object;
-   if (cache_object) {
-      for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s)
-         if (api[s])
-            hk_apple9_remember_variant(dev, api[s], cache_object);
-   }
-   simple_mtx_lock(&dev->apple9_variants.lock);
-   v->result = result;
-   util_queue_fence_signal(&v->ready);
-   simple_mtx_unlock(&dev->apple9_variants.lock);
-   return result;
-}
-
-/* Variants live as long as all of their API shaders. */
-static void
-hk_apple9_forget_deferred(struct hk_device *dev, struct hk_api_shader *obj)
-{
-   simple_mtx_lock(&dev->apple9_variants.lock);
-   if (dev->apple9_variants.ht) {
-      hash_table_foreach(dev->apple9_variants.ht, entry) {
-         struct hk_apple9_variant *v = entry->data;
-         bool uses = false;
-         for (unsigned s = 0; s < HK_APPLE9_GFX_STAGES; ++s)
-            uses |= v->api[s] == obj;
-         if (uses) {
-            _mesa_hash_table_remove(dev->apple9_variants.ht, entry);
-            hk_apple9_variant_destroy(dev, v);
-         }
-      }
-   }
-   simple_mtx_unlock(&dev->apple9_variants.lock);
-}
-
-void
-hk_apple9_variants_finish(struct hk_device *dev)
-{
-   if (dev->apple9_variants.ht) {
-      hash_table_foreach(dev->apple9_variants.ht, entry)
-         hk_apple9_variant_destroy(dev, entry->data);
-      _mesa_hash_table_destroy(dev->apple9_variants.ht, NULL);
-      dev->apple9_variants.ht = NULL;
-   }
-}
-
 static VkResult
 hk_compile_shaders_timed(struct vk_device *vk_dev, uint32_t shader_count,
                          struct vk_shader_compile_info *infos,
@@ -6848,25 +3200,6 @@ hk_compile_shaders_timed(struct vk_device *vk_dev, uint32_t shader_count,
                                 nir_shader_get_entrypoint(shaders[i]));
    }
 
-   if (agx_is_apple9(&dev->dev) && shader_count &&
-       infos[0].stage != MESA_SHADER_COMPUTE) {
-      enum hk_apple9_deferral deferral =
-         hk_apple9_needs_deferral(shader_count, infos, state, features);
-      if (deferral != HK_APPLE9_COMPILE_NOW) {
-         VkResult result = hk_apple9_defer_graphics(
-            dev, shader_count, infos, state, pAllocator, shaders_out);
-         /* With complete state, the variant draws select is known: resolve
-          * it now, as RADV and ANV compile at creation, so that draws do not
-          * stall the recording thread. */
-         if (result == VK_SUCCESS && deferral == HK_APPLE9_DEFER_COMPLETE)
-            hk_apple9_eager_variant(dev, shader_count, shaders_out, state,
-                                    true);
-         return result;
-      }
-      return hk_apple9_compile_graphics(dev, shader_count, infos, state, NULL,
-                                        NULL, pAllocator, shaders_out);
-   }
-
    for (uint32_t i = 0; i < shader_count; i++) {
       VkResult result =
          hk_compile_shader(dev, &infos[i], state, features, pAllocator,
@@ -6916,7 +3249,7 @@ hk_deserialize_shader(struct hk_device *dev, struct blob_reader *blob,
    const uint32_t code_size = blob_read_uint32(blob);
    const uint32_t data_size = blob_read_uint32(blob);
    /* Validate payload lengths before any code/data allocation, including
-    * shader binaries outside the variant cache.
+    * shader binaries.
     * Subtract successively so even a 32-bit host cannot overflow the sum. */
    if (blob->overrun || (unsigned)info.stage >= MESA_SHADER_MESH_STAGES ||
        code_size > blob->end - blob->current ||
@@ -6953,7 +3286,7 @@ hk_deserialize_shader(struct hk_device *dev, struct blob_reader *blob,
 }
 
 /* Version the container independently of the hardware programs it owns. */
-#define HK_SHADER_CONTAINER_VERSION 0x484b0008u
+#define HK_SHADER_CONTAINER_VERSION 0x484b0009u
 
 static VkResult
 hk_deserialize_api_shader(struct vk_device *vk_dev, struct blob_reader *blob,
@@ -6977,42 +3310,6 @@ hk_deserialize_api_shader(struct vk_device *vk_dev, struct blob_reader *blob,
 
    if (obj == NULL)
       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-   if (blob_read_uint8(blob)) {
-      struct hk_apple9_deferred *d = calloc(1, sizeof(*d));
-      if (!d) {
-         vk_shader_free(&dev->vk, pAllocator, &obj->vk);
-         return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-      }
-      d->next_stage_mask = blob_read_uint32(blob);
-      d->set_layout_count = blob_read_uint32(blob);
-      d->sample_shading = blob_read_uint8(blob);
-      d->zs_self_dep = blob_read_uint8(blob);
-      d->vertex_unbounded = blob_read_uint8(blob);
-      d->undefined_colors = blob_read_uint8(blob);
-      d->cull_distance = blob_read_uint8(blob);
-      obj->writes_memory = blob_read_uint8(blob);
-      obj->pre_raster_reads = blob_read_uint8(blob);
-      obj->reads_draw_id = blob_read_uint8(blob);
-      blob_copy_bytes(blob, &obj->push_constant_mask,
-                      sizeof(obj->push_constant_mask));
-      const uint32_t nir_size = blob_read_uint32(blob);
-      const void *nir = blob_read_bytes(blob, nir_size);
-      d->nir = blob->overrun ? NULL : hk_apple9_nir_create(nir, nir_size);
-      if (!d->nir) {
-         free(d);
-         vk_shader_free(&dev->vk, pAllocator, &obj->vk);
-         return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
-      }
-      obj->apple9_deferred = d;
-      simple_mtx_init(&d->variant_lock, mtx_plain);
-      if (!hk_apple9_deserialize_variants(dev, obj, blob)) {
-         hk_api_shader_destroy(&dev->vk, &obj->vk, pAllocator);
-         return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
-      }
-      *shader_out = &obj->vk;
-      return VK_SUCCESS;
-   }
 
    hk_foreach_variant(obj, shader) {
       VkResult result = hk_deserialize_shader(dev, blob, shader);
@@ -7059,26 +3356,6 @@ hk_api_shader_serialize(struct vk_device *vk_dev,
 
    blob_write_uint32(blob, HK_SHADER_CONTAINER_VERSION);
    blob_write_uint8(blob, vk_shader->stage);
-
-   struct hk_apple9_deferred *d = obj->apple9_deferred;
-   blob_write_uint8(blob, d != NULL);
-   if (d) {
-      blob_write_uint32(blob, d->next_stage_mask);
-      blob_write_uint32(blob, d->set_layout_count);
-      blob_write_uint8(blob, d->sample_shading);
-      blob_write_uint8(blob, d->zs_self_dep);
-      blob_write_uint8(blob, d->vertex_unbounded);
-      blob_write_uint8(blob, d->undefined_colors);
-      blob_write_uint8(blob, d->cull_distance);
-      blob_write_uint8(blob, obj->writes_memory);
-      blob_write_uint8(blob, obj->pre_raster_reads);
-      blob_write_uint8(blob, obj->reads_draw_id);
-      blob_write_bytes(blob, &obj->push_constant_mask,
-                       sizeof(obj->push_constant_mask));
-      blob_write_uint32(blob, d->nir->size);
-      blob_write_bytes(blob, d->nir->data, d->nir->size);
-      return hk_apple9_serialize_variants(d, blob);
-   }
 
    hk_foreach_variant(obj, shader) {
       hk_shader_serialize(vk_dev, shader, blob);
@@ -7208,6 +3485,54 @@ const struct vk_device_shader_ops hk_device_shader_ops = {
    .cmd_bind_shaders = hk_cmd_bind_shaders,
 };
 
+/* Apple9 launch state; varyings and coefficients are filled in per draw */
+static void
+hk_apple9_init_linked(struct hk_device *dev, struct hk_linked_shader *s,
+                      bool fragment, struct hk_shader *main,
+                      struct agx_shader_part *prolog,
+                      struct agx_shader_part *epilog)
+{
+   const struct agx_apple9_program *p = &s->b.apple9;
+   agx_apple9_stage_launch_cache_init(&s->apple9_launch);
+
+   s->apple9_stage = (struct agx_apple9_render_stage){
+      .program_id = p_atomic_inc_return(&dev->apple9_last_program_id),
+      .bo = s->b.bo,
+      .binary = s->b.bo ? agx_bo_map(s->b.bo) : NULL,
+      .binary_size = p->size,
+      .preamble_offset = p->preamble_offset,
+      .preamble_size = p->preamble_size,
+      .scratch_size = p->profile.scratch_size,
+      .atomic_frame_size = p->profile.atomic_frame_size,
+      .publication_count = p->profile.publication_count,
+      .publication_count_valid = true,
+      .resource_count = p->profile.resource_binding_count,
+      .launch_cache = &s->apple9_launch,
+      .position_components = fragment ? 0 : 4,
+   };
+
+   for (unsigned i = 0; i < p->profile.resource_binding_count; ++i) {
+      assert(p->profile.resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_SSBO &&
+             "API shaders reach buffers through descriptors");
+      s->apple9_stage.resource_binding[i] = p->profile.resource_binding[i];
+   }
+
+   if (fragment) {
+      struct agx_shader_part *parts[] = {prolog, &main->b, epilog};
+      for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
+         if (parts[i]) {
+            s->apple9_stage.reads_tile |= parts[i]->info.apple9_tile_reads;
+            s->apple9_stage.uses_discard |= parts[i]->info.writes_sample_mask;
+         }
+      }
+
+      s->apple9_stage.writes_depth = main->info.fs.epilog_key.write_z;
+      s->apple9_stage.disable_tri_merging =
+         main->b.info.disable_tri_merging || main->info.fs.disable_tri_merging;
+      s->apple9_stage.pixel_interlock = main->info.fs.pixel_interlock;
+   }
+}
+
 struct hk_linked_shader *
 hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
              struct agx_shader_part *prolog, struct agx_shader_part *epilog,
@@ -7218,8 +3543,10 @@ hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
                  nr_samples_shaded, NULL);
 
    /* Apple9 programs are launched from their profile, see hk_cmd_apple9.c */
-   if (agx_is_apple9(&dev->dev))
+   if (agx_is_apple9(&dev->dev)) {
+      hk_apple9_init_linked(dev, s, fragment, main, prolog, epilog);
       return s;
+   }
 
    if (fragment) {
       unsigned samplers = main->b.info.sampler_state_count;

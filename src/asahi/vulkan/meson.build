@@ -10,7 +10,6 @@ hk_files = files(
   'hk_cmd_clear.c',
   'hk_cmd_dispatch.c',
   'hk_cmd_draw.c',
-  'hk_apple9_polygon_points.c',
   'hk_cmd_apple9.c',
   'hk_cmd_meta.c',
   'hk_cmd_pool.c',
@@ -125,24 +124,14 @@ libvulkan_asahi = shared_library(
 )
 
 if with_tests
-  foreach t : ['hk-index-aperture', 'hk-index-memory', 'hk-variant-retry', 'hk-variant-cache', 'hk-texture-upload-failure', 'hk-line-stipple-limit']
+  foreach t : ['hk-index-aperture', 'hk-index-memory']
     shader_test = executable(t, 'tests/' + t + '.c',
       include_directories : [inc_gallium, inc_gallium_aux, inc_include,
                              inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
       dependencies : [hk_deps], link_with : [libhk],
       link_args : {'hk-index-aperture': ['-Wl,--wrap=hk_dispatch_precomp'],
-                   'hk-index-memory': ['-Wl,--wrap=agx_va_alloc', '-Wl,--wrap=agx_bo_bind', '-Wl,--wrap=agx_va_free'],
-                   'hk-variant-cache': ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference', '-Wl,--wrap=agx_bo_unreference', '-Wl,--wrap=nir_deserialize', '-Wl,--wrap=__vk_errorf'],
-                   'hk-variant-retry': ['-Wl,--wrap=nir_deserialize', '-Wl,--wrap=__vk_errorf'],
-                   'hk-texture-upload-failure': ['-Wl,--wrap=hk_pool_upload'],
-                   'hk-line-stipple-limit': []}[t])
-    if t == 'hk-variant-cache'
-      test(t, prog_python,
-        args : [files('tests/hk-variant-cache.py'), shader_test],
-        suite : ['asahi', 'honeykrisp'])
-    else
-      test(t, shader_test, suite : ['asahi', 'honeykrisp'])
-    endif
+                   'hk-index-memory': ['-Wl,--wrap=agx_va_alloc', '-Wl,--wrap=agx_bo_bind', '-Wl,--wrap=agx_va_free']}[t])
+    test(t, shader_test, suite : ['asahi', 'honeykrisp'])
   endforeach
   test(
     'hk-heap-oom',
@@ -189,7 +178,7 @@ if with_tests
     ),
     suite : ['asahi', 'honeykrisp'],
   )
-  foreach t : ['hk-feedback', 'hk-descriptor-parts', 'hk-constant-data', 'hk-draw-state-cache', 'hk-render-merge', 'hk-empty-clear-barriers', 'hk-image-limits', 'hk-stage-output-limits', 'hk-cull-output-limits', 'hk-pregfx-recording', 'hk-heap-resubmit', 'hk-heap-addresses', 'hk-native-image-store', 'hk-native-store-rw', 'hk-mesh-query', 'hk-robust-bounded-vector']
+  foreach t : ['hk-feedback', 'hk-descriptor-parts', 'hk-constant-data', 'hk-draw-state-cache', 'hk-render-merge', 'hk-empty-clear-barriers', 'hk-image-limits', 'hk-pregfx-recording', 'hk-heap-resubmit', 'hk-heap-addresses', 'hk-native-image-store', 'hk-native-store-rw', 'hk-mesh-query', 'hk-robust-bounded-vector']
     contract_test = executable(
       t,
       'tests/' + t + '.c',
@@ -206,12 +195,6 @@ if with_tests
     )
   endforeach
   # Corpus inspection is an explicit host tool, not part of the driver.
-  test('hk-shader-memory', executable('hk-shader-memory', 'tests/hk-shader-memory.c',
-    include_directories : [inc_gallium, inc_gallium_aux, inc_include,
-                           inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [hk_deps], link_with : [libhk],
-    link_args : ['-Wl,--wrap=agx_bo_create', '-Wl,--wrap=agx_bo_reference',
-                 '-Wl,--wrap=agx_bo_unreference']), suite : ['asahi', 'honeykrisp'])
   test('hk-sliced-3d', executable('hk-sliced-3d', 'tests/hk-sliced-3d.c',
     include_directories : [inc_gallium, inc_gallium_aux, inc_include,
                            inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],

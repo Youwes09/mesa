@@ -255,169 +255,14 @@ hk_apple9_compute_sysvals(struct hk_device *dev, void *out)
           sizeof(fetch));
 }
 
-/* The line stipple pattern and factor of the draw, packed as the fragment
- * stipple test reads them. Draws that rasterize no lines after any
- * geometry, tessellation or mesh stage, or have stipple disabled, keep every
- * fragment: factor 1 with every pattern bit set.
- */
-/* Rasterization state the software polygon-point stage applies itself, see
- * hk_apple9_polygon_point_gs. */
-static void
-hk_apple9_polygon_point_params(const struct hk_cmd_buffer *cmd,
-                               struct agx_apple9_polygon_point_params *p)
-{
-   const struct vk_dynamic_graphics_state *dyn =
-      &cmd->vk.dynamic_graphics_state;
-   memset(p, 0, sizeof(*p));
-   p->flags =
-      ((dyn->rs.cull_mode & VK_CULL_MODE_FRONT_BIT) ? AGX_APPLE9_PP_CULL_FRONT
-                                                    : 0) |
-      ((dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT) ? AGX_APPLE9_PP_CULL_BACK
-                                                   : 0) |
-      (dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE
-          ? AGX_APPLE9_PP_FRONT_CCW
-          : 0) |
-      (vk_rasterization_state_depth_clip_enable(&dyn->rs)
-          ? AGX_APPLE9_PP_DEPTH_CLIP
-          : 0);
-   if (dyn->rs.depth_bias.enable) {
-      VkFormat format = cmd->state.gfx.render.depth_att.vk_format;
-      bool force_unorm =
-         dyn->rs.depth_bias.representation ==
-         VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-      bool exact = dyn->rs.depth_bias.exact;
-      p->flags |= AGX_APPLE9_PP_DEPTH_BIAS;
-      p->bias_constant = dyn->rs.depth_bias.constant_factor;
-      p->bias_slope = dyn->rs.depth_bias.slope_factor;
-      p->bias_clamp = dyn->rs.depth_bias.clamp;
-      if (format == VK_FORMAT_D16_UNORM)
-         p->bias_unit = 1.0f / (exact ? 65536.0f : 32768.0f);
-      else if (force_unorm || format == VK_FORMAT_X8_D24_UNORM_PACK32 ||
-               format == VK_FORMAT_D24_UNORM_S8_UINT)
-         p->bias_unit = 1.0f / (exact ? 16777216.0f : 8388608.0f);
-      else
-         p->flags |= AGX_APPLE9_PP_DEPTH_BIAS_FLOAT;
-   }
-   if (dyn->vp.viewport_count) {
-      p->depth_range =
-         dyn->vp.viewports[0].maxDepth - dyn->vp.viewports[0].minDepth;
-   }
-}
-
-static_assert(HK_MAX_VIEWPORTS == AGX_APPLE9_VIEWPORT_TABLE_COUNT,
-              "one window transform per viewport");
-
-static uint32_t
-hk_apple9_line_stipple_word(const struct vk_dynamic_graphics_state *dyn,
-                            bool lines)
-{
-   if (!lines || !dyn->rs.line.stipple.enable)
-      return 0x1ffff;
-   return dyn->rs.line.stipple.pattern |
-          ((uint32_t)MAX2(dyn->rs.line.stipple.factor, 1) << 16);
-}
-
-/* Window transforms of the bound viewports, for the vertex-stage stipple
- * start: x_w = x + w/2 + ndc.x * w/2, and likewise for y with the height,
- * which may be negative. */
-static void
-hk_apple9_viewport_table(const struct vk_dynamic_graphics_state *dyn,
-                         float table[AGX_APPLE9_VIEWPORT_TABLE_COUNT][4])
-{
-   memset(table, 0, AGX_APPLE9_VIEWPORT_TABLE_COUNT * 4 * sizeof(float));
-   unsigned count =
-      MIN2(dyn->vp.viewport_count, AGX_APPLE9_VIEWPORT_TABLE_COUNT);
-   for (unsigned i = 0; i < count; ++i) {
-      const VkViewport *vp = &dyn->vp.viewports[i];
-      table[i][0] = vp->width * 0.5f;
-      table[i][1] = vp->height * 0.5f;
-      table[i][2] = vp->x + vp->width * 0.5f;
-      table[i][3] = vp->y + vp->height * 0.5f;
-   }
-}
-
-bool
-hk_apple9_upload_textures(struct hk_cmd_buffer *cmd,
-                          const struct hk_shader *shader, bool graphics,
-                          bool first_fan, bool lines, uint64_t *textures,
+/* Descriptors live in the USC aperture, see agx_nir_lower_apple9_handles */
+void
+hk_apple9_upload_textures(struct hk_cmd_buffer *cmd, uint64_t *textures,
                           uint64_t *samplers, uint64_t *sysvals)
 {
-   /* Textures and samplers are addressed through their descriptors, see
-    * hk_apple9_texture_bindings: the stage's table pointers name the USC
-    * aperture, and only per-draw state goes in the sysval block. */
-   if (shader->b.info.apple9_texture_mask || shader->b.info.apple9_sampler_mask)
-      return false;
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    *textures = *samplers = dev->dev.shader_base;
-   /* A stage without sampler handles names the compiler-private fetch
-    * sampler as immediate slot 0 of its sampler table. */
-   if (shader->b.info.apple9_uses_texel_fetch)
-      *samplers = dev->apple9_fetch_sampler->va->addr;
-   if (!graphics) {
-      /* Kernels read only the fixed part, built at device creation. */
-      *sysvals = dev->apple9_compute_sysvals->va->addr;
-      return true;
-   }
-
-   /* The graphics block holds command buffer state only. Compare its
-    * inputs with the last upload: binding a pipeline or restoring meta
-    * state may dirty blend constants and write enables without changing
-    * either value. */
-   struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   uint32_t line_stipple = hk_apple9_line_stipple_word(dyn, lines);
-   float viewports[AGX_APPLE9_VIEWPORT_TABLE_COUNT][4];
-   hk_apple9_viewport_table(dyn, viewports);
-   struct agx_apple9_polygon_point_params polygon_points;
-   hk_apple9_polygon_point_params(cmd, &polygon_points);
-   if (gfx->apple9_sysvals &&
-       !memcmp(&gfx->apple9_sysvals_polygon_points, &polygon_points,
-               sizeof(polygon_points)) &&
-       !memcmp(gfx->apple9_sysvals_blend_constants, dyn->cb.blend_constants,
-               sizeof(gfx->apple9_sysvals_blend_constants)) &&
-       gfx->apple9_sysvals_color_write_enables == dyn->cb.color_write_enables &&
-       gfx->apple9_sysvals_positions == gfx->apple9_sample_positions &&
-       gfx->apple9_sysvals_first_fan == first_fan &&
-       gfx->apple9_sysvals_line_stipple == line_stipple &&
-       !memcmp(gfx->apple9_sysvals_viewports, viewports, sizeof(viewports))) {
-      *sysvals = gfx->apple9_sysvals;
-      goto clean;
-   }
-   _Alignas(64) uint8_t info[AGX_APPLE9_RUNTIME_SYSVAL_SIZE];
-   hk_apple9_compute_sysvals(dev, info);
-   memcpy(info, dyn->cb.blend_constants, 4 * sizeof(float));
-   uint32_t enables = dyn->cb.color_write_enables;
-   memcpy((uint8_t *)info + AGX_APPLE9_COLOR_WRITE_ENABLE_OFFSET, &enables,
-          sizeof(enables));
-   memcpy((uint8_t *)info + AGX_APPLE9_SAMPLE_POSITIONS_OFFSET,
-          &gfx->apple9_sample_positions, sizeof(uint32_t));
-   uint32_t fan = first_fan;
-   memcpy((uint8_t *)info + AGX_APPLE9_FIRST_FAN_OFFSET, &fan, sizeof(fan));
-   memcpy((uint8_t *)info + AGX_APPLE9_LINE_STIPPLE_OFFSET, &line_stipple,
-          sizeof(line_stipple));
-   memcpy((uint8_t *)info + AGX_APPLE9_VIEWPORT_TABLE_OFFSET, viewports,
-          sizeof(viewports));
-   memcpy((uint8_t *)info + AGX_APPLE9_POLYGON_POINT_OFFSET, &polygon_points,
-          sizeof(polygon_points));
-   *sysvals = hk_pool_upload(cmd, info, sizeof(info), 64);
-   if (!*sysvals)
-      return false;
-
-   /* Publish the cache and consume its inputs only after the upload succeeds. */
-   gfx->apple9_sysvals = *sysvals;
-   memcpy(gfx->apple9_sysvals_blend_constants, dyn->cb.blend_constants,
-          sizeof(gfx->apple9_sysvals_blend_constants));
-   gfx->apple9_sysvals_color_write_enables = dyn->cb.color_write_enables;
-   gfx->apple9_sysvals_positions = gfx->apple9_sample_positions;
-   gfx->apple9_sysvals_first_fan = first_fan;
-   gfx->apple9_sysvals_line_stipple = line_stipple;
-   memcpy(gfx->apple9_sysvals_viewports, viewports, sizeof(viewports));
-   gfx->apple9_sysvals_polygon_points = polygon_points;
-clean:
-   /* Draw-state reuse is invalidated before these bits are consumed. */
-   BITSET_CLEAR(dyn->dirty, MESA_VK_DYNAMIC_CB_BLEND_CONSTANTS);
-   BITSET_CLEAR(dyn->dirty, MESA_VK_DYNAMIC_CB_COLOR_WRITE_ENABLES);
-   return true;
+   *sysvals = dev->apple9_compute_sysvals->va->addr;
 }
 
 /* Report why the CDM record emitter rejected a dispatch, with the values it
@@ -452,8 +297,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                    struct agx_shader_body *body,
                    const struct agx_apple9_compute_profile *p,
                    struct agx_grid grid, uint64_t root, uint64_t push,
-                   const struct hk_shader *shader,
-                   const struct hk_apple9_prerast_bindings *prerast)
+                   const struct hk_shader *shader)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    /* A command buffer in error is never submitted; emitting more records
@@ -470,18 +314,8 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       return;
    }
 
-   /* Software pre-rasterization stages read draw state from the graphics
-    * block, which extends the compute one: the vertex-stage line stipple
-    * start reads the viewport table. */
    uint64_t textures = 0, samplers = 0, sysvals = 0;
-   if (shader &&
-       !hk_apple9_upload_textures(cmd, shader, prerast != NULL, false, false,
-                                  &textures, &samplers, &sysvals)) {
-      mesa_loge("hk: Apple9 dispatch failed: texture or sampler state cannot "
-                "be uploaded");
-      vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
-      return;
-   }
+   hk_apple9_upload_textures(cmd, &textures, &samplers, &sysvals);
 
    uint64_t resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES] = {0};
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
@@ -499,10 +333,6 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
          resources[i] = root;
       } else if (binding == AGX_APPLE9_GRAPHICS_SYSVAL_BINDING) {
          resources[i] = sysvals;
-      } else if (prerast && binding == HK_APPLE9_DRAW_PARAMS_BINDING) {
-         resources[i] = prerast->draw_params;
-      } else if (prerast && binding == HK_APPLE9_VERTEX_BUFFERS_BINDING) {
-         resources[i] = prerast->vertex_buffers;
       } else {
          mesa_loge(
             "hk: Apple9 dispatch failed: unknown uniform buffer binding");
@@ -532,9 +362,8 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
           &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
           p->resource_binding_count, textures, samplers, push, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
-          shader && ((shader->apple9_body && shader->apple9_body == body) ||
-                     (shader->only_linked &&
-                      &shader->only_linked->b.bo->apple9_body == body))
+          shader && shader->only_linked &&
+                &shader->only_linked->b.bo->apple9_body == body
              ? shader->apple9_launch
              : NULL,
           &launch)) {
@@ -680,7 +509,7 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
          hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
       cmd->api_dispatch = !cmd->in_meta;
       hk_apple9_dispatch(cmd, cs, &linked->b.bo->apple9_body, p, grid, root,
-                         root, s, NULL);
+                         root, s);
       cmd->api_dispatch = false;
       return;
    }
@@ -796,7 +625,7 @@ hk_tess_fold_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
    cmd->tess_batch.capture = lane;
    hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
-                      grid, args, 0, NULL, NULL);
+                      grid, args, 0, NULL);
    cmd->tess_batch.capture = NULL;
 }
 

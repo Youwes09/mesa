@@ -25,7 +25,6 @@
 struct lower_descriptors_ctx {
    const struct hk_descriptor_set_layout *set_layouts[HK_MAX_SETS];
 
-   bool root_uniform;
    bool clamp_desc_array_bounds;
    nir_address_format ubo_addr_format;
    nir_address_format ssbo_addr_format;
@@ -74,18 +73,7 @@ lower_load_constant(nir_builder *b, nir_intrinsic_instr *load,
     */
    unsigned slot = hk_root_descriptor_offset(constant_data) +
                    b->shader->info.stage * sizeof(uint64_t);
-   /* G16 binds the root table as UBO 0, just as for descriptor-set roots.
-    * Read the pointer directly from that uniform binding instead of fetching
-    * the root address and then loading the pointer from global memory.
-    * The driver always uploads this root word, even when the shader does
-    * not enter the branch using its table, so fetching it can speculate.
-    */
-   nir_def *addr =
-      ctx->root_uniform
-         ? nir_load_ubo(b, 1, 64, nir_imm_int(b, 0), nir_imm_int(b, slot),
-                        .align_mul = 8, .range_base = slot, .range = 8,
-                        .access = ACCESS_CAN_SPECULATE)
-         : load_root(b, 1, 64, nir_imm_int(b, slot), 8);
+   nir_def *addr = load_root(b, 1, 64, nir_imm_int(b, slot), 8);
    nir_def *offset =
       nir_iadd_imm(b, load->src[0].ssa, nir_intrinsic_base(load));
 
@@ -744,7 +732,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       nir_def *bias = load_resource_deref_desc(
          b, 1, 16, nir_src_as_deref(nir_src_for_ssa(sampler)), offs, ctx);
 
-      nir_def_replace(&tex->def, bias);
+      /* Apple9 adds the bias in FP32 */
+      nir_def_replace(&tex->def, nir_f2fN(b, bias, tex->def.bit_size));
       return true;
    }
 
@@ -1059,11 +1048,9 @@ bool
 hk_nir_lower_descriptors(nir_shader *nir,
                          const struct vk_pipeline_robustness_state *rs,
                          uint32_t set_layout_count,
-                         struct vk_descriptor_set_layout *const *set_layouts,
-                         bool root_uniform)
+                         struct vk_descriptor_set_layout *const *set_layouts)
 {
    struct lower_descriptors_ctx ctx = {
-      .root_uniform = root_uniform,
       .clamp_desc_array_bounds =
          rs->storage_buffers !=
             VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT ||

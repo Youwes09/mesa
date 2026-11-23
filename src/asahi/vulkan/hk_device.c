@@ -534,11 +534,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    }
 
    simple_mtx_init(&dev->heap_lock, mtx_plain);
-   simple_mtx_init(&dev->apple9_variants.lock, mtx_plain);
-   simple_mtx_init(&dev->apple9_bodies.lock, mtx_plain);
-   list_inithead(&dev->apple9_bodies.slabs);
    dev->dev.apple9_pin_entry = hk_apple9_pin_entry;
-   simple_mtx_init(&dev->apple9_tile_helpers.lock, mtx_plain);
    result = hk_device_init_meta(dev);
    if (result != VK_SUCCESS)
       goto fail_mem_cache;
@@ -547,31 +543,20 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
     * null fragment shaders. We do this at device-time to make binds cheap.
     * Regardless, compiling this shader should be fast.
     */
-   if (agx_is_apple9(&dev->dev)) {
-      result = hk_apple9_create_null_fs(dev, pAllocator, true, &dev->null_fs);
-      if (result != VK_SUCCESS)
-         goto fail_meta;
-      result = hk_apple9_create_null_fs(dev, pAllocator, false,
-                                        &dev->null_fs_trivial);
-      if (result != VK_SUCCESS)
-         goto fail_null_fs;
-   } else {
-      nir_builder b = nir_builder_init_simple_shader(
-         MESA_SHADER_FRAGMENT, &agx_nir_options, "empty FS");
-      struct vk_shader_compile_info info = {
-         .nir = b.shader,
-         .robustness = &vk_robustness_disabled,
-         .stage = MESA_SHADER_FRAGMENT,
-      };
-      hk_compile_shader(dev, &info, NULL, NULL, pAllocator, &dev->null_fs);
-      if (!dev->null_fs) {
-         result = VK_ERROR_OUT_OF_HOST_MEMORY;
-         goto fail_meta;
-      }
+   nir_builder b = nir_builder_init_simple_shader(
+      MESA_SHADER_FRAGMENT,
+      agx_nir_options_for_isa(agx_gather_device_key(&dev->dev).shader_isa),
+      "empty FS");
+   struct vk_shader_compile_info info = {
+      .nir = b.shader,
+      .robustness = &vk_robustness_disabled,
+      .stage = MESA_SHADER_FRAGMENT,
+   };
+   hk_compile_shader(dev, &info, NULL, NULL, pAllocator, &dev->null_fs);
+   if (!dev->null_fs) {
+      result = VK_ERROR_OUT_OF_HOST_MEMORY;
+      goto fail_meta;
    }
-
-   if (agx_is_apple9(&dev->dev))
-      hk_apple9_precompile_init(dev);
 
    *pDevice = hk_device_to_handle(dev);
 
@@ -585,20 +570,11 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
 
    return VK_SUCCESS;
 
-fail_null_fs:
-   hk_api_shader_destroy(&dev->vk, &dev->null_fs->vk, pAllocator);
 fail_meta:
    hk_device_finish_meta(dev);
 fail_mem_cache:
    vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
    hk_cmd_bo_cache_finish(dev);
-   hk_apple9_variants_finish(dev);
-   hk_apple9_bodies_finish(dev);
-   hk_apple9_tile_helpers_finish(dev);
-   assert(list_is_empty(&dev->apple9_bodies.slabs));
-   simple_mtx_destroy(&dev->apple9_variants.lock);
-   simple_mtx_destroy(&dev->apple9_bodies.lock);
-   simple_mtx_destroy(&dev->apple9_tile_helpers.lock);
 fail_queues:
    vk_foreach_queue_safe(iter, &dev->vk) {
       struct hk_queue *queue = container_of(iter, struct hk_queue, vk);
@@ -639,11 +615,7 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    if (!dev)
       return;
 
-   hk_apple9_precompile_finish(dev);
    hk_device_finish_meta(dev);
-   hk_apple9_variants_finish(dev);
-   hk_apple9_bodies_finish(dev);
-   hk_apple9_tile_helpers_finish(dev);
    hk_destroy_internal_shaders(dev, &dev->kernels, false);
    hk_destroy_internal_shaders(dev, &dev->prolog_epilog, true);
 
@@ -666,12 +638,6 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    if (dev->null_fs) {
       hk_api_shader_destroy(&dev->vk, &dev->null_fs->vk, pAllocator);
    }
-   if (dev->null_fs_trivial)
-      hk_api_shader_destroy(&dev->vk, &dev->null_fs_trivial->vk, pAllocator);
-   simple_mtx_destroy(&dev->apple9_variants.lock);
-   assert(list_is_empty(&dev->apple9_bodies.slabs));
-   simple_mtx_destroy(&dev->apple9_bodies.lock);
-   simple_mtx_destroy(&dev->apple9_tile_helpers.lock);
 
    if (dev->apple9_fetch_sampler)
       agx_bo_unreference(&dev->dev, dev->apple9_fetch_sampler);

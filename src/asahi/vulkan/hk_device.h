@@ -86,8 +86,7 @@ struct hk_device {
    struct agx_bo *apple9_fetch_sampler;
    /* Reload sampler shares the immutable sampler BO, at a 64-byte boundary. */
    uint64_t apple9_reload_sampler;
-   /* Last G16 graphics program id handed out, see hk_shader::apple9_program_id.
-    */
+   /* Last G16 program id handed out, see hk_linked_shader::apple9_stage */
    uint64_t apple9_last_program_id;
    /* USC space charged to shared index aliases, including allocator guards. */
    uint64_t apple9_index_alias_bytes;
@@ -116,39 +115,6 @@ struct hk_device {
    struct hk_internal_shaders prolog_epilog;
    struct hk_internal_shaders kernels;
    struct hk_api_shader *null_fs;
-   /* Apple9: the null fragment program for a full API sample mask. */
-   struct hk_api_shader *null_fs_trivial;
-
-   /* Apple9 draw-time variants of deferred graphics shaders, keyed by the
-    * bound shader objects and the resolved graphics key. */
-   struct {
-      simple_mtx_t lock;
-      struct hash_table *ht;
-   } apple9_variants;
-
-   /* Apple9 variants compiled into the pipeline cache in the background when
-    * a pipeline with complete state is created, see hk_apple9_precompile_init. */
-   struct {
-      struct util_queue queue;
-      bool ready;
-      uint32_t abort;
-   } apple9_precompile;
-
-   /* Apple9 shader code slices shared by byte-identical bodies, see
-    * hk_upload_shader. */
-   struct {
-      simple_mtx_t lock;
-      struct hash_table *ht;
-      struct list_head lru, slabs;
-      unsigned count;
-      uint64_t bytes, backing_bytes;
-   } apple9_bodies;
-
-   /* Apple9 tile load and store programs, keyed by their tile buffer key. */
-   struct {
-      simple_mtx_t lock;
-      struct hash_table *ht;
-   } apple9_tile_helpers;
 
    /* Indirected for common secondary emulation */
    struct vk_device_dispatch_table cmd_dispatch;

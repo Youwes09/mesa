@@ -86,7 +86,6 @@ hk_free_resettable_cmd_buffer(struct hk_cmd_buffer *cmd, bool release)
    cmd->apple9_prev_cs = NULL;
    cmd->apple9_draw_state.valid = false;
    cmd->apple9_linked_id[0] = cmd->apple9_linked_id[1] = 0;
-   cmd->apple9_null_fs_vertex_id = 0;
    hk_descriptor_state_fini(cmd, &cmd->state.gfx.descriptors);
    hk_descriptor_state_fini(cmd, &cmd->state.cs.descriptors);
 
@@ -1084,8 +1083,6 @@ hk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd, uint32_t stage_count,
       if (stages[i] == MESA_SHADER_COMPUTE || stages[i] == MESA_SHADER_KERNEL) {
          hk_cmd_bind_compute_shader(cmd, shader);
       } else {
-         if (stages[i] < HK_APPLE9_GFX_STAGES)
-            cmd->state.gfx.apple9_api[stages[i]] = shaders[i] ? shader : NULL;
          hk_cmd_bind_graphics_shader(cmd, stages[i],
                                      shaders[i] ? shader : NULL);
       }
@@ -1689,7 +1686,7 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
    if (prog->apple9) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
       hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
-                         grid, args, 0, NULL, NULL);
+                         grid, args, 0, NULL);
       return;
    }
 
