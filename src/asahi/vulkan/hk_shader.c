@@ -1692,11 +1692,6 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    else if (nir->info.stage == MESA_SHADER_VERTEX)
       lower_indirect_modes |= nir_var_shader_in | nir_var_shader_out;
 
-   /* Apple9 interpolation packets address a fixed coefficient. Expand
-    * dynamic fragment input indexing before lowering away the array derefs. */
-   if (agx_is_apple9(&dev->dev) && nir->info.stage == MESA_SHADER_FRAGMENT)
-      lower_indirect_modes |= nir_var_shader_in;
-
    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
             lower_indirect_modes, UINT32_MAX);
 
