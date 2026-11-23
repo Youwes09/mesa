@@ -2141,6 +2141,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_to(b, dst, AGX_SR_BACKFACING);
 
    case nir_intrinsic_load_samples_log2_agx:
+      /* Apple9 has no such system register */
+      assert(!agx_is_apple9(b->shader) && "lowered by the driver on Apple9");
       return agx_get_sr_to(b, dst, AGX_SR_SAMPLES_LOG2);
 
    case nir_intrinsic_load_sample_mask_in:
