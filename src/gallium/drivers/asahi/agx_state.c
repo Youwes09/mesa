@@ -730,6 +730,11 @@ agx_pack_texture(void *out, struct agx_resource *rsrc,
       if (state->target == PIPE_BUFFER)
          cfg.address += state->u.buf.offset;
 
+      /* Apple9 buffers are above this word's 40 bits, and read elsewhere */
+      if (state->target == PIPE_BUFFER &&
+          agx_apple9_direct_render_enabled(agx_device(rsrc->base.screen)))
+         cfg.address = 0;
+
       if (rsrc->layout.compressed) {
          cfg.acceleration_buffer =
             agx_map_gpu(rsrc) + rsrc->layout.metadata_offset_B +
@@ -1217,6 +1222,10 @@ agx_batch_upload_pbe(struct agx_batch *batch, struct agx_pbe_packed *out,
 
          /* Buffers uniquely have offsets (in bytes, not texels) */
          cfg.buffer += view->u.buf.offset;
+
+         /* As for textures, Apple9 stores through the texel metadata */
+         if (agx_apple9_direct_render_enabled(agx_device(tex->base.screen)))
+            cfg.buffer = 0;
 
          /* Use a 2D texture to increase the maximum size */
          cfg.width = AGX_TEXTURE_BUFFER_WIDTH;
