@@ -5233,6 +5233,75 @@ agx_nir_lower_printf_buffer(nir_shader *nir)
                                      nir_metadata_control_flow, NULL);
 }
 
+/*
+ * Run an Apple9 preamble at the start of the shader instead: the values it
+ * stores are used where the shader loads them. Only preambles storing general
+ * uniforms can; texture and sampler state is read from its registers.
+ */
+static bool
+agx_inline_apple9_preamble(nir_function_impl *main)
+{
+   nir_function_impl *preamble = main->preamble->impl;
+   nir_foreach_block(block, preamble) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type == nir_instr_type_intrinsic &&
+             nir_instr_as_intrinsic(instr)->intrinsic ==
+                nir_intrinsic_store_preamble &&
+             nir_intrinsic_preamble_class(nir_instr_as_intrinsic(instr)) !=
+                nir_preamble_class_general)
+            return false;
+      }
+   }
+
+   nir_builder b = nir_builder_at(nir_before_impl(main));
+   nir_inline_function_impl(&b, preamble, NULL, NULL);
+   main->preamble = NULL;
+
+   /* The component stored at each 16-bit uniform. Loads of uniforms the
+    * preamble does not store, like push words, stay.
+    */
+   nir_def *stored[1024] = {NULL};
+   nir_foreach_block(block, main) {
+      nir_foreach_instr_safe(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         b.cursor = nir_before_instr(instr);
+
+         if (intr->intrinsic == nir_intrinsic_store_preamble) {
+            nir_def *value = intr->src[0].ssa;
+            unsigned stride = value->bit_size / 16;
+            for (unsigned c = 0; c < value->num_components; ++c) {
+               unsigned u = nir_intrinsic_base(intr) + c * stride;
+               assert(u < ARRAY_SIZE(stored));
+               stored[u] = nir_channel(&b, value, c);
+            }
+            nir_instr_remove(instr);
+         } else if (intr->intrinsic == nir_intrinsic_load_preamble) {
+            unsigned stride = intr->def.bit_size / 16;
+            nir_def *comps[NIR_MAX_VEC_COMPONENTS];
+            bool all = true;
+            for (unsigned c = 0; c < intr->def.num_components; ++c) {
+               unsigned u = nir_intrinsic_base(intr) + c * stride;
+               comps[c] = u < ARRAY_SIZE(stored) ? stored[u] : NULL;
+               all &= comps[c] && comps[c]->bit_size == intr->def.bit_size;
+            }
+
+            if (all) {
+               nir_def_replace(&intr->def,
+                               nir_vec(&b, comps, intr->def.num_components));
+            } else {
+               assert(!comps[0] && "uniforms stored whole or not at all");
+            }
+         }
+      }
+   }
+
+   nir_progress(true, main, nir_metadata_none);
+   return true;
+}
+
 void
 agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                        struct agx_shader_part *out)
@@ -5387,6 +5456,20 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
          info->apple9_compute.preamble_offset = offset;
          info->apple9_compute.preamble_size = binary.size - offset;
+
+         /* A preamble past the drivers' bound runs in the shader instead */
+         bool compute = mesa_shader_stage_is_compute(nir->info.stage);
+         if (info->apple9_compute.preamble_size >
+                agx_apple9_max_preamble_bytes(compute) &&
+             agx_inline_apple9_preamble(main)) {
+            util_dynarray_clear(&binary);
+            info->nr_preamble_gprs = 0;
+            info->stats.preamble_inst = 0;
+            info->apple9_compute.preamble_offset = 0;
+            info->apple9_compute.preamble_size = 0;
+            agx_compile_function_nir(nir, main, key, &binary, &out->info);
+            info->main_size = binary.size;
+         }
       }
 
       info->apple9_compute.scratch_size = info->scratch_size;
