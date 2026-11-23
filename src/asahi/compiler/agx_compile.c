@@ -5150,8 +5150,8 @@ agx_preprocess_nir(nir_shader *nir)
 
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
-   /* Apple9 names varyings in instructions */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9 && nir->info.io_lowered)
+   /* Apple9 names varyings in instructions, so indexing must be direct */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
       NIR_PASS(_, nir, agx_nir_lower_apple9_indirect_io);
 
    /* Lower large arrays to scratch and small to csel. Apple9 has fewer GPRs */
