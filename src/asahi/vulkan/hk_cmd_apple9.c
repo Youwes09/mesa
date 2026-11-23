@@ -1039,6 +1039,8 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    record->pixel_interlock = fragment->pixel_interlock;
    record->flatshade_first = pipeline.flatshade_first;
    gfx->descriptors.root.draw.api_sample_mask = dyn->ms.sample_mask;
+   gfx->descriptors.root.draw.ppp_multisamplectl = gfx->apple9_sample_positions;
+   gfx->descriptors.root.draw.samples_log2 = util_logbase2(pipeline.samples);
    gfx->descriptors.root.draw.clip_z_coeff =
       dyn->vp.depth_clip_negative_one_to_one ? 0.5f : 0.0f;
    gfx->descriptors.root.draw.rasterized_prim =

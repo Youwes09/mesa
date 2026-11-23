@@ -118,6 +118,10 @@ struct hk_root_descriptor_table {
          uint16_t rasterization_stream;
          uint16_t _pad6;
 
+         /* Apple9: log2 of samples rasterized; Apple8 has a system register */
+         uint16_t samples_log2;
+         uint16_t _pad7;
+
          /* Fragment depth exports clamp to this range: viewport 0's depth
           * range, or the user range, with depth clamping; [0, 1] without.
           */

@@ -436,6 +436,13 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
    case nir_intrinsic_load_sample_positions_agx:
       return lower_sysval_to_root_table(b, intrin, draw.ppp_multisamplectl);
 
+   case nir_intrinsic_load_samples_log2_agx:
+      /* Apple8 reads it from a system register */
+      if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+         return false;
+
+      return lower_sysval_to_root_table(b, intrin, draw.samples_log2);
+
    case nir_intrinsic_load_depth_never_agx:
       return lower_sysval_to_root_table(b, intrin, draw.force_never_in_shader);
 
