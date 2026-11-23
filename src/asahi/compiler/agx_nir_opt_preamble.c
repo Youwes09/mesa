@@ -446,6 +446,9 @@ agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
    if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
       options.def_size = def_size_apple9;
       options.straight_line = true;
+
+      /* Parameter-form textures cannot take implicit-LOD zero gradients */
+      options.keep_implicit_lod_textures = true;
    }
 
    bool progress = false;
