@@ -438,6 +438,11 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
    nir_def *offset = nir_steal_tex_src(tex, nir_tex_src_offset);
 
    coord = nir_u2u32(b, coord);
+
+   /* LOD queries ignore the layer, which would be taken for a cube's z */
+   if (tex->is_array && !array)
+      coord = nir_trim_vector(b, coord, coord->num_components - 1);
+
    if (lod)
       lod = fetch ? nir_u2u32(b, lod) : nir_f2f32(b, lod);
    if (ms)
