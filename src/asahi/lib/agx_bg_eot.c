@@ -59,8 +59,21 @@ agx_compile_bg_eot_shader(struct agx_bg_eot_cache *cache, nir_shader *shader,
    agx_compile_shader_nir(shader, key, &bin);
 
    res->info = bin.info;
-   res->ptr = agx_pool_upload_aligned_with_bo(
-      &cache->pool, bin.binary, bin.info.binary_size, 128, &res->bo);
+
+   /* Apple9 launches enter through the BO's shader body, so use its own BO */
+   if (key->dev.shader_isa == AGX_SHADER_ISA_APPLE9) {
+      res->bo =
+         agx_bo_create(cache->dev, bin.info.binary_size, 0,
+                       AGX_BO_EXEC | AGX_BO_LOW_VA, "Apple9 tile program");
+      if (res->bo) {
+         memcpy(agx_bo_map(res->bo), bin.binary, bin.info.binary_size);
+         res->ptr = res->bo->va->addr;
+      }
+   } else {
+      res->ptr = agx_pool_upload_aligned_with_bo(
+         &cache->pool, bin.binary, bin.info.binary_size, 128, &res->bo);
+   }
+
    free(bin.binary);
    ralloc_free(shader);
 
@@ -257,6 +270,12 @@ agx_get_bg_eot_shader(struct agx_bg_eot_cache *cache,
    struct agx_bg_eot_shader *ret =
       agx_compile_bg_eot_shader(cache, nir, &compiler_key);
 
+   /* Nothing is cached when the program cannot be uploaded */
+   if (!ret->bo) {
+      ralloc_free(ret);
+      return NULL;
+   }
+
    ret->key = *key;
    _mesa_hash_table_insert(cache->ht, &ret->key, ret);
    return ret;
@@ -281,6 +300,14 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
       if (cache->precomp[i] && cache->precomp[i]->apple9)
          agx_bo_unreference(cache->dev, cache->precomp[i]->bo);
    }
+
+   if (agx_gather_device_key(cache->dev).shader_isa == AGX_SHADER_ISA_APPLE9) {
+      hash_table_foreach(cache->ht, ent) {
+         struct agx_bg_eot_shader *shader = ent->data;
+         agx_bo_unreference(cache->dev, shader->bo);
+      }
+   }
+
    agx_pool_cleanup(&cache->pool);
    _mesa_hash_table_destroy(cache->ht, NULL);
    simple_mtx_destroy(&cache->lock);
