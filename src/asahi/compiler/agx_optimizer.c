@@ -663,6 +663,15 @@ agx_optimizer_fold_apple9(agx_instr **defs, agx_instr *I)
 
       uint32_t mask = I->bfi_mask ? BITFIELD_MASK(I->bfi_mask) : ~0u;
       v = (a >> I->src[2].value) & mask;
+   } else if (I->op == AGX_OPCODE_BFI) {
+      /* Insertion into zero, a shift left by a whole mask */
+      if (!agx_is_equiv(I->src[0], agx_zero()) ||
+          !const_operand(defs, I->src[1], &a) ||
+          I->src[2].type != AGX_INDEX_IMMEDIATE || I->src[2].value >= 32)
+         return;
+
+      uint32_t mask = I->bfi_mask ? BITFIELD_MASK(I->bfi_mask) : ~0u;
+      v = (a & mask) << I->src[2].value;
    } else if (I->op == AGX_OPCODE_BITOP) {
       if (!const_operand(defs, I->src[0], &a) ||
           !const_operand(defs, I->src[1], &b))
