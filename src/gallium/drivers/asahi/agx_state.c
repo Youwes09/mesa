@@ -1882,6 +1882,33 @@ agx_apple9_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
    return true;
 }
 
+/* Info record word flagging a clamped comparison reference, for buffers */
+#define AGX_APPLE9_INFO_CLAMP_REFERENCE 5
+
+/* Clamp the reference for normalized formats, as Z24 is stored as Z32F */
+static bool
+agx_apple9_clamp_shadow_reference(nir_builder *b, nir_tex_instr *tex,
+                                  UNUSED void *data)
+{
+   int comparator = nir_tex_instr_src_index(tex, nir_tex_src_comparator);
+   if (!tex->is_shadow || comparator < 0 ||
+       nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0)
+      return false;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *ref = tex->src[comparator].src.ssa;
+   nir_def *clamp = nir_load_ubo(
+      b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
+      nir_imm_int(b, AGX_APPLE9_TEXTURE_INFO_OFFSET +
+                        tex->texture_index * AGX_APPLE9_TEXTURE_INFO_STRIDE +
+                        AGX_APPLE9_INFO_CLAMP_REFERENCE * 4),
+      .align_mul = 4, .range = ~0);
+
+   nir_src_rewrite(&tex->src[comparator].src,
+                   nir_bcsel(b, nir_ine_imm(b, clamp, 0), nir_fsat(b, ref), ref));
+   return true;
+}
+
 static void
 agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
                       nir_shader *nir, bool support_lod_bias, bool robust)
@@ -2004,6 +2031,8 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
       NIR_PASS(_, nir, nir_shader_tex_pass,
                agx_apple9_lower_lod_query_mip_filter, nir_metadata_control_flow,
                NULL);
+      NIR_PASS(_, nir, nir_shader_tex_pass, agx_apple9_clamp_shadow_reference,
+               nir_metadata_control_flow, NULL);
    }
 
    NIR_PASS(_, nir, agx_nir_lower_texture);
@@ -3556,6 +3585,9 @@ agx_apple9_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
                                                                : layers;
       info[3] = view->base.u.tex.last_level - level + 1;
       info[4] = MAX2(texture->nr_samples, 1);
+      info[AGX_APPLE9_INFO_CLAMP_REFERENCE] =
+         util_format_has_depth(util_format_description(view->base.format)) &&
+         util_format_is_unorm(view->base.format);
 
       agx_unpack(stderr, &view->desc, TEXTURE, descriptor);
       const unsigned channels[] = {descriptor.swizzle_r, descriptor.swizzle_g,
