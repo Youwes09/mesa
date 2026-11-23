@@ -5275,6 +5275,45 @@ agx_nir_lower_printf_buffer(nir_shader *nir)
                                      nir_metadata_control_flow, NULL);
 }
 
+/* A stored uniform component and which of its 16-bit halves a uniform is */
+struct agx_stored_half {
+   nir_def *value;
+   unsigned half;
+};
+
+/* Stored bits, in split packs as the shader is not optimized again */
+static nir_def *
+agx_stored_bits(nir_builder *b, const struct agx_stored_half *stored,
+                unsigned bit_size)
+{
+   nir_def *v = stored[0].value;
+   unsigned h = stored[0].half;
+
+   if (h == 0 && v->bit_size == bit_size)
+      return v;
+
+   if (bit_size == 64) {
+      return nir_pack_64_2x32_split(b, agx_stored_bits(b, stored, 32),
+                                    agx_stored_bits(b, stored + 2, 32));
+   } else if (bit_size == 32) {
+      if (v->bit_size == 64 && !(h & 1) && stored[1].value == v)
+         return h ? nir_unpack_64_2x32_split_y(b, v)
+                  : nir_unpack_64_2x32_split_x(b, v);
+
+      return nir_pack_32_2x16_split(b, agx_stored_bits(b, stored, 16),
+                                    agx_stored_bits(b, stored + 1, 16));
+   } else {
+      assert(bit_size == 16 && v->bit_size > 16);
+      nir_def *word = v;
+      if (v->bit_size == 64)
+         word = h >= 2 ? nir_unpack_64_2x32_split_y(b, v)
+                       : nir_unpack_64_2x32_split_x(b, v);
+
+      return (h & 1) ? nir_unpack_32_2x16_split_y(b, word)
+                     : nir_unpack_32_2x16_split_x(b, word);
+   }
+}
+
 /*
  * Run an Apple9 preamble at the start of the shader instead: the values it
  * stores are used where the shader loads them. Only preambles storing general
@@ -5299,10 +5338,9 @@ agx_inline_apple9_preamble(nir_function_impl *main)
    nir_inline_function_impl(&b, preamble, NULL, NULL);
    main->preamble = NULL;
 
-   /* The component stored at each 16-bit uniform. Loads of uniforms the
-    * preamble does not store, like push words, stay.
-    */
-   nir_def *stored[1024] = {NULL};
+   /* The stored component and half behind each 16-bit uniform */
+   struct agx_stored_half stored[1024] = {{NULL}};
+
    nir_foreach_block(block, main) {
       nir_foreach_instr_safe(instr, block) {
          if (instr->type != nir_instr_type_intrinsic)
@@ -5313,29 +5351,37 @@ agx_inline_apple9_preamble(nir_function_impl *main)
 
          if (intr->intrinsic == nir_intrinsic_store_preamble) {
             nir_def *value = intr->src[0].ssa;
-            unsigned stride = value->bit_size / 16;
+            unsigned halves = MAX2(value->bit_size / 16, 1);
             for (unsigned c = 0; c < value->num_components; ++c) {
-               unsigned u = nir_intrinsic_base(intr) + c * stride;
-               assert(u < ARRAY_SIZE(stored));
-               stored[u] = nir_channel(&b, value, c);
+               for (unsigned h = 0; h < halves; ++h) {
+                  unsigned u = nir_intrinsic_base(intr) + c * halves + h;
+                  assert(u < ARRAY_SIZE(stored));
+                  stored[u].value = nir_channel(&b, value, c);
+                  stored[u].half = h;
+               }
             }
             nir_instr_remove(instr);
          } else if (intr->intrinsic == nir_intrinsic_load_preamble) {
-            unsigned stride = intr->def.bit_size / 16;
+            unsigned halves = MAX2(intr->def.bit_size / 16, 1);
+            unsigned base = nir_intrinsic_base(intr);
+            unsigned n = intr->def.num_components * halves;
+            unsigned nr_stored = 0;
+            for (unsigned u = base; u < base + n; ++u)
+               nr_stored += u < ARRAY_SIZE(stored) && stored[u].value;
+
+            if (!nr_stored)
+               continue;
+
+            assert(nr_stored == n && "uniforms stored whole or not at all");
+
             nir_def *comps[NIR_MAX_VEC_COMPONENTS];
-            bool all = true;
             for (unsigned c = 0; c < intr->def.num_components; ++c) {
-               unsigned u = nir_intrinsic_base(intr) + c * stride;
-               comps[c] = u < ARRAY_SIZE(stored) ? stored[u] : NULL;
-               all &= comps[c] && comps[c]->bit_size == intr->def.bit_size;
+               comps[c] = agx_stored_bits(&b, &stored[base + c * halves],
+                                          intr->def.bit_size);
             }
 
-            if (all) {
-               nir_def_replace(&intr->def,
-                               nir_vec(&b, comps, intr->def.num_components));
-            } else {
-               assert(!comps[0] && "uniforms stored whole or not at all");
-            }
+            nir_def_replace(&intr->def,
+                            nir_vec(&b, comps, intr->def.num_components));
          }
       }
    }
