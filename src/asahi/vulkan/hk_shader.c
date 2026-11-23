@@ -889,152 +889,7 @@ lower_load_global_bounded(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def_replace(&intr->def, val);
 }
 
-/* Merging loads issues the combined load at the first one, so every later
- * component stays live from there. Apple9 shaders that already reach the
- * register limit then need more copies and swaps, so only merge accesses that
- * are close together (HK_APPLE9_VECTORIZE_WINDOW).
- */
-/* Index of the first use in the load's own block, or -1 if a use is in
- * another block or not an instruction. The vectorizer numbers each block's
- * instructions in order before calling back. */
-static int64_t
-hk_first_use_index(nir_intrinsic_instr *load)
-{
-   int64_t first = INT64_MAX;
-   nir_foreach_use_including_if(use, &load->def) {
-      if (nir_src_is_if(use))
-         return -1;
-      nir_instr *user = nir_src_use_instr(use);
-      if (user->block != load->instr.block)
-         return -1;
-      first = MIN2(first, (int64_t)user->index);
-   }
-   return first == INT64_MAX ? -1 : first;
-}
-
-/* Windowed merging joins loads at most this many instructions apart. */
-#define HK_APPLE9_VECTORIZE_WINDOW 4
-/* Robust fields merge only when their first uses are this close. */
-#define HK_APPLE9_VECTORIZE_USE_WINDOW 2
-/* Largest merged robust load, in bytes. */
-#define HK_APPLE9_ROBUST_MERGE_BYTES 16
-
-/* Peak number of live 32-bit words in a shader, from NIR liveness: a
- * backward walk of each block from its live-out set. 16-bit values count as
- * half a word; constants and undefs are free (immediates).
- */
-static unsigned
-hk_def_halves(const nir_def *def)
-{
-   nir_instr *instr = nir_def_instr((nir_def *)def);
-   if (instr->type == nir_instr_type_load_const ||
-       instr->type == nir_instr_type_undef)
-      return 0;
-   return def->num_components * MAX2(def->bit_size, 16) / 16;
-}
-
-static bool
-hk_index_def(nir_def *def, void *data)
-{
-   ((nir_def **)data)[def->index] = def;
-   return true;
-}
-
-struct hk_live_walk {
-   bool *live;
-   unsigned *halves;
-};
-
-static bool
-hk_add_live_src(nir_src *src, void *data)
-{
-   struct hk_live_walk *walk = data;
-   if (!walk->live[src->ssa->index]) {
-      walk->live[src->ssa->index] = true;
-      *walk->halves += hk_def_halves(src->ssa);
-   }
-   return true;
-}
-
-static unsigned
-hk_apple9_peak_live_words(nir_shader *nir)
-{
-   unsigned peak = 0;
-   nir_foreach_function_impl(impl, nir) {
-      nir_metadata_require(impl,
-                           nir_metadata_block_index | nir_metadata_live_defs);
-      nir_def **defs = calloc(impl->ssa_alloc, sizeof(*defs));
-      nir_foreach_block(block, impl) {
-         nir_foreach_instr(instr, block)
-            nir_foreach_def(instr, hk_index_def, defs);
-      }
-      bool *live = calloc(impl->ssa_alloc, sizeof(*live));
-      nir_foreach_block(block, impl) {
-         memset(live, 0, impl->ssa_alloc * sizeof(*live));
-         unsigned halves = 0;
-         U_SPARSE_BITSET_FOREACH_SET(&block->live_out, i) {
-            live[i] = true;
-            if (defs[i])
-               halves += hk_def_halves(defs[i]);
-         }
-         peak = MAX2(peak, halves);
-         nir_foreach_instr_reverse(instr, block) {
-            if (instr->type == nir_instr_type_phi)
-               break;
-            nir_def *def = nir_instr_def(instr);
-            if (def && live[def->index]) {
-               live[def->index] = false;
-               halves -= hk_def_halves(def);
-            }
-            struct hk_live_walk walk = {live, &halves};
-            nir_foreach_src(instr, hk_add_live_src, &walk);
-            peak = MAX2(peak, halves);
-         }
-      }
-      free(live);
-      free(defs);
-   }
-   return DIV_ROUND_UP(peak, 2);
-}
-
-/* The issue and first-use windows in hk_apple9_vectorize_cb protect shaders
- * near the register limit, where a merged load keeps later fields live from
- * the first one's issue. Across DXVK they also leave most robust fields of
- * a vector or matrix as separate loads with their own bounds checks and
- * waits. So apply them only when the shader's estimated peak of live words
- * exceeds HK_APPLE9_VECTORIZE_PRESSURE_BUDGET.
- */
-struct hk_vectorize_policy {
-   bool windowed;
-};
-
-static bool hk_apple9_vectorize_cb(unsigned align_mul, unsigned align_offset,
-                                   unsigned bit_size, unsigned num_components,
-                                   int64_t hole_size, nir_intrinsic_instr *low,
-                                   nir_intrinsic_instr *high, void *data);
-
-/* Peak of live words after vectorizing a copy of the shader with or
- * without the windows. */
-static unsigned
-hk_apple9_vectorized_peak(const nir_shader *nir, bool windowed)
-{
-   nir_shader *clone = nir_shader_clone(NULL, nir);
-   struct hk_vectorize_policy policy = {.windowed = windowed};
-   nir_opt_load_store_vectorize(clone,
-                                &(const nir_load_store_vectorize_options){
-                                   .modes = nir_var_mem_global,
-                                   .bounds_checked_modes = nir_var_mem_global,
-                                   .callback = hk_apple9_vectorize_cb,
-                                   .cb_data = &policy,
-                                });
-   unsigned peak = hk_apple9_peak_live_words(clone);
-   ralloc_free(clone);
-   return peak;
-}
-
-/* Below this peak of live 32-bit words, loads merge without windows. */
-#define HK_APPLE9_VECTORIZE_PRESSURE_BUDGET 96
-
+/* Natural alignment keeps a partly in-bounds merged load within one page */
 static bool
 hk_apple9_vectorize_cb(unsigned align_mul, unsigned align_offset,
                        unsigned bit_size, unsigned num_components,
@@ -1044,33 +899,9 @@ hk_apple9_vectorize_cb(unsigned align_mul, unsigned align_offset,
    if (!agx_mem_vectorize_cb(align_mul, align_offset, bit_size, num_components,
                              hole_size, low, high, NULL))
       return false;
-   const struct hk_vectorize_policy *policy = data;
-   int64_t window = policy->windowed ? HK_APPLE9_VECTORIZE_WINDOW : INT64_MAX;
-   int64_t distance = (int64_t)high->instr.index - (int64_t)low->instr.index;
-   if (llabs(distance) > window)
-      return false;
-   /* A merged load issues every field where the first one was. In shaders
-    * near the register limit that keeps later fields live much longer, so
-    * only merge robust fields whose first uses are close as well. */
-   int64_t use_window = HK_APPLE9_VECTORIZE_USE_WINDOW;
-   bool bounded = low->intrinsic == nir_intrinsic_load_global_bounded ||
-                  low->intrinsic == nir_intrinsic_load_global_constant_bounded;
-   /* Robust merges of fields whose first uses are adjacent shorten Lethal
-    * Company's light loops without extra spills at the register limit. */
-   int64_t robust_bytes = HK_APPLE9_ROBUST_MERGE_BYTES;
-   if (bounded && num_components * bit_size / 8 > robust_bytes)
-      return false;
-   if (bounded && policy->windowed) {
-      int64_t low_use = hk_first_use_index(low),
-              high_use = hk_first_use_index(high);
-      if (low_use < 0 || high_use < 0 || llabs(high_use - low_use) > use_window)
-         return false;
-   }
 
-   /* A merged bounded load may read past the end of its buffer when only
-    * its first components are in bounds. Natural alignment keeps that read
-    * inside one aligned block, so it cannot cross into another page. */
-   if (bounded) {
+   if (low->intrinsic == nir_intrinsic_load_global_bounded ||
+       low->intrinsic == nir_intrinsic_load_global_constant_bounded) {
       unsigned bytes = util_next_power_of_two(num_components * bit_size / 8);
       if (hole_size > 0 || align_mul < bytes || align_offset % bytes)
          return false;
@@ -1806,24 +1637,11 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       /* Explicit I/O builds each access's base and offset afresh. The
        * vectorizer only merges accesses sharing those definitions. */
       NIR_PASS(_, nir, nir_opt_cse);
-      /* Below the pressure budget, merge without windows, unless that
-       * raises the shader's peak of live words over windowed merging.
-       */
-      unsigned peak = hk_apple9_peak_live_words(nir);
-      struct hk_vectorize_policy policy = {
-         .windowed = peak > HK_APPLE9_VECTORIZE_PRESSURE_BUDGET};
-      unsigned peak_windowed = 0, peak_free = 0;
-      if (!policy.windowed) {
-         peak_windowed = hk_apple9_vectorized_peak(nir, true);
-         peak_free = hk_apple9_vectorized_peak(nir, false);
-         policy.windowed = peak_free > peak_windowed;
-      }
       NIR_PASS(_, nir, nir_opt_load_store_vectorize,
                &(const nir_load_store_vectorize_options){
                   .modes = nir_var_mem_global,
                   .bounds_checked_modes = nir_var_mem_global,
                   .callback = hk_apple9_vectorize_cb,
-                  .cb_data = &policy,
                });
    }
 
