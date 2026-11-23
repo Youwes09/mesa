@@ -576,14 +576,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
       words[2] = tex->is_shadow ? nir_f2f32(b, comparator) : face;
       words[3] = nir_ior(b, w3, array ? nir_ishl_imm(b, face, 12) : face);
 
-      /* Apple9 cube filtering clamps at the edges of the selected face.
-       * Without seamless filtering, the sampler's wrap modes apply on the face
-       * instead, so the face is sampled as a layer of a 2D array (6 layers per
-       * cube). Whether a sampler is seamful is in its runtime record.
-       * Implicit-LOD, gradient and comparison samples stay native: as array
-       * layers, a quad straddling a face edge takes discontinuous derivatives,
-       * and gradients are not projected. Only the sample itself depends on
-       * the sampler, so the coordinates are shared.
+      /* Seamful samplers wrap on the face, a layer of the 2D array alias.
+       * Implicit-LOD, gradient and compare samples stay native.
        */
       seamful = !tex->is_shadow &&
                 (tex->op == nir_texop_txl || tex->op == nir_texop_tg4) &&
@@ -625,6 +619,22 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
          nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
       as_array->backend_flags |= AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
       nir_def *alt_words = nir_vec(b, alt, 4);
+
+      /* The alias of the cube view */
+      int handle =
+         nir_tex_instr_src_index(as_array, nir_tex_src_texture_handle);
+      if (handle >= 0) {
+         nir_def *alias =
+            nir_iadd_imm(b, as_array->src[handle].src.ssa,
+                         AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
+         nir_src_rewrite(&as_array->src[handle].src, alias);
+      } else {
+         assert(nir_tex_instr_src_index(as_array, nir_tex_src_texture_offset) <
+                   0 &&
+                tex->texture_index < AGX_APPLE9_MAX_TEXTURE_INDICES);
+         as_array->texture_index =
+            AGX_APPLE9_CUBE_ALIAS_INDEX(tex->texture_index);
+      }
 
       nir_push_if(b, is_seamful);
       nir_builder_instr_insert(b, &as_array->instr);

@@ -3304,8 +3304,10 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
       b->shader->out->apple9_tile_domain =
          MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
-   /* Cube coordinates are projected by agx_nir_lower_texture */
+   /* agx_nir_lower_texture points cubes sampled as arrays at their aliases */
    bool cube_as_array = instr->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
+   if (cube_as_array && texture.type == AGX_INDEX_IMMEDIATE)
+      b->shader->out->apple9_cube_aliases = true;
 
    agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, nr);
    params.reg_class = RA_EXPORT;
