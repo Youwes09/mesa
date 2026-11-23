@@ -3951,6 +3951,10 @@ agx_launch_apple9(struct agx_batch *batch, struct agx_grid grid,
    struct agx_apple9_compute_profile profile =
       linked ? linked->apple9.profile : cs->b.info.apple9_compute;
 
+   /* Graphics stages run as compute take the dispatch's workgroup size */
+   if (!profile.variable_local_size && !profile.local_size[0])
+      profile.variable_local_size = true;
+
    /* The launch allocates the dynamic threadgroup memory with the static */
    if (variable_shared_mem) {
       profile.required_threadgroup_memory_bytes = util_next_power_of_two(
