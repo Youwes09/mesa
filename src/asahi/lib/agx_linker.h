@@ -35,6 +35,15 @@
  * outstanding memory and export operations at its end, so the next part
  * finds them complete.
  *
+ * Apple9 keeps the colours in the fixed AGX_ABI_FOUT_COLOUR registers too,
+ * r4 and up, with the allocator steering other values away from them so the
+ * main shader computes its colours in place. Colours are mostly 4-component
+ * vectors (texture results, varyings), which the allocator aligns to four
+ * registers, and r0-r3 carry the killed samples, the sample of a sample loop,
+ * depth and stencil, so packing them lower costs copies instead of saving
+ * registers. The registers r0-r3 leave unused do not change occupancy, which
+ * is full up to 52 registers (agx_performance.c).
+ *
  * Uniforms. Apple9 preloads no uniforms. The launch writes the six graphics
  * roots into the first 12 uniform words (agx_apple9_profile.h); the driver's
  * push words, which Apple8 preloads into the uniform registers it reserves,
