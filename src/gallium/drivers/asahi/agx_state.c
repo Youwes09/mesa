@@ -3574,12 +3574,64 @@ agx_apple9_null_storage(struct agx_apple9_storage_descriptor *desc)
    agx_set_null_pbe(&desc->common.pbe);
 }
 
-/*
- * Storage descriptor of an image view (agx_apple9_storage.h): the texture and
- * PBE words of the view, as Apple8 binds images, and the texel layout the
- * compiler's software accesses use. Reads that no write of the invocation can
- * precede use the native texture entry. Writes and atomics go through memory.
- */
+/* Native PBE entries of an image view, one per layer, where writable */
+static bool
+agx_apple9_pack_storage_pbes(struct agx_batch *batch,
+                             struct agx_apple9_storage_descriptor *desc,
+                             const struct pipe_image_view *view)
+{
+   struct agx_device *dev = agx_device(batch->ctx->base.screen);
+   struct agx_resource *rsrc = agx_resource(view->resource);
+   const struct ail_layout *layout = &rsrc->layout;
+   enum pipe_texture_target target = rsrc->base.target;
+
+   bool array = target == PIPE_TEXTURE_2D_ARRAY ||
+                target == PIPE_TEXTURE_CUBE ||
+                target == PIPE_TEXTURE_CUBE_ARRAY;
+   bool slices = target == PIPE_TEXTURE_3D && view->u.tex.level == 0;
+
+   if (!agx_apple9_native_store_format(view->format) ||
+       util_res_sample_count(&rsrc->base) > 1 || layout->compressed ||
+       util_format_is_compressed(layout->format) ||
+       util_format_get_blocksize(layout->format) !=
+          util_format_get_blocksize(view->format) ||
+       (util_format_is_pure_integer(view->format) &&
+        view->format != layout->format) ||
+       (!array && !slices && target != PIPE_TEXTURE_2D))
+      return true;
+
+   /* Single-layer views write their layer as a 2D image */
+   bool layered = (array || slices) && !view->u.tex.single_layer_view;
+   unsigned first = view->u.tex.first_layer;
+   unsigned count = layered ? view->u.tex.last_layer - first + 1 : 1;
+
+   struct agx_ptr t = agx_pool_alloc_aligned(
+      &batch->pipeline_pool, count * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+      AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+
+   uint64_t index =
+      (t.gpu - dev->shader_base) / AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+   if (index + count - 1 > AGX_APPLE9_STORAGE_PBE_MASK)
+      return true;
+
+   for (unsigned i = 0; i < count; ++i) {
+      uint64_t base =
+         agx_map_gpu(rsrc) + ail_get_layer_level_B(layout, first + i, 0);
+
+      if (!agx_apple9_translate_pbe(
+             (uint8_t *)t.cpu + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+             &desc->common.pbe, view->format, layout, base, view->u.tex.level,
+             1, false, AGX_TEXTURE_DIMENSION_2D))
+         return true;
+   }
+
+   desc->native_ok |= (layered ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
+                               : AGX_APPLE9_STORAGE_WRITE_VALID) |
+                      (index << AGX_APPLE9_STORAGE_PBE_SHIFT);
+   return true;
+}
+
+/* Storage descriptor of an image view: texture and PBE words, texel layout */
 static bool
 agx_apple9_pack_storage(struct agx_batch *batch,
                         struct agx_apple9_storage_descriptor *desc,
@@ -3613,7 +3665,7 @@ agx_apple9_pack_storage(struct agx_batch *batch,
    if (agx_apple9_translate_texture(desc->texture, &desc->common.tex))
       desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
 
-   return true;
+   return agx_apple9_pack_storage_pbes(batch, desc, view);
 }
 
 /* Native texture record of a sampler view */
