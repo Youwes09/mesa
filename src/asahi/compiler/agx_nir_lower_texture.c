@@ -1165,6 +1165,43 @@ lower_sampler_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex,
    return true;
 }
 
+/* Implicit-LOD compares of 2D array layers return the stored depth and of cube
+ * array faces misread, so sample with derivatives scaled by the bias.
+ */
+static bool
+apple9_lower_implicit_array_compare(nir_builder *b, nir_tex_instr *tex,
+                                    UNUSED void *data)
+{
+   bool derivatives =
+      b->shader->info.stage == MESA_SHADER_FRAGMENT ||
+      (b->shader->info.stage == MESA_SHADER_COMPUTE &&
+       b->shader->info.derivative_group != DERIVATIVE_GROUP_NONE);
+
+   if (!derivatives || !tex->is_shadow || !tex->is_array ||
+       (tex->op != nir_texop_tex && tex->op != nir_texop_txb) ||
+       (tex->sampler_dim != GLSL_SAMPLER_DIM_2D &&
+        tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE))
+      return false;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *coord = nir_get_tex_src(tex, nir_tex_src_coord);
+   nir_def *position = nir_trim_vector(b, coord, coord->num_components - 1);
+   nir_def *ddx = nir_ddx(b, position);
+   nir_def *ddy = nir_ddy(b, position);
+
+   nir_def *bias = nir_steal_tex_src(tex, nir_tex_src_bias);
+   if (bias) {
+      nir_def *scale = nir_fexp2(b, nir_f2fN(b, bias, ddx->bit_size));
+      ddx = nir_fmul(b, ddx, scale);
+      ddy = nir_fmul(b, ddy, scale);
+   }
+
+   nir_tex_instr_add_src(tex, nir_tex_src_ddx, ddx);
+   nir_tex_instr_add_src(tex, nir_tex_src_ddy, ddy);
+   tex->op = nir_texop_txd;
+   return true;
+}
+
 bool
 agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
                             bool software_buffer_bounds)
@@ -1200,6 +1237,22 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
    };
 
    NIR_PASS(progress, s, nir_lower_tex, &lower_tex_options);
+
+   if (apple9) {
+      bool gradients = false;
+      NIR_PASS(gradients, s, nir_shader_tex_pass,
+               apple9_lower_implicit_array_compare, nir_metadata_control_flow,
+               NULL);
+
+      /* Cube gradients become explicit LODs */
+      if (gradients) {
+         NIR_PASS(_, s, nir_lower_tex,
+                  &(nir_lower_tex_options){.lower_txd_cube_map = true});
+      }
+
+      progress |= gradients;
+   }
+
    return progress;
 }
 
