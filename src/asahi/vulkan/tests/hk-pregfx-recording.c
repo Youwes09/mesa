@@ -112,10 +112,32 @@ main(void)
    CHECK(streams[0].wait_tiling.engine[HK_SYNC_CDM] == 2);
    CHECK(streams[1].wait.engine[HK_SYNC_RENDER] == 6);
 
-   /* An unclassified post-graphics helper still requests fallback. */
+   /* Post-graphics helpers record nothing while the render is open */
    struct hk_cs *post = hk_cmd_buffer_get_cs_general(
       cmd, &cmd->current_cs.post_gfx, true, HK_SYNC_ALL);
-   CHECK(post && !post->sync_before_gfx && cmd->sync_fallback);
+   CHECK(post && post->sync_after_gfx && !cmd->sync_fallback);
+   CHECK(hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.post_gfx, true,
+                                      HK_SYNC_ALL) == post);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         3);
+   cmd->current_cs.gfx = NULL;
+   hk_cmd_buffer_end_compute_internal(cmd, &cmd->current_cs.post_gfx);
+   CHECK(util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event) ==
+         4);
+   ev = cmd->sync_events.data;
+   CHECK(ev[3].stream == post->sync_id && ev[3].dst == HK_SYNC_ALL);
+
+   struct hk_sync_stream all[3] = {
+      {.engine = HK_SYNC_RENDER, .index = 1, .before = {0, 1}},
+      {.engine = HK_SYNC_CDM, .index = 1, .before = {0, 0}},
+      {.engine = HK_SYNC_CDM, .index = 2, .before = {1, 1}},
+   };
+   for (unsigned i = 0; i < ARRAY_SIZE(all); ++i)
+      all[i].wait = all[i].wait_tiling = hk_sync_empty();
+   hk_sync_init(&state);
+   CHECK(hk_sync_resolve(&state, ev, 4, cmd->sync_remap.data, all, 3,
+                         cmd->sync_fallback));
+   CHECK(all[2].wait.engine[HK_SYNC_RENDER] == 1);
 
    free(post);
    free(pre);

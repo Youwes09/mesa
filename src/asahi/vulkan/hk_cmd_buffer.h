@@ -514,6 +514,8 @@ struct hk_cs {
    unsigned sync_stages;
    /* The whole pre-graphics stream is ordered at its render's first event. */
    bool sync_before_gfx;
+   /* The whole post-graphics stream is ordered at its render's end. */
+   bool sync_after_gfx;
    bool cdm_dirty;
 
    /* The last dispatch ended with the compute-only barrier: later compute
@@ -1111,9 +1113,9 @@ hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
       list_inithead(&cs->node);
 
       bool before_gfx = (ptr == &cmd->current_cs.pre_gfx);
-      /* Post-graphics operations may still have events interleaved with their
-       * render. Keep the fallback until those operations are classified. */
-      cmd->sync_fallback |= ptr == &cmd->current_cs.post_gfx;
+      /* Post-graphics work is recorded once, as the open render ends */
+      cs->sync_after_gfx =
+         ptr == &cmd->current_cs.post_gfx && cmd->current_cs.gfx;
 
       /* Insert into the command buffer. We usually append to the end of the
        * command buffer, except for pre-graphics streams which go right before
@@ -1149,7 +1151,7 @@ hk_cmd_buffer_get_cs_general(struct hk_cmd_buffer *cmd, struct hk_cs **ptr,
    }
 
    assert(*ptr != NULL);
-   if (!(*ptr)->sync_before_gfx)
+   if (!(*ptr)->sync_before_gfx && !(*ptr)->sync_after_gfx)
       hk_cmd_sync_work(cmd, *ptr, stages);
    return *ptr;
 }
@@ -1226,6 +1228,9 @@ hk_cmd_buffer_end_compute_internal(struct hk_cmd_buffer *cmd,
        */
       if (cs->cdm_dirty || cs->timestamp.end.handle)
          hk_cdm_cache_flush(hk_cmd_buffer_device(cmd), cs);
+
+      if (cs->sync_after_gfx)
+         hk_cmd_sync_work(cmd, cs, HK_SYNC_ALL);
    }
 
    *ptr = NULL;
