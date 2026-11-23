@@ -3371,6 +3371,19 @@ hk_flush_shaders(struct hk_cmd_buffer *cmd)
                   hk_only_variant(fs)->info.fs.interp.flat,
                   hk_only_variant(fs)->info.fs.interp.linear);
 
+   /* Apple9 outputs stay in their unlinked slots, see agx_apple9_link */
+   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+      const struct agx_unlinked_uvs_layout *uvs = &hw_vs->info.uvs;
+      unsigned slot = uvs->group_offs[UVS_VARYINGS];
+
+      memset(gfx->linked_varyings.slots, 0,
+             sizeof(gfx->linked_varyings.slots));
+      u_foreach_bit64(loc, uvs->written) {
+         gfx->linked_varyings.slots[loc] = slot;
+         slot += uvs->components[loc];
+      }
+   }
+
    for (unsigned i = 0; i < VARYING_SLOT_MAX; ++i) {
       desc->root.draw.uvs_index[i] = gfx->linked_varyings.slots[i];
    }
@@ -4975,6 +4988,9 @@ hk_update_polygon_points(struct hk_cmd_buffer *cmd)
    if (desc->root.draw.polygon_points_active != active) {
       desc->root.draw.polygon_points_active = active;
       desc->root_dirty = true;
+
+      /* Geometry stages switch rasterization program and relink varyings */
+      gfx->shaders_dirty |= BITFIELD_BIT(MESA_SHADER_GEOMETRY);
    }
 
    if (!active)
