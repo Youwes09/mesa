@@ -614,12 +614,32 @@ agx_extend_apple9(agx_builder *b, agx_index x, unsigned bits, bool sign)
 static void
 agx_emit_load_const(agx_builder *b, nir_load_const_instr *instr)
 {
-   /* Ensure we've been scalarized and bit size lowered */
    unsigned bit_size = instr->def.bit_size;
-   assert(instr->def.num_components == 1);
+   agx_index dst = agx_def_index(b->shader, &instr->def);
+
+   /* Lowering after scalarization can form constant vectors */
+   if (instr->def.num_components > 1) {
+      agx_index channels[NIR_MAX_VEC_COMPONENTS];
+      for (unsigned c = 0; c < instr->def.num_components; ++c) {
+         uint64_t value = nir_const_value_as_uint(instr->value[c], bit_size);
+         channels[c] = agx_temp(b->shader, dst.size);
+
+         if (agx_is_apple9(b->shader) && bit_size == 64) {
+            agx_emit_collect_to(b, channels[c], 2,
+                                (agx_index[]){
+                                   agx_mov_imm(b, 32, value & UINT32_MAX),
+                                   agx_mov_imm(b, 32, value >> 32),
+                                });
+         } else {
+            agx_mov_imm_to(b, channels[c], value);
+         }
+      }
+
+      agx_emit_collect_to(b, dst, instr->def.num_components, channels);
+      return;
+   }
 
    uint64_t value = nir_const_value_as_uint(instr->value[0], bit_size);
-   agx_index dst = agx_def_index(b->shader, &instr->def);
 
    /* Apple9 only moves 32-bit constants */
    if (agx_is_apple9(b->shader) && bit_size == 64) {
