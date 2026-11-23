@@ -442,8 +442,11 @@ bool
 agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
 {
    nir_opt_preamble_options options = preamble_options;
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+   /* Apple9 preambles cannot spill, so keep control flow in the main shader */
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
       options.def_size = def_size_apple9;
+      options.straight_line = true;
+   }
 
    bool progress = false;
    NIR_PASS(progress, nir, nir_opt_preamble, &options, sizes);
