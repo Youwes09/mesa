@@ -1858,6 +1858,30 @@ agx_flag_texture_metadata_queries(nir_builder *b, nir_tex_instr *tex,
    return true;
 }
 
+/* Apple9 LOD queries return the clamped LOD, so apply the mipmap filter */
+static bool
+agx_apple9_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
+                                      UNUSED void *data)
+{
+   if (tex->op != nir_texop_lod)
+      return false;
+
+   b->cursor = nir_after_instr(&tex->instr);
+   nir_def *lod = nir_channel(b, &tex->def, 0);
+   nir_def *mip = agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_MIP);
+
+   nir_def *nearest =
+      nir_fadd_imm(b, nir_fceil(b, nir_fadd_imm(b, lod, 0.5)), -1.0);
+   nir_def *level = nir_bcsel(
+      b, nir_ieq_imm(b, mip, PIPE_TEX_MIPFILTER_NEAREST), nearest, lod);
+   level = nir_bcsel(b, nir_ieq_imm(b, mip, PIPE_TEX_MIPFILTER_NONE),
+                     nir_imm_floatN_t(b, 0.0, lod->bit_size), level);
+
+   nir_def *result = nir_vector_insert_imm(b, &tex->def, level, 0);
+   nir_def_rewrite_uses_after(&tex->def, result);
+   return true;
+}
+
 static void
 agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
                       nir_shader *nir, bool support_lod_bias, bool robust)
@@ -1977,6 +2001,9 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
       NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
                nir_metadata_all, NULL);
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
+      NIR_PASS(_, nir, nir_shader_tex_pass,
+               agx_apple9_lower_lod_query_mip_filter, nir_metadata_control_flow,
+               NULL);
    }
 
    NIR_PASS(_, nir, agx_nir_lower_texture);
