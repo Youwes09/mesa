@@ -267,6 +267,9 @@ struct ra_ctx {
    /* Apple9: GPRs exported at the end of the part, which other values avoid */
    BITSET_WORD *export_targets;
 
+   /* GPRs that preloaded values arrive in */
+   BITSET_WORD *preload_regs;
+
    /* For affinities */
    agx_instr **src_to_collect;
    struct phi_web_node *phi_web;
@@ -2098,20 +2101,34 @@ agx_ra_assign_local(struct ra_ctx *rctx)
          agx_set_dests(rctx, I);
          continue;
       } else if (I->op == AGX_OPCODE_PRELOAD) {
-         /* We must coalesce all preload moves */
          assert(I->dest[0].size == I->src[0].size);
          assert(I->src[0].type == AGX_INDEX_REGISTER);
 
-         /* r1l specifically is a preloaded register. It is reserved during
-          * demand calculations to ensure we don't need live range shuffling of
-          * spilling temporaries. But we can still preload to it. So if it's
-          * reserved, just free it. It'll be fine.
+         /* Preloads are coalesced, except out of the reserved prefix, which
+          * stays with the spill temporaries and the nesting counter
+          * throughout. Preloads come first, before any copy uses a
+          * temporary, so the value can be copied out there, to registers no
+          * other preload arrives in.
           */
-         if (I->src[0].value == 2) {
-            BITSET_CLEAR(rctx->used_regs[RA_GPR], 2);
+         unsigned reg = I->src[0].value;
+         if (reg < reserved_size(rctx->shader)) {
+            unsigned count = rctx->ncomps[I->dest[0].value];
+            BITSET_DECLARE(used, AGX_NUM_REGS);
+            memcpy(used, used_regs_gpr, sizeof(used));
+            __bitset_or(used_regs_gpr, used_regs_gpr, rctx->preload_regs,
+                        BITSET_WORDS(AGX_NUM_REGS));
+            bool found = find_regs_simple(rctx, RA_GPR, count, count,
+                                          I->dest[0].value, &reg);
+            memcpy(used_regs_gpr, used, sizeof(used));
+
+            if (!found) {
+               rctx->shader->ra_error = "No registers for a preloaded value";
+               free(ssa_to_reg);
+               return false;
+            }
          }
 
-         assign_regs(rctx, I->dest[0], I->src[0].value);
+         assign_regs(rctx, I->dest[0], reg);
          agx_set_dests(rctx, I);
          continue;
       }
@@ -2733,6 +2750,7 @@ agx_ra(agx_context *ctx)
    enum ra_class *classes = calloc(ctx->alloc, sizeof(enum ra_class));
    agx_instr **src_to_collect = calloc(ctx->alloc, sizeof(agx_instr *));
    BITSET_WORD *export_targets = NULL;
+   BITSET_WORD *preload_regs = BITSET_CALLOC(AGX_NUM_REGS);
 
    if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
       agx_foreach_instr_in_block(agx_exit_block(ctx), I) {
@@ -2751,6 +2769,11 @@ agx_ra(agx_context *ctx)
    unsigned max_ncomps = 1;
 
    agx_foreach_instr_global(ctx, I) {
+      if (I->op == AGX_OPCODE_PRELOAD) {
+         BITSET_SET_COUNT(preload_regs, I->src[0].value,
+                          agx_size_align_16(I->src[0].size));
+      }
+
       /* Record tuple and export uses; all phi uses are retained separately. */
       if (I->op == AGX_OPCODE_COLLECT || I->op == AGX_OPCODE_EXPORT ||
           I->op == AGX_OPCODE_SPLIT) {
@@ -2875,6 +2898,7 @@ agx_ra(agx_context *ctx)
              .demand = demand,
              .affinity_ssa = ~0u,
              .export_targets = export_targets,
+             .preload_regs = preload_regs,
           }))
          goto cleanup;
    }
@@ -3020,8 +3044,15 @@ agx_ra(agx_context *ctx)
       switch (I->op) {
       /* Pseudoinstructions for RA must be removed now */
       case AGX_OPCODE_PHI:
-      case AGX_OPCODE_PRELOAD:
          agx_remove_instruction(I);
+         break;
+
+      /* Preloads copied out of the reserved prefix become moves */
+      case AGX_OPCODE_PRELOAD:
+         if (I->dest[0].value == I->src[0].value)
+            agx_remove_instruction(I);
+         else
+            I->op = AGX_OPCODE_MOV;
          break;
 
       /* Coalesced moves can be removed */
@@ -3059,6 +3090,7 @@ cleanup:
    free(phi_web);
    free(src_to_collect);
    free(export_targets);
+   free(preload_regs);
    free(ncomps);
    free(ncomps_unrounded);
    free(sizes);
