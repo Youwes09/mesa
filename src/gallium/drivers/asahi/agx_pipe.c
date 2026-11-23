@@ -2238,20 +2238,15 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       caps->indirect_const_addr = true;
       caps->integers = true;
 
-      /* The Apple9 graphics compiler currently consumes FP32 shader I/O
-       * and texture results. Keep lowp/mediump GLSL at FP32 instead of
-       * advertising a half-precision lowering path it cannot compile. */
-      bool apple9_graphics =
-         agx_apple9_direct_render_enabled(agx_device(pscreen)) &&
-         (i == MESA_SHADER_VERTEX || i == MESA_SHADER_FRAGMENT);
+      /* The Apple9 compiler cannot export 16-bit fragment shader values yet */
       caps->fp16 = caps->glsl_16bit_consts = caps->fp16_derivatives =
-         !is_no16 && !apple9_graphics;
+         !is_no16 && !agx_is_apple9(agx_device(pscreen));
       /* GLSL compiler is broken. Flip this on when Panfrost does. */
       caps->int16 = false;
       /* This cap is broken, see 9a38dab2d18 ("zink: disable
        * pipe_shader_caps.fp16_const_buffers") */
       caps->fp16_const_buffers = false;
-      caps->glsl_16bit_load_dst = !apple9_graphics;
+      caps->glsl_16bit_load_dst = caps->fp16;
 
       /* TODO: Enable when fully baked */
       if (strcmp(util_get_process_name(), "blender") == 0)
@@ -2269,24 +2264,15 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
 
       caps->max_shader_buffers = PIPE_MAX_SHADER_BUFFERS;
 
-      caps->max_shader_images = PIPE_MAX_SHADER_IMAGES;
-      if (apple9_graphics) {
-         caps->max_outputs = i == MESA_SHADER_FRAGMENT
-                                ? 1
-                                : AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
-         caps->max_inputs = i == MESA_SHADER_FRAGMENT
-                               ? AGX_APPLE9_MAX_VARYING_COMPONENTS / 4
-                               : 16;
-         caps->max_shader_buffers = caps->max_shader_images = 0;
-         caps->max_texture_samplers = caps->max_sampler_views = 16;
-      }
+      /* Gallium storage images are not lowered for Apple9 */
+      caps->max_shader_images =
+         agx_is_apple9(agx_device(pscreen)) ? 0 : PIPE_MAX_SHADER_IMAGES;
    }
 
-   /* Apple9 has no native launch path for the tessellation control stage or
-    * the libagx tessellator yet. Report no tessellation stages so
-    * ARB_tessellation_shader stays hidden instead of aborting at draw time.
+   /* Apple9 cannot compile tessellation control shaders yet: their stores
+    * of constant tessellation levels reach instruction selection as vectors.
     */
-   if (agx_apple9_direct_render_enabled(agx_device(pscreen))) {
+   if (agx_is_apple9(agx_device(pscreen))) {
       memset((void *)&pscreen->shader_caps[MESA_SHADER_TESS_CTRL], 0,
              sizeof(pscreen->shader_caps[MESA_SHADER_TESS_CTRL]));
       memset((void *)&pscreen->shader_caps[MESA_SHADER_TESS_EVAL], 0,
@@ -2333,7 +2319,6 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
 {
    struct pipe_caps *caps = (struct pipe_caps *)&pscreen->caps;
    struct agx_screen *screen = agx_screen(pscreen);
-   const bool apple9_compute = agx_apple9_compute_enabled(&screen->dev);
    const bool apple9_render = agx_apple9_direct_render_enabled(&screen->dev);
 
    u_init_pipe_screen_caps(pscreen, 1);
@@ -2447,11 +2432,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
 
    caps->vertex_input_alignment = PIPE_VERTEX_INPUT_ALIGNMENT_ELEMENT;
 
-   /* Apple9 indirect dispatch does not yet accumulate compute invocation
-    * statistics.  Do not expose ARB_pipeline_statistics_query until every
-    * supported dispatch form has correct query semantics.
-    */
-   caps->query_pipeline_statistics_single = !apple9_compute;
+   caps->query_pipeline_statistics_single = true;
 
    caps->max_texture_2d_size = 16384;
    caps->max_texture_cube_levels = 15; /* Max 16384x16384 */
@@ -2488,7 +2469,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->min_texture_gather_offset = -8;
    caps->max_texture_gather_offset = 7;
    caps->draw_indirect = true;
-   caps->texture_query_samples = !apple9_render;
+   caps->texture_query_samples = true;
    caps->texture_query_lod = true;
    caps->texture_shadow_lod = true;
 
@@ -2561,14 +2542,6 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->hw_clear_buffer_sizes = apple9_render ? 0 : (1 | 2 | 4 | 8 | 16);
 
    if (apple9_render) {
-      /* Do not inherit capabilities whose Apple8 shader/attachment paths are
-       * unavailable to this backend. Version overrides belong in development
-       * harnesses, not in capabilities presented to applications. */
-      /* Public contexts expose the current graphics frontend contract.
-       * Internal NIR compute remains available for resource copies. */
-      caps->glsl_feature_level = caps->glsl_feature_level_compatibility = 330;
-      /* ES 3.0 shader support is independent of the desktop GLSL level. */
-      caps->essl_feature_level = 300;
       caps->robust_buffer_access_behavior = false;
       /* Lost-context reporting (EGL_EXT_create_context_robustness, reset
        * status queries) works: failed work and rejected submissions mark the
@@ -2576,13 +2549,9 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       caps->device_reset_status_query = true;
       /* External textures are sampled as 2D views. */
       caps->texture_external = true;
-      /* Cull distances still need primitive rejection lowering. */
-      caps->cull_distance = false;
       /* One RGBA8 tile-output slot per active color attachment. */
       caps->max_render_targets = 8;
-      /* Advanced equations are lowered with the attachment blend state.
-       * The separate shader framebuffer-fetch input ABI is not implemented. */
-      caps->fbfetch = 0;
+      /* Advanced equations are lowered with the attachment blend state */
       caps->blend_equation_advanced = true;
       caps->max_dual_source_render_targets = 1;
       /* The fragment compiler exports stencil with the depth publication,
@@ -2608,7 +2577,12 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       /* Gathers use the native gather sample, including constant offsets. */
       caps->max_texture_gather_components = 4;
       caps->max_varyings = AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
+      /* Software fp64 needs OpenGL 4.0, which needs tessellation */
       caps->doubles = false;
+      /* The Apple9 compiler cannot read the sample mask and positions of
+       * per-sample fragment shaders yet.
+       */
+      caps->sample_shading = false;
    }
 }
 
