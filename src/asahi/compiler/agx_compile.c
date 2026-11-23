@@ -3257,17 +3257,14 @@ agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
    return agx_emit_collect_to(b, dst, 4, out);
 }
 
-/*
- * Apple9 texture operations, after agx_nir_lower_texture: the parameters in
- * backend1 are written to an export register bundle, the offset is a constant
- * in backend2, and the texture and sampler are table indices. Fetches use
- * sampler 0, as on Apple8, and the API samplers follow.
- */
+/* Parameters are exported. Fetches use sampler 0, so API samplers start at 1 */
 static void
 agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
 {
    agx_index texture = agx_immediate(instr->texture_index);
    agx_index sampler = agx_immediate(instr->sampler_index + 1);
+   bool sampler_handle =
+      nir_tex_instr_src_index(instr, nir_tex_src_sampler_handle) >= 0;
    agx_index offset = agx_null();
    agx_index words[16];
    unsigned nr = 0;
@@ -3305,7 +3302,7 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
       }
    }
 
-   if (fetch)
+   if (fetch && !sampler_handle)
       sampler = agx_immediate(0);
 
    /* Fragment shaders sample within the tile domain */
@@ -5439,6 +5436,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       apple9 && (!mesa_shader_stage_is_compute(nir->info.stage) ||
                  key->apple9_graphics_abi);
    if (apple9) {
+      NIR_PASS(_, nir, agx_nir_lower_apple9_handles);
+
       unsigned roots =
          agx_nir_lower_apple9_abi(nir, graphics_abi, &info->apple9_compute);
 

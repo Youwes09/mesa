@@ -20,6 +20,7 @@ libasahi_agx_files = files(
   'agx_legality.c',
   'agx_nir_legalize_apple9.c',
   'agx_nir_lower_apple9_abi.c',
+  'agx_nir_lower_apple9_handles.c',
   'agx_nir_lower_apple9_coverage.c',
   'agx_nir_lower_apple9_indirect_io.c',
   'agx_nir_lower_address.c',
