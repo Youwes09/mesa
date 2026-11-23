@@ -2116,6 +2116,24 @@ agx_create_shader_state(struct pipe_context *pctx,
                         ? cso->ir.nir
                         : tgsi_to_nir(cso->tokens, pctx->screen, false);
 
+   /* Apple9 has fewer varying components than the API's whole slots allow */
+   mesa_shader_stage stage = nir->info.stage;
+   bool varyings = stage == MESA_SHADER_FRAGMENT ||
+                   stage == MESA_SHADER_GEOMETRY ||
+                   ((stage == MESA_SHADER_VERTEX ||
+                     stage == MESA_SHADER_TESS_EVAL) &&
+                    (nir->info.next_stage == MESA_SHADER_FRAGMENT ||
+                     nir->info.next_stage == MESA_SHADER_NONE));
+
+   if (agx_is_apple9(dev) && cso->report_compile_error && varyings &&
+       !agx_apple9_varyings_fit(nir)) {
+      ((struct pipe_shader_state *)cso)->error_message =
+         strdup("Too many varying components for Apple9");
+      ralloc_free(nir);
+      ralloc_free(so);
+      return NULL;
+   }
+
    if (nir->info.stage == MESA_SHADER_VERTEX ||
        nir->info.stage == MESA_SHADER_TESS_EVAL) {
       so->variants = asahi_vs_shader_key_table_create(so);
