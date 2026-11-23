@@ -4210,10 +4210,16 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    if (!apple9)
       NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
+   /* Apple9 runs the preamble per workgroup, so one invocation gains nothing */
+   bool single_invocation =
+      apple9 && mesa_shader_stage_is_compute(nir->info.stage) &&
+      !nir->info.workgroup_size_variable && nir->info.workgroup_size[0] == 1 &&
+      nir->info.workgroup_size[1] == 1 && nir->info.workgroup_size[2] == 1;
+
    /* Force preamble generation for internal shaders since hk's meta copies
     * depend on it for correctness with imgwblk intrinsics.
     */
-   if (preamble_size &&
+   if (preamble_size && !single_invocation &&
        (!(agx_compiler_debug & AGX_DBG_NOPREAMBLE) || nir->info.internal)) {
       unsigned sizes[] = {
          *preamble_size,
