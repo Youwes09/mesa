@@ -44,7 +44,10 @@ agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
                NULL, NULL);
       NIR_PASS(_, shader, agx_nir_lower_monolithic_msaa, tib->nr_samples);
       NIR_PASS(_, shader, agx_nir_lower_multisampled_image_store);
-      NIR_PASS(_, shader, agx_nir_lower_texture);
+
+      /* Spilled render targets. Apple9 does not spill, lowers textures once */
+      if (!tib->apple9)
+         NIR_PASS(_, shader, agx_nir_lower_texture);
       NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_tex_handle_to_u0,
                nir_metadata_control_flow, NULL);
    }
