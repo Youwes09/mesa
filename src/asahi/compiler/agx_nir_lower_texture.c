@@ -405,6 +405,19 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
    if (nir_tex_instr_src_index(tex, nir_tex_src_backend1) >= 0)
       return false;
 
+   /* Texture results are 32-bit, so narrow 16-bit destinations afterwards */
+   if (tex->def.bit_size == 16) {
+      nir_alu_type base = nir_alu_type_get_base_type(tex->dest_type);
+      tex->def.bit_size = 32;
+      tex->dest_type = base | 32;
+
+      b->cursor = nir_after_instr(&tex->instr);
+      nir_def *narrow = base == nir_type_float ? nir_f2f16(b, &tex->def)
+                                               : nir_u2u16(b, &tex->def);
+      nir_def_rewrite_uses_after(&tex->def, narrow);
+      b->cursor = nir_before_instr(&tex->instr);
+   }
+
    bool fetch = tex->op == nir_texop_txf || tex->op == nir_texop_txf_ms;
    bool cube = tex->sampler_dim == GLSL_SAMPLER_DIM_CUBE;
    bool volume = tex->sampler_dim == GLSL_SAMPLER_DIM_3D;
