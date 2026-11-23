@@ -3509,7 +3509,7 @@ agx_apple9_runtime_sampler(uint32_t *record,
    record[AGX_APPLE9_SAMP_MAX_LOD] = fui(state->max_lod);
    record[AGX_APPLE9_SAMP_BIAS] = fui(CLAMP(state->lod_bias, -16.f, 16.f));
    record[AGX_APPLE9_SAMP_BORDER] = apple9_border_preset(state);
-   record[AGX_APPLE9_SAMP_PIXEL_COORDS] = state->unnormalized_coords;
+   /* Rectangle textures are normalized in NIR, so SAMP_PIXEL_COORDS stays 0 */
    record[AGX_APPLE9_SAMP_MAX_ANISOTROPY] = fui(MAX2(state->max_anisotropy, 1));
    record[AGX_APPLE9_SAMP_SEAMFUL_CUBE] = !state->seamless_cube_map;
 }
