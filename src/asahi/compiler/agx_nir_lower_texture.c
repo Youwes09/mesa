@@ -1187,6 +1187,9 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
       .lower_index_to_offset = true,
       .lower_sampler_lod_bias = support_lod_bias && !apple9,
 
+      /* Apple9 texel fetches have no offset form */
+      .lower_txf_offset = apple9,
+
       /* Unclear if/how mipmapped 1D textures work in the hardware. */
       .lower_1d = true,
 
