@@ -2725,6 +2725,11 @@ load("helper_arg_hi_agx", [], [], [CAN_ELIMINATE])
 # Must only appear in the last block of the shader part.
 intrinsic("export_agx", [0], indices=[BASE])
 
+# Apple9 cube face selection: the major axis, the face (0-5) and the face's u
+# and v, so that the face coordinates are u / major + 0.5 and v / major + 0.5.
+intrinsic("cube_face_agx", src_comp=[3], dest_comp=4, bit_sizes=[32],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+
 # Pack an RGB(A) FP32 colour into one 32-bit word of the given packed format
 # (R11G11B10_FLOAT or R10G10B10A2_UNORM, component 0 in the low bits), as the
 # Apple9 single-instruction format pack does.

@@ -752,6 +752,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
 
    case nir_intrinsic_optimization_barrier_vgpr_amd:
    case nir_intrinsic_pack_format_agx:
+   case nir_intrinsic_cube_face_agx:
       is_divergent = src_divergent(instr->src[0], state);
       break;
 

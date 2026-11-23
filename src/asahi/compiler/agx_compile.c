@@ -2019,6 +2019,9 @@ translate_simd_op(nir_op op)
 #undef CASE
 }
 
+static agx_instr *agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
+                                            nir_intrinsic_instr *instr);
+
 static agx_instr *
 agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 {
@@ -2095,6 +2098,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_store_local_pixel_agx:
       return agx_emit_local_store_pixel(b, instr);
+
+   case nir_intrinsic_cube_face_agx:
+      return agx_emit_cube_face_apple9(b, dst, instr);
 
    case nir_intrinsic_pack_format_agx: {
       /* RGB10A2 from four channels, RG11B10F from three */
@@ -3238,54 +3244,30 @@ agx_gather_for_nir(nir_tex_instr *tex)
    }
 }
 
-/*
- * Apple9 cube maps: CUBE selects the face of a direction, returning the major
- * axis with the face in the low half of the next register (mode 0), and the
- * two other components (modes 1 and 2), from which the face coordinates are
- * u / major + 0.5 and v / major + 0.5. Cube arrays have the face in bits 12-14
- * of their LOD word, cube maps in its low bits and in their third word.
- */
-static void
-agx_emit_cube_apple9(agx_builder *b, agx_index *words, bool array,
-                     bool as_array)
+/* CUBE mode 0 gives the major axis and face, modes 1 and 2 the components */
+static agx_instr *
+agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
+                          nir_intrinsic_instr *instr)
 {
+   agx_index c[3];
+   for (unsigned i = 0; i < 3; ++i)
+      c[i] = agx_extract_nir_src(b, instr->src[0], i);
+
    agx_index major = agx_vec_temp(b->shader, AGX_SIZE_32, 2);
-   agx_cube_to(b, major, words[0], words[1], words[2], 0);
+   agx_cube_to(b, major, c[0], c[1], c[2], 0);
 
-   agx_index major_face[2];
-   agx_emit_split(b, major_face, major, 2);
-
-   agx_index rcp = agx_rcp(b, major_face[0]);
-   agx_index half = agx_mov_imm(b, 32, fui(0.5f));
-   agx_index uv[2];
-
-   for (unsigned i = 0; i < 2; ++i) {
-      uv[i] = agx_temp(b->shader, AGX_SIZE_32);
-      agx_cube_to(b, uv[i], words[0], words[1], words[2], 1 + i);
-   }
-
-   for (unsigned i = 0; i < 2; ++i)
-      words[i] = agx_ffma(b, uv[i], rcp, half);
+   agx_index out[4];
+   agx_emit_split(b, out, major, 2);
 
    /* Only the low half of the face's register is defined */
-   agx_index face = agx_extend_apple9(b, major_face[1], 16, false);
+   out[1] = agx_extend_apple9(b, out[1], 16, false);
 
-   if (as_array) {
-      /* The face as a layer of a 2D array, 6 * cube + face, in place of the
-       * cube index in the low bits of the LOD word
-       */
-      agx_index cube = agx_extend_apple9(b, words[3], 16, false);
-      agx_index layer =
-         array ? agx_imad(b, cube, agx_immediate(6), face, 0) : face;
-
-      words[2] = layer;
-      words[3] = agx_or(b, agx_xor(b, words[3], cube), layer);
-      return;
+   for (unsigned i = 0; i < 2; ++i) {
+      out[2 + i] = agx_temp(b->shader, AGX_SIZE_32);
+      agx_cube_to(b, out[2 + i], c[0], c[1], c[2], 1 + i);
    }
 
-   words[2] = face;
-   words[3] =
-      agx_or(b, words[3], array ? agx_shl32(b, face, agx_immediate(12)) : face);
+   return agx_emit_collect_to(b, dst, 4, out);
 }
 
 /*
@@ -3344,10 +3326,8 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
       b->shader->out->apple9_tile_domain =
          MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
+   /* Cube coordinates are projected by agx_nir_lower_texture */
    bool cube_as_array = instr->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
-
-   if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE && !fetch)
-      agx_emit_cube_apple9(b, words, instr->is_array, cube_as_array);
 
    agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, nr);
    params.reg_class = RA_EXPORT;
