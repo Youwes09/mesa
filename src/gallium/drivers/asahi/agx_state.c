@@ -1496,12 +1496,12 @@ agx_compile_nir(struct agx_device *dev, nir_shader *nir,
       NIR_PASS(_, nir, agx_nir_lower_interpolation);
    }
 
-   /* Apple9 launches take the workgroup size of graphics stages run as
-    * compute shaders from the dispatch.
-    */
+   /* Graphics stages run as compute take the dispatch's workgroup size */
    if (agx_is_apple9(dev) && nir->info.stage == MESA_SHADER_COMPUTE &&
-       !nir->info.workgroup_size[0])
+       (stage != MESA_SHADER_COMPUTE || !nir->info.workgroup_size[0])) {
       nir->info.workgroup_size_variable = true;
+      memset(nir->info.workgroup_size, 0, sizeof(nir->info.workgroup_size));
+   }
 
    /* We always use dynamic sample shading in the GL driver. Indicate that. */
    if (nir->info.stage == MESA_SHADER_FRAGMENT &&
