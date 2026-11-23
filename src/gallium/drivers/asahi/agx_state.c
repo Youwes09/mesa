@@ -4186,8 +4186,9 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
          agx_batch_upload_pbe(batch, &pbe, &view, true, true, false,
                               no_compress);
 
+         /* PBE dimension: array and 3D layers are stored as 2D arrays */
          enum agx_texture_dimension dim =
-            agx_translate_tex_dim(agx_pbe_image_target(&view, false, false),
+            agx_translate_tex_dim(agx_pbe_image_target(&view, true, false),
                                   util_res_sample_count(&rsrc->base));
 
          ASSERTED bool translated = agx_apple9_translate_pbe(
