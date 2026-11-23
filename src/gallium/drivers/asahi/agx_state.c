@@ -4009,7 +4009,7 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
    uint64_t launch;
    if (!agx_apple9_prepare_compute_dispatch(
           dev, &batch->pipeline_pool, bo, profile, addresses, count, textures,
-          samplers, &geometry,
+          samplers, 0, &geometry,
           profile->preamble_size ? bo->va->addr + profile->preamble_offset : 0,
           &launch)) {
       UNREACHABLE("Apple9 pre-rasterization launch state is invalid");
@@ -7877,7 +7877,8 @@ agx_launch_grid(struct pipe_context *pipe, const struct pipe_grid_info *info)
       uint64_t launch_address;
       if (!agx_apple9_prepare_compute_dispatch(
              dev, &batch->pipeline_pool, cs->bo, &cs->apple9_compute_profile,
-             resource_addresses, resource_count, textures, samplers, &geometry,
+             resource_addresses, resource_count, textures, samplers, 0,
+             &geometry,
              cs->apple9_compute_profile.preamble_size
                 ? cs->bo->va->addr + cs->apple9_compute_profile.preamble_offset
                 : 0,

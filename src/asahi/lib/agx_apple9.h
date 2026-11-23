@@ -429,7 +429,7 @@ bool agx_apple9_compute_launch_template(
 bool agx_apple9_prepare_compute_dispatch(
    struct agx_device *dev, struct agx_pool *usc_pool, struct agx_bo *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
-   unsigned resource_count, uint64_t textures, uint64_t samplers,
+   unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
    const struct agx_apple9_compute_geometry *geometry,
    uint64_t preamble_address, uint64_t *launch_address);
 
