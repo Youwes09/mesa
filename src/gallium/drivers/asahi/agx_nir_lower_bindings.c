@@ -174,6 +174,81 @@ lower(nir_builder *b, nir_instr *instr, void *data)
    return true;
 }
 
+/* Apple9 texture indices are immediates, so select among the textures */
+static nir_def *
+select_texture(nir_builder *b, nir_tex_instr *tex, nir_def *index, bool sampler,
+               unsigned i, unsigned count)
+{
+   nir_tex_instr *copy =
+      nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
+   copy->texture_index += i;
+   if (sampler)
+      copy->sampler_index += i;
+
+   /* Out-of-bounds indices are undefined, take the last texture */
+   if (i + 1 == count) {
+      nir_builder_instr_insert(b, &copy->instr);
+      return &copy->def;
+   }
+
+   nir_push_if(b, nir_ieq_imm(b, index, i));
+   nir_builder_instr_insert(b, &copy->instr);
+   nir_push_else(b, NULL);
+   nir_def *other = select_texture(b, tex, index, sampler, i + 1, count);
+   nir_pop_if(b, NULL);
+   return nir_if_phi(b, &copy->def, other);
+}
+
+static bool
+lower_dynamic_texture_index(nir_shader *shader)
+{
+   bool progress = false;
+
+   nir_foreach_function_impl(impl, shader) {
+      struct util_dynarray texs;
+      util_dynarray_init(&texs, NULL);
+
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type == nir_instr_type_tex &&
+                nir_tex_instr_src_index(nir_instr_as_tex(instr),
+                                        nir_tex_src_texture_offset) >= 0)
+               util_dynarray_append(&texs, nir_instr_as_tex(instr));
+         }
+      }
+
+      util_dynarray_foreach(&texs, nir_tex_instr *, it) {
+         nir_tex_instr *tex = *it;
+         nir_builder b = nir_builder_at(nir_before_instr(&tex->instr));
+
+         nir_def *index = nir_steal_tex_src(tex, nir_tex_src_texture_offset);
+         nir_def *sampler = nir_steal_tex_src(tex, nir_tex_src_sampler_offset);
+         progress = true;
+
+         if (nir_scalar_is_const(nir_scalar_resolved(index, 0))) {
+            unsigned offset = nir_scalar_as_uint(nir_scalar_resolved(index, 0));
+            tex->texture_index += offset;
+            if (sampler)
+               tex->sampler_index += offset;
+            continue;
+         }
+
+         unsigned count =
+            MAX2(shader->info.num_textures, tex->texture_index + 1) -
+            tex->texture_index;
+
+         nir_def *res = select_texture(&b, tex, nir_u2u32(&b, index),
+                                       sampler != NULL, 0, count);
+         nir_def_replace(&tex->def, res);
+      }
+
+      nir_progress(progress, impl, nir_metadata_none);
+      util_dynarray_fini(&texs);
+   }
+
+   return progress;
+}
+
 bool
 agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers)
 {
@@ -185,6 +260,9 @@ agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers)
     * chance.
     */
    progress |= nir_opt_constant_folding(shader);
+
+   if (agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9)
+      progress |= lower_dynamic_texture_index(shader);
 
    progress |= nir_shader_instructions_pass(
       shader, lower, nir_metadata_control_flow, uses_bindless_samplers);
