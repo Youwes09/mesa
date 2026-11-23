@@ -11,9 +11,11 @@
 #include <stdio.h>
 #include "indices/u_primconvert.h"
 
+#include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/compiler/agx_nir.h"
+#include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_abi.h"
@@ -1842,6 +1844,20 @@ agx_gather_shade_model_color(nir_builder *b, nir_intrinsic_instr *intr,
    return false;
 }
 
+/* Queries of textures bound by index, answered from texture state */
+static bool
+agx_flag_texture_metadata_queries(nir_builder *b, nir_tex_instr *tex,
+                                  UNUSED void *data)
+{
+   if (!nir_tex_instr_is_query(tex) ||
+       nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0 ||
+       (tex->backend_flags & AGX_TEXTURE_FLAG_METADATA_QUERY))
+      return false;
+
+   tex->backend_flags |= AGX_TEXTURE_FLAG_METADATA_QUERY;
+   return true;
+}
+
 static void
 agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
                       nir_shader *nir, bool support_lod_bias, bool robust)
@@ -1953,10 +1969,23 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
          .callback = agx_mem_vectorize_cb,
       });
 
+   /* Apple9 storage images go through storage descriptors, queries included */
+   bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
+   if (apple9) {
+      NIR_PASS(_, nir, agx_nir_lower_apple9_storage);
+      NIR_PASS(_, nir, agx_nir_lower_images);
+      NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
+               nir_metadata_all, NULL);
+      NIR_PASS(_, nir, agx_nir_lower_texture_queries);
+   }
+
    NIR_PASS(_, nir, agx_nir_lower_texture);
    NIR_PASS(_, nir, nir_lower_ssbo, NULL);
 
    agx_preprocess_nir(nir);
+
+   if (apple9)
+      NIR_PASS(_, nir, agx_nir_lower_apple9_image_barriers);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT &&
        (nir->info.inputs_read & VARYING_BITS_TEX_ANY)) {
@@ -3158,13 +3187,16 @@ agx_update_descriptors(struct agx_batch *batch, struct agx_compiled_shader *cs)
    if (ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SSBO)
       agx_set_ssbo_uniforms(batch, stage);
 
-   if (ctx->stage[stage].dirty & AGX_STAGE_DIRTY_IMAGE)
+   /* Apple9 uploads the texture and sampler tables with each launch */
+   bool apple9 = agx_is_apple9(agx_device(ctx->base.screen));
+
+   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_IMAGE) && !apple9)
       agx_upload_textures(batch, cs, stage);
 
    if (ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER)
       agx_set_sampler_uniforms(batch, stage);
 
-   if (ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER)
+   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER) && !apple9)
       agx_upload_samplers(batch, cs, stage);
 
    struct agx_stage_uniforms *unif = &batch->stage_uniforms[stage];
@@ -3428,10 +3460,26 @@ agx_apple9_runtime_sampler(uint32_t *record,
 static uint64_t
 agx_apple9_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
 {
-   size_t size = AGX_APPLE9_RUNTIME_SAMPLER_OFFSET +
-                 PIPE_MAX_SAMPLERS * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE;
+   static_assert(PIPE_MAX_SAMPLERS * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE +
+                       AGX_APPLE9_RUNTIME_SAMPLER_OFFSET ==
+                    AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET,
+                 "runtime records of every sampler");
+
+   size_t size = AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 4;
    struct agx_ptr sysvals = agx_pool_alloc_aligned(&batch->pool, size, 16);
    memset(sysvals.cpu, 0, size);
+
+   /* Storage image fetches use the texel fetch sampler by aperture index */
+   struct agx_device *dev = agx_device(batch->ctx->base.screen);
+   struct agx_ptr fetch = agx_pool_alloc_aligned(
+      &batch->pipeline_pool, AGX_APPLE9_SAMPLER_TABLE_STRIDE,
+      AGX_APPLE9_SAMPLER_TABLE_STRIDE);
+   agx_apple9_pack_fetch_sampler(fetch.cpu);
+
+   uint32_t fetch_index =
+      (fetch.gpu - dev->shader_base) / AGX_APPLE9_SAMPLER_TABLE_STRIDE;
+   memcpy((uint8_t *)sysvals.cpu + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET,
+          &fetch_index, sizeof(fetch_index));
 
    float *bias =
       (float *)((uint8_t *)sysvals.cpu + AGX_APPLE9_SAMPLER_BIAS_OFFSET);
@@ -3516,6 +3564,56 @@ agx_apple9_store_uncompressed(const struct agx_batch *batch,
    return false;
 }
 
+static void
+agx_apple9_null_storage(struct agx_apple9_storage_descriptor *desc)
+{
+   *desc = (struct agx_apple9_storage_descriptor){0};
+   agx_set_null_texture(&desc->common.tex);
+   agx_set_null_pbe(&desc->common.pbe);
+}
+
+/*
+ * Storage descriptor of an image view (agx_apple9_storage.h): the texture and
+ * PBE words of the view, as Apple8 binds images, and the texel layout the
+ * compiler's software accesses use. Reads that no write of the invocation can
+ * precede use the native texture entry. Writes and atomics go through memory.
+ */
+static bool
+agx_apple9_pack_storage(struct agx_batch *batch,
+                        struct agx_apple9_storage_descriptor *desc,
+                        struct pipe_image_view *view)
+{
+   struct agx_resource *rsrc = agx_resource(view->resource);
+   agx_apple9_null_storage(desc);
+
+   /* Cubes are 2D arrays, matching the compiler */
+   struct pipe_sampler_view sampler_view = util_image_to_sampler_view(view);
+   if (target_is_cube(sampler_view.target))
+      sampler_view.target = PIPE_TEXTURE_2D_ARRAY;
+
+   agx_pack_texture(&desc->common.tex, rsrc, view->format, &sampler_view);
+   agx_batch_upload_pbe(batch, &desc->common.pbe, view, false, false, false,
+                        false);
+
+   agx_apple9_texel_layout(view->format, &desc->metadata);
+   desc->store_encode = agx_apple9_store_encode(view->format);
+
+   if (rsrc->base.target == PIPE_BUFFER) {
+      desc->metadata.base = agx_map_gpu(rsrc) + view->u.buf.offset;
+      desc->metadata.elements =
+         agx_texture_buffer_size_el(view->format, view->u.buf.size);
+      return true;
+   }
+
+   desc->metadata.elements =
+      view->u.tex.level | (view->u.tex.first_layer << 16);
+
+   if (agx_apple9_translate_texture(desc->texture, &desc->common.tex))
+      desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+
+   return true;
+}
+
 /* Native texture record of a sampler view */
 static bool
 agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
@@ -3588,11 +3686,10 @@ agx_apple9_upload_tables(struct agx_batch *batch,
 
    unsigned nr_textures = cs->so ? cs->so->info.nr_bindful_textures : 0;
    unsigned nr_images = cs->so ? cs->so->info.nr_bindful_images : 0;
-   unsigned nr_descriptors = nr_textures + 2 * nr_images;
 
-   if (nr_descriptors) {
+   if (nr_textures) {
       struct agx_ptr t = agx_pool_alloc_aligned(
-         &batch->pool, nr_descriptors * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
+         &batch->pool, nr_textures * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
       uint8_t *out = t.cpu;
 
       for (unsigned i = 0; i < nr_textures; ++i) {
@@ -3614,57 +3711,33 @@ agx_apple9_upload_tables(struct agx_batch *batch,
             agx_batch_reads(batch, view->rsrc);
       }
 
-      for (unsigned i = 0; i < nr_images; ++i) {
-         uint8_t *texture =
-            out + (nr_textures + 2 * i) * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
-         uint8_t *pbe = texture + AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+      *textures = t.gpu;
+   }
 
+   /* Images are handles from texture_base, see agx_nir_lower_bindings */
+   batch->stage_uniforms[stage].texture_base = 0;
+
+   if (nr_images) {
+      struct agx_ptr t = agx_pool_alloc_aligned(
+         &batch->pipeline_pool,
+         nr_images * sizeof(struct agx_apple9_storage_descriptor),
+         AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+      struct agx_apple9_storage_descriptor *out = t.cpu;
+
+      for (unsigned i = 0; i < nr_images; ++i) {
          if (!(st->image_mask & BITFIELD_BIT(i))) {
-            agx_apple9_set_null_texture(texture);
-            memset(pbe, 0, AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+            agx_apple9_null_storage(&out[i]);
             continue;
          }
 
          struct pipe_image_view *view = &st->images[i];
-         struct agx_resource *rsrc = agx_resource(view->resource);
          agx_batch_track_image(batch, view, stage);
 
-         /* Cubes are 2D arrays, matching the compiler */
-         struct pipe_sampler_view sampler_view =
-            util_image_to_sampler_view(view);
-         if (target_is_cube(sampler_view.target))
-            sampler_view.target = PIPE_TEXTURE_2D_ARRAY;
-
-         struct agx_texture_packed tex;
-         agx_pack_texture(&tex, rsrc, view->format, &sampler_view);
-         if (!agx_apple9_translate_texture(texture, &tex))
+         if (!agx_apple9_pack_storage(batch, &out[i], view))
             return false;
-
-         bool uncompressed = agx_apple9_store_uncompressed(batch, view, rsrc);
-         struct ail_layout layout = rsrc->layout;
-         layout.compressed &= !uncompressed;
-
-         struct agx_pbe_packed legacy;
-         agx_batch_upload_pbe(batch, &legacy, view, false, false, false,
-                              uncompressed);
-
-         enum agx_texture_dimension dim =
-            agx_translate_tex_dim(agx_pbe_image_target(view, false, false),
-                                  util_res_sample_count(&rsrc->base));
-
-         if (!agx_apple9_translate_pbe(
-                pbe, &legacy, view->format, &layout,
-                agx_map_texture_gpu(rsrc, view->u.tex.first_layer),
-                view->u.tex.level,
-                view->u.tex.last_layer - view->u.tex.first_layer + 1,
-                !view->u.tex.single_layer_view, dim)) {
-            mesa_loge("Apple9: unsupported image view (format %s)",
-                      util_format_short_name(view->format));
-            return false;
-         }
       }
 
-      *textures = t.gpu;
+      batch->stage_uniforms[stage].texture_base = t.gpu;
    }
 
    unsigned nr_samplers = 1 + st->sampler_count;

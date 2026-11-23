@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
@@ -41,10 +42,10 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 {
    bool *uses_bindless_samplers = data;
    bool progress = false;
+   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+
    /* Apple9 reads texture dimensions from memory, not the descriptor */
-   bool force_bindless =
-      agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9 &&
-      agx_nir_needs_texture_crawl(instr);
+   bool force_bindless = !apple9 && agx_nir_needs_texture_crawl(instr);
    b->cursor = nir_before_instr(instr);
 
    if (instr->type == nir_instr_type_intrinsic) {
@@ -64,6 +65,28 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 
       nir_def *index = intr->src[0].ssa;
       nir_scalar index_scalar = nir_scalar_resolved(index, 0);
+
+      /* Apple9 images are storage descriptors, writes and atomics use PBEs */
+      if (apple9) {
+         index = nir_umin(b, nir_u2u32(b, index),
+                          nir_imm_int(b, b->shader->info.num_images - 1));
+
+         bool pbe = intr->intrinsic != nir_intrinsic_image_load &&
+                    intr->intrinsic != nir_intrinsic_image_size &&
+                    intr->intrinsic != nir_intrinsic_image_samples;
+         nir_def *offset = nir_iadd_imm(
+            b,
+            nir_imul_imm(b, index,
+                         sizeof(struct agx_apple9_storage_descriptor)),
+            pbe ? sizeof(struct agx_texture_packed) : 0);
+
+         nir_rewrite_image_intrinsic(
+            intr,
+            nir_bindless_image_agx(b, offset,
+                                   .desc_set = AGX_APPLE9_IMAGE_TABLE_UNIFORM),
+            nir_image_intrinsic_type_bindless);
+         return true;
+      }
 
       /* Remap according to the driver layout */
       unsigned offset = BITSET_LAST_BIT(b->shader->info.textures_used);
@@ -108,7 +131,8 @@ lower(nir_builder *b, nir_instr *instr, void *data)
    } else if (instr->type == nir_instr_type_tex) {
       nir_tex_instr *tex = nir_instr_as_tex(instr);
 
-      if (((BITSET_COUNT(b->shader->info.samplers_used) > 16) &&
+      if (!apple9 &&
+          ((BITSET_COUNT(b->shader->info.samplers_used) > 16) &&
            (nir_tex_instr_src_index(tex, nir_tex_src_sampler_offset) >= 0 ||
             tex->sampler_index >= 16)) &&
           lower_sampler(b, tex)) {
@@ -118,6 +142,11 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 
       /* Nothing to do for "real" bindless */
       if (nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0)
+         return progress;
+
+      /* Apple9 texture instructions index the whole texture table */
+      if (apple9 &&
+          nir_tex_instr_src_index(tex, nir_tex_src_texture_offset) == -1)
          return progress;
 
       /* Textures are mapped 1:1, so if we can prove it fits in a texture state

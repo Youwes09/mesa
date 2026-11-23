@@ -2264,9 +2264,7 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
 
       caps->max_shader_buffers = PIPE_MAX_SHADER_BUFFERS;
 
-      /* Gallium storage images are not lowered for Apple9 */
-      caps->max_shader_images =
-         agx_is_apple9(agx_device(pscreen)) ? 0 : PIPE_MAX_SHADER_IMAGES;
+      caps->max_shader_images = PIPE_MAX_SHADER_IMAGES;
    }
 
    /* Apple9 cannot compile tessellation control shaders yet: their stores
@@ -2572,8 +2570,6 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       /* Seamless filtering is per sampler in the native descriptor and the
        * compiler key, so it can come from texture state too. */
       caps->seamless_cube_map_per_texture = true;
-      caps->image_load_formatted = false;
-      caps->image_store_formatted = false;
       /* Gathers use the native gather sample, including constant offsets. */
       caps->max_texture_gather_components = 4;
       caps->max_varyings = AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
@@ -2616,8 +2612,6 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
       return true;
 
    if (agx_apple9_direct_render_enabled(agx_device(pscreen))) {
-      if (usage & PIPE_BIND_SHADER_IMAGE)
-         return false;
       if ((usage & PIPE_BIND_RENDER_TARGET) &&
           ((target != PIPE_TEXTURE_1D && target != PIPE_TEXTURE_1D_ARRAY &&
             target != PIPE_TEXTURE_RECT && target != PIPE_TEXTURE_2D &&

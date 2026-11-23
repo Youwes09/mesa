@@ -546,6 +546,67 @@ agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
    return progress;
 }
 
+struct image_table {
+   bool used;
+   unsigned uniform;
+};
+
+static bool
+find_image_table(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   struct image_table *table = data;
+   table->used |=
+      intr->intrinsic == nir_intrinsic_bindless_image_agx &&
+      nir_intrinsic_desc_set(intr) == AGX_APPLE9_IMAGE_TABLE_UNIFORM;
+   return false;
+}
+
+/* Push texture_base of the stage, unless a range already holds it */
+static unsigned
+push_image_table(struct agx_compiled_shader *shader, unsigned uniform,
+                 struct image_table *table)
+{
+   unsigned stage_table = AGX_SYSVAL_STAGE(shader->stage);
+   struct agx_stage_uniforms *s = NULL;
+   uint16_t offset = (uintptr_t)&s->texture_base;
+
+   for (unsigned i = 0; i < shader->push_range_count; ++i) {
+      struct agx_push_range *range = &shader->push[i];
+
+      if (range->table == stage_table && range->offset <= offset &&
+          offset + 8 <= range->offset + range->length * 2) {
+         table->uniform = range->uniform + (offset - range->offset) / 2;
+         return uniform;
+      }
+   }
+
+   assert((shader->push_range_count < ARRAY_SIZE(shader->push)) &&
+          "AGX_MAX_PUSH_RANGES must be an upper bound");
+
+   uniform = ALIGN_POT(uniform, 4);
+   shader->push[shader->push_range_count++] = (struct agx_push_range){
+      .uniform = uniform,
+      .table = stage_table,
+      .offset = offset,
+      .length = 4,
+   };
+
+   table->uniform = uniform;
+   return uniform + 4;
+}
+
+static bool
+assign_image_table(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   struct image_table *table = data;
+   if (intr->intrinsic != nir_intrinsic_bindless_image_agx ||
+       nir_intrinsic_desc_set(intr) != AGX_APPLE9_IMAGE_TABLE_UNIFORM)
+      return false;
+
+   nir_intrinsic_set_desc_set(intr, table->uniform);
+   return true;
+}
+
 bool
 agx_nir_layout_uniforms(nir_shader *shader,
                         struct agx_compiled_shader *compiled,
@@ -563,6 +624,20 @@ agx_nir_layout_uniforms(nir_shader *shader,
    *push_size = lay_out_uniforms(compiled, &state);
 
    util_dynarray_fini(&state.loads);
+
+   /* Apple9 image handles read the image table address from a uniform */
+   if (state.apple9) {
+      struct image_table table = {.uniform = ~0};
+
+      nir_shader_intrinsics_pass(shader, find_image_table, nir_metadata_all,
+                                 &table);
+
+      if (table.used) {
+         *push_size = push_image_table(compiled, *push_size, &table);
+         nir_shader_intrinsics_pass(shader, assign_image_table,
+                                    nir_metadata_all, &table);
+      }
+   }
 
    /* Make sure texture handles have constants associated */
    nir_opt_constant_folding(shader);
