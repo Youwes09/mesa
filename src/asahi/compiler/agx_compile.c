@@ -1299,6 +1299,21 @@ agx_emit_load_preamble(agx_builder *b, agx_index dst,
    unsigned base = nir_intrinsic_base(instr);
    unsigned stride = agx_size_align_16(dst.size);
 
+   /* Apple9 reads uniform words. Shift a 16-bit value in a high half down */
+   if (agx_is_apple9(b->shader) && instr->def.bit_size == 16) {
+      for (unsigned i = 0; i < dim; ++i) {
+         unsigned half = base + i;
+         srcs[i] = agx_uniform(half & ~1, AGX_SIZE_32);
+
+         if (half & 1)
+            srcs[i] = agx_bitfield32(b, srcs[i], 16, 16);
+         else if (dim > 1)
+            srcs[i] = agx_mov(b, srcs[i]);
+      }
+
+      return agx_emit_collect_to(b, dst, dim, srcs);
+   }
+
    for (unsigned i = 0; i < dim; ++i) {
       srcs[i] = agx_uniform(base + i * stride, dst.size);
 
