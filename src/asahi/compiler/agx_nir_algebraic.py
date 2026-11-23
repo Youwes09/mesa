@@ -163,6 +163,11 @@ for bits in range(9, 32):
          ('ubitfield_extract', a, 0, bits), apple9),
     ])
 
+# Apple9 has no bitwise not, so clear a's bits in b by xoring the common ones
+fuse_ubfe.extend([
+    (('iand', ('inot(is_used_once)', a), '#b'), ('ixor', ('iand', a, b), b), apple9),
+])
+
 # (x * y) + s = (x * y) + (s << 0)
 def imad(x, y, z):
     return ('imadshl_agx', x, y, z, 0)
