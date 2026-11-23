@@ -1689,7 +1689,7 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
    if (prog->apple9) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
       hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
-                         grid, args, NULL, NULL);
+                         grid, args, 0, NULL, NULL);
       return;
    }
 

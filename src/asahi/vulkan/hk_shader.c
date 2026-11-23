@@ -133,7 +133,14 @@ const nir_shader_compiler_options *
 hk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
                    UNUSED const struct vk_pipeline_robustness_state *rs)
 {
-   return &agx_nir_options;
+   struct hk_physical_device *pdev =
+      container_of(vk_pdev, struct hk_physical_device, vk);
+
+   /* Apple9 graphics stages are still compiled by agx_compile_apple9_* */
+   if (stage != MESA_SHADER_COMPUTE)
+      return &agx_nir_options;
+
+   return agx_nir_options_for_isa(agx_gather_device_key(&pdev->dev).shader_isa);
 }
 
 static struct spirv_to_nir_options
@@ -2624,10 +2631,12 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    if (agx_is_apple9(&dev->dev)) {
       NIR_PASS(_, nir, agx_nir_lower_apple9_storage);
       NIR_PASS(_, nir, agx_nir_lower_images);
-      /* The ordinary descriptor prefix serves storage-image queries. Sampled
-       * views' queries (AGX_TEXTURE_FLAG_METADATA_QUERY) are answered from
-       * texture metadata by the Apple9 backend. */
+      /* Storage-image queries read the descriptor, sampled ones metadata */
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
+
+      /* Graphics stages are still compiled by agx_compile_apple9_* */
+      if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+         NIR_PASS(_, nir, agx_nir_lower_texture);
    } else {
       NIR_PASS(_, nir, agx_nir_lower_texture);
    }
@@ -2971,6 +2980,46 @@ hk_apple9_init_render_stage(struct hk_shader *s)
 static VkResult
 hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
 {
+   /* Apple9 preambles are in the linked program; upload constant data only */
+   if (agx_is_apple9(&dev->dev) && shader->b.info.apple9_compute.abi) {
+      assert(!shader->b.info.rodata.size_16 && "no uniform preloads");
+
+      if (shader->data_size) {
+         shader->bo = agx_bo_create(&dev->dev, shader->data_size, 0,
+                                    AGX_BO_LOW_VA, "Constant data");
+         if (!shader->bo)
+            return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+         void *map = agx_bo_map(shader->bo);
+         if (!map)
+            return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+         memcpy(map, shader->data_ptr, shader->data_size);
+         shader->data_addr = shader->bo->va->addr;
+      }
+
+      if (!shader->linked.ht) {
+         shader->only_linked = hk_fast_link(dev, false, shader, NULL, NULL, 0);
+         if (!shader->only_linked->b.bo)
+            return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+      }
+
+      if (shader->info.stage == MESA_SHADER_COMPUTE) {
+         const struct agx_apple9_program *p = &shader->only_linked->b.apple9;
+         struct agx_apple9_launch_template *t = malloc(sizeof(*t));
+         if (t && agx_apple9_compute_launch_template(
+                     t, &p->profile, dev->dev.shader_base,
+                     p->preamble_size ? shader->only_linked->b.bo->va->addr +
+                                           p->preamble_offset
+                                      : 0))
+            shader->apple9_launch = t;
+         else
+            free(t);
+      }
+
+      return VK_SUCCESS;
+   }
+
    if (agx_is_apple9(&dev->dev)) {
       agx_apple9_dump_info(&shader->b.info);
       if (!shader->code_size || (shader->info.stage == MESA_SHADER_COMPUTE &&
@@ -3794,12 +3843,6 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       }
    }
 
-   if (agx_is_apple9(&dev->dev) && !hk_apple9_texture_bindings(nir)) {
-      ralloc_free(nir);
-      return vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                       "Apple9 texture operation without a descriptor handle");
-   }
-
    if (agx_is_apple9(&dev->dev)) {
       const char *reason = NULL;
       if (!agx_nir_lower_apple9_runtime_sampler_state(nir, &reason)) {
@@ -3818,8 +3861,9 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
 
    /* XXX: rename */
    NIR_PASS(_, nir, hk_lower_uvs_index, sw_stage, nr_vbos);
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-            agx_is_apple9(&dev->dev) ? hk_apple9_lower_roots : lower_uniforms,
+   if (agx_is_apple9(&dev->dev))
+      hk_assert_final_push_mask(nir, shader);
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_uniforms,
             nir_metadata_control_flow, &root);
 
 #if 0
@@ -3838,6 +3882,9 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       .has_scratch = !nir->info.internal,
       .promote_constants = true,
       .promote_textures = true,
+
+      /* Compute stages run API shaders, which read push words */
+      .apple9_graphics_abi = true,
    };
 
    /* For now, sample shading is always dynamic. Indicate that. */
@@ -3853,52 +3900,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       simple_mtx_lock(lock);
 
    assert(nir->info.io_lowered);
-   if (agx_is_apple9(&dev->dev)) {
-      hk_assert_final_push_mask(nir, shader);
-      /* A compute entrypoint without side effects has no GPU work, even
-       * when loads and arithmetic remain, for example once optimization has
-       * proved every store unreachable. Keep the common Asahi empty-shader
-       * marker so cached and freshly compiled shaders agree.
-       */
-      bool empty = sw_stage == MESA_SHADER_COMPUTE;
-      nir_foreach_block(block, nir_shader_get_entrypoint(nir)) {
-         nir_foreach_instr(instr, block) {
-            if (instr->type != nir_instr_type_intrinsic)
-               continue;
-            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-            if (intr->intrinsic != nir_intrinsic_barrier &&
-                !(nir_intrinsic_infos[intr->intrinsic].flags &
-                  NIR_INTRINSIC_CAN_ELIMINATE))
-               empty = false;
-         }
-      }
-
-      const char *reason = NULL;
-      if (empty) {
-         shader->b.info.stats.instrs = 1;
-      } else if (sw_stage == MESA_SHADER_COMPUTE &&
-                 agx_compile_apple9_tiny(nir, &shader->b, &shader->info.apple9,
-                                         &reason)) {
-         /* Compiled. */
-      } else if (reason == agx_apple9_compute_without_effects) {
-         /* Optimization removed every store: there is nothing to run. */
-         memset(&shader->b, 0, sizeof(shader->b));
-         memset(&shader->info.apple9, 0, sizeof(shader->info.apple9));
-         shader->b.info.stats.instrs = 1;
-      } else {
-         if (agx_get_compiler_debug())
-            mesa_loge("hk: Apple9 compute compilation failed: %s",
-                      reason ?: "unsupported stage");
-         if (lock)
-            simple_mtx_unlock(lock);
-         ralloc_free(nir);
-         return vk_errorf(dev, VK_ERROR_FEATURE_NOT_PRESENT,
-                          "Apple9 shader: %s",
-                          reason ? reason : "unsupported stage");
-      }
-   } else {
-      agx_compile_shader_nir(nir, &backend_key, &shader->b);
-   }
+   agx_compile_shader_nir(nir, &backend_key, &shader->b);
 
    if (lock)
       simple_mtx_unlock(lock);
@@ -7214,6 +7216,10 @@ hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
    struct hk_linked_shader *s = rzalloc(NULL, struct hk_linked_shader);
    agx_fast_link(&s->b, &dev->dev, fragment, &main->b, prolog, epilog,
                  nr_samples_shaded, NULL);
+
+   /* Apple9 programs are launched from their profile, see hk_cmd_apple9.c */
+   if (agx_is_apple9(&dev->dev))
+      return s;
 
    if (fragment) {
       unsigned samplers = main->b.info.sampler_state_count;

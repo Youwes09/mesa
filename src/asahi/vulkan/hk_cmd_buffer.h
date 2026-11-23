@@ -1485,7 +1485,7 @@ struct hk_apple9_prerast_bindings {
 void hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                         struct agx_shader_body *body,
                         const struct agx_apple9_compute_profile *profile,
-                        struct agx_grid grid, uint64_t root,
+                        struct agx_grid grid, uint64_t root, uint64_t push,
                         const struct hk_shader *shader,
                         const struct hk_apple9_prerast_bindings *prerast);
 

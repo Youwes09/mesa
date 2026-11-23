@@ -451,7 +451,7 @@ void
 hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                    struct agx_shader_body *body,
                    const struct agx_apple9_compute_profile *p,
-                   struct agx_grid grid, uint64_t root,
+                   struct agx_grid grid, uint64_t root, uint64_t push,
                    const struct hk_shader *shader,
                    const struct hk_apple9_prerast_bindings *prerast)
 {
@@ -530,9 +530,13 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    if (!root ||
        !agx_apple9_prepare_compute_dispatch_alloc_tmpl(
           &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
-          p->resource_binding_count, textures, samplers, 0, &geometry,
+          p->resource_binding_count, textures, samplers, push, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
-          shader && shader->apple9_body == body ? shader->apple9_launch : NULL,
+          shader && ((shader->apple9_body && shader->apple9_body == body) ||
+                     (shader->only_linked &&
+                      &shader->only_linked->b.bo->apple9_body == body))
+             ? shader->apple9_launch
+             : NULL,
           &launch)) {
       mesa_loge("hk: Apple9 dispatch failed: out of memory");
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
@@ -647,12 +651,13 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
          return;
       uint64_t stat = hk_pipeline_stat_addr(
          cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
+      const struct hk_linked_shader *linked = s->only_linked;
+      const struct agx_apple9_compute_profile *p = &linked->b.apple9.profile;
       if (hk_stat_enabled(stat)) {
          libagx_increment_cs_invocations(
             cmd, agx_1d(1), AGX_BARRIER_ALL,
             cmd->state.cs.descriptors.root.cs.group_count_addr, stat,
-            s->info.apple9.local_size[0] * s->info.apple9.local_size[1] *
-               s->info.apple9.local_size[2]);
+            p->local_size[0] * p->local_size[1] * p->local_size[2]);
       }
       if (hk_cond_render_applies(cmd)) {
          /* Predicated dispatches read zero group counts when skipped. */
@@ -668,13 +673,14 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
       }
       if (!agx_is_indirect(grid)) {
          for (unsigned d = 0; d < 3; ++d)
-            grid.count[d] *= s->info.apple9.local_size[d];
+            grid.count[d] *= p->local_size[d];
       }
+      /* Push words are the root and set addresses, as the root table starts */
       uint64_t root =
          hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
       cmd->api_dispatch = !cmd->in_meta;
-      hk_apple9_dispatch(cmd, cs, s->apple9_body, &s->info.apple9, grid, root,
-                         s, NULL);
+      hk_apple9_dispatch(cmd, cs, &linked->b.bo->apple9_body, p, grid, root,
+                         root, s, NULL);
       cmd->api_dispatch = false;
       return;
    }
@@ -790,7 +796,7 @@ hk_tess_fold_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
    cmd->tess_batch.capture = lane;
    hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
-                      grid, args, NULL, NULL);
+                      grid, args, 0, NULL, NULL);
    cmd->tess_batch.capture = NULL;
 }
 
