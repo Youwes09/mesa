@@ -4,6 +4,7 @@
  */
 
 #include "compiler/nir/nir_builder.h"
+#include "agx_compile.h"
 #include "agx_nir.h"
 
 /* Apple9 instructions name varyings by immediate. Dynamic input indices become
@@ -210,4 +211,135 @@ agx_nir_lower_apple9_indirect_io(nir_shader *nir)
    }
 
    return progress;
+}
+
+static bool
+is_user_varying(gl_varying_slot loc, bool fragment)
+{
+   switch (loc) {
+   case VARYING_SLOT_POS:
+   case VARYING_SLOT_PSIZ:
+   case VARYING_SLOT_LAYER:
+      return false;
+   case VARYING_SLOT_PNTC:
+   case VARYING_SLOT_FACE:
+   case VARYING_SLOT_PRIMITIVE_ID:
+      return !fragment;
+   default:
+      return loc < VARYING_SLOT_MAX;
+   }
+}
+
+static void
+add_components(uint8_t *masks, unsigned loc, unsigned slots, unsigned mask)
+{
+   for (unsigned s = 0; s < slots && loc + s < VARYING_SLOT_MAX; ++s)
+      masks[loc + s] |= mask;
+}
+
+unsigned
+agx_apple9_user_varying_components(const nir_shader *nir)
+{
+   bool fragment = nir->info.stage == MESA_SHADER_FRAGMENT;
+   uint8_t masks[VARYING_SLOT_MAX] = {0};
+
+   if (nir->info.io_lowered) {
+      nir_foreach_function_impl(impl, nir) {
+         nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+               if (instr->type != nir_instr_type_intrinsic)
+                  continue;
+
+               nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+               unsigned mask;
+
+               switch (intr->intrinsic) {
+               case nir_intrinsic_store_output:
+               case nir_intrinsic_store_per_vertex_output:
+                  if (fragment)
+                     continue;
+                  mask = nir_intrinsic_write_mask(intr)
+                         << nir_intrinsic_component(intr);
+                  break;
+               case nir_intrinsic_load_input:
+               case nir_intrinsic_load_interpolated_input:
+               case nir_intrinsic_load_input_vertex:
+                  if (!fragment)
+                     continue;
+                  mask = nir_component_mask(intr->def.num_components)
+                         << nir_intrinsic_component(intr);
+                  break;
+               default:
+                  continue;
+               }
+
+               /* 64-bit components take two */
+               if (nir_intrinsic_has_src_type(intr) &&
+                   nir_alu_type_get_type_size(nir_intrinsic_src_type(intr)) ==
+                      64)
+                  mask = util_widen_mask(mask, 2);
+               else if (nir_intrinsic_has_dest_type(intr) &&
+                        nir_alu_type_get_type_size(
+                           nir_intrinsic_dest_type(intr)) == 64)
+                  mask = util_widen_mask(mask, 2);
+
+               nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
+               nir_src *offset = nir_get_io_offset_src(intr);
+               unsigned first = sem.location, slots = sem.num_slots;
+               if (nir_src_is_const(*offset)) {
+                  first += nir_src_as_uint(*offset);
+                  slots = 1;
+               }
+
+               add_components(masks, first, slots, mask & 0xf);
+               add_components(masks, first + 1, slots, mask >> 4);
+            }
+         }
+      }
+   } else {
+      nir_variable_mode mode =
+         fragment ? nir_var_shader_in : nir_var_shader_out;
+      nir_foreach_variable_with_modes(var, nir, mode) {
+         const struct glsl_type *type = var->type;
+         if (nir_is_arrayed_io(var, nir->info.stage))
+            type = glsl_get_array_element(type);
+
+         unsigned slots = glsl_count_attribute_slots(type, false);
+         const struct glsl_type *elem = glsl_without_array(type);
+         unsigned comps = var->data.compact
+                             ? glsl_get_aoa_size(type)
+                             : glsl_get_components(elem) *
+                                  (glsl_type_is_64bit(elem) ? 2 : 1);
+         unsigned frac = var->data.location_frac;
+
+         if (var->data.compact) {
+            add_components(masks, var->data.location,
+                           DIV_ROUND_UP(comps + frac, 4), 0xf);
+         } else {
+            for (unsigned s = 0; s < slots; ++s) {
+               unsigned n = MIN2(comps + frac, 8);
+               add_components(masks, var->data.location + s, 1,
+                              BITFIELD_MASK(MIN2(n, 4)) & ~BITFIELD_MASK(frac));
+               if (n > 4)
+                  add_components(masks, var->data.location + s + 1, 1,
+                                 BITFIELD_MASK(n - 4));
+            }
+         }
+      }
+   }
+
+   unsigned count = 0;
+   for (unsigned loc = 0; loc < VARYING_SLOT_MAX; ++loc) {
+      if (masks[loc] && is_user_varying(loc, fragment))
+         count += util_last_bit(masks[loc]);
+   }
+
+   return count;
+}
+
+bool
+agx_apple9_varyings_fit(const nir_shader *nir)
+{
+   return agx_apple9_user_varying_components(nir) <=
+          AGX_APPLE9_MAX_VARYING_COMPONENTS;
 }
