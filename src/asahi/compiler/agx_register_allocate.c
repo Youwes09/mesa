@@ -264,6 +264,9 @@ struct ra_ctx {
     */
    unsigned *count[RA_CLASSES];
 
+   /* Apple9: GPRs exported at the end of the part, which other values avoid */
+   BITSET_WORD *export_targets;
+
    /* For affinities */
    agx_instr **src_to_collect;
    struct phi_web_node *phi_web;
@@ -848,6 +851,20 @@ find_regs_simple(struct ra_ctx *rctx, enum ra_class cls, unsigned count,
    bool found = false;
    struct placement_cost best = {.moves = ~0u};
    rctx->affinity_ssa = ~0u;
+
+   /* A value that is not exported first tries registers no export wants */
+   if (cls == RA_GPR && rctx->export_targets &&
+       rctx->src_to_collect[ssa] == NULL) {
+      for (unsigned reg = 0; reg + count <= rctx->bound[cls]; reg += align) {
+         if (!BITSET_TEST_COUNT(rctx->used_regs[cls], reg, count) &&
+             !BITSET_TEST_COUNT(rctx->export_targets, reg, count) &&
+             reg + count <= MAX2(rctx->demand, *rctx->count[cls])) {
+            *out = reg;
+            return true;
+         }
+      }
+   }
+
    for (unsigned reg = 0; reg + count <= rctx->bound[cls]; reg += align) {
       if (!BITSET_TEST_COUNT(rctx->used_regs[cls], reg, count)) {
          if (!rctx->preferred || cls != RA_GPR) {
@@ -2715,6 +2732,20 @@ agx_ra(agx_context *ctx)
    uint8_t *ncomps_unrounded = calloc(ctx->alloc, sizeof(uint8_t));
    enum ra_class *classes = calloc(ctx->alloc, sizeof(enum ra_class));
    agx_instr **src_to_collect = calloc(ctx->alloc, sizeof(agx_instr *));
+   BITSET_WORD *export_targets = NULL;
+
+   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+      agx_foreach_instr_in_block(agx_exit_block(ctx), I) {
+         if (I->op != AGX_OPCODE_EXPORT || I->src[0].reg_class != RA_GPR)
+            continue;
+
+         if (!export_targets)
+            export_targets = BITSET_CALLOC(AGX_NUM_REGS);
+
+         BITSET_SET_COUNT(export_targets, I->imm,
+                          agx_size_align_16(I->src[0].size));
+      }
+   }
    enum agx_size *sizes = calloc(ctx->alloc, sizeof(enum agx_size));
    BITSET_WORD *visited = BITSET_CALLOC(ctx->alloc);
    unsigned max_ncomps = 1;
@@ -2843,6 +2874,7 @@ agx_ra(agx_context *ctx)
              .scarcity_floor = scarcity_floor,
              .demand = demand,
              .affinity_ssa = ~0u,
+             .export_targets = export_targets,
           }))
          goto cleanup;
    }
@@ -3026,6 +3058,7 @@ cleanup:
    ralloc_free(web_memctx);
    free(phi_web);
    free(src_to_collect);
+   free(export_targets);
    free(ncomps);
    free(ncomps_unrounded);
    free(sizes);
