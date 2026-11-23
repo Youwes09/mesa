@@ -723,9 +723,7 @@ typedef struct agx_context {
    /* Number of export registers used, in 16-bit units */
    unsigned export_reg_count;
 
-   /* Apple9 vertex outputs: the export value of each UVS word written, by
-    * unlinked UVS index, or null.
-    */
+   /* Apple9 vertex outputs: each UVS word's value by unlinked index, or null */
    agx_index uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
 
    /* Promoted constants. These will be appended to the binary at the end. */

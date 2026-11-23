@@ -976,6 +976,11 @@ agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
  * at the end: here for a complete shader, by the linker for a vertex shader
  * part, whose varying slots depend on the fragment shader's interpolation
  * (agx_linker.h). The index is the UVS word's unlinked index.
+ *
+ * The values are moved to export registers in the last block, after the
+ * shader's other export use: texture and image parameter bundles must be in
+ * the first 32 export registers, which varyings written earlier could fill.
+ * Until then they are ordinary values, which can also be spilled.
  */
 static agx_instr *
 agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
@@ -991,13 +996,7 @@ agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
    agx_index value = agx_src_index(ctx, &instr->src[0]);
    assert(value.size == AGX_SIZE_32 && "no 16-bit varyings");
 
-   /* A collect rather than a move, which would be propagated */
-   agx_index pub = agx_temp(ctx, AGX_SIZE_32);
-   pub.reg_class = RA_EXPORT;
-   agx_instr *I = agx_collect_to(b, pub, 1);
-   I->src[0] = value;
-
-   ctx->uvs_exports[index] = pub;
+   ctx->uvs_exports[index] = value;
    return NULL;
 }
 
@@ -1032,16 +1031,30 @@ agx_commit_uvs_apple9(agx_context *ctx)
 {
    agx_block *exit = agx_exit_block(ctx);
 
+   agx_index pub[ARRAY_SIZE(ctx->uvs_exports)];
+
+   for (unsigned i = 0; i < ARRAY_SIZE(ctx->uvs_exports); ++i) {
+      if (agx_is_null(ctx->uvs_exports[i]))
+         continue;
+
+      /* A collect rather than a move, which would be propagated */
+      agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
+      pub[i] = agx_temp(ctx, AGX_SIZE_32);
+      pub[i].reg_class = RA_EXPORT;
+      agx_instr *I = agx_collect_to(&b, pub[i], 1);
+      I->src[0] = ctx->uvs_exports[i];
+   }
+
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->uvs_exports); ++i) {
       if (agx_is_null(ctx->uvs_exports[i]))
          continue;
 
       if (ctx->key->no_stop) {
          agx_builder b = agx_init_builder(ctx, agx_after_block(exit));
-         agx_publish(&b, ctx->uvs_exports[i], i);
+         agx_publish(&b, pub[i], i);
       } else {
          agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
-         agx_st_vary(&b, agx_immediate(i), ctx->uvs_exports[i]);
+         agx_st_vary(&b, agx_immediate(i), pub[i]);
       }
    }
 }
