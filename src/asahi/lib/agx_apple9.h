@@ -178,6 +178,8 @@ struct agx_apple9_uniform_draw {
    uint64_t fragment_table;
    /* Graphics stage indices: vertex = 0, fragment = 1. */
    uint64_t texture_table[2], sampler_table[2];
+   /* Push words of each stage (AGX_APPLE9_PUSH_ROOT) */
+   uint64_t push[2];
    uint32_t depth_control, depth_face[2], stencil[2];
    uint32_t raster_control;
    uint8_t object_type;
@@ -235,13 +237,14 @@ agx_apple9_tile_sample_bytes(unsigned color_bytes, unsigned samples)
 
 /* Prepare one native stage independently, including background/EOT helpers.
  * The caller retains the shader BO and immutable allocation until completion.
+ * push is the address of the stage's push words (AGX_APPLE9_PUSH_ROOT).
  */
 bool agx_apple9_prepare_graphics_stage(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
    const struct agx_apple9_render_stage *shader, bool fragment, uint64_t table,
-   uint64_t textures, uint64_t samplers, unsigned tile_bytes, unsigned samples,
-   uint32_t *launch);
+   uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
+   unsigned samples, uint32_t *launch);
 
 /* Whether a draw can take the previous draw's launch for stage (0 vertex, 1
  * fragment) or its coefficient table. Both need nonzero, equal program ids:
@@ -257,6 +260,7 @@ agx_apple9_draw_reuses_launch(const struct agx_apple9_uniform_draw *previous,
           previous->code[stage] == draw->code[stage] &&
           previous->texture_table[stage] == draw->texture_table[stage] &&
           previous->sampler_table[stage] == draw->sampler_table[stage] &&
+          previous->push[stage] == draw->push[stage] &&
           (stage ? previous->fragment_table == draw->fragment_table
                  : previous->vertex_table == draw->vertex_table) &&
           (!stage || (previous->samples == draw->samples &&
@@ -306,16 +310,16 @@ bool agx_apple9_prepare_draw(struct agx_device *dev, struct agx_pool *usc_pool,
                              struct agx_apple9_uniform_draw *draw,
                              const struct agx_apple9_uniform_draw *previous);
 
-/* Update only resource-table bindings of an already prepared draw. All shader,
- * texture/sampler, interpolation and raster state must remain unchanged.
- * GPU allocations remain immutable. Failure leaves the CPU draw unchanged.
+/* Update the tables and push words (unless push is NULL) of a prepared draw
+ * with unchanged shader and raster state. Failure leaves the draw unchanged.
  */
 bool agx_apple9_update_draw_tables_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
    const struct agx_apple9_render_pipeline *pipeline,
-   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2]);
+   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2],
+   const uint64_t push[2]);
 
 #define AGX_APPLE9_COMPUTE_RESOURCE_STRIDE                0x20u
 #define AGX_APPLE9_COMPUTE_SUPERSET_RESOURCE_STRIDE       0x100u

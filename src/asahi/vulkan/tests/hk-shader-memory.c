@@ -170,8 +170,9 @@ launch_body(struct hk_device *dev, struct recording *r,
       .binary_size = 64,
    };
    uint32_t launch;
-   CHECK(agx_apple9_prepare_graphics_stage(
-      &dev->dev, &r->cmd, alloc_launch, &stage, false, 0, 0, 0, 0, 1, &launch));
+   CHECK(agx_apple9_prepare_graphics_stage(&dev->dev, &r->cmd, alloc_launch,
+                                           &stage, false, 0, 0, 0, 0, 0, 1,
+                                           &launch));
 }
 static void
 check_slices_and_entries(struct hk_device *dev)

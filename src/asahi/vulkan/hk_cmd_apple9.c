@@ -274,7 +274,7 @@ hk_apple9_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    uint32_t launch;
    if (!agx_apple9_prepare_graphics_stage(
           &dev->dev, cmd, hk_apple9_usc_alloc, &shader, true, table,
-          textures.gpu, dev->apple9_reload_sampler,
+          textures.gpu, dev->apple9_reload_sampler, 0,
           agx_apple9_tile_sample_bytes(tile_bytes, key.samples), key.samples,
           &launch))
       goto fail;
@@ -639,7 +639,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          }
          if (!agx_apple9_update_draw_tables_alloc(
                 &dev->dev, cmd, hk_apple9_usc_alloc, cmd,
-                hk_apple9_context_alloc, pipeline, record, tables)) {
+                hk_apple9_context_alloc, pipeline, record, tables, NULL)) {
             vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
             return true;
          }

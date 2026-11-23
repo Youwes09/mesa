@@ -1388,8 +1388,8 @@ agx_apple9_prepare_graphics_stage(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
    const struct agx_apple9_render_stage *shader, bool fragment, uint64_t table,
-   uint64_t textures, uint64_t samplers, unsigned tile_bytes, unsigned samples,
-   uint32_t *launch)
+   uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
+   unsigned samples, uint32_t *launch)
 {
    if (!shader->bo || !shader->publication_count_valid)
       return false;
@@ -1433,6 +1433,7 @@ agx_apple9_prepare_graphics_stage(
       apple9_put_u64(roots, textures);
       apple9_put_u64(roots + 8, samplers);
       apple9_put_u64(roots + 0x10, table);
+      apple9_put_u64(roots + 8 * AGX_APPLE9_PUSH_ROOT, push);
       if (!agx_apple9_launch_template_emit(roots + roots_size, tmpl, state.gpu,
                                            entry, state.gpu + roots_size))
          return false;
@@ -1445,6 +1446,7 @@ agx_apple9_prepare_graphics_stage(
    apple9_put_u64(roots, textures);
    apple9_put_u64(roots + 8, samplers);
    apple9_put_u64(roots + 0x10, table);
+   apple9_put_u64(roots + 8 * AGX_APPLE9_PUSH_ROOT, push);
    struct agx_ptr state = alloc(allocator, sizeof(canonical), 64);
    if (!state.cpu)
       return false;
@@ -1565,6 +1567,7 @@ agx_apple9_prepare_draw_alloc(
       if (!agx_apple9_prepare_graphics_stage(
              dev, usc_allocator, usc_alloc, shader, stage != 0, table,
              draw->texture_table[stage], draw->sampler_table[stage],
+             draw->push[stage],
              agx_apple9_tile_sample_bytes(tile_bytes, samples), samples,
              &draw->launch[stage]))
          return false;
@@ -1739,21 +1742,25 @@ agx_apple9_update_draw_tables_alloc(
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
    const struct agx_apple9_render_pipeline *pipeline,
-   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2])
+   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2],
+   const uint64_t push[2])
 {
    const struct agx_apple9_render_stage *stages[] = {pipeline->vertex,
                                                      pipeline->fragment};
    const uint64_t old_tables[] = {draw->vertex_table, draw->fragment_table};
+   const uint64_t new_push[] = {push ? push[0] : draw->push[0],
+                                push ? push[1] : draw->push[1]};
    uint32_t launch[] = {draw->launch[0], draw->launch[1]};
    for (unsigned stage = 0; stage < 2; ++stage) {
       assert(draw->program_id[stage] == stages[stage]->program_id);
       assert(draw->code[stage] == apple9_stage_body(stages[stage])->addr);
-      if (tables[stage] == old_tables[stage])
+      if (tables[stage] == old_tables[stage] &&
+          new_push[stage] == draw->push[stage])
          continue;
       if (!agx_apple9_prepare_graphics_stage(
              dev, usc_allocator, usc_alloc, stages[stage], stage != 0,
              tables[stage], draw->texture_table[stage],
-             draw->sampler_table[stage],
+             draw->sampler_table[stage], new_push[stage],
              agx_apple9_tile_sample_bytes(draw->tile_bytes, draw->samples),
              draw->samples, &launch[stage]))
          return false;
@@ -1777,6 +1784,7 @@ agx_apple9_update_draw_tables_alloc(
     */
    draw->vertex_table = tables[0];
    draw->fragment_table = tables[1];
+   memcpy(draw->push, new_push, sizeof(new_push));
    memcpy(draw->launch, launch, sizeof(launch));
    apple9_put_u32(draw->ppp_record + 0x54, launch[1] / 0x40);
    draw->ppp = ppp;

@@ -169,7 +169,7 @@ main(void)
                      &draw[0], &previous));
                   CHECK(agx_apple9_update_draw_tables_alloc(
                      dev, &usc[1], allocate, &context[1], allocate, &pipeline,
-                     &draw[1], tables));
+                     &draw[1], tables, NULL));
                   compare(&pipeline, draw, usc, context);
                   CHECK(!memcmp(old_usc, usc[1].bytes, usc_used));
                   CHECK(!memcmp(old_ctx, context[1].bytes, ctx_used));
@@ -198,7 +198,8 @@ main(void)
                      c.gpu =
                         AGX_APPLE9_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
                   CHECK(!agx_apple9_update_draw_tables_alloc(
-                     dev, &u, allocate, &c, allocate, &pipeline, &d, tables));
+                     dev, &u, allocate, &c, allocate, &pipeline, &d, tables,
+                     NULL));
                   CHECK(!memcmp(&d, &draw[1], sizeof(d)));
                   CHECK(!memcmp(u.bytes, usc[1].bytes, usc[1].used));
                   CHECK(!memcmp(c.bytes, context[1].bytes, context[1].used));

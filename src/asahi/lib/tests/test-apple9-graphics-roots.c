@@ -55,10 +55,11 @@ main(void)
                uint32_t launch = 0;
                CHECK(agx_apple9_prepare_graphics_stage(
                   dev, &a, allocate, &shader, fragment, 0x30000, 0x40000,
-                  0x50000, 16, samples, &launch));
+                  0x50000, 0x60000, 16, samples, &launch));
                CHECK(a.size == 64 + AGX_APPLE9_GRAPHICS_LAUNCH_SIZE);
                CHECK(launch == a.gpu + 64 - dev->shader_base);
-               const uint64_t roots[8] = {0x40000, 0x50000, 0x30000};
+               const uint64_t roots[8] = {0x40000, 0x50000, 0x30000,
+                                          0,       0,       0x60000};
                CHECK(!memcmp(a.data, roots, sizeof(roots)));
                struct agx_apple9_launch_parameters p = {
                   .shader_base = dev->shader_base,
