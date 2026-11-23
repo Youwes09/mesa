@@ -504,12 +504,6 @@ agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
                                 const struct agx_apple9_render_stage *vertex,
                                 const struct agx_apple9_render_stage *fragment);
 
-bool agx_apple9_link_render_pipeline_with_prolog(
-   struct agx_apple9_render_pipeline *pipeline,
-   const struct agx_apple9_render_stage *vertex_prolog,
-   const struct agx_apple9_render_stage *vertex,
-   const struct agx_apple9_render_stage *fragment);
-
 size_t
 agx_apple9_direct_draw_size(const struct agx_apple9_render_pipeline *pipeline);
 

@@ -1828,21 +1828,9 @@ agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
                                 const struct agx_apple9_render_stage *vertex,
                                 const struct agx_apple9_render_stage *fragment)
 {
-   return agx_apple9_link_render_pipeline_with_prolog(pipeline, NULL, vertex,
-                                                      fragment);
-}
-
-bool
-agx_apple9_link_render_pipeline_with_prolog(
-   struct agx_apple9_render_pipeline *pipeline,
-   const struct agx_apple9_render_stage *vertex_prolog,
-   const struct agx_apple9_render_stage *vertex,
-   const struct agx_apple9_render_stage *fragment)
-{
    if (!pipeline || !vertex || !fragment || !vertex->binary ||
        !vertex->binary_size || !fragment->binary || !fragment->binary_size ||
-       vertex->binary_size > UINT32_MAX || fragment->binary_size > UINT32_MAX ||
-       (vertex_prolog && (vertex_prolog->binary || vertex_prolog->binary_size)))
+       vertex->binary_size > UINT32_MAX || fragment->binary_size > UINT32_MAX)
       return false;
 
    /*
