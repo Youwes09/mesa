@@ -2228,9 +2228,7 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       caps->indirect_const_addr = true;
       caps->integers = true;
 
-      /* The Apple9 compiler cannot export 16-bit fragment shader values yet */
-      caps->fp16 = caps->glsl_16bit_consts = caps->fp16_derivatives =
-         !is_no16 && !agx_is_apple9(agx_device(pscreen));
+      caps->fp16 = caps->glsl_16bit_consts = caps->fp16_derivatives = !is_no16;
       /* GLSL compiler is broken. Flip this on when Panfrost does. */
       caps->int16 = false;
       /* This cap is broken, see 9a38dab2d18 ("zink: disable
@@ -2257,8 +2255,8 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       caps->max_shader_images = PIPE_MAX_SHADER_IMAGES;
    }
 
-   /* Apple9 cannot compile tessellation control shaders yet: their stores
-    * of constant tessellation levels reach instruction selection as vectors.
+   /* The libagx tessellator cannot be launched on Apple9 yet: its scratch
+    * size is not a multiple of the 16 bytes launches allocate in.
     */
    if (agx_is_apple9(agx_device(pscreen))) {
       memset((void *)&pscreen->shader_caps[MESA_SHADER_TESS_CTRL], 0,
@@ -2565,10 +2563,6 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       caps->max_varyings = AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
       /* Software fp64 needs OpenGL 4.0, which needs tessellation */
       caps->doubles = false;
-      /* The Apple9 compiler cannot read the sample mask and positions of
-       * per-sample fragment shaders yet.
-       */
-      caps->sample_shading = false;
    }
 }
 
