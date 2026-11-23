@@ -274,8 +274,8 @@ agx_assign_uvs(struct agx_varyings_vs *varyings,
 {
    *varyings = (struct agx_varyings_vs){0};
 
-   /* Layer/viewport always flat-shaded, no other special varyings are */
-   flat_mask &= BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32);
+   /* Layer/viewport always flat-shaded, colours may be, no other specials */
+   flat_mask &= BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32) | VARYING_BITS_COLOR;
    flat_mask |= VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT;
 
    /* The internal cull distance slots are always linearly-interpolated */

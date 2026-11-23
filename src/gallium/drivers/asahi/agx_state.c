@@ -6232,7 +6232,7 @@ agx_apple9_render_stages(struct agx_batch *batch,
       varyings.mask[loc] = BITFIELD_MASK(uvs->components[loc]);
       varyings.group[loc] = agx_apple9_varying_group(
          (fs->info.inputs_flat_shaded &
-          BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32)) |
+          (BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32) | VARYING_BITS_COLOR)) |
             VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT,
          fs->info.inputs_linear_shaded |
             BITFIELD64_RANGE(VARYING_SLOT_CULL_PRIMITIVE, 2),
