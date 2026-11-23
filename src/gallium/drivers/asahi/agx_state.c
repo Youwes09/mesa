@@ -1507,10 +1507,6 @@ agx_compile_nir(struct agx_device *dev, nir_shader *nir,
 
    if (!secondary) {
       NIR_PASS(_, nir, agx_nir_lower_sysvals, stage, true);
-
-      /* Apple9 binds the buffers the shader still accesses */
-      NIR_PASS(_, nir, nir_opt_dce);
-
       NIR_PASS(_, nir, agx_nir_layout_uniforms, compiled,
                &key.reserved_preamble);
    }

@@ -303,7 +303,8 @@ lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
    }
 
    if (replacement != NULL) {
-      nir_def_rewrite_uses(old, replacement);
+      /* Remove the sysval so the compiler does not bind the buffers it reads */
+      nir_def_replace(old, replacement);
       return true;
    } else {
       return false;
