@@ -4943,13 +4943,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    }
 
    if (agx_is_apple9(ctx)) {
-      /* Apple9 sizes the private frame in bytes. Returning atomics alone only
-       * need their atomic frame.
-       */
+      /* Frames are in 16-byte units. Atomics alone only use the atomic frame */
       assert(!ctx->is_preamble || ctx->scratch_size_B == 0);
 
       if (ctx->scratch_size_B > ctx->atomic_frame_B)
-         out->scratch_size = ctx->scratch_size_B;
+         out->scratch_size = align(ctx->scratch_size_B, 16);
 
       if (ctx->atomic_frame_B)
          out->apple9_compute.atomic_frame_size = 4;
