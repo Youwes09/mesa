@@ -99,6 +99,11 @@ agx_validate_sources(agx_instr *I)
 
          bool ldst = agx_allows_16bit_immediate(I);
 
+         /* Packed texel offsets take three 4-bit components */
+         bool texel_offset = (I->op == AGX_OPCODE_TEXTURE_SAMPLE ||
+                              I->op == AGX_OPCODE_TEXTURE_LOAD) &&
+                             s == 5;
+
          /* Immediates are encoded as 8-bit (16-bit for memory load/store). For
           * integers, they extend to 16-bit. For floating point, they are 8-bit
           * minifloats. The 8-bit minifloats are a strict subset of 16-bit
@@ -106,7 +111,8 @@ agx_validate_sources(agx_instr *I)
           * implicit f16->f32 for 32-bit floating point operations.
           */
          agx_validate_assert(src.size == AGX_SIZE_16);
-         agx_validate_assert(src.value < (1 << (ldst ? 16 : 8)));
+         unsigned bits = ldst ? 16 : texel_offset ? 12 : 8;
+         agx_validate_assert(src.value < (1 << bits));
       } else if (I->op == AGX_OPCODE_COLLECT && !agx_is_null(src)) {
          agx_validate_assert(src.size == I->src[0].size);
       } else if (I->op == AGX_OPCODE_PHI) {
