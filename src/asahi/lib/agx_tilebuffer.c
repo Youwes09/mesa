@@ -141,7 +141,11 @@ agx_build_tilebuffer_layout_apple9(const enum pipe_format *formats,
       }
    }
 
-   tib.sample_size_B = offset_B;
+   /* As on Apple8. Large 2x depth-only renders without one may not retire */
+   if (nr_samples > 1)
+      offset_B = MAX2(offset_B, 8);
+
+   tib.sample_size_B = align(offset_B, 8);
    tib.tile_size = nr_samples == 4 ? 32 * 16 : 32 * 32;
    return tib;
 }
