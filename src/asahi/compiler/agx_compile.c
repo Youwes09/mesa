@@ -4070,13 +4070,17 @@ agx_mem_vectorize_cb(unsigned align_mul, unsigned align_offset,
    return true;
 }
 
-/* Apple9 only accesses vectors of 32-bit elements */
+/* Vectors of 32-bit elements only, and single words of private memory */
 static bool
 mem_vectorize_apple9_cb(unsigned align_mul, unsigned align_offset,
                         unsigned bit_size, unsigned num_components,
                         int64_t hole_size, nir_intrinsic_instr *low,
                         nir_intrinsic_instr *high, void *data)
 {
+   if (low->intrinsic == nir_intrinsic_load_scratch ||
+       low->intrinsic == nir_intrinsic_store_scratch)
+      return false;
+
    return bit_size == 32 &&
           agx_mem_vectorize_cb(align_mul, align_offset, bit_size,
                                num_components, hole_size, low, high, data);
