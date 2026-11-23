@@ -916,6 +916,7 @@ min_algorithm(struct spill_ctx *ctx)
       if (I->op == AGX_OPCODE_PHI) {
          if (!BITSET_TEST(ctx->W, I->dest[0].value) &&
              !is_export(ctx, I->dest[0].value)) {
+            assert(!ctx->remat_only && "must have remat something");
             I->dest[0] = agx_index_as_mem(I->dest[0], ctx->spill_base);
          }
 
@@ -1257,8 +1258,10 @@ compute_w_entry(struct spill_ctx *ctx)
          if (src.type != AGX_INDEX_NORMAL)
             continue;
 
+         /* Rematerialized on the edge, as good as in a register */
          unsigned v = src.value;
-         for (unsigned i = 0; i < sp->nW_exit; ++i) {
+         found = v < ctx->n && ctx->remat[v];
+         for (unsigned i = 0; i < sp->nW_exit && !found; ++i) {
             if (sp->W_exit[i] == v) {
                found = true;
                break;

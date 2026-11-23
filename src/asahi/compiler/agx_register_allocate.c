@@ -2557,6 +2557,7 @@ agx_ra(agx_context *ctx)
    unsigned effective_demand = agx_calc_register_demand(ctx, false);
    bool spilling = (effective_demand > max_possible_regs);
    bool remat = false;
+   unsigned file_regs = max_possible_regs;
 
    /* If we need multiple waves, see if we can rematerialize constants to save
     * waves. If we only have a single wave regardless, this is pointless.
@@ -2596,6 +2597,10 @@ agx_ra(agx_context *ctx)
       /* After spilling, recalculate liveness and demand */
       agx_compute_liveness(ctx);
       effective_demand = agx_calc_register_demand(ctx, false);
+
+      /* If rematerializing overshoots occupancy, use the whole file */
+      if (remat && effective_demand > max_possible_regs)
+         max_possible_regs = file_regs;
 
       /* The resulting program can now be assigned registers */
       assert(effective_demand <= max_possible_regs && "spiller post-condition");
