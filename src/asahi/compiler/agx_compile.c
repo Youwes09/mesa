@@ -4964,10 +4964,12 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    if (agx_is_apple9(ctx)) {
       /* Frames are in 16-byte units. Atomics alone only use the atomic frame */
-      assert(!ctx->is_preamble || ctx->scratch_size_B == 0);
-
-      if (ctx->scratch_size_B > ctx->atomic_frame_B)
+      if (ctx->is_preamble) {
+         /* Preambles have no frame, one that spills is inlined */
+         out->preamble_scratch_size = ctx->scratch_size_B;
+      } else if (ctx->scratch_size_B > ctx->atomic_frame_B) {
          out->scratch_size = align(ctx->scratch_size_B, 16);
+      }
 
       if (ctx->atomic_frame_B)
          out->apple9_compute.atomic_frame_size = 4;
@@ -5549,14 +5551,16 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          info->apple9_compute.preamble_offset = offset;
          info->apple9_compute.preamble_size = binary.size - offset;
 
-         /* A preamble past the drivers' bound runs in the shader instead */
+         /* Inline a preamble that is too big or spills */
          bool compute = mesa_shader_stage_is_compute(nir->info.stage);
-         if (info->apple9_compute.preamble_size >
-                agx_apple9_max_preamble_bytes(compute) &&
-             agx_inline_apple9_preamble(main)) {
+         bool inline_ = info->apple9_compute.preamble_size >
+                           agx_apple9_max_preamble_bytes(compute) ||
+                        info->preamble_scratch_size;
+         if (inline_ && agx_inline_apple9_preamble(main)) {
             util_dynarray_clear(&binary);
             memset(info->apple9_vary_stores, 0,
                    sizeof(info->apple9_vary_stores));
+            info->preamble_scratch_size = 0;
             info->nr_preamble_gprs = 0;
             info->stats.preamble_inst = 0;
             info->apple9_compute.preamble_offset = 0;
@@ -5566,6 +5570,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          }
       }
 
+      assert(!info->preamble_scratch_size &&
+             "a preamble storing texture state has no private frame");
       info->apple9_compute.scratch_size = info->scratch_size;
    } else {
       nir_foreach_function_with_impl(func, impl, nir) {
