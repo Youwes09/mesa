@@ -2510,7 +2510,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    /* TODO: Probably should bump to 32? */
    caps->max_varyings = 16;
 
-   caps->flatshade = apple9_render;
+   caps->flatshade = false;
    caps->two_sided_color = false;
    caps->alpha_test = false;
    caps->clip_planes = 0;
@@ -2519,8 +2519,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->query_buffer_object = true;
 
    caps->texture_border_color_quirk =
-      apple9_render ? PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_NV50
-                    : PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_FREEDRENO;
+      PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_FREEDRENO;
 
    caps->supported_prim_modes = caps->supported_prim_modes_with_restart =
       BITFIELD_BIT(MESA_PRIM_POINTS) | BITFIELD_BIT(MESA_PRIM_LINES) |
@@ -2570,8 +2569,6 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       caps->glsl_feature_level = caps->glsl_feature_level_compatibility = 330;
       /* ES 3.0 shader support is independent of the desktop GLSL level. */
       caps->essl_feature_level = 300;
-      /* Point size is carried by the vertex output interface. */
-      caps->point_size_fixed = PIPE_POINT_SIZE_LOWER_ALWAYS;
       caps->robust_buffer_access_behavior = false;
       /* Lost-context reporting (EGL_EXT_create_context_robustness, reset
        * status queries) works: failed work and rejected submissions mark the
@@ -2636,10 +2633,7 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
       return false;
 
    if (usage & PIPE_BIND_VERTEX_BUFFER) {
-      bool supported = agx_apple9_direct_render_enabled(agx_device(pscreen))
-                          ? agx_apple9_vertex_format_supported(format)
-                          : agx_vbo_supports_format(format);
-      if (!supported)
+      if (!agx_vbo_supports_format(format))
          return false;
    }
 
@@ -2957,37 +2951,9 @@ agx_screen_create(int fd, struct renderonly *ro,
    screen->get_disk_shader_cache = agx_get_disk_shader_cache;
    screen->get_cl_cts_version = agx_get_cl_cts_version;
 
-   agx_screen->apple9_nir_options = agx_nir_options;
-   agx_screen->apple9_nir_options.disable_inter_shader_code_motion = true;
-   agx_screen->apple9_nir_options.lower_pack_unorm_2x16 = false;
-   agx_screen->apple9_nir_options.lower_pack_unorm_4x8 = false;
-   agx_screen->apple9_nir_options.lower_unpack_unorm_2x16 = false;
-   agx_screen->apple9_nir_options.lower_unpack_unorm_4x8 = false;
-   agx_screen->apple9_nir_options.lower_unpack_snorm_2x16 = false;
-   agx_screen->apple9_nir_options.lower_unpack_snorm_4x8 = false;
-   const nir_shader_compiler_options *nir_options =
-      agx_apple9_compute_enabled(&agx_screen->dev)
-         ? &agx_screen->apple9_nir_options
-         : &agx_nir_options;
+   /* Shaders are created for the ISA the compiler targets */
    for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
-      screen->nir_options[i] = nir_options;
-   if (agx_apple9_direct_render_enabled(&agx_screen->dev)) {
-      /* The Apple9 backend supports structured loops. Expanding nested
-       * texture loops with Apple8's unroll policy greatly increases shader
-       * size. Preserve loops until we have a code-size cost model.
-       * Compute keeps its existing policy.
-       */
-      agx_screen->apple9_graphics_nir_options = *nir_options;
-      /* UVS and coefficient accesses have constant indices. Keep shader
-       * indexing in temporary arrays when the frontend lowers the interface. */
-      agx_screen->apple9_graphics_nir_options.support_indirect_inputs = 0;
-      agx_screen->apple9_graphics_nir_options.support_indirect_outputs = 0;
-      agx_screen->apple9_graphics_nir_options.max_unroll_iterations = 0;
-      screen->nir_options[MESA_SHADER_VERTEX] =
-         &agx_screen->apple9_graphics_nir_options;
-      screen->nir_options[MESA_SHADER_FRAGMENT] =
-         &agx_screen->apple9_graphics_nir_options;
-   }
+      screen->nir_options[i] = agx_nir_options_for_dev(&agx_screen->dev);
 
    screen->resource_create = u_transfer_helper_resource_create;
    screen->resource_destroy = u_transfer_helper_resource_destroy;

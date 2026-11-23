@@ -153,6 +153,9 @@ struct PACKED agx_draw_uniforms {
    /* gl_DrawID for a direct multidraw */
    uint32_t draw_id;
 
+   /* Line stipple pattern in the low half, factor in the high half */
+   uint32_t line_stipple;
+
    /* Sprite coord replacement mask */
    uint16_t sprite_mask;
 
@@ -230,21 +233,6 @@ struct agx_compiled_shader {
    /* Mapped executable memory */
    struct agx_bo *bo;
 
-   /* Compiled by the deliberately bounded Apple9 compute backend. */
-   bool apple9_tiny;
-   /* Whether the early NIR permits a nonzero pipe_grid_info dynamic shared
-    * allocation.  Apple9 package validation still constrains the resulting
-    * static-plus-dynamic total to the exact capture-backed ABI size. */
-   bool apple9_has_variable_shared_mem;
-   struct agx_apple9_compute_profile apple9_compute_profile;
-   struct agx_apple9_texture_mapping apple9_compute_textures;
-
-   /* Apple9 render compiler output consumed by the pipeline linker/VDM
-    * encoder. Generated stage storage is owned by this compiled shader.
-    */
-   uint8_t *apple9_render_binary;
-   struct agx_apple9_render_stage apple9_render_stage;
-
    /* Uniforms the driver must push */
    unsigned push_range_count;
    struct agx_push_range push[AGX_MAX_PUSH_RANGES];
@@ -279,6 +267,9 @@ struct agx_fast_link_key {
    } prolog;
 
    struct agx_compiled_shader *main;
+
+   /* Apple9 vertex stages: FS input interpolation, which sets varying slots */
+   uint64_t uvs_flat, uvs_linear;
 
    union {
       struct agx_fs_epilog_key fs;
@@ -548,14 +539,10 @@ struct agx_blend {
 };
 
 struct asahi_vs_shader_key {
-   uint64_t apple9_fragment_inputs;
    /* If true, this is running as a hardware vertex shader. If false, this is a
     * compute job used to feed a TCS or GS.
     */
    bool hw;
-   uint8_t apple9_index_size;
-   struct agx_apple9_vertex_layout apple9_inputs;
-   struct agx_apple9_sampler_key apple9_samplers[32];
 };
 
 struct agx_vertex_elements {
@@ -570,22 +557,21 @@ struct agx_vertex_elements {
 struct asahi_fs_shader_key {
    enum pipe_format rt_formats[PIPE_MAX_COLOR_BUFS];
    uint8_t nr_samples;
-   uint8_t apple9_nr_targets;
-   uint8_t apple9_sprite_coord_enable;
-   bool apple9_polygon_stipple;
-   bool apple9_flatshade;
-   bool apple9_line_stipple;
-   bool padding[2];
-   struct agx_apple9_varying_layout apple9_varyings;
-   struct agx_apple9_blend apple9_blend[PIPE_MAX_COLOR_BUFS];
-   struct agx_apple9_sampler_key apple9_samplers[32];
-};
-static_assert(sizeof(struct asahi_fs_shader_key) == 1804, "no holes");
 
-union asahi_shader_key {
-   struct asahi_vs_shader_key vs;
-   struct asahi_fs_shader_key fs;
+   /* Test the line stipple counter of the passthrough geometry shader */
+   bool line_stipple;
+   bool padding[2];
 };
+static_assert(sizeof(struct asahi_fs_shader_key) == 36, "no holes");
+
+/* The largest key comes first, so {0} zeroes the whole key */
+union asahi_shader_key {
+   struct asahi_fs_shader_key fs;
+   struct asahi_vs_shader_key vs;
+};
+static_assert(sizeof(struct asahi_fs_shader_key) >=
+                 sizeof(struct asahi_vs_shader_key),
+              "first member is the largest");
 
 enum agx_dirty {
    AGX_DIRTY_VERTEX = BITFIELD_BIT(0),
@@ -676,9 +662,13 @@ struct agx_context {
     * rasterizer: Apple9 driver clears use it to store depth exactly. */
    bool force_clip_halfz;
 
+   /* The fragment program may kill samples: discard, sample mask, prolog */
+   bool fs_kills_samples;
+
    struct agx_compiled_shader *vs, *fs, *gs, *tcs;
    struct {
-      struct agx_linked_shader *vs, *fs;
+      /* Apple9: gs is the geometry shader rasterization program */
+      struct agx_linked_shader *vs, *fs, *gs;
    } linked;
    uint32_t dirty;
 
@@ -738,19 +728,12 @@ struct agx_context {
    struct pipe_scissor_state scissor[AGX_MAX_VIEWPORTS];
    struct pipe_stencil_ref stencil_ref;
    struct agx_streamout streamout;
-   struct agx_uncompiled_shader *apple9_xfb_capture;
-   uint8_t apple9_xfb_mode, apple9_xfb_index_size;
-   bool apple9_xfb_flatshade_first;
-   struct pipe_resource *apple9_xfb_target;
    struct primconvert_context *apple9_primconvert;
 
    /* Apple9 in-place decompression: driver-internal stores to this resource
     * use an uncompressed descriptor while the decompress pass is recorded.
     */
    struct agx_resource *apple9_uncompressed_store;
-   void *apple9_xfb_fs;
-   void *apple9_xfb_rasterizer;
-   void *apple9_xfb_unroll[MESA_PRIM_COUNT][3][2];
    uint16_t sample_mask;
    struct pipe_framebuffer_state framebuffer;
 
@@ -911,10 +894,6 @@ uint64_t agx_batch_get_so_address(struct agx_batch *batch, unsigned buffer,
                                   uint32_t *size);
 
 void agx_init_streamout_functions(struct pipe_context *ctx);
-void
-agx_apple9_capture_streamout(struct pipe_context *pctx,
-                             const struct pipe_draw_info *info, unsigned drawid,
-                             const struct pipe_draw_start_count_bias *draw);
 void agx_cleanup_streamout(struct pipe_context *pctx);
 
 static inline void
@@ -986,12 +965,6 @@ struct agx_screen {
    struct agx_device dev;
    struct disk_cache *disk_cache;
 
-   /* Device-specific NIR policy.  Apple9's bounded render compiler must keep
-    * arithmetic in its source stage until both stage compilers accept the
-    * same general instruction set. */
-   nir_shader_compiler_options apple9_nir_options;
-   nir_shader_compiler_options apple9_graphics_nir_options;
-
    struct agx_bo *rodata;
 
    /* Shared timeline syncobj and value to serialize flushes across contexts */
@@ -1027,6 +1000,13 @@ static inline struct agx_device *
 agx_device(struct pipe_screen *p)
 {
    return &(agx_screen(p)->dev);
+}
+
+/* NIR options of the shaders compiled for the device */
+static inline const nir_shader_compiler_options *
+agx_nir_options_for_dev(struct agx_device *dev)
+{
+   return agx_nir_options_for_isa(agx_gather_device_key(dev).shader_isa);
 }
 
 #define perf_debug(dev, ...)                                                   \
@@ -1158,11 +1138,6 @@ bool agx_nir_lower_point_size(nir_shader *nir, bool insert_write);
 
 bool agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
                            bool lower_draw_params);
-
-/* Private bindings for the same sysval tables used by the Gallium ABI. */
-#define AGX_APPLE9_SYSVAL_UBO_BASE 240
-bool agx_nir_lower_apple9_sysvals(nir_shader *shader,
-                                  mesa_shader_stage desc_stage);
 
 bool agx_nir_layout_uniforms(nir_shader *shader,
                              struct agx_compiled_shader *compiled,

@@ -44,6 +44,7 @@ struct table_state {
 
 struct state {
    mesa_shader_stage stage, hw_stage;
+   bool apple9;
 
    /* Array of nir_intrinsic_instr's to fix up at the end */
    struct util_dynarray loads;
@@ -127,6 +128,21 @@ load_texture_handle(nir_builder *b, nir_intrinsic_instr *intr, void *base)
    return nir_bindless_image_agx(b, offs_B);
 }
 
+/* Apple9 reads draw parameters by address, as indirect draws write them */
+static nir_def *
+lower_draw_param(nir_builder *b, unsigned offset)
+{
+   if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+      return load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, offset);
+
+   struct agx_draw_uniforms *u = NULL;
+   nir_def *params =
+      load_sysval_root(b, 1, 64, &u->tables[AGX_SYSVAL_TABLE_PARAMS]);
+
+   return nir_load_global_constant(b, 1, 32, nir_iadd_imm(b, params, offset),
+                                   .align_mul = 4);
+}
+
 static nir_def *
 load_provoking_vtx(nir_builder *b)
 {
@@ -143,6 +159,12 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ubo:
+      /* Apple9 texture state is a buffer the compiler binds itself */
+      if (nir_src_is_const(intr->src[0]) &&
+          nir_src_as_uint(intr->src[0]) == AGX_APPLE9_GRAPHICS_SYSVAL_BINDING &&
+          agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+         return NULL;
+
       return load_ubo(b, intr, s->ubo_base);
    case nir_intrinsic_load_texture_handle_agx:
       return load_texture_handle(b, intr, &s->texture_base);
@@ -193,6 +215,8 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
    case nir_intrinsic_load_viewport_scale:
       return nir_pad_vector_imm_int(
          b, load_sysval_root(b, 2, 32, &u->viewport_scale), 0, 3);
+   case nir_intrinsic_load_line_stipple_agx:
+      return load_sysval_root(b, 1, 32, &u->line_stipple);
    case nir_intrinsic_load_viewport_offset:
       return nir_pad_vector_imm_int(
          b, load_sysval_root(b, 2, 32, &u->viewport_offset), 0, 3);
@@ -223,18 +247,22 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_num_workgroups:
+      /* Apple9 compute launches pass the workgroup counts themselves */
+      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+         return NULL;
+
       return load_sysval(b, 3, 32, AGX_SYSVAL_TABLE_GRID, 0);
    case nir_intrinsic_load_first_vertex:
-      return load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, 0);
+      return lower_draw_param(b, 0);
    case nir_intrinsic_load_base_instance:
-      return load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, 4);
+      return lower_draw_param(b, 4);
    case nir_intrinsic_load_base_vertex:
       /* first vertex if indexed, 0 otherwise. More efficient for our hw than
        * the lowering in NIR.
        */
       return nir_bcsel(
          b, nir_i2b(b, load_sysval_root(b, 1, 16, &u->is_indexed_draw)),
-         load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, 0), nir_imm_int(b, 0));
+         lower_draw_param(b, 0), nir_imm_int(b, 0));
    case nir_intrinsic_load_draw_id:
       return load_sysval_root(b, 1, 32, &u->draw_id);
    default:
@@ -280,56 +308,6 @@ lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
    } else {
       return false;
    }
-}
-
-static bool
-lower_apple9_sysval(nir_builder *b, nir_instr *instr, void *data)
-{
-   /* Apple9 retains API buffer bindings until its own resource lowering.
-    * In particular, vertex fetch uses private UBO bindings outside the
-    * Gallium constant-buffer table. */
-   if (instr->type == nir_instr_type_intrinsic &&
-       nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_load_ubo)
-      return false;
-
-   return lower_sysvals(b, instr, data);
-}
-
-static bool
-lower_apple9_sysval_table(nir_builder *b, nir_intrinsic_instr *intr,
-                          UNUSED void *data)
-{
-   if (intr->intrinsic != nir_intrinsic_load_sysval_agx)
-      return false;
-
-   assert(nir_intrinsic_flags(intr) == 0);
-   unsigned table = nir_intrinsic_desc_set(intr);
-   assert(table < AGX_NUM_SYSVAL_TABLES);
-   unsigned offset = nir_intrinsic_binding(intr);
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def *value =
-      nir_load_ubo(b, intr->def.num_components, intr->def.bit_size,
-                   nir_imm_int(b, AGX_APPLE9_SYSVAL_UBO_BASE + table),
-                   nir_imm_int(b, offset), .align_mul = intr->def.bit_size / 8,
-                   .range_base = offset,
-                   .range = intr->def.num_components * intr->def.bit_size / 8);
-   nir_def_replace(&intr->def, value);
-   return true;
-}
-
-bool
-agx_nir_lower_apple9_sysvals(nir_shader *shader, mesa_shader_stage desc_stage)
-{
-   mesa_shader_stage physical_stage = shader->info.stage;
-   shader->info.stage = desc_stage;
-   bool lower_draw_params = true;
-   bool progress = nir_shader_instructions_pass(shader, lower_apple9_sysval,
-                                                nir_metadata_control_flow,
-                                                &lower_draw_params);
-   shader->info.stage = physical_stage;
-   progress |= nir_shader_intrinsics_pass(shader, lower_apple9_sysval_table,
-                                          nir_metadata_control_flow, NULL);
-   return progress;
 }
 
 /* Step 2: Record system value loads */
@@ -458,12 +436,22 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
          };
       }
 
-      shader->push[shader->push_range_count++] = (struct agx_push_range){
-         .uniform = AGX_ABI_VUNI_FIRST_VERTEX(count),
-         .table = AGX_SYSVAL_TABLE_PARAMS,
-         .offset = 0,
-         .length = 4,
-      };
+      /* Apple9 pushes the draw parameters' address, see lower_draw_param */
+      if (state->apple9) {
+         shader->push[shader->push_range_count++] = (struct agx_push_range){
+            .uniform = AGX_ABI_VUNI_FIRST_VERTEX(count),
+            .table = AGX_SYSVAL_TABLE_ROOT,
+            .offset = (uintptr_t)&u->tables[AGX_SYSVAL_TABLE_PARAMS],
+            .length = 4,
+         };
+      } else {
+         shader->push[shader->push_range_count++] = (struct agx_push_range){
+            .uniform = AGX_ABI_VUNI_FIRST_VERTEX(count),
+            .table = AGX_SYSVAL_TABLE_PARAMS,
+            .offset = 0,
+            .length = 4,
+         };
+      }
 
       bool sw = state->hw_stage == MESA_SHADER_COMPUTE;
       if (sw) {
@@ -565,6 +553,7 @@ agx_nir_layout_uniforms(nir_shader *shader,
    struct state state = {
       .stage = compiled->stage,
       .hw_stage = shader->info.stage,
+      .apple9 = agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9,
    };
 
    nir_shader_intrinsics_pass(shader, record_loads, nir_metadata_control_flow,

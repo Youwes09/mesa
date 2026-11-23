@@ -41,7 +41,10 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 {
    bool *uses_bindless_samplers = data;
    bool progress = false;
-   bool force_bindless = agx_nir_needs_texture_crawl(instr);
+   /* Apple9 reads texture dimensions from memory, not the descriptor */
+   bool force_bindless =
+      agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9 &&
+      agx_nir_needs_texture_crawl(instr);
    b->cursor = nir_before_instr(instr);
 
    if (instr->type == nir_instr_type_intrinsic) {

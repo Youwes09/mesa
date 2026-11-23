@@ -84,7 +84,8 @@ write_shader(struct blob *blob, const struct agx_compiled_shader *binary,
 
 static struct agx_compiled_shader *
 read_shader(struct agx_screen *screen, struct blob_reader *blob,
-            const struct agx_uncompiled_shader *uncompiled, bool is_root)
+            const struct agx_uncompiled_shader *uncompiled, bool is_root,
+            bool linked_part)
 {
    struct agx_compiled_shader *binary = CALLOC_STRUCT(agx_compiled_shader);
    binary->stage = uncompiled->type;
@@ -93,14 +94,17 @@ read_shader(struct agx_screen *screen, struct blob_reader *blob,
    blob_copy_bytes(blob, &binary->b.info, sizeof(binary->b.info));
    size_t size = binary->b.info.binary_size;
 
-   if (uncompiled->type == MESA_SHADER_VERTEX ||
-       uncompiled->type == MESA_SHADER_TESS_EVAL ||
-       uncompiled->type == MESA_SHADER_FRAGMENT) {
+   /* Apple9 links vertex, fragment and rasterization programs from binaries */
+   bool apple9 = agx_is_apple9(&screen->dev);
+   linked_part |= uncompiled->type == MESA_SHADER_VERTEX ||
+                  uncompiled->type == MESA_SHADER_TESS_EVAL ||
+                  uncompiled->type == MESA_SHADER_FRAGMENT;
 
+   if (linked_part) {
       binary->b.binary = malloc(size);
       blob_copy_bytes(blob, binary->b.binary, size);
 
-      if (size) {
+      if (size && !apple9) {
          binary->bo = agx_bo_create(&screen->dev, size, 0,
                                     AGX_BO_EXEC | AGX_BO_LOW_VA, "Executable");
          memcpy(agx_bo_map(binary->bo), binary->b.binary, size);
@@ -121,13 +125,13 @@ read_shader(struct agx_screen *screen, struct blob_reader *blob,
 
    if (is_root && uncompiled->type == MESA_SHADER_GEOMETRY) {
       blob_copy_bytes(blob, &binary->gs, sizeof(binary->gs));
-      binary->pre_gs = read_shader(screen, blob, uncompiled, false);
+      binary->pre_gs = read_shader(screen, blob, uncompiled, false, false);
 
       if (blob_read_uint8(blob))
-         binary->gs_copy = read_shader(screen, blob, uncompiled, false);
+         binary->gs_copy = read_shader(screen, blob, uncompiled, false, apple9);
 
       if (blob_read_uint8(blob))
-         binary->gs_count = read_shader(screen, blob, uncompiled, false);
+         binary->gs_count = read_shader(screen, blob, uncompiled, false, false);
    }
 
    return binary;
@@ -187,7 +191,7 @@ agx_disk_cache_retrieve(struct agx_screen *screen,
    blob_reader_init(&blob, buffer, size);
 
    struct agx_compiled_shader *binary =
-      read_shader(screen, &blob, uncompiled, true);
+      read_shader(screen, &blob, uncompiled, true, false);
 
    free(buffer);
    return binary;
@@ -218,7 +222,10 @@ agx_disk_cache_init(struct agx_screen *screen)
    char timestamp[BLAKE3_HEX_LEN];
    _mesa_sha1_format(timestamp, id_sha1);
 
-   uint64_t driver_flags = screen->dev.debug;
+   /* Shaders are compiled for the ISA of the device */
+   uint64_t driver_flags =
+      screen->dev.debug |
+      ((uint64_t)agx_gather_device_key(&screen->dev).shader_isa << 56);
    screen->disk_cache = disk_cache_create(renderer, timestamp, driver_flags);
 #endif
 }
