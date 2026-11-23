@@ -3741,6 +3741,28 @@ agx_arm_has_tile_domain_ops(agx_block *from, agx_block *to)
    }
 }
 
+/* Issue cost of an arm, memory operations weighted by their latency */
+#define AGX_APPLE9_SKIP_COST 19
+
+static unsigned
+agx_arm_cost(struct exec_list *list)
+{
+   unsigned cost = 0;
+   foreach_list_typed(nir_cf_node, node, node, list) {
+      nir_foreach_block_in_cf_node(block, node) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type == nir_instr_type_tex)
+               cost += 50;
+            else if (instr->type == nir_instr_type_intrinsic)
+               cost += 10;
+            else if (instr->type == nir_instr_type_alu)
+               cost += 1;
+         }
+      }
+   }
+   return cost;
+}
+
 static void
 emit_if(agx_context *ctx, nir_if *nif)
 {
@@ -3775,19 +3797,18 @@ emit_if(agx_context *ctx, nir_if *nif)
    if (agx_is_apple9(ctx)) {
       agx_instr *else_ = agx_else_exec(&_b);
 
-      /* Skip arms with tile domain operations when no lane takes them: the
-       * then arm to the else, the else arm to the pop at its end. The jumps
-       * are inserted after scheduling, by agx_opt_jmp_none.
-       */
+      /* Arms to skip when no lane takes them, see agx_opt_jmp_none */
       if (!ctx->apple9_skips.mem_ctx)
          util_dynarray_init(&ctx->apple9_skips, ctx);
 
-      if (agx_arm_has_tile_domain_ops(if_block, end_then)) {
+      if (agx_arm_cost(&nif->then_list) > AGX_APPLE9_SKIP_COST ||
+          agx_arm_has_tile_domain_ops(if_block, end_then)) {
          struct agx_apple9_skip skip = {if_, else_block, false};
          util_dynarray_append(&ctx->apple9_skips, skip);
       }
 
-      if (agx_arm_has_tile_domain_ops(else_block, end_else)) {
+      if (agx_arm_cost(&nif->else_list) > AGX_APPLE9_SKIP_COST ||
+          agx_arm_has_tile_domain_ops(else_block, end_else)) {
          struct agx_apple9_skip skip = {else_, end_else, true};
          util_dynarray_append(&ctx->apple9_skips, skip);
       }
