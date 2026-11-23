@@ -761,8 +761,15 @@ agx_emit_load_vary_apple9(agx_builder *b, agx_index dest,
       w = agx_rcp(b, rw);
    }
 
+   /* Coefficients are iterated one at a time, so skip those never read */
+   nir_component_mask_t read = nir_def_components_read(&instr->def);
    agx_index channels[4];
    for (unsigned c = 0; c < components; ++c) {
+      if (!(read & BITFIELD_BIT(c))) {
+         channels[c] = agx_undef(AGX_SIZE_32);
+         continue;
+      }
+
       agx_index cf = agx_immediate(I.value + c);
       channels[c] = agx_temp(b->shader, AGX_SIZE_32);
       agx_iter_to(b, channels[c], cf, position, 1, interp);
@@ -791,8 +798,8 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
    agx_index I = cf_for_intrinsic(b, instr);
 
    if (agx_is_apple9(b->shader)) {
+      /* The collect caches the channels, so the vector itself is unused */
       agx_emit_load_vary_apple9(b, dest, instr, I, bary, interp, sample_index);
-      agx_emit_cached_split(b, dest, components);
       return;
    }
 
