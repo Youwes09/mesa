@@ -1667,13 +1667,20 @@ agx_emit_local_store(agx_builder *b, nir_intrinsic_instr *instr)
    agx_local_store(b, value, base, index, format, mask);
 }
 
-/*
- * Apple9 private memory is addressed by a word index from the start of the
- * invocation's frame, where returning atomics may keep a word first.
- */
+/* Frame word index, or an immediate byte offset in the first 1024/2048 words */
 static agx_index
-agx_scratch_word_apple9(agx_builder *b, nir_src offset)
+agx_scratch_word_apple9(agx_builder *b, nir_src offset, bool load)
 {
+   if (nir_src_is_const(offset)) {
+      unsigned offset_B = nir_src_as_uint(offset) + b->shader->atomic_frame_B;
+      unsigned word = offset_B / 4;
+
+      if (word < (load ? 1024 : 2048))
+         return agx_immediate(offset_B);
+      else
+         return agx_mov_imm(b, 32, word);
+   }
+
    agx_index word =
       agx_ushr(b, agx_src_index(b->shader, &offset), agx_immediate(2));
 
@@ -1690,7 +1697,8 @@ agx_emit_load_scratch(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
    if (agx_is_apple9(b->shader)) {
       assert(instr->def.num_components == 1 && instr->def.bit_size == 32);
-      agx_stack_load_to(b, dst, agx_scratch_word_apple9(b, instr->src[0]),
+      agx_stack_load_to(b, dst,
+                        agx_scratch_word_apple9(b, instr->src[0], true),
                         AGX_FORMAT_I32, 1);
       b->shader->any_scratch = true;
       return;
@@ -1713,8 +1721,8 @@ agx_emit_store_scratch(agx_builder *b, nir_intrinsic_instr *instr)
       assert(nir_src_num_components(instr->src[0]) == 1 &&
              nir_src_bit_size(instr->src[0]) == 32);
       agx_stack_store(b, agx_src_index(b->shader, &instr->src[0]),
-                      agx_scratch_word_apple9(b, instr->src[1]), AGX_FORMAT_I32,
-                      1);
+                      agx_scratch_word_apple9(b, instr->src[1], false),
+                      AGX_FORMAT_I32, 1);
       b->shader->any_scratch = true;
       return;
    }

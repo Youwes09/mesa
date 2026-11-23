@@ -169,6 +169,11 @@ agx_optimizer_inline_imm(agx_context *ctx, agx_instr **defs, agx_instr *I)
            I->op == AGX_OPCODE_STACK_STORE) &&
           s != 1)
          continue;
+
+      /* Apple9 private memory register offsets are word indices, not bytes */
+      if ((I->op == AGX_OPCODE_STACK_LOAD || I->op == AGX_OPCODE_STACK_STORE) &&
+          ctx->target.isa == AGX_SHADER_ISA_APPLE9)
+         continue;
       if (I->op == AGX_OPCODE_SPLIT)
          continue;
 
