@@ -3575,7 +3575,7 @@ agx_apple9_null_storage(struct agx_apple9_storage_descriptor *desc)
 }
 
 /* Native PBE entries of an image view, one per layer, where writable */
-static bool
+static void
 agx_apple9_pack_storage_pbes(struct agx_batch *batch,
                              struct agx_apple9_storage_descriptor *desc,
                              const struct pipe_image_view *view)
@@ -3598,7 +3598,7 @@ agx_apple9_pack_storage_pbes(struct agx_batch *batch,
        (util_format_is_pure_integer(view->format) &&
         view->format != layout->format) ||
        (!array && !slices && target != PIPE_TEXTURE_2D))
-      return true;
+      return;
 
    /* Single-layer views write their layer as a 2D image */
    bool layered = (array || slices) && !view->u.tex.single_layer_view;
@@ -3612,7 +3612,7 @@ agx_apple9_pack_storage_pbes(struct agx_batch *batch,
    uint64_t index =
       (t.gpu - dev->shader_base) / AGX_APPLE9_TEXTURE_TABLE_STRIDE;
    if (index + count - 1 > AGX_APPLE9_STORAGE_PBE_MASK)
-      return true;
+      return;
 
    for (unsigned i = 0; i < count; ++i) {
       uint64_t base =
@@ -3622,17 +3622,17 @@ agx_apple9_pack_storage_pbes(struct agx_batch *batch,
              (uint8_t *)t.cpu + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
              &desc->common.pbe, view->format, layout, base, view->u.tex.level,
              1, false, AGX_TEXTURE_DIMENSION_2D))
-         return true;
+         return;
    }
 
    desc->native_ok |= (layered ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
                                : AGX_APPLE9_STORAGE_WRITE_VALID) |
                       (index << AGX_APPLE9_STORAGE_PBE_SHIFT);
-   return true;
+   return;
 }
 
 /* Storage descriptor of an image view: texture and PBE words, texel layout */
-static bool
+static void
 agx_apple9_pack_storage(struct agx_batch *batch,
                         struct agx_apple9_storage_descriptor *desc,
                         struct pipe_image_view *view)
@@ -3656,7 +3656,7 @@ agx_apple9_pack_storage(struct agx_batch *batch,
       desc->metadata.base = agx_map_gpu(rsrc) + view->u.buf.offset;
       desc->metadata.elements =
          agx_texture_buffer_size_el(view->format, view->u.buf.size);
-      return true;
+      return;
    }
 
    desc->metadata.elements =
@@ -3665,20 +3665,15 @@ agx_apple9_pack_storage(struct agx_batch *batch,
    if (agx_apple9_translate_texture(desc->texture, &desc->common.tex))
       desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
 
-   return agx_apple9_pack_storage_pbes(batch, desc, view);
+   agx_apple9_pack_storage_pbes(batch, desc, view);
 }
 
-/* Native texture record of a sampler view */
-static bool
+/* Native texture record of a view. Layouts only allow views Apple9 samples */
+static void
 agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
 {
    struct agx_resource *resource = view->rsrc;
-
-   if (!agx_apple9_texture_view_supported(view)) {
-      mesa_loge("Apple9: unsupported texture view (target %u, format %s)",
-                view->base.target, util_format_short_name(view->format));
-      return false;
-   }
+   assert(agx_apple9_texture_view_supported(view));
 
    struct pipe_sampler_view physical = view->base;
    enum pipe_format format = view->format;
@@ -3706,21 +3701,17 @@ agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
          AGX_TEXTURE_BUFFER_WIDTH * util_format_get_blocksize(format);
       address |= ((stride >> 4) - 1) << 46;
       memcpy((uint8_t *)out + 8, &address, sizeof(address));
-      return true;
+      return;
    }
 
    struct agx_texture_packed texture;
    agx_pack_texture(&texture, resource, format, &physical);
-   return agx_apple9_translate_texture(out, &texture);
+   ASSERTED bool translated = agx_apple9_translate_texture(out, &texture);
+   assert(translated);
 }
 
-/*
- * The texture and sampler tables of a stage, which Apple9 shaders address by
- * their roots. Textures are laid out as on Apple8 (agx_upload_textures):
- * textures, then a texture and a PBE descriptor per image. Sampler 0 is the
- * texel fetch sampler, sampler 1 + i the API sampler i.
- */
-static bool
+/* Stage tables. Sampler 0 is texel fetch, API sampler i is sampler 1 + i */
+static void
 agx_apple9_upload_tables(struct agx_batch *batch,
                          const struct agx_compiled_shader *cs,
                          uint64_t *textures, uint64_t *samplers)
@@ -3732,11 +3723,8 @@ agx_apple9_upload_tables(struct agx_batch *batch,
 
    *textures = *samplers = 0;
 
-   /* Spilled render targets would be accessed through bindless images */
-   if (fragment && agx_tilebuffer_spills(&batch->tilebuffer_layout)) {
-      mesa_loge("Apple9: render targets exceed the tile");
-      return false;
-   }
+   /* Eight four-word render targets fit the 128-byte tile, so none spill */
+   assert(!agx_tilebuffer_spills(&batch->tilebuffer_layout));
 
    unsigned nr_textures = cs->so ? cs->so->info.nr_bindful_textures : 0;
    unsigned nr_images = cs->so ? cs->so->info.nr_bindful_images : 0;
@@ -3756,8 +3744,7 @@ agx_apple9_upload_tables(struct agx_batch *batch,
             continue;
          }
 
-         if (!agx_apple9_pack_view(texture, view))
-            return false;
+         agx_apple9_pack_view(texture, view);
 
          if (fragment)
             agx_batch_reads_fragment(batch, view->rsrc);
@@ -3787,8 +3774,7 @@ agx_apple9_upload_tables(struct agx_batch *batch,
          struct pipe_image_view *view = &st->images[i];
          agx_batch_track_image(batch, view, stage);
 
-         if (!agx_apple9_pack_storage(batch, &out[i], view))
-            return false;
+         agx_apple9_pack_storage(batch, &out[i], view);
       }
 
       batch->stage_uniforms[stage].texture_base = t.gpu;
@@ -3816,10 +3802,9 @@ agx_apple9_upload_tables(struct agx_batch *batch,
                                ? AGX_BORDER_COLOUR_TRANSPARENT_BLACK
                                : state.border_colour;
 
-      if (!agx_apple9_pack_sampler_state(sampler, &state)) {
-         mesa_loge("Apple9: unsupported sampler state");
-         return false;
-      }
+      /* Every Gallium wrap mode and filter has a native encoding */
+      ASSERTED bool packed = agx_apple9_pack_sampler_state(sampler, &state);
+      assert(packed);
 
       if (so->uses_custom_border) {
          uint32_t modes;
@@ -3835,7 +3820,6 @@ agx_apple9_upload_tables(struct agx_batch *batch,
    }
 
    *samplers = s.gpu;
-   return true;
 }
 
 /* Push words: the uniforms Apple8 preloads, copied on the CPU */
@@ -3875,7 +3859,7 @@ agx_apple9_upload_push(struct agx_batch *batch,
 }
 
 /* The buffer table of an Apple9 program, in the order of its profile */
-static bool
+static void
 agx_apple9_upload_buffers(struct agx_batch *batch, struct agx_stage *stage,
                           const struct agx_apple9_compute_profile *profile,
                           uint64_t *addresses)
@@ -3883,19 +3867,14 @@ agx_apple9_upload_buffers(struct agx_batch *batch, struct agx_stage *stage,
    for (unsigned i = 0; i < profile->resource_binding_count; ++i) {
       if (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED) {
          addresses[i] = AGX_APPLE9_COMPUTE_SHARED_ROOT;
-      } else if (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
-                 profile->resource_binding[i] ==
-                    AGX_APPLE9_GRAPHICS_SYSVAL_BINDING) {
-         addresses[i] = agx_apple9_upload_texture_info(batch, stage);
       } else {
-         /* Gallium buffers are lowered to global memory */
-         mesa_loge("Apple9: unexpected buffer binding %u",
-                   profile->resource_binding[i]);
-         return false;
+         /* Gallium buffers are global memory, leaving the texture state */
+         assert(profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
+                profile->resource_binding[i] ==
+                   AGX_APPLE9_GRAPHICS_SYSVAL_BINDING);
+         addresses[i] = agx_apple9_upload_texture_info(batch, stage);
       }
    }
-
-   return true;
 }
 
 /* Dispatch an Apple9 compute program */
@@ -3931,7 +3910,7 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
           profile->resource_binding_count, textures, samplers, push, &geometry,
           profile->preamble_size ? bo->va->addr + profile->preamble_offset : 0,
           &launch)) {
-      mesa_loge("Apple9: could not prepare a compute launch");
+      mesa_loge("Apple9: out of memory for a compute launch");
       return false;
    }
 
@@ -3941,19 +3920,15 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
                               : AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE;
    agx_ensure_cmdbuf_has_space(batch, &batch->cdm, size + 4);
 
-   bool ok = indirect ? agx_apple9_emit_indirect_dispatch(
-                           batch->cdm.current, launch, grid.ptr, geometry.local,
-                           indirect_local, profile, true)
-                      : agx_apple9_emit_direct_dispatch(
-                           batch->cdm.current, launch, geometry.threads,
-                           geometry.local, profile, true);
-   if (!ok) {
-      mesa_loge("Apple9: compute dispatch rejected: %s",
-                agx_apple9_dispatch_reject_reason(launch, indirect, grid.ptr,
-                                                  geometry.threads,
-                                                  geometry.local, profile));
-      return false;
-   }
+   ASSERTED bool ok =
+      indirect ? agx_apple9_emit_indirect_dispatch(
+                    batch->cdm.current, launch, grid.ptr, geometry.local,
+                    indirect_local, profile, true)
+               : agx_apple9_emit_direct_dispatch(batch->cdm.current, launch,
+                                                 geometry.threads,
+                                                 geometry.local, profile, true);
+   /* The grid and workgroup are valid by the API */
+   assert(ok && "valid dispatch");
 
    batch->cdm.current += size;
    agx_batch_add_bo(batch, bo);
@@ -4016,10 +3991,9 @@ agx_launch_apple9(struct agx_batch *batch, struct agx_grid grid,
    uint64_t textures, samplers;
    uint64_t addresses[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
 
-   if (!agx_apple9_upload_tables(batch, cs, &textures, &samplers) ||
-       !agx_apple9_upload_buffers(batch, &ctx->stage[cs->stage], &profile,
-                                  addresses))
-      return;
+   agx_apple9_upload_tables(batch, cs, &textures, &samplers);
+   agx_apple9_upload_buffers(batch, &ctx->stage[cs->stage], &profile,
+                             addresses);
 
    if (!agx_apple9_launch_compute(batch, grid, wg, bo, &profile, addresses,
                                   textures, samplers,
@@ -4110,8 +4084,9 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
          struct agx_texture_packed texture;
 
          agx_pack_texture(&texture, rsrc, surf->format, &view);
-         if (!agx_apple9_translate_texture(textures[2 * rt], &texture))
-            return (struct asahi_bg_eot){0};
+         ASSERTED bool translated =
+            agx_apple9_translate_texture(textures[2 * rt], &texture);
+         assert(translated && "render targets are textures");
 
          nr_textures = MAX2(nr_textures, 2 * rt + 1);
          fetch = true;
@@ -4137,13 +4112,12 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
             agx_translate_tex_dim(agx_pbe_image_target(&view, false, false),
                                   util_res_sample_count(&rsrc->base));
 
-         if (!agx_apple9_translate_pbe(
-                textures[rt], &pbe, view.format, &layout,
-                agx_map_texture_gpu(rsrc, view.u.tex.first_layer),
-                view.u.tex.level,
-                view.u.tex.last_layer - view.u.tex.first_layer + 1,
-                !view.u.tex.single_layer_view, dim))
-            return (struct asahi_bg_eot){0};
+         ASSERTED bool translated = agx_apple9_translate_pbe(
+            textures[rt], &pbe, view.format, &layout,
+            agx_map_texture_gpu(rsrc, view.u.tex.first_layer), view.u.tex.level,
+            view.u.tex.last_layer - view.u.tex.first_layer + 1,
+            !view.u.tex.single_layer_view, dim);
+         assert(translated && "render targets are PBE images");
 
          nr_textures = MAX2(nr_textures, rt + 1);
       }
@@ -6795,11 +6769,11 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       agx_apple9_render_stages(batch, linked_vs, vs, info->mode, &vertex,
                                &fragment);
 
+      /* The linked programs respect the varying, clip and RT limits */
       struct agx_apple9_render_pipeline pipeline;
-      if (!agx_apple9_link_render_pipeline(&pipeline, &vertex, &fragment)) {
-         mesa_loge("Apple9: cannot link the vertex and fragment programs");
-         return;
-      }
+      ASSERTED bool linked =
+         agx_apple9_link_render_pipeline(&pipeline, &vertex, &fragment);
+      assert(linked);
 
       if (!agx_apple9_collect_color_targets(batch, &pipeline)) {
          mesa_loge("Apple9 direct render requires one to eight color surfaces");
@@ -6936,12 +6910,11 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
             &programs[stage]->apple9.profile;
          struct agx_stage *shader = &ctx->stage[mains[stage]->stage];
 
-         if (!agx_apple9_upload_tables(batch, mains[stage],
-                                       &record->texture_table[stage],
-                                       &record->sampler_table[stage]) ||
-             !agx_apple9_upload_buffers(batch, shader, profile,
-                                        record->buffers[stage]))
-            return;
+         agx_apple9_upload_tables(batch, mains[stage],
+                                  &record->texture_table[stage],
+                                  &record->sampler_table[stage]);
+         agx_apple9_upload_buffers(batch, shader, profile,
+                                   record->buffers[stage]);
 
          record->push[stage] = agx_apple9_upload_push(batch, mains[stage]);
          record->buffer_count[stage] = profile->resource_binding_count;
@@ -6978,7 +6951,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       if (!agx_apple9_prepare_draw(dev, &batch->pipeline_pool,
                                    &batch->apple9_context_pool, &pipeline,
                                    record, previous)) {
-         mesa_loge("Apple9: could not prepare the state of a draw");
+         mesa_loge("Apple9: out of memory for the state of a draw");
          return;
       }
       batch->apple9_previous_draw = *record;
