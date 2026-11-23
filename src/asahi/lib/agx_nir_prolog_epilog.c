@@ -867,7 +867,9 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
          info->loc0_w_1 = true;
       } else {
-         unsigned stride = vec->bit_size / 16;
+         /* Apple9 keeps 16-bit values in the low half of 32-bit registers */
+         bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+         unsigned stride = apple9 ? 2 : vec->bit_size / 16;
 
          nir_export_agx(b, nir_channel(b, vec, c),
                         .base = AGX_ABI_FOUT_COLOUR(loc) + (comp + c) * stride);

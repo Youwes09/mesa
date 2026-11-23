@@ -776,6 +776,13 @@ agx_emit_load_vary_apple9(agx_builder *b, agx_index dest,
 
       if (!agx_is_null(w))
          channels[c] = agx_fmul_perspective(b, channels[c], w, cf.value);
+
+      /* Coefficients iterate in FP32. 16-bit inputs are FP16 in the low half */
+      if (instr->def.bit_size == 16) {
+         agx_index half = agx_temp(b->shader, AGX_SIZE_32);
+         agx_f32_to_f16_to(b, half, channels[c]);
+         channels[c] = half;
+      }
    }
 
    agx_emit_collect_to(b, dest, components, channels);
