@@ -1491,11 +1491,26 @@ agx_nir_lower_apple9_texel_buffers(nir_shader *nir)
                               NULL);
 }
 
+/* Rectangle images (OpenGL) are 2D images with a single level */
+static bool
+apple9_lower_rect_image(nir_builder *b, nir_intrinsic_instr *intr, void *_)
+{
+   if (!nir_intrinsic_has_image_dim(intr) ||
+       nir_intrinsic_image_dim(intr) != GLSL_SAMPLER_DIM_RECT)
+      return false;
+
+   nir_intrinsic_set_image_dim(intr, GLSL_SAMPLER_DIM_2D);
+   return true;
+}
+
 /* Storage, texel buffers and sparse residency, before agx_nir_lower_images */
 bool
 agx_nir_lower_apple9_storage(nir_shader *nir)
 {
    bool progress = false;
+
+   NIR_PASS(progress, nir, nir_shader_intrinsics_pass, apple9_lower_rect_image,
+            nir_metadata_all, NULL);
 
    /* Buffer residency lookups add control flow */
    NIR_PASS(progress, nir, agx_nir_lower_apple9_sparse_residency);
