@@ -99,7 +99,7 @@ agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
 static inline bool
 agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
 {
-   if (word >= 128 || slot >= 64)
+   if (word >= 128 || slot >= 138)
       return false;
    const uint8_t bytes[8] = {
       0x57,
