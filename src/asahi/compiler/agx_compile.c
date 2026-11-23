@@ -5555,6 +5555,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                 agx_apple9_max_preamble_bytes(compute) &&
              agx_inline_apple9_preamble(main)) {
             util_dynarray_clear(&binary);
+            memset(info->apple9_vary_stores, 0,
+                   sizeof(info->apple9_vary_stores));
             info->nr_preamble_gprs = 0;
             info->stats.preamble_inst = 0;
             info->apple9_compute.preamble_offset = 0;
