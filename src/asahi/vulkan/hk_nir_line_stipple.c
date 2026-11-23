@@ -198,10 +198,20 @@ struct gs_outputs {
    nir_variable *cur, *prev;
 };
 
+/* Outputs are kept as words: private memory is accessed a word at a time */
+static nir_def *
+gs_load_slot(nir_builder *b, nir_variable *var, unsigned slot)
+{
+   nir_def *c[4];
+   for (unsigned i = 0; i < 4; ++i)
+      c[i] = nir_load_array_var_imm(b, var, slot * 4 + i);
+   return nir_vec(b, c, 4);
+}
+
 static nir_def *
 gs_tap(nir_builder *b, struct gs_outputs *o, unsigned location)
 {
-   return nir_load_array_var_imm(b, o->cur, location - o->first);
+   return gs_load_slot(b, o->cur, location - o->first);
 }
 
 static void
@@ -212,7 +222,7 @@ gs_emit_outputs(nir_builder *b, struct gs_outputs *o, bool prev, nir_def *word)
       if (!s->mask)
          continue;
 
-      nir_def *value = nir_load_array_var_imm(b, prev ? o->prev : o->cur, i);
+      nir_def *value = gs_load_slot(b, prev ? o->prev : o->cur, i);
       nir_store_output(b, value, nir_imm_int(b, 0), .write_mask = s->mask,
                        .src_type = s->type, .io_semantics = s->sem);
    }
@@ -259,7 +269,7 @@ hk_nir_lower_gs_line_stipple(nir_shader *gs)
       o->first = first;
       o->count = end - first;
       const struct glsl_type *type =
-         glsl_array_type(glsl_vec4_type(), o->count, 0);
+         glsl_array_type(glsl_uint_type(), o->count * 4, 0);
       o->cur = nir_local_variable_create(impl, type, "stipple_cur");
       o->prev = nir_local_variable_create(impl, type, "stipple_prev");
    }
@@ -293,17 +303,17 @@ hk_nir_lower_gs_line_stipple(nir_shader *gs)
 
          if (intr->intrinsic == nir_intrinsic_store_output) {
             nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
-            nir_def *index =
-               nir_iadd_imm(&b, intr->src[1].ssa, sem.location - o->first);
-            nir_deref_instr *slot = nir_build_deref_array(
-               &b, nir_build_deref_var(&b, o->cur), index);
-            nir_def *value = nir_load_deref(&b, slot);
+            nir_def *index = nir_imul_imm(
+               &b, nir_iadd_imm(&b, intr->src[1].ssa, sem.location - o->first),
+               4);
             unsigned c0 = nir_intrinsic_component(intr);
             u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
-               value = nir_vector_insert_imm(
-                  &b, value, nir_channel(&b, intr->src[0].ssa, c), c0 + c);
+               nir_store_array_var(
+                  &b, o->cur, nir_iadd_imm(&b, index, c0 + c),
+                  nir_bitcast_vector(&b, nir_channel(&b, intr->src[0].ssa, c),
+                                     32),
+                  0x1);
             }
-            nir_store_deref(&b, slot, value, 0xf);
             nir_instr_remove(instr);
          } else if (intr->intrinsic == nir_intrinsic_end_primitive) {
             nir_store_var(&b, have_prev, nir_imm_false(&b), 1);
@@ -339,9 +349,9 @@ hk_nir_lower_gs_line_stipple(nir_shader *gs)
             }
             nir_pop_if(&b, NULL);
 
-            for (unsigned i = 0; i < o->count; ++i) {
+            for (unsigned i = 0; i < o->count * 4; ++i) {
                nir_store_array_var_imm(
-                  &b, o->prev, i, nir_load_array_var_imm(&b, o->cur, i), 0xf);
+                  &b, o->prev, i, nir_load_array_var_imm(&b, o->cur, i), 0x1);
             }
             nir_store_var(&b, prev_window, window, 0x3);
             nir_store_var(&b, have_prev, nir_imm_true(&b), 1);
