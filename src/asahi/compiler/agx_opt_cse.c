@@ -96,6 +96,12 @@ instrs_equal(const void *_i1, const void *_i2)
 static bool
 instr_can_cse(const agx_instr *I)
 {
+   /* Parameter bundles are read after issue by one operation, never shared */
+   agx_foreach_dest(I, d) {
+      if (I->dest[d].reg_class == RA_EXPORT)
+         return false;
+   }
+
    return agx_opcodes_info[I->op].can_eliminate &&
           agx_opcodes_info[I->op].can_reorder;
 }
