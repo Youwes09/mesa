@@ -7056,6 +7056,20 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          sizeof(uint32_t);
       agx_batch_add_apple9_entries(batch, dev);
       ++batch->apple9_vdm_draws;
+
+      /* Barrier the rasterization program's XFB writes for later vertex reads.
+       * The barrier replaces the terminator, which current points at.
+       */
+      if (ctx->gs && ctx->streamout.num_targets > 0) {
+         agx_push(out, VDM_BARRIER_G16, cfg) {
+            cfg.unk_0 = true;
+            cfg.unk_1 = true;
+            cfg.unk_4 = true;
+         }
+
+         const uint32_t terminator = 0xc0000000;
+         memcpy(out, &terminator, sizeof(terminator));
+      }
    } else {
       out = agx_encode_state(batch, batch->vdm.current);
 
