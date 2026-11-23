@@ -4079,6 +4079,124 @@ agx_launch_precomp(struct agx_batch *batch, struct agx_grid grid,
                        MESA_SHADER_COMPUTE, usc);
 }
 
+static struct agx_ptr
+agx_apple9_pool_alloc(void *pool, size_t size, size_t alignment)
+{
+   return agx_pool_alloc_aligned(pool, size, alignment);
+}
+
+/* Tile programs load texture 2 * rt and store image rt, clear colours pushed */
+static struct asahi_bg_eot
+agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
+{
+   struct agx_context *ctx = batch->ctx;
+   struct agx_device *dev = agx_device(ctx->base.screen);
+   uint8_t textures[2 * PIPE_MAX_COLOR_BUFS][AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint32_t push[2 + 4 * PIPE_MAX_COLOR_BUFS] = {0};
+   unsigned nr_textures = 0, push_words = 0;
+   bool fetch = false;
+
+   memset(textures, 0, sizeof(textures));
+
+   for (unsigned rt = 0; rt < PIPE_MAX_COLOR_BUFS; ++rt) {
+      const struct pipe_surface *surf = &batch->key.cbufs[rt];
+
+      if (key->op[rt] == AGX_BG_LOAD) {
+         struct agx_resource *rsrc = agx_resource(surf->texture);
+         struct pipe_sampler_view view = sampler_view_for_surface(surf);
+         struct agx_texture_packed texture;
+
+         agx_pack_texture(&texture, rsrc, surf->format, &view);
+         if (!agx_apple9_translate_texture(textures[2 * rt], &texture))
+            return (struct asahi_bg_eot){0};
+
+         nr_textures = MAX2(nr_textures, 2 * rt + 1);
+         fetch = true;
+      } else if (key->op[rt] == AGX_BG_CLEAR) {
+         memcpy(&push[2 + 4 * rt], batch->clear_color[rt].ui,
+                sizeof(batch->clear_color[rt].ui));
+         push_words = MAX2(push_words, 2 + 4 * (rt + 1));
+      } else if (key->op[rt] == AGX_EOT_STORE) {
+         struct agx_resource *rsrc = agx_resource(surf->texture);
+         struct pipe_image_view view = image_view_for_surface(surf);
+         struct agx_pbe_packed pbe;
+
+         /* The tile already holds encoded sRGB values. Do not convert */
+         view.format = util_format_linear(view.format);
+
+         bool no_compress = batch->feedback & (PIPE_CLEAR_COLOR0 << rt);
+         struct ail_layout layout = rsrc->layout;
+         layout.compressed &= !no_compress;
+         agx_batch_upload_pbe(batch, &pbe, &view, true, true, false,
+                              no_compress);
+
+         enum agx_texture_dimension dim =
+            agx_translate_tex_dim(agx_pbe_image_target(&view, false, false),
+                                  util_res_sample_count(&rsrc->base));
+
+         if (!agx_apple9_translate_pbe(
+                textures[rt], &pbe, view.format, &layout,
+                agx_map_texture_gpu(rsrc, view.u.tex.first_layer),
+                view.u.tex.level,
+                view.u.tex.last_layer - view.u.tex.first_layer + 1,
+                !view.u.tex.single_layer_view, dim))
+            return (struct asahi_bg_eot){0};
+
+         nr_textures = MAX2(nr_textures, rt + 1);
+      }
+   }
+
+   key->reserved_preamble = 2 * push_words;
+   struct agx_bg_eot_shader *shader = agx_get_bg_eot_shader(&ctx->bg_eot, key);
+   if (!shader)
+      return (struct asahi_bg_eot){0};
+
+   agx_batch_add_bo(batch, shader->bo);
+
+   uint64_t texture_table =
+      nr_textures
+         ? agx_pool_upload_aligned(&batch->pool, textures,
+                                   nr_textures * sizeof(textures[0]), 64)
+         : 0;
+
+   uint64_t sampler_table = 0;
+   if (fetch) {
+      struct agx_ptr sampler = agx_pool_alloc_aligned(
+         &batch->pool, AGX_APPLE9_SAMPLER_TABLE_STRIDE, 64);
+      agx_apple9_pack_fetch_sampler(sampler.cpu);
+      sampler_table = sampler.gpu;
+   }
+
+   uint64_t push_table =
+      push_words ? agx_pool_upload_aligned(&batch->pool, push,
+                                           push_words * sizeof(uint32_t), 16)
+                 : 0;
+
+   const struct agx_shader_info *info = &shader->info;
+   const struct agx_apple9_render_stage stage = {
+      .bo = shader->bo,
+      .binary_size = info->binary_size,
+      .preamble_offset = info->apple9_compute.preamble_offset,
+      .preamble_size = info->apple9_compute.preamble_size,
+      .scratch_size = info->apple9_compute.scratch_size,
+      .atomic_frame_size = info->apple9_compute.atomic_frame_size,
+      .publication_count = info->apple9_compute.publication_count,
+      .publication_count_valid = true,
+   };
+
+   unsigned samples = key->tib.nr_samples;
+   uint32_t launch;
+   if (!agx_apple9_prepare_graphics_stage(
+          dev, &batch->pipeline_pool, agx_apple9_pool_alloc, &stage, true, 0,
+          texture_table, sampler_table, push_table,
+          agx_apple9_tile_sample_bytes(key->tib.sample_size_B, samples),
+          samples, &launch))
+      return (struct asahi_bg_eot){0};
+
+   agx_batch_add_apple9_entries(batch, dev);
+   return (struct asahi_bg_eot){.usc = launch};
+}
+
 struct asahi_bg_eot
 agx_build_bg_eot(struct agx_batch *batch, bool store, bool partial_render)
 {
@@ -4124,6 +4242,9 @@ agx_build_bg_eot(struct agx_batch *batch, bool store, bool partial_render)
                               : AGX_BG_EOT_NONE;
       }
    }
+
+   if (agx_is_apple9(agx_device(ctx->base.screen)))
+      return agx_build_bg_eot_apple9(batch, &key);
 
    /* Begin building the pipeline */
    size_t usc_size = agx_usc_size(3 + PIPE_MAX_COLOR_BUFS);
@@ -4374,32 +4495,20 @@ agx_batch_init_state(struct agx_batch *batch)
    enum pipe_format formats[PIPE_MAX_COLOR_BUFS] = {0};
    for (unsigned i = 0; i < batch->key.nr_cbufs; ++i) {
       formats[i] = batch->key.cbufs[i].format;
-      /* Apple9 output addresses preserve API slots, including GL_NONE holes. */
-      if (agx_apple9_direct_render_enabled(
-             agx_device(batch->ctx->base.screen)) &&
-          formats[i] == PIPE_FORMAT_NONE)
-         formats[i] = PIPE_FORMAT_R8G8B8A8_UNORM;
    }
 
-   batch->tilebuffer_layout = agx_build_tilebuffer_layout(
+   bool apple9 = agx_is_apple9(agx_device(batch->ctx->base.screen));
+   batch->tilebuffer_layout = (apple9 ? agx_build_tilebuffer_layout_apple9
+                                      : agx_build_tilebuffer_layout)(
       formats, batch->key.nr_cbufs,
       util_framebuffer_get_num_samples(&batch->key),
       util_framebuffer_get_num_layers(&batch->key) > 1);
 
-   /* The direct stages use API-ordered raw words, including padded R16F
-    * slots. Four samples use a 32x16 local-memory launch layout. */
-   if (agx_device(batch->ctx->base.screen)->chip == AGX_CHIP_G16G &&
-       agx_apple9_direct_render_enabled(agx_device(batch->ctx->base.screen))) {
+   /* Renders allocate whole double words per sample, Apple9 MSAA some always */
+   if (apple9) {
       struct agx_tilebuffer_layout *tib = &batch->tilebuffer_layout;
-      unsigned bytes = 0;
-      for (unsigned rt = 0; rt < batch->key.nr_cbufs; ++rt) {
-         tib->_offset_B[rt] = bytes;
-         bytes += 4 * agx_apple9_color_words(formats[rt]);
-         tib->spilled[rt] = false;
-      }
-      tib->sample_size_B =
-         ALIGN_POT(agx_apple9_tile_sample_bytes(bytes, tib->nr_samples), 8);
-      tib->tile_size = tib->nr_samples == 4 ? 32 * 16 : 32 * 32;
+      tib->sample_size_B = ALIGN_POT(
+         agx_apple9_tile_sample_bytes(tib->sample_size_B, tib->nr_samples), 8);
    }
 
    if (agx_device(batch->ctx->base.screen)->debug & AGX_DBG_SMALLTILE)
@@ -6017,8 +6126,7 @@ static void
 agx_legalize_feedback_loops(struct agx_context *ctx)
 {
    /* Trust that u_blitter knows what it's doing */
-   if (ctx->blitter->running ||
-       (ctx->batch && ctx->batch->apple9_preparing_tile_helper))
+   if (ctx->blitter->running)
       return;
 
    for (unsigned stage = 0; stage < ARRAY_SIZE(ctx->stage); ++stage) {
@@ -6813,8 +6921,6 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
 #endif
 
    agx_batch_init_state(batch);
-   if (agx_apple9_direct_render_enabled(dev) && !agx_apple9_reload_color(batch))
-      return;
 
    /* Dirty track the reduced prim: lines vs points vs triangles. Happens before
     * agx_update_vs/agx_update_fs, which specialize based on primitive.
@@ -7321,15 +7427,6 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       pipeline.vertex_launch = record->launch[0] / 0x40;
       /* Native vertex launch configuration. It is not a header address. */
       pipeline.pipeline_word = 0x01000000;
-      /* Background and EOT dispatch use these fragment entries directly.
-       * A rasterized reload triangle would mark every tile as non-empty,
-       * forcing attachment traffic even where the application draws nothing. */
-      if (batch->apple9_preparing_tile_helper) {
-         agx_batch_add_apple9_entries(batch, dev);
-         agx_dirty_reset_graphics(ctx);
-         return;
-      }
-
       /* Keep current at the terminator, so both another draw and a stream
        * link replace it. A newly linked buffer starts at current directly.
        */
@@ -7401,14 +7498,6 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
                                    draws->count, info->instance_count));
    }
    batch->draws++;
-
-   /* The color load/store helpers recurse through draw_vbo before their
-    * launch records are installed. Only the outer draw may submit the batch.
-    */
-   if (agx_apple9_direct_render_enabled(dev) &&
-       (!batch->apple9_color_reload_launch ||
-        !batch->apple9_color_store_launch))
-      return;
 
    /* The scissor/zbias arrays are indexed with 16-bit integers, imposigin a
     * maximum of UINT16_MAX descriptors. Flush if the next draw would overflow

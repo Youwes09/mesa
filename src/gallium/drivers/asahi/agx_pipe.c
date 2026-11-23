@@ -1325,6 +1325,7 @@ agx_clear(struct pipe_context *pctx, unsigned buffers,
 
       batch->uploaded_clear_color[rt] = agx_pool_upload_aligned(
          &batch->pool, clamped.f, sizeof(clamped.f), 16);
+      batch->clear_color[rt] = clamped;
    }
 
    if (fastclear & PIPE_CLEAR_DEPTH)
@@ -1858,30 +1859,24 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
       pipeline_background_partial, pipeline_store, clear_pipeline_textures,
       batch->clear_depth, batch->clear_stencil, &batch->tilebuffer_layout);
 
-   if (agx_apple9_direct_render_enabled(dev)) {
-      if (batch->key.nr_cbufs > 8) {
-         mesa_loge("Apple9 direct render supports up to eight color targets");
+   /* Apple9 tile programs are entered through their launch programs */
+   if (agx_is_apple9(dev)) {
+      if (!pipeline_background.usc || !pipeline_background_partial.usc ||
+          !pipeline_store.usc) {
+         mesa_loge("Apple9: could not prepare the tile programs of a render");
          return false;
       }
 
-      bool package_ready = batch->apple9_render_initialized;
-      uint32_t load_usc = batch->apple9_color_reload_launch;
-      uint32_t store_usc = batch->apple9_color_store_launch;
-      if (!package_ready || !load_usc || !store_usc) {
-         mesa_loge("failed to prepare Apple9 color target");
-         return false;
-      }
-
-      /* Both tile helpers use batch-owned compiled entries and bindings. */
-      cmdbuf->bg.usc = load_usc;
+      cmdbuf->bg.usc = pipeline_background.usc;
       cmdbuf->bg.rsrc_spec = 0;
-      cmdbuf->eot.usc = store_usc;
+      cmdbuf->eot.usc = pipeline_store.usc;
       cmdbuf->eot.rsrc_spec = 0;
-      cmdbuf->partial_bg.usc = load_usc;
+      cmdbuf->partial_bg.usc = pipeline_background_partial.usc;
       cmdbuf->partial_bg.rsrc_spec = 0;
-      cmdbuf->partial_eot.usc = store_usc;
+      cmdbuf->partial_eot.usc = pipeline_store.usc;
       cmdbuf->partial_eot.rsrc_spec = 0;
    }
+
    return true;
 }
 
@@ -1959,7 +1954,6 @@ agx_destroy_context(struct pipe_context *pctx)
    agx_bg_eot_cleanup(&ctx->bg_eot);
    agx_cleanup_streamout(pctx);
    agx_destroy_meta_shaders(ctx);
-   agx_destroy_color_reload(ctx);
 
    /* Lock around the syncobj destruction, to avoid racing
     * command submission in another context.

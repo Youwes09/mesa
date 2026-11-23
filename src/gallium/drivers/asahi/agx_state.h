@@ -430,15 +430,11 @@ struct agx_batch {
    /* PIPE_CLEAR_* bitmask */
    uint32_t clear, draw, load, resolve, feedback;
    bool initialized;
-   bool apple9_color_reloaded;
-   uint32_t apple9_color_reload_launch;
-   uint32_t apple9_color_store_launch;
-   /* Prepare background/EOT state without emitting a rasterized draw. */
-   bool apple9_preparing_tile_helper;
-   /* Draws emitted into the VDM stream; tile helpers are not among them. */
+   /* Apple9: draws emitted into the VDM stream */
    unsigned apple9_vdm_draws;
 
    uint64_t uploaded_clear_color[PIPE_MAX_COLOR_BUFS];
+   union pipe_color_union clear_color[PIPE_MAX_COLOR_BUFS];
    double clear_depth;
    unsigned clear_stencil;
 
@@ -780,7 +776,6 @@ struct agx_context {
    bool in_tess;
 
    struct blitter_context *blitter;
-   struct agx_color_reload *color_reload;
    struct asahi_blitter compute_blitter;
 
    /* Map of GEM handle to (batch index + 1) that (conservatively) writes that
@@ -1324,8 +1319,6 @@ void agx_blitter_save(struct agx_context *ctx, struct blitter_context *blitter,
                       enum asahi_blitter_op op);
 
 void agx_blit(struct pipe_context *pipe, const struct pipe_blit_info *info);
-bool agx_apple9_reload_color(struct agx_batch *batch);
-void agx_destroy_color_reload(struct agx_context *ctx);
 
 void agx_resource_copy_region(struct pipe_context *pctx,
                               struct pipe_resource *dst, unsigned dst_level,
