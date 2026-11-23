@@ -311,6 +311,9 @@ can_move_instr(nir_instr *instr, opt_preamble_ctx *ctx)
     * for an if-else that is itself movable.
     */
    case nir_instr_type_phi: {
+      if (ctx->options->straight_line)
+         return false;
+
       nir_cf_node *prev_node = nir_cf_node_prev(&instr->block->cf_node);
       if (!prev_node)
          return false;
@@ -424,7 +427,8 @@ calculate_can_move_for_cf_list(opt_preamble_ctx *ctx, struct exec_list *list)
 
       case nir_cf_node_if: {
          nir_if *nif = nir_cf_node_as_if(node);
-         bool uniform = can_move_src(&nif->condition, ctx);
+         bool uniform =
+            !ctx->options->straight_line && can_move_src(&nif->condition, ctx);
 
          if (!uniform)
             ctx->nonuniform_cf_nesting++;

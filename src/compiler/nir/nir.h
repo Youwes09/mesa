@@ -7262,6 +7262,9 @@ typedef struct nir_opt_preamble_options {
    /* True if load_workgroup_size is supported in the preamble. */
    bool load_workgroup_size_allowed;
 
+   /* True if only straight-line code may move to the preamble */
+   bool straight_line;
+
    /* size/align/class for load/store_preamble.
     *
     * Defs with class "general" will always be allocated as general. Other
