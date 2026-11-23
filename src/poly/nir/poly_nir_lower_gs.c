@@ -576,6 +576,10 @@ struct lower_gs_rast_state {
 
    nir_variable *output_strip_length, *output_strip_base, *id_in_strip;
    nir_def *xfb_count[NIR_MAX_XFB_STREAMS];
+
+   /* Strip triangles to rasterize, and the outputs of the two before */
+   const struct poly_gs_rast_triangles *triangles;
+   nir_variable *before[2][NUM_TOTAL_VARYING_SLOTS];
 };
 
 static void
@@ -632,6 +636,23 @@ select_rast_output(nir_builder *b, nir_intrinsic_instr *intr,
 
       nir_store_var(b, state->outputs[slot].selected_var, value,
                     nir_component_mask(value->num_components));
+   }
+
+   /* The two previous strip vertices, used only from the third vertex on */
+   for (unsigned i = 0; state->triangles && i < 2; ++i) {
+      nir_def *target = nir_iadd_imm(b, state->output_id, (int)i - 2);
+      nir_def *selected = nir_iand(
+         b, nir_ieq(b, intr->src[0].ssa, target),
+         nir_ieq_imm(b, state->stream, nir_intrinsic_stream_id(intr)));
+
+      u_foreach_bit64(slot, b->shader->info.outputs_written) {
+         nir_def *orig = nir_load_var(b, state->before[i][slot]);
+         nir_def *data = nir_load_var(b, state->outputs[slot].output_var);
+
+         nir_store_var(b, state->before[i][slot],
+                       nir_bcsel(b, selected, data, orig),
+                       nir_component_mask(orig->num_components));
+      }
    }
 }
 
@@ -760,7 +781,8 @@ stream_multiplier(const nir_shader *gs)
  */
 static nir_shader *
 create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
-                      bool cull_mask)
+                      bool cull_mask,
+                      const struct poly_gs_rast_triangles *triangles)
 {
    /* Don't muck up the original shader */
    nir_shader *shader = nir_shader_clone(NULL, gs);
@@ -780,7 +802,7 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
    }
 
    /* Optimize out pointless gl_PointSize outputs. Bizarrely, these occur. */
-   if (shader->info.gs.output_primitive != MESA_PRIM_POINTS)
+   if (shader->info.gs.output_primitive != MESA_PRIM_POINTS && !triangles)
       shader->info.outputs_written &= ~VARYING_BIT_PSIZ;
 
    nir_builder b_ =
@@ -797,9 +819,14 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
       .output_strip_length = nir_local_variable_create(b->impl, T, NULL),
       .output_strip_base = nir_local_variable_create(b->impl, T, NULL),
       .id_in_strip = nir_local_variable_create(b->impl, T, NULL),
+      .triangles = triangles,
    };
 
-   if (cull_mask && gs->info.cull_distance_array_size) {
+   /* An output vertex outside every strip completes no triangle */
+   if (triangles)
+      nir_store_var(b, rs.id_in_strip, nir_imm_int(b, 0), 1);
+
+   if (cull_mask && gs->info.cull_distance_array_size && !triangles) {
       rs.cull_base = gs->info.clip_distance_array_size;
       rs.cull_count = gs->info.cull_distance_array_size;
       rs.vertices_per_primitive =
@@ -869,12 +896,22 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
       output->selected_var = nir_variable_create(
          shader, nir_var_shader_temp, glsl_vector_type(type, output->nr_components),
          ralloc_asprintf(shader, "%s-selected", slot_name));
+
+      for (unsigned i = 0; triangles && i < 2; ++i) {
+         rs.before[i][slot] = nir_variable_create(
+            shader, nir_var_shader_temp,
+            glsl_vector_type(type, output->nr_components),
+            ralloc_asprintf(shader, "%s-before%u", slot_name, 2 - i));
+      }
    }
 
    nir_shader_intrinsics_pass(shader, lower_to_gs_rast,
                               nir_metadata_control_flow, &rs);
 
    b->cursor = nir_after_impl(b->impl);
+   if (gs->xfb_info && triangles && triangles->writes_xfb)
+      nir_push_if(b, triangles->writes_xfb(b, triangles->data));
+
    if (gs->xfb_info) {
       unsigned n_ = mesa_vertices_per_prim(gs->info.gs.output_primitive);
       nir_def *zero = nir_imm_int(b, 0);
@@ -955,6 +992,35 @@ create_gs_rast_shader(const nir_shader *gs, const struct lower_gs_state *state,
          }
          nir_pop_if(b, NULL);
       }
+   }
+
+   if (gs->xfb_info && triangles && triangles->writes_xfb)
+      nir_pop_if(b, NULL);
+
+   if (triangles) {
+      nir_def *id_in_strip = nir_load_var(b, rs.id_in_strip);
+      nir_variable *selected[NUM_TOTAL_VARYING_SLOTS] = {NULL};
+      u_foreach_bit64(slot, shader->info.outputs_written)
+         selected[slot] = rs.outputs[slot].selected_var;
+
+      struct poly_gs_rast_triangle tri = {
+         .complete = nir_uge_imm(b, id_in_strip, 2),
+         .odd = nir_ine_imm(b, nir_iand_imm(b, id_in_strip, 1), 0),
+         .primitive_id = rs.primitive_id,
+         .flat_mask = load_geometry_param(b, flat_outputs),
+         .outputs = shader->info.outputs_written,
+         .vertex = {rs.before[0], rs.before[1], selected},
+      };
+
+      /* Only triangles of the rasterization stream are drawn */
+      if (state->info->multistream) {
+         tri.complete =
+            nir_iand(b, tri.complete,
+                     nir_ieq(b, rs.stream, nir_load_rasterization_stream(b)));
+      }
+
+      triangles->emit(b, &tri, triangles->data);
+      return shader;
    }
 
    if (rs.cull_count) {
@@ -1371,7 +1437,9 @@ optimize_static_topology(struct poly_gs_info *info, nir_shader *gs)
 
 static bool
 lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
-         nir_shader **pre_gs, struct poly_gs_info *info, bool cull_mask)
+         nir_shader **gs_triangles, nir_shader **pre_gs,
+         struct poly_gs_info *info, bool cull_mask,
+         const struct poly_gs_rast_triangles *triangles)
 {
    /* Lower I/O as assumed by the rest of GS lowering */
    if (gs->xfb_info != NULL) {
@@ -1480,7 +1548,14 @@ lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
    /* Ensure that outputs_written is still accurate after DCE. */
    nir_shader_gather_info(gs, nir_shader_get_entrypoint(gs));
 
-   *gs_copy = create_gs_rast_shader(gs, &gs_state, cull_mask);
+   *gs_copy = create_gs_rast_shader(gs, &gs_state, cull_mask, NULL);
+
+   if (gs_triangles) {
+      *gs_triangles =
+         gs->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP
+            ? create_gs_rast_shader(gs, &gs_state, false, triangles)
+            : NULL;
+   }
 
    NIR_PASS(_, gs, nir_shader_intrinsics_pass, lower_id,
             nir_metadata_control_flow, NULL);
@@ -1657,7 +1732,17 @@ bool
 poly_nir_lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
                   nir_shader **pre_gs, struct poly_gs_info *info)
 {
-   return lower_gs(gs, gs_count, gs_copy, pre_gs, info, false);
+   return lower_gs(gs, gs_count, gs_copy, NULL, pre_gs, info, false, NULL);
+}
+
+bool
+poly_nir_lower_gs_triangles(nir_shader *gs, nir_shader **gs_count,
+                            nir_shader **gs_copy, nir_shader **gs_triangles,
+                            nir_shader **pre_gs, struct poly_gs_info *info,
+                            const struct poly_gs_rast_triangles *triangles)
+{
+   return lower_gs(gs, gs_count, gs_copy, gs_triangles, pre_gs, info, false,
+                   triangles);
 }
 
 /* The rasterization shader exports a flat bit per wholly negative plane in
@@ -1669,5 +1754,5 @@ poly_nir_lower_gs_cull_mask(nir_shader *gs, nir_shader **gs_count,
                             nir_shader **gs_copy, nir_shader **pre_gs,
                             struct poly_gs_info *info)
 {
-   return lower_gs(gs, gs_count, gs_copy, pre_gs, info, true);
+   return lower_gs(gs, gs_count, gs_copy, NULL, pre_gs, info, true, NULL);
 }
