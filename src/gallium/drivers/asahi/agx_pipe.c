@@ -2196,6 +2196,7 @@ static void
 agx_init_shader_caps(struct pipe_screen *pscreen)
 {
    bool is_no16 = agx_device(pscreen)->debug & AGX_DBG_NO16;
+   bool apple9 = agx_apple9_direct_render_enabled(agx_device(pscreen));
 
    for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
@@ -2215,6 +2216,10 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
       caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 8
                           : i == MESA_SHADER_VERTEX ? 24
                                                     : 32;
+
+      /* Apple9 links up to 31 varyings, like max_varyings */
+      if (apple9 && i != MESA_SHADER_FRAGMENT)
+         caps->max_outputs = 32;
 
       caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
 
