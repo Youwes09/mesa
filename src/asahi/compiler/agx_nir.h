@@ -50,6 +50,9 @@ bool agx_nir_lower_apple9_subgroup_denorms(struct nir_shader *shader);
 bool agx_nir_legalize_apple9_memory(struct nir_shader *nir);
 bool agx_nir_legalize_apple9_alu(struct nir_shader *nir);
 bool agx_nir_lower_apple9_handles(struct nir_shader *nir);
+struct nir_def *agx_nir_apple9_descriptor_address(struct nir_builder *b,
+                                                  struct nir_def *handle,
+                                                  unsigned offset);
 unsigned agx_nir_lower_apple9_abi(struct nir_shader *nir, bool graphics,
                                   struct agx_apple9_compute_profile *profile);
 bool agx_nir_preload_apple9_push(struct nir_shader *nir, unsigned first,

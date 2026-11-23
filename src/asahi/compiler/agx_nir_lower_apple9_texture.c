@@ -85,9 +85,7 @@ agx_nir_lower_apple9_texture_lod(nir_shader *shader)
 static nir_def *
 descriptor_word(nir_builder *b, nir_def *handle, unsigned offset)
 {
-   nir_def *address =
-      nir_pack_64_2x32_split(b, nir_iadd_imm(b, handle, offset),
-                             nir_imm_int(b, AGX_APPLE9_USC_BASE >> 32));
+   nir_def *address = agx_nir_apple9_descriptor_address(b, handle, offset);
    /* EXP: descriptor records are constant for the draw; speculating them
     * lets the preamble hoist uniform sampler work out of control flow. */
    return nir_load_global_constant(

@@ -118,6 +118,21 @@ lower(nir_builder *b, nir_instr *instr, UNUSED void *data)
    return true;
 }
 
+/* Address of a descriptor byte, by descriptor set or USC aperture offset */
+nir_def *
+agx_nir_apple9_descriptor_address(nir_builder *b, nir_def *handle,
+                                  unsigned offset)
+{
+   if (nir_def_instr(handle)->type == nir_instr_type_intrinsic &&
+       handle_intrinsic(nir_src_for_ssa(handle))) {
+      return nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, handle),
+                          offset);
+   }
+
+   return nir_pack_64_2x32_split(b, nir_iadd_imm(b, handle, offset),
+                                 nir_imm_int(b, AGX_APPLE9_USC_BASE >> 32));
+}
+
 bool
 agx_nir_lower_apple9_handles(nir_shader *nir)
 {
