@@ -731,7 +731,19 @@ typedef struct agx_context {
 
    /* Promoted constants. These will be appended to the binary at the end. */
    uint16_t rodata[512];
+
+   /* Apple9 arms to skip when no lane takes them (struct agx_apple9_skip) */
+   struct util_dynarray apple9_skips;
 } agx_context;
+
+struct agx_apple9_skip {
+   /* Mask operation the jump follows */
+   agx_instr *after;
+
+   /* Where to go: the start of the block, or its last instruction */
+   agx_block *target;
+   bool to_end;
+};
 
 static inline void
 agx_remove_instruction(agx_instr *ins)

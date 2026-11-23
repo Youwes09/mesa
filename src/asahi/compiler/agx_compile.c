@@ -3724,6 +3724,23 @@ emit_block(agx_context *ctx, nir_block *block)
 
 static agx_block *emit_cf_list(agx_context *ctx, struct exec_list *list);
 
+/* Whether from..to has tile domain ops, which run even with no lane active */
+static bool
+agx_arm_has_tile_domain_ops(agx_block *from, agx_block *to)
+{
+   for (agx_block *block = from;; block = agx_next_block(block)) {
+      agx_foreach_instr_in_block(block, I) {
+         if (I->op == AGX_OPCODE_BEGIN_TILE || I->op == AGX_OPCODE_END_TILE ||
+             I->op == AGX_OPCODE_WRITE_COVERAGE ||
+             I->op == AGX_OPCODE_ZS_STORE)
+            return true;
+      }
+
+      if (block == to)
+         return false;
+   }
+}
+
 static void
 emit_if(agx_context *ctx, nir_if *nif)
 {
@@ -3735,7 +3752,7 @@ emit_if(agx_context *ctx, nir_if *nif)
    if (agx_is_apple9(ctx)) {
       /* Push the execution mask, keeping the lanes with a nonzero condition */
       agx_icmp_pred(&_b, cond, agx_zero(), AGX_ICOND_UEQ, false, 0);
-      agx_if_pred(&_b, 0, true);
+      if_ = agx_if_pred(&_b, 0, true);
    } else {
       if_ = agx_if_icmp(&_b, cond, agx_zero(), 1, AGX_ICOND_UEQ, true,
                         NULL /* filled in later */);
@@ -3756,7 +3773,24 @@ emit_if(agx_context *ctx, nir_if *nif)
    _b.cursor = agx_before_block(else_block);
 
    if (agx_is_apple9(ctx)) {
-      agx_else_exec(&_b);
+      agx_instr *else_ = agx_else_exec(&_b);
+
+      /* Skip arms with tile domain operations when no lane takes them: the
+       * then arm to the else, the else arm to the pop at its end. The jumps
+       * are inserted after scheduling, by agx_opt_jmp_none.
+       */
+      if (!ctx->apple9_skips.mem_ctx)
+         util_dynarray_init(&ctx->apple9_skips, ctx);
+
+      if (agx_arm_has_tile_domain_ops(if_block, end_then)) {
+         struct agx_apple9_skip skip = {if_, else_block, false};
+         util_dynarray_append(&ctx->apple9_skips, skip);
+      }
+
+      if (agx_arm_has_tile_domain_ops(else_block, end_else)) {
+         struct agx_apple9_skip skip = {else_, end_else, true};
+         util_dynarray_append(&ctx->apple9_skips, skip);
+      }
    } else {
       /* If the "if" fails, we fallthrough to the else */
       if_->target = else_block;
