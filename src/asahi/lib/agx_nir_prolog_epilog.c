@@ -820,8 +820,10 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
       return true;
    }
 
+   /* Apple9 masks stores by the killed samples anyway, so it keeps discards */
    if (intr->intrinsic == nir_intrinsic_demote_samples &&
-       b->shader->info.fs.early_fragment_tests) {
+       b->shader->info.fs.early_fragment_tests &&
+       agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9) {
 
       if (!ctx->masked_samples) {
          b->cursor = nir_before_impl(nir_shader_get_entrypoint(b->shader));
