@@ -311,6 +311,10 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
    unsigned nr_slots = ctx->target.scoreboard_slots;
    bool apple9 = ctx->target.isa == AGX_SHADER_ISA_APPLE9;
 
+   /* Whether the block waits for every slot at its end, see below */
+   bool waits_at_end =
+      block != agx_exit_block(ctx) || (apple9 && ctx->falls_through);
+
    assert(nr_slots <= ARRAY_SIZE(slots));
 
    agx_foreach_instr_in_block_safe(block, I) {
@@ -320,8 +324,11 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
       /* Check for read-after-write */
       bool exports_waited = apple9 && apple9_waits_for_exports(I);
 
+      /* An export reads its register after the block's final wait */
+      bool reads_nothing = apple9 && I->op == AGX_OPCODE_EXPORT && waits_at_end;
+
       agx_foreach_src(I, s) {
-         if (I->src[s].type != AGX_INDEX_REGISTER)
+         if (I->src[s].type != AGX_INDEX_REGISTER || reads_nothing)
             continue;
 
          bool exp = I->src[s].reg_class == RA_EXPORT;
@@ -470,7 +477,7 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
     * waiting is pointless. On Apple9, a shader part that does not stop is
     * followed by another, which must find its registers and exports written.
     */
-   if (block != agx_exit_block(ctx) || (apple9 && ctx->falls_through)) {
+   if (waits_at_end) {
       agx_builder b = agx_init_builder(ctx, agx_after_block_logical(block));
       uint8_t pending = 0;
 
