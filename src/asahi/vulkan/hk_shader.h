@@ -170,11 +170,28 @@ hk_per_vertex_copies_used(const struct hk_per_vertex_copies *map)
 struct hk_mesh_rast_key {
    struct hk_mesh_info info;
    uint8_t clip_distance_array_size, cull_distance_array_size;
-   uint8_t pad[2];
+   /* Lines are stippled, see hk_nir_line_stipple.c */
+   bool line_stipple;
+   uint8_t pad[1];
    struct hk_per_vertex_copies copies;
 };
 
 void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
+
+/* Apple9 line stipple, see hk_nir_line_stipple.c */
+struct nir_def *hk_nir_line_stipple_window(struct nir_builder *b,
+                                           struct nir_def *pos,
+                                           struct nir_def *viewport);
+struct nir_def *hk_nir_line_stipple_length(struct nir_builder *b,
+                                           struct nir_def *w0,
+                                           struct nir_def *w1);
+struct nir_def *hk_nir_line_stipple_word(struct nir_builder *b,
+                                         struct nir_def *w0, struct nir_def *w1,
+                                         struct nir_def *base);
+void hk_nir_store_line_stipple(struct nir_builder *b, struct nir_def *word);
+void hk_nir_line_stipple_passthrough(nir_shader *gs, bool strip, bool viewport);
+void hk_nir_lower_gs_line_stipple(nir_shader *gs);
+bool hk_nir_lower_line_stipple_fs(nir_shader *fs);
 
 struct hk_shader_info {
    union {

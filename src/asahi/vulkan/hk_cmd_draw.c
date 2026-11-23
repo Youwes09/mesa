@@ -2296,6 +2296,10 @@ struct hk_apple9_passthrough_suffix {
    uint8_t per_vertex_location[HK_MAX_PER_VERTEX_COPIES];
    uint8_t per_vertex_copy_base[HK_MAX_PER_VERTEX_COPIES];
    uint8_t per_vertex_bary[2];
+
+   /* 0: none, 1: segments, 2: strips. See hk_nir_line_stipple_passthrough */
+   uint8_t line_stipple;
+   uint8_t stipple_viewport;
 };
 
 /* Before every emitted vertex, write the per-vertex values of the input
@@ -2381,6 +2385,11 @@ hk_apple9_passthrough_gs(struct nir_builder *b, const void *key)
    struct hk_apple9_passthrough_suffix suffix;
    memcpy(&suffix, (const uint8_t *)key + key_size, sizeof(suffix));
    hk_apple9_write_per_vertex_copies(b->shader, &suffix);
+
+   if (suffix.line_stipple) {
+      hk_nir_line_stipple_passthrough(b->shader, suffix.line_stipple == 2,
+                                      suffix.stipple_viewport);
+   }
 }
 
 static struct hk_api_shader *
@@ -4868,6 +4877,70 @@ hk_sw_vs_outputs_fit(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    return false;
 }
 
+/* Whether a draw rasterizes stippled lines, see hk_nir_line_stipple.c */
+static bool
+hk_line_stipple_active(struct hk_cmd_buffer *cmd)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+
+   if (!agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) ||
+       !dyn->rs.line.stipple.enable)
+      return false;
+
+   struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
+   if (mesh)
+      return hk_only_variant(mesh)->info.mesh.prim == MESA_PRIM_LINES;
+
+   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
+   if (gs && !gs->is_passthrough) {
+      return u_reduced_prim(gs->variants[HK_GS_VARIANT_RAST].info.gs.mode) ==
+             MESA_PRIM_LINES;
+   }
+
+   enum mesa_prim prim = gfx->shaders[MESA_SHADER_TESS_EVAL]
+                            ? gfx->tess.prim
+                            : vk_topology_to_mesa(dyn->ia.primitive_topology);
+   return u_reduced_prim(prim) == MESA_PRIM_LINES;
+}
+
+/* The stipple pattern, and viewport transforms when stippling lines */
+static void
+hk_update_line_stipple(struct hk_cmd_buffer *cmd)
+{
+   struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+   bool active = hk_line_stipple_active(cmd);
+
+   /* A full pattern keeps every fragment */
+   uint32_t word = 0xffff | (1u << 16);
+   if (active) {
+      word = dyn->rs.line.stipple.pattern |
+             ((uint32_t)MAX2(dyn->rs.line.stipple.factor, 1) << 16);
+   }
+
+   if (desc->root.draw.line_stipple != word) {
+      desc->root.draw.line_stipple = word;
+      desc->root_dirty = true;
+   }
+
+   if (active && (!desc->root.draw.stipple_viewports ||
+                  IS_DIRTY(VP_VIEWPORTS) || IS_DIRTY(VP_VIEWPORT_COUNT))) {
+      float transforms[HK_MAX_VIEWPORTS][4] = {0};
+      for (unsigned i = 0; i < dyn->vp.viewport_count; ++i) {
+         const VkViewport *vp = &dyn->vp.viewports[i];
+         transforms[i][0] = vp->width * 0.5f;
+         transforms[i][1] = vp->height * 0.5f;
+         transforms[i][2] = vp->x + vp->width * 0.5f;
+         transforms[i][3] = vp->y + vp->height * 0.5f;
+      }
+
+      desc->root.draw.stipple_viewports =
+         hk_pool_upload(cmd, transforms, sizeof(transforms), 16);
+      desc->root_dirty = true;
+   }
+}
+
 static void
 hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
@@ -4878,7 +4951,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    if (!IS_SHADER_DIRTY(VERTEX) && !IS_SHADER_DIRTY(TESS_EVAL) &&
        !IS_SHADER_DIRTY(GEOMETRY) && !IS_SHADER_DIRTY(FRAGMENT) &&
-       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY))
+       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) && !IS_DIRTY(RS_LINE_STIPPLE_ENABLE))
       return;
 
    /* If there's an application geometry shader, there's nothing to un/bind */
@@ -4907,6 +4980,19 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
       needed |= suffix.per_vertex_copies || suffix.per_vertex_bary[0] ||
                 suffix.per_vertex_bary[1];
+   }
+
+   /* ...or to write the word of stippled lines */
+   if (hk_line_stipple_active(cmd)) {
+      VkPrimitiveTopology topology = dyn->ia.primitive_topology;
+      bool strip =
+         !gfx->shaders[MESA_SHADER_TESS_EVAL] &&
+         (topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
+          topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY);
+      suffix.line_stipple = strip ? 2 : 1;
+      suffix.stipple_viewport =
+         !!(last_sw->b.info.outputs & VARYING_BIT_VIEWPORT);
+      needed = true;
    }
 
    /* If we don't need a GS but we do have a passthrough, unbind it */
@@ -5055,6 +5141,7 @@ hk_flush_gfx_state(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
    /* TODO: Try to reduce draw overhead of this */
    hk_handle_passthrough_gs(cmd, draw);
+   hk_update_line_stipple(cmd);
 
    hk_flush_shaders(cmd);
 
@@ -5303,6 +5390,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
          hk_apple9_merge_tess_info(cmd);
       hk_handle_passthrough_gs(cmd, draw_);
+      hk_update_line_stipple(cmd);
       hk_flush_shaders(cmd);
       if (cmd->state.gfx.descriptors.push_dirty)
          hk_cmd_buffer_flush_push_descriptors(cmd, &cmd->state.gfx.descriptors);
@@ -5579,6 +5667,8 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    rast_key.info = *info;
    rast_key.clip_distance_array_size = main->info.clip_distance_array_size;
    rast_key.cull_distance_array_size = main->info.cull_distance_array_size;
+   rast_key.line_stipple = hk_line_stipple_active(cmd);
+   hk_update_line_stipple(cmd);
    rast_key.copies.count = fs->info.fs.per_vertex_copies;
    memcpy(rast_key.copies.location, fs->info.fs.per_vertex_location,
           sizeof(rast_key.copies.location));

@@ -130,6 +130,12 @@ struct hk_root_descriptor_table {
          /* Apple9 depth_clip_control: 1/2 maps [-w, w] to [0, w], 0 keeps z */
          float clip_z_coeff;
 
+         /* Apple9 stipple: pattern low, repeat high, full when not stippling */
+         uint32_t line_stipple;
+
+         /* Per-viewport (scale.xy, offset.xy) for line stipple, or 0 */
+         uint64_t stipple_viewports;
+
          /* Mapping from varying slots written by the last vertex stage to UVS
           * indices. This mapping must be compatible with the fragment shader.
           */
@@ -160,7 +166,7 @@ struct hk_root_descriptor_table {
 
 /* Bumped whenever hk_root_descriptor_table offsets change: compiled shaders
  * bake them, so pipeline and disk cache keys include it. */
-#define HK_ROOT_LAYOUT_VERSION 6
+#define HK_ROOT_LAYOUT_VERSION 7
 
 /* helper macro for computing root descriptor byte offsets */
 #define hk_root_descriptor_offset(member)                                      \

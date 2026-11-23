@@ -86,7 +86,8 @@ struct hk_fs_key {
    /* Whether a depth/stencil feedback loop can be enabled at draw time */
    bool dynamic_zs_self_dep;
 
-   uint8_t pad[1];
+   /* Whether the shader may draw stippled lines, see hk_nir_line_stipple.c */
+   bool line_stipple;
 };
 static_assert(sizeof(struct hk_fs_key) == 4, "packed");
 
@@ -313,12 +314,28 @@ hk_populate_vs_key(struct hk_vs_key *key,
    }
 }
 
+/* Whether these shaders may stipple lines, which only Apple9 exposes */
+static bool
+hk_may_stipple_lines(const struct vk_graphics_pipeline_state *state,
+                     const struct vk_features *features)
+{
+   if (!features || !features->stippledBresenhamLines)
+      return false;
+
+   if (state == NULL || state->rs == NULL)
+      return true;
+
+   return state->rs->line.stipple.enable ||
+          BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE);
+}
+
 static void
 hk_populate_fs_key(struct hk_fs_key *key,
                    const struct vk_graphics_pipeline_state *state,
                    const struct vk_features *features)
 {
    memset(key, 0, sizeof(*key));
+   key->line_stipple = hk_may_stipple_lines(state, features);
 
    /* Pipelines allow draw-time feedback loops only with the dynamic state */
    if (state == NULL) {
@@ -2629,11 +2646,9 @@ hk_api_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
    vk_shader_free(&dev->vk, pAllocator, &obj->vk);
 }
 
-/* The task and mesh lowering divides workgroup IDs by the grid size after
- * agx_preprocess_nir lowered integer division, so lower it again.
- */
+/* Task/mesh lowering and the stipple test divide after agx_preprocess_nir */
 static void
-hk_lower_task_mesh_division(nir_shader *nir)
+hk_lower_late_division(nir_shader *nir)
 {
    nir_lower_idiv_options idiv_options = {.allow_fp16 = true};
 
@@ -2737,6 +2752,12 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          nir->info.fs.uses_discard = true;
       }
 
+      /* Demote fragments of stippled lines, see hk_nir_line_stipple.c */
+      if (apple9 && key->fs.line_stipple) {
+         NIR_PASS(_, nir, hk_nir_lower_line_stipple_fs);
+         hk_lower_late_division(nir);
+      }
+
       if (apple9)
          hk_apple9_lower_fs(nir, hk_only_variant(obj));
 
@@ -2756,7 +2777,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          nir->info.cull_distance_array_size;
 
       hk_nir_lower_mesh_main(nir, &shader->info.mesh);
-      hk_lower_task_mesh_division(nir);
+      hk_lower_late_division(nir);
       nir->info.stage = MESA_SHADER_COMPUTE;
       memset(&nir->info.cs, 0, sizeof(nir->info.cs));
       nir->xfb_info = NULL;
@@ -2766,7 +2787,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       shader->info.task.max_mesh_groups = hk_nir_task_mesh_bound(nir);
 
       hk_nir_lower_task_main(nir);
-      hk_lower_task_mesh_division(nir);
+      hk_lower_late_division(nir);
       nir->info.stage = MESA_SHADER_COMPUTE;
       memset(&nir->info.cs, 0, sizeof(nir->info.cs));
    }
@@ -2777,6 +2798,11 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       struct hk_shader *count_variant = hk_count_gs_variant(obj);
 
       nir_shader *count = NULL, *rast = NULL, *pre_gs = NULL;
+
+      /* Line strips are emitted segment by segment for line stipple */
+      if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_LINE_STRIP &&
+          hk_may_stipple_lines(state, vk_features))
+         hk_nir_lower_gs_line_stipple(nir);
 
       NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
                &count_variant->info.gs);
@@ -2835,12 +2861,13 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
-      /* Apple9 also layers fragment shader barycentrics and primitives
-       * generated queries on the passthrough geometry shader, which any
-       * fragment shader may need at draw time.
+      /* Apple9 also layers fragment shader barycentrics, primitives
+       * generated queries and line stipple on the passthrough geometry
+       * shader, which any fragment shader may need at draw time.
        */
       if (apple9 && (dev->vk.enabled_features.fragmentShaderBarycentric ||
-                     dev->vk.enabled_features.primitivesGeneratedQuery)) {
+                     dev->vk.enabled_features.primitivesGeneratedQuery ||
+                     dev->vk.enabled_features.stippledBresenhamLines)) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 

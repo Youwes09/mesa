@@ -443,6 +443,9 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
 
       return lower_sysval_to_root_table(b, intrin, draw.samples_log2);
 
+   case nir_intrinsic_load_line_stipple_agx:
+      return lower_sysval_to_root_table(b, intrin, draw.line_stipple);
+
    case nir_intrinsic_load_depth_never_agx:
       return lower_sysval_to_root_table(b, intrin, draw.force_never_in_shader);
 
