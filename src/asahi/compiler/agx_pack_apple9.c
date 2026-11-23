@@ -2534,9 +2534,13 @@ pack_sync(const agx_instr *I, struct a9_packed *p)
       return;
    }
 
-   case AGX_OPCODE_WAIT: {
+   case AGX_OPCODE_WAIT:
+   case AGX_OPCODE_WAIT_SLOTS: {
       /* Bits 10-15 are a mask of slots */
-      const uint8_t bytes[2] = {0x06, (1u << I->scoreboard) << 2};
+      unsigned mask =
+         I->op == AGX_OPCODE_WAIT ? BITFIELD_BIT(I->scoreboard) : I->imm;
+      pack_assert(I, mask && mask < 64);
+      const uint8_t bytes[2] = {0x06, mask << 2};
       a9_init(p, AGX_APPLE9_ENC_WAIT, bytes, 2);
       return;
    }
@@ -3463,6 +3467,7 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    case AGX_OPCODE_RASTER_ORDER_FENCE:
    case AGX_OPCODE_STOP:
    case AGX_OPCODE_WAIT:
+   case AGX_OPCODE_WAIT_SLOTS:
       pack_sync(I, p);
       return;
 

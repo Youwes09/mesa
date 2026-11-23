@@ -344,6 +344,10 @@ op("local_atomic",
 op("wait", (0x38, 2, _), dests = 0,
       can_eliminate = False, imms = [SCOREBOARD], schedule_class = "invalid")
 
+# Apple9 waits for a mask of scoreboard slots in one instruction
+op("wait_slots", _, dests = 0, can_eliminate = False, imms = [IMM],
+   schedule_class = "invalid", isa = APPLE9)
+
 for (suffix, schedule_class) in [("", "none"), ("_coverage", "coverage"), ("_barrier", "barrier")]:
     op(f"get_sr{suffix}", (0x72, 4, _), dests = 1, imms = [SR],
        schedule_class = schedule_class, can_reorder = schedule_class == "none")

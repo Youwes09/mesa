@@ -401,8 +401,15 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
       }
 
       /* Insert the appropriate waits, clearing the slots */
+      uint8_t unfolded = wait_mask & ~(folded >= 0 ? BITFIELD_BIT(folded) : 0);
+      if (apple9 && unfolded) {
+         /* One instruction waits for every slot */
+         agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
+         agx_wait_slots(&b, unfolded);
+      }
+
       u_foreach_bit(slot, wait_mask) {
-         if (slot != folded) {
+         if (slot != folded && !apple9) {
             agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
             agx_wait(&b, slot);
          }
@@ -458,11 +465,19 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
     */
    if (block != agx_exit_block(ctx) || (apple9 && ctx->falls_through)) {
       agx_builder b = agx_init_builder(ctx, agx_after_block_logical(block));
+      uint8_t pending = 0;
 
       for (unsigned slot = 0; slot < nr_slots; ++slot) {
-         if (slots[slot].nr_pending)
-            agx_wait(&b, slot);
+         if (slots[slot].nr_pending) {
+            if (apple9)
+               pending |= BITFIELD_BIT(slot);
+            else
+               agx_wait(&b, slot);
+         }
       }
+
+      if (pending)
+         agx_wait_slots(&b, pending);
    }
 }
 

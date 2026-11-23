@@ -53,6 +53,11 @@ class InsertWaits : public testing::Test {
       agx_foreach_instr_global(ctx, I) {
          if (I->op == AGX_OPCODE_WAIT)
             slots.push_back(I->scoreboard);
+
+         if (I->op == AGX_OPCODE_WAIT_SLOTS) {
+            u_foreach_bit(slot, I->imm)
+               slots.push_back(slot);
+         }
       }
       return slots;
    }
