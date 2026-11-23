@@ -332,3 +332,6 @@ bool agx_nir_lower_fs_output_to_epilog(nir_shader *s,
 bool agx_nir_lower_fs_active_samples_to_register(nir_shader *s);
 
 bool agx_nir_lower_non_monolithic_uniforms(nir_shader *nir, unsigned nr);
+
+nir_def *agx_nir_load_vs_draw_param(struct nir_builder *b, unsigned uniform,
+                                    bool base_instance);

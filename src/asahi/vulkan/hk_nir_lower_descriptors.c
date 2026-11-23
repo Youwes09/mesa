@@ -512,7 +512,16 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
          size = 16;
       }
 
-      nir_def *val = nir_load_preamble(b, 1, size, .base = base);
+      nir_def *val;
+      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9 &&
+          intrin->intrinsic != nir_intrinsic_load_draw_id) {
+         val = agx_nir_load_vs_draw_param(
+            b, AGX_ABI_VUNI_FIRST_VERTEX(args->nr_vbos),
+            intrin->intrinsic == nir_intrinsic_load_base_instance);
+      } else {
+         val = nir_load_preamble(b, 1, size, .base = base);
+      }
+
       nir_def_rewrite_uses(&intrin->def,
                            nir_u2uN(b, val, intrin->def.bit_size));
       return true;

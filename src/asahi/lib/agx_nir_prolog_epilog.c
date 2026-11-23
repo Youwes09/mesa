@@ -240,6 +240,19 @@ agx_nir_line_stipple_test(nir_builder *b, nir_def *counter)
    b->shader->info.fs.uses_discard = true;
 }
 
+/* See AGX_ABI_VUNI_FIRST_VERTEX */
+nir_def *
+agx_nir_load_vs_draw_param(nir_builder *b, unsigned uniform, bool base_instance)
+{
+   nir_def *addr =
+      nir_pack_64_2x32_split(b, nir_load_preamble(b, 1, 32, .base = uniform),
+                             nir_load_preamble(b, 1, 32, .base = uniform + 2));
+
+   return nir_load_global_constant(
+      b, 1, 32, nir_iadd_imm(b, addr, base_instance ? 4 : 0), .align_mul = 4,
+      .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
+}
+
 static int
 map_vs_part_uniform(nir_intrinsic_instr *intr, unsigned nr_attribs)
 {
@@ -299,7 +312,19 @@ lower_non_monolithic_uniforms(nir_builder *b, nir_intrinsic_instr *intr,
 
    if (unif >= 0) {
       b->cursor = nir_instr_remove(&intr->instr);
-      nir_def *load = nir_load_preamble(b, 1, intr->def.bit_size, .base = unif);
+      nir_def *load;
+
+      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9 &&
+          (intr->intrinsic == nir_intrinsic_load_first_vertex ||
+           intr->intrinsic == nir_intrinsic_load_base_instance)) {
+         unsigned *nr_attribs = data;
+         load = agx_nir_load_vs_draw_param(
+            b, AGX_ABI_VUNI_FIRST_VERTEX(*nr_attribs),
+            intr->intrinsic == nir_intrinsic_load_base_instance);
+      } else {
+         load = nir_load_preamble(b, 1, intr->def.bit_size, .base = unif);
+      }
+
       nir_def_rewrite_uses(&intr->def, load);
       return true;
    } else if (intr->intrinsic == nir_intrinsic_load_texture_handle_agx) {

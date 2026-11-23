@@ -28,6 +28,9 @@
 #define AGX_ABI_VUNI_VBO_CLAMP(nr_vbos, vbo)                                   \
    (AGX_ABI_VUNI_VBO_BASE(nr_vbos) + 2 * (vbo))
 
+/* First vertex (or index bias) and base instance. Apple9 push words are copied
+ * before indirect draws write these, so they hold the address of the pair.
+ */
 #define AGX_ABI_VUNI_FIRST_VERTEX(nr_vbos)                                     \
    AGX_ABI_VUNI_VBO_CLAMP(nr_vbos, nr_vbos)
 
