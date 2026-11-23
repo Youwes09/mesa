@@ -3045,9 +3045,12 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 /* Run the vertex and geometry shaders as compute before the render pass,
  * returning the draw that rasterizes the geometry shader output.
  */
+static bool hk_line_stipple_strips(struct hk_cmd_buffer *cmd);
+
 static struct agx_draw
 hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
+   const bool restart = draw.restart;
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
@@ -3059,6 +3062,14 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    desc->root.draw.vertex_params = hk_upload_vertex_params(cmd, draw);
    desc->root.draw.geometry_params = hk_upload_geometry_params(cmd, draw);
+
+   /* Stippled strips continue the counter, see hk_nir_line_stipple_prefix */
+   bool stipple_strips = hk_line_stipple_strips(cmd);
+   if (stipple_strips) {
+      struct hk_line_stipple_counters counters = {.heap = hk_heap(cmd)};
+      desc->root.draw.stipple_counters =
+         hk_pool_upload(cmd, &counters, sizeof(counters), 8);
+   }
    desc->root.draw.api_gs = !gs->is_passthrough;
    desc->root.draw.rasterization_stream = dyn->rs.rasterization_stream;
    desc->root.draw.provoking =
@@ -3128,6 +3139,7 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
     */
    const unsigned max_batch_prims = 2048;
    bool batch = !agx_is_indirect(draw.b) && !xfb_or_queries &&
+                !stipple_strips &&
                 grid_gs.count[0] * grid_gs.count[1] <= max_batch_prims;
    if (!batch)
       hk_tess_batch_flush(cmd);
@@ -3136,6 +3148,23 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    hk_apple9_dispatch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX],
                               grid_vs);
    cmd->tess_batch.capture = NULL;
+
+   if (stipple_strips) {
+      struct hk_line_stipple_prefix_key key = {
+         .restart = restart,
+         .viewport = !!(vs->b.info.outputs & VARYING_BIT_VIEWPORT),
+      };
+      struct hk_api_shader *prefix = hk_meta_shader(
+         hk_cmd_buffer_device(cmd), hk_nir_line_stipple_prefix, &key,
+         sizeof(key));
+      if (!prefix) {
+         vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
+         return (struct agx_draw){0};
+      }
+
+      struct hk_shader *s = hk_only_variant(prefix);
+      hk_apple9_dispatch_prerast(cmd, s, s->only_linked, agx_1d(1024));
+   }
 
    if (xfb_or_queries) {
       if (count->info.gs.count_words)
@@ -4995,6 +5024,21 @@ hk_update_polygon_points(struct hk_cmd_buffer *cmd)
    }
 }
 
+/* Whether a draw stipples VS/TES line strips, see hk_nir_line_stipple_prefix */
+static bool
+hk_line_stipple_strips(struct hk_cmd_buffer *cmd)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+   VkPrimitiveTopology topology =
+      cmd->vk.dynamic_graphics_state.ia.primitive_topology;
+   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
+
+   return (!gs || gs->is_passthrough) && hk_line_stipple_active(cmd) &&
+          !gfx->shaders[MESA_SHADER_TESS_EVAL] &&
+          (topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
+           topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY);
+}
+
 /* The stipple pattern, and viewport transforms when stippling lines */
 static void
 hk_update_line_stipple(struct hk_cmd_buffer *cmd)
@@ -5101,12 +5145,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    /* ...or to write the word of stippled lines */
    if (hk_line_stipple_active(cmd)) {
-      VkPrimitiveTopology topology = dyn->ia.primitive_topology;
-      bool strip =
-         !gfx->shaders[MESA_SHADER_TESS_EVAL] &&
-         (topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
-          topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY);
-      suffix.line_stipple = strip ? 2 : 1;
+      suffix.line_stipple = hk_line_stipple_strips(cmd) ? 2 : 1;
       suffix.stipple_viewport =
          !!(last_sw->b.info.outputs & VARYING_BIT_VIEWPORT);
       needed = true;

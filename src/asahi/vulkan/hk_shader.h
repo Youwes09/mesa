@@ -196,6 +196,22 @@ struct nir_def *hk_nir_line_stipple_word(struct nir_builder *b,
                                          struct nir_def *base);
 void hk_nir_store_line_stipple(struct nir_builder *b, struct nir_def *word);
 void hk_nir_line_stipple_passthrough(nir_shader *gs, bool strip, bool viewport);
+
+/* Strip counters (hk_nir_line_stipple_prefix): given, or 0 for the heap */
+struct hk_line_stipple_counters {
+   uint64_t counters;
+   uint64_t heap;
+};
+
+struct hk_line_stipple_prefix_key {
+   /* Restarts unrolled the strips to a list of segments */
+   bool restart;
+   /* The vertex stage writes the viewport index */
+   bool viewport;
+   uint8_t pad[2];
+};
+
+void hk_nir_line_stipple_prefix(struct nir_builder *b, const void *key);
 void hk_nir_lower_gs_line_stipple(nir_shader *gs);
 bool hk_nir_lower_line_stipple_fs(nir_shader *fs);
 

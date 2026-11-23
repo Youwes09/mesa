@@ -136,6 +136,9 @@ struct hk_root_descriptor_table {
          /* Per-viewport (scale.xy, offset.xy) for line stipple, or 0 */
          uint64_t stipple_viewports;
 
+         /* Line stipple along strips: struct hk_line_stipple_counters */
+         uint64_t stipple_counters;
+
          /* Apple9 polygon-mode points, see hk_apple9_pp_emit_triangle */
          struct agx_apple9_polygon_point_params polygon_points;
          float polygon_points_viewport[4];
@@ -174,7 +177,7 @@ struct hk_root_descriptor_table {
 
 /* Bumped whenever hk_root_descriptor_table offsets change: compiled shaders
  * bake them, so pipeline and disk cache keys include it. */
-#define HK_ROOT_LAYOUT_VERSION 8
+#define HK_ROOT_LAYOUT_VERSION 9
 
 /* helper macro for computing root descriptor byte offsets */
 #define hk_root_descriptor_offset(member)                                      \
