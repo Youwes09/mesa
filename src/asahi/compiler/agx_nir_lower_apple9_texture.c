@@ -207,15 +207,21 @@ normalize_runtime_coordinates(nir_builder *b, nir_tex_instr *tex,
       agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_PIXEL_COORDS);
    nir_def *coord = tex->src[src].src.ssa;
    nir_def *normalized[NIR_MAX_VEC_COMPONENTS];
-   for (unsigned c = 0; c < coord->num_components; ++c)
-      normalized[c] =
-         c < 2 ? nir_fdiv(b, nir_channel(b, coord, c),
-                          nir_u2f32(b, agx_apple9_texture_info(b, tex, c)))
-               : nir_channel(b, coord, c);
-   nir_src_rewrite(
-      &tex->src[src].src,
-      nir_bcsel(b, nir_ine_imm(b, pixel, 0),
-                nir_vec(b, normalized, coord->num_components), coord));
+
+   /* Scale by the reciprocal size or one, hoisted to the preamble */
+   for (unsigned c = 0; c < coord->num_components; ++c) {
+      if (c < 2) {
+         nir_def *size = nir_u2f32(b, agx_apple9_texture_info(b, tex, c));
+         nir_def *scale = nir_bcsel(b, nir_ine_imm(b, pixel, 0),
+                                    nir_frcp(b, size), nir_imm_float(b, 1.0f));
+         normalized[c] = nir_fmul(b, nir_channel(b, coord, c), scale);
+      } else {
+         normalized[c] = nir_channel(b, coord, c);
+      }
+   }
+
+   nir_src_rewrite(&tex->src[src].src,
+                   nir_vec(b, normalized, coord->num_components));
    return true;
 }
 
