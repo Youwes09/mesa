@@ -19,6 +19,7 @@
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_abi.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_helpers.h"
 #include "asahi/lib/agx_ppp.h"
 #include "asahi/lib/agx_usc.h"
@@ -3788,10 +3789,18 @@ agx_apple9_upload_tables(struct agx_batch *batch,
    unsigned nr_textures = cs->so ? cs->so->info.nr_bindful_textures : 0;
    unsigned nr_images = cs->so ? cs->so->info.nr_bindful_images : 0;
 
+   /* Cube aliases follow the textures (agx_apple9_layout.h) */
+   bool aliases = nr_textures && cs->b.info.apple9_cube_aliases;
+   unsigned table_size =
+      aliases ? AGX_APPLE9_CUBE_ALIAS_INDEX(nr_textures) : nr_textures;
+
    if (nr_textures) {
       struct agx_ptr t = agx_pool_alloc_aligned(
-         &batch->pool, nr_textures * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
+         &batch->pool, table_size * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
       uint8_t *out = t.cpu;
+
+      for (unsigned i = nr_textures; i < table_size; ++i)
+         agx_apple9_set_null_texture(out + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE);
 
       for (unsigned i = 0; i < nr_textures; ++i) {
          uint8_t *texture = out + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
@@ -3804,6 +3813,16 @@ agx_apple9_upload_tables(struct agx_batch *batch,
          }
 
          agx_apple9_pack_view(texture, view);
+
+         /* The alias is a 2D array view of the cube faces */
+         if (aliases && (view->base.target == PIPE_TEXTURE_CUBE ||
+                         view->base.target == PIPE_TEXTURE_CUBE_ARRAY)) {
+            struct agx_sampler_view alias = *view;
+            alias.base.target = PIPE_TEXTURE_2D_ARRAY;
+            agx_apple9_pack_view(out + AGX_APPLE9_CUBE_ALIAS_INDEX(i) *
+                                          AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                                 &alias);
+         }
 
          if (fragment)
             agx_batch_reads_fragment(batch, view->rsrc);
