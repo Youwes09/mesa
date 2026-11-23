@@ -6338,7 +6338,9 @@ agx_apple9_render_stages(struct agx_batch *batch,
    fragment->disable_tri_merging = ctx->fs->b.info.disable_tri_merging;
    fragment->writes_depth =
       ctx->fs->epilog_key.write_z || ctx->fs->epilog_key.write_s;
-   fragment->uses_discard = ctx->fs_kills_samples;
+
+   /* Shader depth and stencil are late tests, reported as discards */
+   fragment->uses_discard = ctx->fs_kills_samples || fragment->writes_depth;
    fragment->reads_tile = ctx->fs->b.info.reads_tib;
 }
 
