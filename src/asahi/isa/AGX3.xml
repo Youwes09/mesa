@@ -1,0 +1,1672 @@
+<!--
+ Copyright 2026 The Asahi Linux Contributors
+ SPDX-License-Identifier: MIT
+-->
+
+<!--
+  Apple9 (G16, G17P) instruction set.
+
+  The layouts follow the Apple9 packer (src/asahi/compiler/agx_pack_apple9.c)
+  and agx_apple9_encoding.h. Bit n is bit n % 8 of byte n / 8.
+
+  Instructions have a fixed length. Every bit not covered by a field has the
+  value given by the instruction's template, so an instruction only matches
+  when its layout explains all of its bits.
+
+  Register fields hold 32-bit register numbers, r0-r95, unless they say
+  otherwise; some name 16-bit halves. Uniform fields hold 32-bit uniform words,
+  export fields 32-bit export ("publication") words. Register sources carry a
+  cache ($) bit, set while the value is still needed, and a release (^) bit,
+  set at its last use.
+
+  Waits on scoreboard slots 1-6 are folded into the instructions that have a
+  dependency field: a slot index (wait=n) or a mask of slots (waitmask=m, bit
+  i naming slot i + 1). Results of asynchronous instructions complete on the
+  slot in their slot field.
+
+  Each instruction lists the encoding forms of agx_apple9_machine.c it is
+  packed for.
+-->
+
+<isa name="agx3">
+
+  <!-- Operand encodings -->
+
+  <!--
+    Compact ALU source. Value bits: 0-5 register, 6 register bit 6 (uniform
+    bit 7), 7 width (32-bit), 8 cache, 9 release (uniform bit 6, constant
+    sign), 10 file (uniform or constant), 11 high half (constant low bit),
+    12 negate, 13 absolute value.
+  -->
+  <encoding name="fsrc">
+    <case>
+      <exact bit="7 10">01</exact>
+      <zero bit="11"/>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 10">00</exact>
+      <immediate name="reg" bit="11 0:6"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <!-- The constant's exponent is at least 8, so its top bit is the cache
+         bit. Its sign is the release bit. -->
+    <case>
+      <exact bit="8 10">11</exact>
+      <immediate name="a9fimm" bit="0:5 8 11"/>
+      <modifier name="neg" bit="9"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 8 10">101</exact>
+      <immediate name="uniform" bit="0:5 9 6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+  </encoding>
+
+  <!-- As fsrc, with an 8-bit integer constant: bit 0 in the high half bit,
+       bits 1-6 in the register field and bit 7 in the release bit. -->
+  <encoding name="isrc">
+    <case>
+      <exact bit="7 10">01</exact>
+      <zero bit="11"/>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 10">00</exact>
+      <immediate name="reg" bit="11 0:6"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="8 10">11</exact>
+      <immediate name="imm" bit="11 0:5 9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 8 10">101</exact>
+      <immediate name="uniform" bit="0:5 9 6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+  </encoding>
+
+  <!-- As fsrc, for the three- and four-source layouts, whose constants have
+       a separate sign (the negate bit) -->
+  <encoding name="fsrc3">
+    <case>
+      <exact bit="7 10">01</exact>
+      <zero bit="11"/>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 10">00</exact>
+      <immediate name="reg" bit="11 0:6"/>
+      <modifier name="cache" bit="8"/>
+      <modifier name="lu" bit="9"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="8 10">11</exact>
+      <zero bit="6 9"/>
+      <immediate name="a9fimm" bit="0:5 8 11"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+
+    <case>
+      <exact bit="7 8 10">101</exact>
+      <immediate name="uniform" bit="0:5 9 6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="neg" bit="12"/>
+      <modifier name="abs" bit="13"/>
+    </case>
+  </encoding>
+
+  <!-- Compact ALU destination: a 32-bit register, or a 16-bit half (value
+       bit 7 set, bit 8 selecting the high half) -->
+  <encoding name="dst">
+    <case>
+      <exact bit="7">0</exact>
+      <zero bit="8"/>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+    </case>
+
+    <case>
+      <exact bit="7">1</exact>
+      <immediate name="reg" bit="8 0:6"/>
+    </case>
+  </encoding>
+
+  <!-- Register: bits 0-6 the 32-bit register, 7 cache, 8 release -->
+  <encoding name="reg">
+    <immediate name="reg" bit="0:6" shift="1"/>
+    <property name="size32"/>
+    <modifier name="cache" bit="7"/>
+    <modifier name="lu" bit="8"/>
+  </encoding>
+
+  <!-- Register pair: bits 0-6 the first 32-bit register, 7 cache, 8 release -->
+  <encoding name="reg64">
+    <immediate name="reg" bit="0:6" shift="1"/>
+    <property name="size64"/>
+    <modifier name="cache" bit="7"/>
+    <modifier name="lu" bit="8"/>
+  </encoding>
+
+  <!-- 16-bit register half: bits 0-7 the half, 8 cache, 9 release -->
+  <encoding name="half">
+    <immediate name="reg" bit="0:7"/>
+    <modifier name="cache" bit="8"/>
+    <modifier name="lu" bit="9"/>
+  </encoding>
+
+  <!-- 32-bit register named by its low half: bits 0-7 the half, 8 cache,
+       9 release -->
+  <encoding name="reg_half">
+    <zero bit="0"/>
+    <immediate name="reg" bit="0:7"/>
+    <property name="size32"/>
+    <modifier name="cache" bit="8"/>
+    <modifier name="lu" bit="9"/>
+  </encoding>
+
+  <!-- Export word -->
+  <encoding name="export">
+    <immediate name="export" bit="0:6" shift="1"/>
+    <property name="size32"/>
+  </encoding>
+
+  <!-- 32-bit uniform word -->
+  <encoding name="uniform">
+    <immediate name="uniform" bit="0:7" shift="1"/>
+    <property name="size32"/>
+  </encoding>
+
+  <!-- 64-bit uniform, in units of 64 bits -->
+  <encoding name="uniform64">
+    <immediate name="uniform" bit="0:7" shift="2"/>
+    <property name="size64"/>
+  </encoding>
+
+  <!-- Source of the unary integer, conversion and special function forms:
+       bits 0-6 register (uniform bits 0-6), 7 cache (uniform bit 7),
+       8 release, 9 file (register), 10 negate, 11 absolute value -->
+  <encoding name="usrc">
+    <modifier name="neg" bit="10"/>
+    <modifier name="abs" bit="11"/>
+
+    <case>
+      <exact bit="9">1</exact>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="cache" bit="7"/>
+      <modifier name="lu" bit="8"/>
+    </case>
+
+    <case>
+      <exact bit="8 9">01</exact>
+      <immediate name="uniform" bit="0:7" shift="1"/>
+      <property name="size32"/>
+    </case>
+  </encoding>
+
+  <!--
+    Integer add and multiply-add source. Value bits: 0-6 register or uniform
+    bits 0-6, 7 cache (uniform bit 7), 8 low bit (high half, constant bit 0),
+    9 width (32-bit), 10 release (uniform), 11 file (register), 12 sign
+    extension of a 16-bit register.
+  -->
+  <encoding name="isrc_desc">
+    <case>
+      <exact bit="9 11">11</exact>
+      <zero bit="8 12"/>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="cache" bit="7"/>
+      <modifier name="lu" bit="10"/>
+    </case>
+
+    <case>
+      <exact bit="9 11">10</exact>
+      <immediate name="reg" bit="8 0:6"/>
+      <modifier name="cache" bit="7"/>
+      <modifier name="lu" bit="10"/>
+      <modifier name="sx" bit="12"/>
+    </case>
+
+    <case>
+      <exact bit="10 11">01</exact>
+      <zero bit="8 12"/>
+      <immediate name="uniform" bit="0:7" shift="1"/>
+      <property name="size32"/>
+    </case>
+
+    <case>
+      <exact bit="10 11">00</exact>
+      <zero bit="7 12"/>
+      <immediate name="imm" bit="8 0:6"/>
+    </case>
+  </encoding>
+
+  <!-- Integer add and multiply-add destination: a register (bit 8 set) or
+       a uniform word -->
+  <encoding name="idst">
+    <case>
+      <exact bit="7 8">10</exact>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+    </case>
+
+    <case>
+      <exact bit="8">0</exact>
+      <immediate name="uniform" bit="0:7" shift="1"/>
+      <property name="size32"/>
+    </case>
+  </encoding>
+
+  <encoding name="idst64">
+    <case>
+      <exact bit="7 8">10</exact>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size64"/>
+    </case>
+
+    <case>
+      <exact bit="8">0</exact>
+      <immediate name="uniform" bit="0:7" shift="1"/>
+      <property name="size64"/>
+    </case>
+  </encoding>
+
+  <!-- Device memory base: bits 0-7 a register pair or a 64-bit uniform, 8
+       set for a register, 9 release of the register pair -->
+  <encoding name="membase">
+    <case>
+      <exact bit="8">1</exact>
+      <immediate name="reg" bit="0:7" shift="1"/>
+      <property name="size64"/>
+      <modifier name="lu" bit="9"/>
+    </case>
+
+    <case>
+      <exact bit="8 9">00</exact>
+      <immediate name="uniform" bit="0:7" shift="2"/>
+      <property name="size64"/>
+    </case>
+  </encoding>
+
+  <!-- Device memory index: bits 0-6 the register, 7 release, 8 present -->
+  <encoding name="memindex">
+    <case>
+      <exact bit="8">1</exact>
+      <immediate name="reg" bit="0:6" shift="1"/>
+      <property name="size32"/>
+      <modifier name="lu" bit="7"/>
+    </case>
+
+    <case>
+      <zero bit="0:8"/>
+    </case>
+  </encoding>
+
+  <!-- Table index of a texture or sampler: a constant (value bit 8 clear) or
+       a 32-bit register named by its low half (bit 8 set), bit 9 releasing
+       it -->
+  <encoding name="table">
+    <case>
+      <exact bit="8">0</exact>
+      <zero bit="9"/>
+      <immediate name="imm" bit="0:7"/>
+    </case>
+
+    <case>
+      <exact bit="0 8">10</exact>
+      <immediate name="reg" bit="0:7"/>
+      <property name="size32"/>
+      <modifier name="lu" bit="9"/>
+    </case>
+  </encoding>
+
+  <!-- Enumerations -->
+
+  <enum kind="sr" name="Special registers">
+        <value value="130">thread_index_in_subgroup</value>
+    <value value="133">subgroup_index_in_threadgroup</value>
+    <value value="152">threads_per_threadgroup_x</value>
+    <value value="153">threads_per_threadgroup_y</value>
+    <value value="154">threads_per_threadgroup_z</value>
+    <value value="156">threadgroup_position_in_grid_x</value>
+    <value value="157">threadgroup_position_in_grid_y</value>
+    <value value="158">threadgroup_position_in_grid_z</value>
+    <value value="160">thread_position_in_grid_x</value>
+    <value value="161">thread_position_in_grid_y</value>
+    <value value="162">thread_position_in_grid_z</value>
+    <value value="164">thread_position_in_threadgroup_x</value>
+    <value value="165">thread_position_in_threadgroup_y</value>
+    <value value="166">thread_position_in_threadgroup_z</value>
+    <value value="167">thread_index_in_threadgroup</value>
+    <value value="194">coverage_mask</value>
+    <value value="195">layer_id</value>
+    <value value="197">backfacing</value>
+    <value value="216">instance_id</value>
+    <value value="221">vertex_id</value>
+  </enum>
+
+  <enum kind="bitop" name="Logic operation (bits 16, 33 and 43)">
+    <value value="1">and</value>
+    <value value="3" label="Export move of operand A, operand B clear">mov</value>
+    <value value="6">xor</value>
+    <value value="7">or</value>
+  </enum>
+
+  <enum kind="fcond" name="Floating-point select condition (bits 48-49, equality bit 34)">
+    <value value="2">fgt</value>
+    <value value="3">flt</value>
+    <value value="4">feq</value>
+    <value value="6">fge</value>
+  </enum>
+
+  <enum kind="icond" name="Integer select condition (bits 48-49, equality bit 34)">
+    <value value="0">ugt</value>
+    <value value="1">ult</value>
+    <value value="2">igt</value>
+    <value value="3">ilt</value>
+    <value value="7">ieq</value>
+  </enum>
+
+  <enum kind="fpred" name="Floating-point predicate condition">
+    <value value="2">fgt</value>
+    <value value="3">flt</value>
+  </enum>
+
+  <enum kind="ipred" name="Integer predicate condition">
+    <value value="0">ugt</value>
+    <value value="1">ult</value>
+    <value value="2">igt</value>
+    <value value="3">ilt</value>
+  </enum>
+
+  <enum kind="fpred_ext" name="Floating-point predicate condition, extended form">
+    <value value="0">feq</value>
+    <value value="2">fge</value>
+    <value value="3">fle</value>
+  </enum>
+
+  <enum kind="memformat" name="Device memory format">
+    <value value="1">i16</value>
+    <value value="17">i32</value>
+    <value value="23">i32x4</value>
+    <value value="25">i32x2</value>
+    <value value="29">i32x3</value>
+    <value value="33">i8</value>
+  </enum>
+
+  <enum kind="atomic" name="Atomic operation">
+    <value value="16">add</value>
+    <value value="17">and</value>
+    <value value="18">cmpxchg</value>
+    <value value="19">fadd</value>
+    <value value="20">imax</value>
+    <value value="21">imin</value>
+    <value value="22">or</value>
+    <value value="27">sub</value>
+    <value value="28">umax</value>
+    <value value="29">umin</value>
+    <value value="30">xchg</value>
+    <value value="31">xor</value>
+  </enum>
+
+  <enum kind="atomic_return" name="Atomic result (bits 73 and 78)">
+    <value value="1">ret</value>
+    <value value="2" default="true">noret</value>
+  </enum>
+
+  <enum kind="unpack" name="Normalized unpack mode">
+    <value value="2">s16norm</value>
+    <value value="3">s8norm</value>
+    <value value="4">u16norm</value>
+    <value value="6">u8norm</value>
+  </enum>
+
+  <enum kind="depth" name="Depth/stencil store mode">
+    <value value="1">stencil</value>
+    <value value="3">depth</value>
+    <value value="7">depth_stencil</value>
+  </enum>
+
+  <enum kind="ipred_ext" name="Integer predicate condition, extended form">
+    <value value="3">ieq</value>
+  </enum>
+
+  <!-- Dependency slot index: the instruction waits for this slot -->
+  <enum kind="wait" name="Dependency slot">
+    <value value="0" default="true">none</value>
+    <value value="1">wait1</value>
+    <value value="2">wait2</value>
+    <value value="3">wait3</value>
+    <value value="4">wait4</value>
+    <value value="5">wait5</value>
+    <value value="6">wait6</value>
+  </enum>
+
+  <!-- Mask of dependency slots: bit i waits for slot i + 1 -->
+  <enum kind="waitmask" name="Dependency slot mask">
+    <value value="0" default="true">none</value>
+    <value value="1">wait1</value>
+    <value value="2">wait2</value>
+    <value value="3">wait12</value>
+    <value value="4">wait3</value>
+    <value value="5">wait13</value>
+    <value value="6">wait23</value>
+    <value value="7">wait123</value>
+    <value value="8">wait4</value>
+    <value value="9">wait14</value>
+    <value value="10">wait24</value>
+    <value value="11">wait124</value>
+    <value value="12">wait34</value>
+    <value value="13">wait134</value>
+    <value value="14">wait234</value>
+    <value value="15">wait1234</value>
+    <value value="16">wait5</value>
+    <value value="17">wait15</value>
+    <value value="18">wait25</value>
+    <value value="19">wait125</value>
+    <value value="20">wait35</value>
+    <value value="21">wait135</value>
+    <value value="22">wait235</value>
+    <value value="23">wait1235</value>
+    <value value="24">wait45</value>
+    <value value="25">wait145</value>
+    <value value="26">wait245</value>
+    <value value="27">wait1245</value>
+    <value value="28">wait345</value>
+    <value value="29">wait1345</value>
+    <value value="30">wait2345</value>
+    <value value="31">wait12345</value>
+    <value value="32">wait6</value>
+    <value value="33">wait16</value>
+    <value value="34">wait26</value>
+    <value value="35">wait126</value>
+    <value value="36">wait36</value>
+    <value value="37">wait136</value>
+    <value value="38">wait236</value>
+    <value value="39">wait1236</value>
+    <value value="40">wait46</value>
+    <value value="41">wait146</value>
+    <value value="42">wait246</value>
+    <value value="43">wait1246</value>
+    <value value="44">wait346</value>
+    <value value="45">wait1346</value>
+    <value value="46">wait2346</value>
+    <value value="47">wait12346</value>
+    <value value="48">wait56</value>
+    <value value="49">wait156</value>
+    <value value="50">wait256</value>
+    <value value="51">wait1256</value>
+    <value value="52">wait356</value>
+    <value value="53">wait1356</value>
+    <value value="54">wait2356</value>
+    <value value="55">wait12356</value>
+    <value value="56">wait456</value>
+    <value value="57">wait1456</value>
+    <value value="58">wait2456</value>
+    <value value="59">wait12456</value>
+    <value value="60">wait3456</value>
+    <value value="61">wait13456</value>
+    <value value="62">wait23456</value>
+    <value value="63">wait123456</value>
+  </enum>
+
+  <!-- Producer slot, less one: the result completes on this slot -->
+  <enum kind="slot" name="Producer slot">
+    <value value="0">slot1</value>
+    <value value="1">slot2</value>
+    <value value="2">slot3</value>
+    <value value="3">slot4</value>
+    <value value="4">slot5</value>
+    <value value="5">slot6</value>
+  </enum>
+
+  <enum kind="round" name="Rounding of the special function datapath">
+    <value value="0" default="true">rte</value>
+    <value value="1">floor</value>
+    <value value="2">ceil</value>
+    <value value="3">trunc</value>
+  </enum>
+
+  <!-- Defines -->
+
+  <define modifier="dstate" bit="21"/>
+  <define modifier="saturate" bit="57" display="sat"/>
+  <define modifier="mask_12_17" bit="12:17" kind="waitmask"/>
+  <define modifier="mask_45_47_61_63" bit="45:47 61:63" kind="waitmask"/>
+  <define modifier="mask_61_63_77_79" bit="61:63 77:79" kind="waitmask"/>
+  <define modifier="mask_61_63_93_95" bit="61:63 93:95" kind="waitmask"/>
+  <define modifier="index_45_47" bit="45:47" kind="wait"/>
+  <define modifier="index_61_63" bit="61:63" kind="wait"/>
+
+  <!-- Destination of the compact ALU forms -->
+  <define dest="dst4" kind="dst" bit="4:7 22:23 =0 =0 =0"/>
+  <define dest="dst6" kind="dst" bit="4:7 22:23 44 =0 =0"/>
+  <define dest="hdst6" kind="dst" bit="4:7 22:23 44 =1 34"/>
+  <define dest="dst8" kind="dst" bit="4:7 22:23 60 =0 =0"/>
+  <define dest="hdst8" kind="dst" bit="4:7 22:23 60 =1 =0"/>
+  <define dest="dst7" kind="reg" bit="25:31"/>
+
+  <!--
+    Floating-point ALU. Byte 0 bit 0 selects FP32 arithmetic and bit 3 an
+    FP32 result; with FP16 arithmetic (both clear) the registers name the low
+    halves of the operands. Bits 16-17 are the operation: add, multiply,
+    fused multiply-add or the coefficient multiply. Bit 18 is clear in the
+    four-byte form, and bits 32-33 select the longer forms. Bit 21 is the
+    destination state the packers publish for ALU consumers ("dstate").
+  -->
+
+  <group name="Float binary, 4 bytes" length="4" form="float2_base">
+    <template>09 05 38 01</template>
+    <exact bit="16">op</exact>
+    <dst4/>
+    <src kind="fsrc" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
+    <src kind="fsrc" bit="25:30 =0 24 31 20 =0 =0 =0 =0"/>
+
+    <ins name="fadd_base" display="fadd" op="0"/>
+    <ins name="fmul_base" display="fmul" op="1"/>
+  </group>
+
+  <group name="Float binary, 6 bytes" length="6">
+    <template>09 05 3c 01 00 00</template>
+    <exact bit="0:3 16">op</exact>
+    <dst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <dstate/>
+    <index_45_47/>
+
+    <ins name="fadd" op="01001" form="float2_compact float2_immediate_compact half_to_float"/>
+    <ins name="fmul" op="11001" form="float2_compact float2_immediate_compact half_to_float"/>
+  </group>
+
+  <!-- FP32 arithmetic writing an FP16 half: the conversions, as an add of
+       -0.0. Also FP16 add and multiply. -->
+  <group name="Float binary, 6 bytes, FP16 result" length="6">
+    <template>01 01 1c 81 00 02</template>
+    <exact bit="0:3 16">op</exact>
+    <hdst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <dstate/>
+    <index_45_47/>
+
+    <ins name="fadd_f16" display="fadd" op="00001" form="float_to_half_zext pack_half_2x16 half2"/>
+    <ins name="fmul_f16" display="fmul" op="10001" form="half2"/>
+    <ins name="hadd" op="00000" form="half2"/>
+    <ins name="hmul" op="10000" form="half2"/>
+  </group>
+
+  <group name="Float binary, 8 bytes" length="8" form="float2_modifier_extended float2_immediate_extended">
+    <template>09 05 3c 01 01 00 00 00</template>
+    <exact bit="16">op</exact>
+    <dst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <saturate/>
+    <dstate/>
+    <mask_45_47_61_63/>
+
+    <ins name="fadd_mod" display="fadd" op="0"/>
+    <ins name="fmul_mod" display="fmul" op="1"/>
+  </group>
+
+  <!-- Multiply into an export word, completing on the producer slot -->
+  <ins name="fmul_export" display="fmul" length="8" form="float2_export texture_coords">
+    <template>09 05 3d 01 41 00 00 00</template>
+    <dest kind="export" bit="4:7 22:23 44"/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <modifier name="slot" kind="slot" bit="58:60"/>
+    <dstate/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <ins name="fadd_abs" display="fadd" length="10" form="float2_abs_extended">
+    <template>09 05 3c 01 02 00 00 00 00 00</template>
+    <dst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 64"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 65"/>
+    <saturate/>
+    <dstate/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <ins name="fmul_abs" display="fmul" length="12" form="float2_mul_abs_extended">
+    <template>09 05 3d 01 02 00 00 00 00 00 00 00</template>
+    <dst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 64"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 65"/>
+    <saturate/>
+    <dstate/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <!-- Multiply by a coefficient-file slot, named in byte 5 -->
+  <ins name="fmul_cf" display="fmul" length="8" form="float2_project">
+    <template>09 05 3f 01 00 00 00 00</template>
+    <dst4/>
+    <src kind="fsrc" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
+    <src kind="fsrc" bit="25:30 =0 24 31 20 =0 =0 =0 =0"/>
+    <immediate name="cf" bit="40:47" prefix="cf"/>
+    <dstate/>
+  </ins>
+
+  <!--
+    Fused multiply-add. The compact form moves operand B's file bit to bit 37,
+    where the longer forms have operand C's. Bit 59 negates the product.
+  -->
+  <ins name="ffma_compact" display="ffma" length="6" form="float3_compact">
+    <template>09 01 3e 05 80 08</template>
+    <dst4/>
+    <src kind="fsrc3" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
+    <src kind="fsrc3" bit="25:30 =0 24 31 20 37 =0 =0 =0"/>
+    <src kind="fsrc3" bit="41:46 38 =1 47 39 =0 40 36 35"/>
+    <dstate/>
+  </ins>
+
+  <ins name="ffma" length="8" form="float3_extended">
+    <template>09 01 3e 05 81 08 02 00</template>
+    <dst8/>
+    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
+    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
+    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <dstate/>
+    <index_61_63/>
+  </ins>
+
+  <ins name="hfma" length="8" form="half3">
+    <template>00 00 1e 00 81 00 00 00</template>
+    <hdst8/>
+    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
+    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
+    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <dstate/>
+    <index_61_63/>
+  </ins>
+
+  <ins name="ffma_sat" display="ffma" length="10" form="float3_saturate_extended">
+    <template>09 01 3e 05 82 08 02 00 00 00</template>
+    <dst8/>
+    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
+    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
+    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <modifier name="saturate" bit="73" display="sat"/>
+    <dstate/>
+    <mask_61_63_77_79/>
+  </ins>
+
+  <ins name="ffma_mod" display="ffma" length="12" form="float3_modifier_extended">
+    <template>09 01 3e 05 83 08 02 00 00 00 00 00</template>
+    <dst8/>
+    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 80"/>
+    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 81"/>
+    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <modifier name="saturate" bit="73" display="sat"/>
+    <dstate/>
+    <mask_61_63_77_79/>
+  </ins>
+
+  <!--
+    Min and max: a compare-select between their own operands. Byte 4 is the
+    selection (0 fmax, 1 fmin, 4 umax, 5 umin, 6 imax, 7 imin). Bit 17 is
+    clear for FP16 operands; bit 18 is clear when operand B is negated or a
+    constant.
+  -->
+  <group name="Min/max" length="6" form="minmax_compact">
+    <template>02 01 3e 05 00 00</template>
+    <exact bit="17 32:34">op</exact>
+    <dst6/>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <modifier name="bit18" bit="18"/>
+    <index_45_47/>
+
+    <ins name="fmax" op="0001"/>
+    <ins name="fmin" op="0011"/>
+    <ins name="hmax" op="0000" form="half_minmax"/>
+    <ins name="hmin" op="0010" form="half_minmax"/>
+  </group>
+
+  <group name="Integer min/max" length="6" form="minmax_compact">
+    <template>02 01 3e 05 00 00</template>
+    <exact bit="17 32:34">op</exact>
+    <dst6/>
+    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="isrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <modifier name="bit18" bit="18"/>
+    <index_45_47/>
+
+    <ins name="umax" op="1001"/>
+    <ins name="umin" op="1011"/>
+    <ins name="imax" op="1101"/>
+    <ins name="imin" op="1111"/>
+  </group>
+
+  <!--
+    Compare and select: dest = (A cond B) ? C : D. Bit 50 is set for the
+    integer conditions, bit 34 adds equality. Operands C and D take 8-bit
+    constants; operand B takes a float or integer constant to compare with.
+    Bit 18 is clear when C or D carries a modifier.
+  -->
+  <ins name="fcmpsel" length="10" form="select_gpr_wide half_compare_select">
+    <template>02 01 1f 01 82 00 00 00 80 00</template>
+    <dst8/>
+    <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
+    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
+    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <modifier name="cond" kind="fcond" bit="48:49 34"/>
+    <modifier name="bit18" bit="18"/>
+    <index_61_63/>
+  </ins>
+
+  <ins name="icmpsel" length="10" form="select_gpr_wide">
+    <template>02 01 1f 01 82 00 04 00 80 00</template>
+    <dst8/>
+    <src kind="isrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <src kind="isrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
+    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
+    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <modifier name="cond" kind="icond" bit="48:49 34"/>
+    <modifier name="bit18" bit="18"/>
+    <index_61_63/>
+  </ins>
+
+  <ins name="fcmpsel_mod" display="fcmpsel" length="14" form="select_modifier_extended">
+    <template>02 01 1f 01 83 00 00 00 80 00 00 00 00 00</template>
+    <dst8/>
+    <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 96"/>
+    <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 97"/>
+    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
+    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <modifier name="cond" kind="fcond" bit="48:49 34"/>
+    <modifier name="bit18" bit="18"/>
+    <mask_61_63_93_95/>
+  </ins>
+
+
+  <!--
+    Predicate compares. Byte 0 bits 5-7 name the predicate, bit 4 inverts the
+    result, bit 16 selects the extended form. Registers are released through
+    bits 19 and 20 only. FP16 operands clear the width bits. Bit 34 (36 in the
+    extended form) is set for the integer conditions.
+  -->
+  <define immediate="pred" bit="5:7" prefix="p"/>
+  <define modifier="invert" bit="4" display="not"/>
+
+  <ins name="fcmp_pred" length="6" form="predicate_compare_short half_predicate_short">
+    <template>0a 01 22 01 00 00</template>
+    <src kind="fsrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
+    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <pred/>
+    <modifier name="cond" kind="fpred" bit="32:33"/>
+    <invert/>
+    <index_45_47/>
+  </ins>
+
+  <ins name="icmp_pred" length="6" form="predicate_compare_short">
+    <template>0a 01 22 01 04 00</template>
+    <src kind="isrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
+    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <pred/>
+    <modifier name="cond" kind="ipred" bit="32:33"/>
+    <invert/>
+    <index_45_47/>
+  </ins>
+
+  <ins name="fcmp_pred_ext" display="fcmp_pred" length="10" form="predicate_compare_extended half_predicate_extended predicate_compare_loop">
+    <template>0a 01 23 01 06 00 00 00 00 00</template>
+    <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <src kind="fsrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
+    <pred/>
+    <modifier name="cond" kind="fpred_ext" bit="48:49"/>
+    <invert/>
+    <index_61_63/>
+  </ins>
+
+  <ins name="icmp_pred_ext" display="icmp_pred" length="10" form="predicate_compare_extended predicate_compare_loop">
+    <template>0a 01 23 01 06 00 04 00 00 00</template>
+    <src kind="isrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <src kind="isrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
+    <pred/>
+    <modifier name="cond" kind="ipred_ext" bit="48:49"/>
+    <invert/>
+    <index_61_63/>
+  </ins>
+
+  <!--
+    Logic. Bits 16, 33 and 43 are the operation; bit 38 writes an export
+    word, completing on the producer slot. Operand B takes an 8-bit constant.
+    Bit 68 makes an export move write one word per lane.
+  -->
+  <ins name="bitop" length="10" form="logic_extended logic_uniform">
+    <template>0b 05 1f 01 00 00 00 00 00 00</template>
+    <dst6/>
+    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <modifier name="op" kind="bitop" bit="16 33 43"/>
+    <dstate/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <ins name="bitop_export" display="bitop" length="10" form="logic_export publication_pair block_store_params block_store_extended_params image_write_params texture_lod_params texture_volume_params texture_grad_params texture_grad_array_params texture_grad_volume_params">
+    <template>0b 05 1f 01 40 00 00 00 00 00</template>
+    <dest kind="export" bit="4:7 22:23 44"/>
+    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <modifier name="op" kind="bitop" bit="16 33 43"/>
+    <modifier name="slot" kind="slot" bit="58:60"/>
+    <modifier name="per_lane" bit="68"/>
+    <dstate/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <ins name="mov_uniform" display="mov" length="4" form="uniform_move">
+    <template>0b 00 01 08</template>
+    <dst4/>
+    <src kind="uniform" bit="9:14 19 28"/>
+  </ins>
+
+  <!-- Moves of constants: seven bits into r0-r15, or 32 bits into r0-r63.
+       Bit 15 of the short form means no write. -->
+  <ins name="mov_imm" display="mov" length="2" form="mov_imm_compact">
+    <template>0c 00</template>
+    <dest kind="dst" bit="4:7 =0 =0 =0 =0 =0"/>
+    <immediate name="value" bit="8:14"/>
+  </ins>
+
+  <ins name="mov_imm32" display="mov" length="8" form="mov_imm32">
+    <template>0c 80 02 00 00 00 00 00</template>
+    <dst4/>
+    <immediate name="value" bit="8:14 33:36 42:43 48:55 56:59 25:31"/>
+  </ins>
+
+  <!--
+    Integer add, multiply-add and widening multiply. Bit 33 clear writes the
+    uniform file, the destination field then holding an 8-bit uniform word.
+    Bit 7 of the add selects addition over subtraction. Sources are registers,
+    16-bit halves, uniforms or 8-bit constants.
+  -->
+  <group name="Integer add" length="10" form="int_add_extended store_uniform_add store_uniform">
+    <template>9f 01 54 00 02 00 00 a8 17 05</template>
+    <exact bit="7">op</exact>
+    <dest kind="idst" bit="25:32 33"/>
+    <src kind="isrc_desc" bit="42:48 49 41 61 65 72 73"/>
+    <src kind="isrc_desc" bit="51:57 58 50 63 66 74 75"/>
+    <mask_12_17/>
+
+    <ins name="iadd" op="1"/>
+    <ins name="isub" op="0"/>
+  </group>
+
+  <ins name="imad" length="12" form="int_mad_extended store_uniform_mad">
+    <template>9f 00 54 00 02 00 00 00 d0 2f 2a 00</template>
+    <dest kind="idst" bit="25:32 33"/>
+    <src kind="isrc_desc" bit="42:48 49 41 70 73 81 82"/>
+    <src kind="isrc_desc" bit="51:57 58 50 71 74 83 =0"/>
+    <src kind="isrc_desc" bit="60:66 67 59 72 75 85 =0"/>
+    <mask_12_17/>
+  </ins>
+
+  <!-- Both factors zero-extend, or with bits 82 and 84 sign-extend -->
+  <group name="Widening multiply" length="12" form="int_mul_wide store_uniform_mul_wide">
+    <template>9f 00 54 00 02 00 00 00 e0 26 0a 00</template>
+    <exact bit="82 84">op</exact>
+    <dest kind="idst64" bit="25:32 33"/>
+    <src kind="reg" bit="42:48 49 73"/>
+    <src kind="reg" bit="51:57 58 74"/>
+    <mask_12_17/>
+
+    <ins name="umul_wide" op="00"/>
+    <ins name="imul_wide" op="11"/>
+  </group>
+
+  <!--
+    Shifts. The arithmetic right shift is ten bytes, the logical shifts
+    twelve, with byte 0 bit 7 selecting the right shift. A constant amount is
+    in bits 50-54; a constant right shift can extract a bitfield of the width
+    in bits 84-89.
+  -->
+  <ins name="asr" length="10" form="shift_extended">
+    <template>a7 01 54 00 02 00 00 78 62 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
+    <immediate name="amount" bit="50:54"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="asr_reg" display="asr" length="10" form="shift_arith_register">
+    <template>a7 01 54 00 02 00 00 d8 e2 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
+    <src kind="usrc" bit="51:57 58 63 71 =0 =0"/>
+    <mask_12_17/>
+  </ins>
+
+  <group name="Logical shift by a constant" length="12" form="shift_logical_immediate">
+    <template>a7 00 54 00 02 00 00 00 f0 11 01 00</template>
+    <exact bit="7">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
+    <immediate name="amount" bit="50:54"/>
+    <immediate name="width" bit="84:89" prefix="width="/>
+    <mask_12_17/>
+
+    <ins name="shl" op="0"/>
+    <ins name="shr" op="1"/>
+  </group>
+
+  <group name="Logical shift by a register" length="12" form="shift_logical_register">
+    <template>a7 00 54 00 02 00 00 00 f0 13 05 00</template>
+    <exact bit="7">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
+    <src kind="usrc" bit="51:57 58 73 82 =0 =0"/>
+    <mask_12_17/>
+
+    <ins name="shl_reg" display="shl" op="0"/>
+    <ins name="shr_reg" display="shr" op="1"/>
+  </group>
+
+  <!-- Conversions between 32-bit integers and FP32 -->
+  <group name="Integer to float" length="8">
+    <template>a7 07 54 00 03 00 8c 20</template>
+    <exact bit="62">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 53 61 =0 =0"/>
+    <mask_12_17/>
+
+    <ins name="u32_to_f" op="0" form="uint_to_float"/>
+    <ins name="s32_to_f" op="1" form="sint_to_float"/>
+  </group>
+
+  <!-- Bit 64 selects the signed format, which must match the conversion -->
+  <group name="Float to integer" length="10">
+    <template>27 07 54 00 03 00 96 08 02 00</template>
+    <exact bit="62 64">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 53 59 =0 =0"/>
+    <mask_12_17/>
+
+    <ins name="f_to_u32" op="00" form="float_to_uint"/>
+    <ins name="f_to_s32" op="11" form="float_to_sint"/>
+  </group>
+
+  <group name="Bit operations" length="8" form="bit_unary">
+    <template>a7 05 54 00 02 00 4e 04</template>
+    <exact bit="7 8">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
+    <mask_12_17/>
+
+    <ins name="popcount" op="10"/>
+    <ins name="ffs" op="11"/>
+    <ins name="bitrev" op="01"/>
+  </group>
+
+  <!-- Population count of a uniform uses another destination format -->
+  <ins name="popcount_uniform" display="popcount" length="8" form="bit_unary">
+    <template>27 05 54 00 03 00 cc 04</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
+    <mask_12_17/>
+  </ins>
+
+  <!--
+    FP32 special functions. Byte 0 bit 7 and bits 8-9 select the function,
+    bits 65-66 the rounding of the round functions. Bit 32 hints that an ALU
+    instruction reads the result. The reciprocal has its own datapath, with
+    other release, saturate and modifier bits.
+  -->
+  <group name="Special function" length="10" form="float_special float_special_uniform">
+    <template>2f 00 54 00 02 00 90 40 00 00</template>
+    <exact bit="7 8:9 65:66">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 53 62 64 63"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="58" display="sat"/>
+    <mask_12_17/>
+
+    <ins name="rsqrt" op="00011"/>
+    <ins name="srsqrt" op="00010"/>
+    <ins name="sin_factor" op="00110"/>
+    <ins name="exp2" op="00101"/>
+    <ins name="log2" op="00100"/>
+    <ins name="rint" op="00000"/>
+    <ins name="floor" op="01000"/>
+    <ins name="ceil" op="10000"/>
+    <ins name="trunc" op="11000"/>
+  </group>
+
+  <ins name="rcp" length="10" form="float_special">
+    <template>af 00 54 00 02 00 00 48 20 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 52 62 71 70"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="65" display="sat"/>
+    <mask_12_17/>
+  </ins>
+
+  <!-- A uniform source of the reciprocal sets bit 53 instead of 52 -->
+  <ins name="rcp_uniform" display="rcp" length="10" form="float_special_uniform">
+    <template>af 00 54 00 02 00 20 48 20 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 49 =1 62 71 70"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="65" display="sat"/>
+    <mask_12_17/>
+  </ins>
+
+  <!--
+    FP16 special functions, which agx_pack_apple9.c does not emit. Byte 6
+    and the precision byte 7 carry the source type; the reciprocal and the
+    square root factor have variants reading an FP16 source for an FP32
+    result.
+  -->
+  <group name="FP16 special function" length="10" form="half_special">
+    <template>2f 00 54 00 02 00 8c 60 00 00</template>
+    <exact bit="7 8:9 65:66">op</exact>
+    <dst7/>
+    <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="58" display="sat"/>
+    <mask_12_17/>
+
+    <ins name="rsqrt_f16" display="rsqrt" op="00011"/>
+    <ins name="exp2_f16" display="exp2" op="00101"/>
+    <ins name="log2_f16" display="log2" op="00100"/>
+    <ins name="rint_f16" display="rint" op="00000"/>
+    <ins name="floor_f16" display="floor" op="01000"/>
+    <ins name="ceil_f16" display="ceil" op="10000"/>
+    <ins name="trunc_f16" display="trunc" op="11000"/>
+  </group>
+
+  <ins name="srsqrt_f16_f32" display="srsqrt" length="10" form="half_special">
+    <template>2f 01 54 00 02 00 8a 40 00 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="58" display="sat"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="rcp_f16" display="rcp" length="10" form="half_special">
+    <template>af 00 54 00 02 00 00 46 30 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="65" display="sat"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="rcp_f16_f32" display="rcp" length="10" form="half_special">
+    <template>af 00 54 00 02 00 00 44 20 00</template>
+    <dst7/>
+    <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
+    <modifier name="alu" bit="32"/>
+    <modifier name="saturate" bit="65" display="sat"/>
+    <mask_12_17/>
+  </ins>
+
+  <group name="Derivative" length="10" form="derivative">
+    <template>37 05 54 00 03 00 90 40 00 00</template>
+    <exact bit="9">op</exact>
+    <dst7/>
+    <src kind="reg" bit="42:48 49 =0"/>
+    <modifier name="saturate" bit="58" display="sat"/>
+    <mask_12_17/>
+
+    <ins name="dfdx" op="0"/>
+    <ins name="dfdy" op="1"/>
+  </group>
+
+  <!-- Special registers. Bit 15 of the selector is set. -->
+  <ins name="get_sr" length="4" form="get_sr get_draw_id get_coverage">
+    <template>0c 80 10 06</template>
+    <dst4/>
+    <modifier name="sr" kind="sr" bit="8:15"/>
+  </ins>
+
+  <!-- 16-bit registers are read with this form, followed by the companion
+       zero-extending the result in place -->
+  <ins name="get_sr16" length="4" form="get_sr_zext16">
+    <template>04 80 10 06</template>
+    <dst4/>
+    <modifier name="sr" kind="sr" bit="8:15"/>
+  </ins>
+
+  <ins name="zext16" length="4" form="get_sr_zext16 float_to_half_zext">
+    <template>03 00 00 01</template>
+    <dst4/>
+  </ins>
+
+  <!--
+    Control flow. The execution mask pushes test a predicate (6 and 7 are the
+    constants true and false); bit 29 inverts it, but is set in a loop
+    update that does not invert. Branches are relative to the instruction,
+    with a signed 48-bit displacement.
+  -->
+  <ins name="if_pred" display="if" length="4" form="exec_mask_push">
+    <template>0f 05 54 01</template>
+    <immediate name="pred" bit="26:28" prefix="p"/>
+    <modifier name="invert" bit="29" display="not"/>
+  </ins>
+
+  <ins name="else" length="4" form="exec_mask_else">
+    <template>0f 04 04 19</template>
+  </ins>
+
+  <ins name="pop_exec" length="6" form="exec_mask_pop">
+    <template>0f 06 04 01 00 00</template>
+  </ins>
+
+  <ins name="begin_loop" length="4" form="loop_mask_push">
+    <template>0f 05 54 1a</template>
+  </ins>
+
+  <ins name="while_pred" display="while" length="4" form="loop_mask_update">
+    <template>8f 04 54 02</template>
+    <immediate name="pred" bit="26:28" prefix="p"/>
+    <modifier name="bit29" bit="29"/>
+  </ins>
+
+  <ins name="end_loop" length="6" form="loop_mask_pop">
+    <template>0f 06 04 02 00 00</template>
+  </ins>
+
+  <ins name="break_pred" display="break" length="6" form="break_mask_unwind">
+    <template>8f 05 54 00 00 00</template>
+    <immediate name="nest" bit="24:31"/>
+    <immediate name="pred" bit="40:47" prefix="p"/>
+  </ins>
+
+  <group name="Branch" length="10">
+    <template>0f 00 54 00 00 00 00 00 00 00</template>
+    <exact bit="8">op</exact>
+    <immediate name="offset" bit="24:71" kind="signed"/>
+
+    <ins name="jmp_exec_any" op="0" form="jmp_exec_any"/>
+    <ins name="jmp_exec_none" op="1" form="jmp_exec_none"/>
+  </group>
+
+  <!-- Waits for the slots in its mask -->
+  <ins name="wait" length="2" form="wait">
+    <template>06 00</template>
+    <modifier name="slots" kind="waitmask" bit="10:15"/>
+  </ins>
+
+  <ins name="stop" length="4" form="halt">
+    <template>0e 00 00 00</template>
+  </ins>
+
+  <ins name="threadgroup_barrier" length="6" form="workgroup_barrier">
+    <template>07 04 54 61 09 00</template>
+  </ins>
+
+  <ins name="memory_barrier" length="6" form="device_fence">
+    <template>07 04 54 84 0a 00</template>
+  </ins>
+
+  <ins name="raster_order_fence" length="6" form="device_fence">
+    <template>07 04 54 c4 08 00</template>
+  </ins>
+
+  <!-- Opens (begin) or closes (end) the tile and raster order domains in
+       the control -->
+  <ins name="begin_tile" length="6" form="tile_access">
+    <template>87 02 54 00 00 00</template>
+    <immediate name="control" bit="24:39"/>
+  </ins>
+
+  <ins name="end_tile" length="6" form="tile_fence">
+    <template>07 02 54 00 00 00</template>
+    <immediate name="control" bit="24:39"/>
+  </ins>
+
+  <!--
+    Device memory. The address is base + (index << shift) + offset, with a
+    64-bit uniform or register pair base, a 32-bit index register and a
+    signed 16-bit byte offset. The shift field holds the element shift plus
+    one, or 0 for 4. Loads complete on their slot; bit 20 says that another
+    load follows. Without an index, a register base is a pointer.
+  -->
+  <ins name="device_load" length="14" form="device_load device_load_indirect device_load_pointer">
+    <template>67 00 44 00 00 00 20 00 11 00 00 40 46 00</template>
+    <dst7/>
+    <src kind="membase" bit="32:39 101 74" role="src1"/>
+    <src kind="memindex" bit="40:46 47 53 102" role="index"/>
+    <immediate name="offset" bit="77:92" kind="signed" prefix="offset="/>
+    <immediate name="shift" bit="97:99" prefix="shift="/>
+    <modifier name="format" kind="memformat" bit="64:69"/>
+    <modifier name="slot" kind="slot" bit="70:72"/>
+    <modifier name="next" bit="20"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="device_store" length="14" form="device_store device_store_indirect">
+    <template>e7 00 54 00 00 00 20 00 11 00 00 90 11 00</template>
+    <src kind="reg" bit="25:31" role="store_data"/>
+    <src kind="membase" bit="32:39 99 =0" role="src1"/>
+    <src kind="reg" bit="40:46 =0 48" role="index"/>
+    <immediate name="offset" bit="75:90" kind="signed" prefix="offset="/>
+    <immediate name="shift" bit="95:97" prefix="shift="/>
+    <modifier name="format" kind="memformat" bit="64:69"/>
+    <mask_12_17/>
+  </ins>
+
+  <!--
+    Device atomics. A returning atomic writes the old value to word 0 of the
+    invocation's private frame, and the result instruction following it loads
+    it into the destination, completing on its slot.
+  -->
+  <ins name="atomic" length="14" form="device_atomic">
+    <template>67 01 54 00 00 00 00 80 00 40 00 00 40 02</template>
+    <src kind="reg" bit="47:53" role="atomic_data"/>
+    <src kind="uniform64" bit="40:46 =0" role="-"/>
+    <src kind="reg" bit="55:61" role="index"/>
+    <modifier name="op" kind="atomic" bit="97:101"/>
+    <modifier name="ret" kind="atomic_return" bit="73 78"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="atomic_indirect" display="atomic" length="14" form="device_atomic_indirect">
+    <template>67 01 54 00 00 00 00 80 00 60 00 00 40 03</template>
+    <src kind="reg" bit="47:53" role="atomic_data"/>
+    <src kind="reg64" bit="40:46" role="src1"/>
+    <src kind="reg" bit="55:61" role="index"/>
+    <modifier name="op" kind="atomic" bit="97:101"/>
+    <modifier name="ret" kind="atomic_return" bit="73 78"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="atomic_result" length="8" form="device_atomic_result device_atomic device_atomic_indirect">
+    <template>0c 80 09 07 00 20 00 00</template>
+    <dest kind="dst" bit="4:7 22:23 60 =0 =0" role="src0"/>
+    <modifier name="slot" kind="slot" bit="29:31"/>
+  </ins>
+
+  <!--
+    Threadgroup memory: an immediate root and a register whose low half
+    counts words. Loads complete on slot 6, atomics on slot 1.
+  -->
+  <ins name="local_load" length="14" form="shared_load">
+    <template>67 02 54 00 00 00 00 00 44 0d 00 c0 08 00</template>
+    <dst7/>
+    <src kind="half" bit="41:47 =0 =0 55"/>
+    <immediate name="root" bit="32:39" prefix="root="/>
+  </ins>
+
+  <ins name="local_store" length="14" form="shared_store">
+    <template>e7 02 54 00 00 00 00 00 44 02 00 30 02 00</template>
+    <src kind="reg" bit="25:31"/>
+    <src kind="half" bit="41:47 =0 =0 55"/>
+    <immediate name="root" bit="32:39" prefix="root="/>
+  </ins>
+
+  <ins name="local_atomic" length="12" form="shared_atomic">
+    <template>67 03 54 00 00 00 00 00 12 00 00 48</template>
+    <dest kind="reg" bit="24:30"/>
+    <src kind="reg" bit="40:46" role="atomic_data"/>
+    <src kind="reg" bit="48:54" role="index"/>
+    <immediate name="root" bit="31:38" prefix="root="/>
+    <modifier name="op" kind="atomic" bit="86:90"/>
+  </ins>
+
+  <!--
+    Private memory. The indexed forms take a word index register; the spill
+    forms a constant word, the fill reaching 1024 words and the save 2048.
+    Spills complete on their slot.
+  -->
+  <ins name="stack_load_indexed" display="stack_load" length="12" form="private_load">
+    <template>6f 00 54 00 00 02 49 01 00 00 03 00</template>
+    <dst7/>
+    <src kind="reg" bit="33:39"/>
+    <immediate name="offset" bit="64:79" prefix="offset="/>
+  </ins>
+
+  <ins name="stack_store_indexed" display="stack_store" length="10" form="private_store">
+    <template>ef 00 54 00 00 02 09 03 00 60</template>
+    <src kind="reg" bit="25:31"/>
+    <src kind="reg" bit="33:39"/>
+    <immediate name="offset" bit="62:63 64:71 72:74" prefix="offset="/>
+  </ins>
+
+  <ins name="stack_load" length="8" form="spill_load">
+    <template>0c 80 01 01 00 00 00 00</template>
+    <dst8/>
+    <immediate name="word" bit="9:14 33:36" prefix="word="/>
+    <modifier name="slot" kind="slot" bit="29:31"/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <ins name="stack_store" length="10" form="spill_store">
+    <template>0b 01 0f 00 22 00 00 00 00 00</template>
+    <src kind="reg" bit="9:14 40"/>
+    <immediate name="word" bit="4:7 22:23 44 50:53" prefix="word="/>
+    <modifier name="slot" kind="slot" bit="58:60"/>
+    <mask_45_47_61_63/>
+  </ins>
+
+  <!-- Subgroup operations -->
+  <ins name="simd_prefix_iadd" length="8" form="subgroup_scan_iadd">
+    <template>bf 01 54 00 03 00 16 09</template>
+    <dst7/>
+    <src kind="reg" bit="42:47 =0"/>
+  </ins>
+
+  <!-- Operands name 16-bit halves; bit 50 makes them 32-bit -->
+  <ins name="simd_reduce_umax" length="8" form="subgroup_reduce_umax">
+    <template>bf 03 54 00 02 00 10 01</template>
+    <dest kind="half" bit="24:31 32 =0"/>
+    <src kind="half" bit="41:48 49 57"/>
+  </ins>
+
+  <ins name="simd_reduce_umax32" display="simd_reduce_umax" length="8" form="subgroup_reduce_umax">
+    <template>bf 03 54 00 02 00 14 01</template>
+    <dest kind="reg_half" bit="24:31 32 =0"/>
+    <src kind="reg_half" bit="41:48 49 57"/>
+  </ins>
+
+  <!-- Each lane reads the data from the lane in the low half of the second
+       source -->
+  <ins name="shuffle" length="10" form="subgroup_broadcast">
+    <template>47 04 54 00 03 00 00 2c 10 00</template>
+    <dst7/>
+    <src kind="reg" bit="42:47 =0"/>
+    <src kind="reg" bit="50:55 =0"/>
+  </ins>
+
+  <ins name="ballot" length="10" form="subgroup_ballot">
+    <template>17 07 54 00 03 00 00 58 22 12</template>
+    <dst7/>
+    <src kind="reg" bit="42:47 =0"/>
+  </ins>
+
+  <!--
+    Conversions and packing. Pack format packs three or four FP32 channels
+    into RG11B10F or RGB10A2; bits 86-89 release dying channels.
+  -->
+  <ins name="pack_rgb10a2" display="pack_format" length="14" form="pack_format">
+    <template>a7 06 54 00 02 00 00 00 00 a0 2a 88 24 11</template>
+    <dst7/>
+    <src kind="reg" bit="42:48 49 86"/>
+    <src kind="reg" bit="51:57 58 87"/>
+    <src kind="reg" bit="60:66 67 88"/>
+    <src kind="reg" bit="69:75 76 89"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="pack_rg11b10f" display="pack_format" length="14" form="pack_format_rgb">
+    <template>a7 06 54 00 02 00 00 00 10 a0 0a 88 24 08</template>
+    <dst7/>
+    <src kind="reg" bit="42:48 49 86"/>
+    <src kind="reg" bit="51:57 58 87"/>
+    <src kind="reg" bit="60:66 67 88"/>
+    <mask_12_17/>
+  </ins>
+
+  <!-- Normalized unpacking of two values into a register pair; 8-bit values
+       may come from the high half (bit 41) -->
+  <ins name="unpack_norm" length="8" form="unpack_norm">
+    <template>17 04 54 00 00 00 04 8a</template>
+    <dest kind="reg64" bit="25:31"/>
+    <src kind="reg" bit="42:48 49 52"/>
+    <modifier name="mode" kind="unpack" bit="60:62"/>
+    <modifier name="hi" bit="41"/>
+    <modifier name="wide" bit="51"/>
+    <mask_12_17/>
+  </ins>
+
+  <!-- unorm packing of a pair of FP32 sources; the 8-bit form writes the
+       destination half in bit 24 -->
+  <ins name="pack_unorm_2x16" length="10" form="pack_unorm_2x16">
+    <template>97 04 56 00 02 00 00 50 44 82</template>
+    <dst7/>
+    <src kind="reg" bit="42:48"/>
+    <src kind="reg" bit="51:57"/>
+  </ins>
+
+  <ins name="pack_unorm_4x8" length="10" form="pack_unorm_4x8">
+    <template>97 04 54 00 02 00 00 50 44 c2</template>
+    <dst7/>
+    <src kind="reg" bit="42:48"/>
+    <src kind="reg" bit="51:57"/>
+    <modifier name="hi" bit="24"/>
+  </ins>
+
+  <!-- Cube map face selection -->
+  <ins name="cube" length="12" form="cube">
+    <template>17 01 54 00 03 00 00 00 50 2f 92 00</template>
+    <dest kind="reg" bit="24:30"/>
+    <src kind="reg" bit="41:47 48 73"/>
+    <src kind="reg" bit="50:56 57 74"/>
+    <src kind="reg" bit="59:65 66 75"/>
+    <immediate name="mode" bit="90:91" prefix="mode="/>
+  </ins>
+
+  <!--
+    Texture sampling and texel fetches. Coordinates and the other parameters
+    are in export words. The texture and sampler are constants, or 32-bit
+    registers named by their low halves in the 20-byte forms. Bytes 6-7 are
+    the sample mode, bits 27-28, 37 and 86 the result component selector.
+    Offsets are signed 4-bit constants. The result completes on the slot in
+    bits 42-44, repeated in bits 45-47.
+  -->
+  <ins name="texture" length="14" form="texture_sample texture_lod texture_grad">
+    <template>05 80 0c b8 b0 00 00 00 00 00 10 00 01 00</template>
+    <dest kind="reg" bit="3:7 22 =0"/>
+    <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
+    <src kind="table" bit="71 11:14 68:70 =0 =0" role="-"/>
+    <src kind="table" bit="72 32:35 =0 =0 =0 =0 =0" role="-"/>
+    <immediate name="mode" bit="48:63" prefix="mode="/>
+    <immediate name="select" bit="27:28 37 86" prefix="select="/>
+    <immediate name="x" bit="75:78" kind="signed" prefix="x="/>
+    <immediate name="y" bit="79 105:107" kind="signed" prefix="y="/>
+    <immediate name="z" bit="108:110 21" kind="signed" prefix="z="/>
+    <modifier name="slot" kind="slot" bit="42:44"/>
+    <modifier name="slot2" kind="slot" bit="45:47"/>
+    <modifier name="gather" bit="26"/>
+    <modifier name="filter" bit="84"/>
+    <modifier name="query_lod" bit="85"/>
+  </ins>
+
+  <ins name="texture_reg" display="texture" length="20" form="texture_sample texture_lod texture_grad">
+    <template>05 80 0c b8 b0 00 00 00 00 02 10 00 01 00 00 20 00 00 40 00</template>
+    <dest kind="reg" bit="3:7 22 153"/>
+    <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
+    <src kind="table" bit="11:14 68:70 122 87 123" role="-"/>
+    <src kind="table" bit="72 32:35 =0 =0 =0 =0 =0" role="-"/>
+    <immediate name="mode" bit="48:63" prefix="mode="/>
+    <immediate name="select" bit="27:28 37 86" prefix="select="/>
+    <immediate name="x" bit="75:78" kind="signed" prefix="x="/>
+    <immediate name="y" bit="79 105:107" kind="signed" prefix="y="/>
+    <immediate name="z" bit="108:110 21" kind="signed" prefix="z="/>
+    <modifier name="slot" kind="slot" bit="42:44"/>
+    <modifier name="slot2" kind="slot" bit="45:47"/>
+    <modifier name="gather" bit="26"/>
+    <modifier name="filter" bit="84"/>
+    <modifier name="query_lod" bit="85"/>
+  </ins>
+
+  <ins name="texture_reg2" display="texture" length="20" form="texture_sample texture_lod texture_grad">
+    <template>05 80 0c b8 b0 00 00 00 00 02 10 01 01 00 80 20 00 00 40 00</template>
+    <dest kind="reg" bit="3:7 22 153"/>
+    <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
+    <src kind="table" bit="11:14 68:70 122 87 123" role="-"/>
+    <src kind="table" bit="32:35 65:67 116 88 117" role="-"/>
+    <immediate name="mode" bit="48:63" prefix="mode="/>
+    <immediate name="select" bit="27:28 37 86" prefix="select="/>
+    <immediate name="x" bit="75:78" kind="signed" prefix="x="/>
+    <immediate name="y" bit="79 105:107" kind="signed" prefix="y="/>
+    <immediate name="z" bit="108:110 21" kind="signed" prefix="z="/>
+    <modifier name="slot" kind="slot" bit="42:44"/>
+    <modifier name="slot2" kind="slot" bit="45:47"/>
+    <modifier name="gather" bit="26"/>
+    <modifier name="filter" bit="84"/>
+    <modifier name="query_lod" bit="85"/>
+  </ins>
+
+  <!--
+    Image stores, each followed by the instruction joining the export its
+    parameters are read by. The PBE image write reads the 2D coordinates and
+    data from eight export words and the image from a register pair; the
+    block store writes the implicit tile.
+  -->
+  <ins name="image_write" length="16" form="image_write">
+    <template>d7 10 54 00 00 40 00 00 20 04 00 00 88 1a 89 00</template>
+    <src kind="export" bit="25:31"/>
+    <src kind="reg64" bit="57:63 =0 64"/>
+    <modifier name="float" bit="109"/>
+  </ins>
+
+  <ins name="block_image_store" length="12" form="block_image_store block_image_store_extended">
+    <template>57 10 54 00 00 00 00 80 00 00 01 00</template>
+    <src kind="export" bit="25:31"/>
+    <immediate name="image" bit="44:47" prefix="ts"/>
+    <immediate name="mode" bit="64:75" prefix="mode="/>
+    <immediate name="format" bit="76:79" prefix="format="/>
+  </ins>
+
+  <ins name="join_export" length="6" form="image_write block_image_store block_image_store_extended">
+    <template>07 12 54 00 03 00</template>
+  </ins>
+
+  <!-- Fragment outputs -->
+  <ins name="write_coverage" length="6" form="coverage">
+    <template>57 04 54 00 00 01</template>
+    <src kind="export" bit="25:31"/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="zs_store" length="6" form="depth_store">
+    <template>d7 14 54 00 00 00</template>
+    <src kind="export" bit="25:31"/>
+    <modifier name="mode" kind="depth" bit="40:47"/>
+  </ins>
+
+  <!--
+    Raw tile words, at a word offset of the pixel. The sample mask is the
+    constant 1, a register named by its 16-bit half, or, with explicit
+    coordinates, a constant. Loads complete on their slot.
+  -->
+  <ins name="ld_tile" length="12" form="tile_load">
+    <template>67 0e 54 00 00 00 01 4e 00 00 00 00</template>
+    <dst7/>
+    <immediate name="offset" bit="41:45" prefix="offset="/>
+    <modifier name="slot" kind="slot" bit="63:65"/>
+  </ins>
+
+  <ins name="ld_tile_mask" display="ld_tile" length="12" form="tile_load_mask">
+    <template>67 06 54 00 00 00 00 4e 00 00 00 20</template>
+    <dst7/>
+    <src kind="half" bit="48:55 =0 69"/>
+    <immediate name="offset" bit="41:45" prefix="offset="/>
+    <modifier name="slot" kind="slot" bit="63:65"/>
+  </ins>
+
+  <ins name="ld_tile_coords" display="ld_tile" length="12" form="tile_load_coords">
+    <template>67 16 54 00 00 00 00 4e 00 00 00 10</template>
+    <dst7/>
+    <src kind="reg" bit="32:38"/>
+    <immediate name="offset" bit="41:45" prefix="offset="/>
+    <immediate name="mask" bit="48:55" prefix="mask="/>
+    <modifier name="slot" kind="slot" bit="63:65"/>
+  </ins>
+
+  <ins name="st_tile" length="12" form="tile_store">
+    <template>e7 06 54 00 00 00 01 4e 00 00 00 00</template>
+    <src kind="reg" bit="25:31"/>
+    <immediate name="offset" bit="41:45" prefix="offset="/>
+  </ins>
+
+  <ins name="st_tile_mask" display="st_tile" length="12" form="tile_store_mask">
+    <template>e7 06 54 00 00 00 00 4e 00 00 00 08</template>
+    <src kind="reg" bit="25:31"/>
+    <src kind="half" bit="48:55 =0 67"/>
+    <immediate name="offset" bit="41:45" prefix="offset="/>
+    <mask_12_17/>
+  </ins>
+
+  <!--
+    Varyings. A varying store commits an export word to a varying slot.
+    Iteration interpolates a coefficient at the pixel centre, or at the
+    position in a register; the flat form reads the coefficient tuple,
+    completing on its slot.
+  -->
+  <ins name="st_vary" length="8" form="vary_store">
+    <template>57 06 54 00 00 40 00 00</template>
+    <src kind="export" bit="25:31"/>
+    <immediate name="slot" bit="37:39 40:44" prefix="slot="/>
+    <mask_12_17/>
+  </ins>
+
+  <ins name="iter" length="10" form="iter">
+    <template>2f 05 54 00 03 00 00 02 10 00</template>
+    <dst7/>
+    <immediate name="cf" bit="41:47" prefix="cf"/>
+  </ins>
+
+  <ins name="iter_coord" display="iter" length="10" form="iter_coord">
+    <template>2f 05 54 00 03 00 00 02 00 00</template>
+    <dst7/>
+    <src kind="reg" bit="48:54 67 69"/>
+    <immediate name="cf" bit="41:47" prefix="cf"/>
+  </ins>
+
+  <ins name="ldcf" length="6" form="iter_flat">
+    <template>1f 03 54 00 00 00</template>
+    <dest kind="reg" bit="24:30"/>
+    <immediate name="cf" bit="31:39" prefix="cf"/>
+    <modifier name="slot" kind="slot" bit="40:42"/>
+  </ins>
+
+  <ins name="interpolation_position" length="8" form="interpolation_position">
+    <template>af 04 54 00 03 00 0a 01</template>
+    <dst7/>
+    <src kind="reg" bit="42:48"/>
+    <modifier name="sample" bit="57"/>
+    <mask_12_17/>
+  </ins>
+</isa>

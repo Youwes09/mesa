@@ -63,7 +63,22 @@ enum operand_kind {
    KIND_SS,
    KIND_IMM,
    KIND_FIMM,
+   KIND_EXPORT,
+   KIND_A9FIMM,
 };
+
+/* Apple9 inline float: mantissa in bits 0-2 and 7, exponent in bits 3-6 */
+static inline float
+apple9_minifloat_decode(unsigned v)
+{
+   unsigned m = ((v & 7) << 1) | ((v >> 7) & 1);
+   unsigned e = (v >> 3) & 15;
+
+   if (e == 8)
+      return m / 64.0f;
+   else
+      return (1.0f + m / 16.0f) * ldexpf(1.0f, (int)e - 11);
+}
 
 struct operand_desc {
    enum operand_kind kind;
@@ -104,7 +119,7 @@ _print_operand(struct disasm_ctx *ctx, struct operand_desc d)
    const char *prefixes[][2] = {
       [KIND_REG] = {"r", "dr"}, [KIND_UNIFORM] = {"u", "du"},
       [KIND_CF] = {"cf"},       [KIND_TS] = {"ts"},
-      [KIND_SS] = {"ss"},
+      [KIND_SS] = {"ss"},       [KIND_EXPORT] = {"e", "de"},
    };
 
    if (d.kind == KIND_IMM) {
@@ -117,6 +132,17 @@ _print_operand(struct disasm_ctx *ctx, struct operand_desc d)
          fprintf(ctx->fp, "%g.0", agx_minifloat_decode(d.value));
       else
          fprintf(ctx->fp, "%g", agx_minifloat_decode(d.value));
+   } else if (d.kind == KIND_A9FIMM) {
+      float f = apple9_minifloat_decode(d.value);
+
+      if (((d.value >> 3) & 15) < 8) {
+         fprintf(ctx->fp, "# XXX: Invalid constant %u", d.value);
+         ctx->error = true;
+      } else if (f == (int)f) {
+         fprintf(ctx->fp, "%g.0", f);
+      } else {
+         fprintf(ctx->fp, "%g", f);
+      }
    } else if (d.kind == KIND_CF || d.kind == KIND_TS || d.kind == KIND_SS) {
       fprintf(ctx->fp, "%s%u", prefixes[d.kind][0], d.value);
    } else {

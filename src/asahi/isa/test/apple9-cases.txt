@@ -1,0 +1,815 @@
+02010f80268007022081 icmpsel  r0, ^r0, 0, 0, 1, ieq, bit18
+02010f80268017022081 icmpsel  r0, ^r0, 1, 0, 1, ieq, bit18
+02010f80268107022080 icmpsel  r0, ^r0, 0, 1, 0, ieq, bit18
+02010f80820017022081 icmpsel  r0, ^r0, 1, ^r0, 1, ilt, bit18
+02010f82268107022080 icmpsel  r0, ^r0, 2, 1, 0, ieq, bit18
+02010f83820005008006 icmpsel  r0, ^r0, $r1, ^r0, ^r3, ult, bit18
+02010f84820414028008 icmpsel  r0, ^r0, 5, ^r2, ^r4, ugt, bit18
+02010f86820417028008 icmpsel  r0, ^r0, 7, ^r2, ^r4, ilt, bit18
+02010fb1820403028008 fcmpsel  r0, ^r0, 1.0, ^r2, ^r4, flt, bit18
+02010fc1820413028008 fcmpsel  r0, ^r0, 2.125, ^r2, ^r4, flt, bit18
+02011f01860000008002 fcmpsel  r0, ^r0, ^r0, ^r0, ^r1, feq, bit18
+02011f01860000008004 fcmpsel  r0, ^r0, ^r0, ^r0, ^r2, feq, bit18
+02011f05820802008006 fcmpsel  r0, ^r0, ^r2, ^r4, ^r3, fgt, bit18
+02011f05820803008006 fcmpsel  r0, ^r0, ^r2, ^r4, ^r3, flt, bit18
+02011f05860800008006 fcmpsel  r0, ^r0, ^r2, ^r4, ^r3, feq, bit18
+02011f05860802008006 fcmpsel  r0, ^r0, ^r2, ^r4, ^r3, fge, bit18
+02012e850600         imax     r0, ^r0, $r2, bit18
+02012e870600         imax     r0, ^r0, $r3, bit18
+028126830600         imax     r0, $r0, $r1, bit18
+028b479d079e0200009800000100 fcmpsel  r16, $r5.abs, $r14, $r15, $r12, fge, bit18
+028b479f078a0200008800000100 fcmpsel  r16, $r5.abs, $r15, $r5, $r4, fge, bit18
+028d171b87040200800000000100 fcmpsel  r0, $r6.abs, ^r13, ^r2, ^r0, fge, bit18
+028d171b87200200800000000100 fcmpsel  r0, $r6.abs, ^r13, ^r16, ^r0, fge, bit18
+029166930000         fmax     r16, $r8, $r9, bit18
+029566a10600         imax     r16, $r10, $r16, bit18
+029f66a10600         imax     r16, $r15, $r16, bit18
+02a1669f0100         fmin     r16, $r16, $r15, bit18
+02a166a30000         fmax     r16, $r16, $r17, bit18
+02a166ad0500         umin     r16, $r16, $r22, bit18
+02a166b10000         fmax     r16, $r16, $r24, bit18
+02c166a10600         imax     r16, $r32, $r16, bit18
+03000001             zext16   r0
+03004001             zext16   r16
+03008001             zext16   r32
+0300c001             zext16   r48
+04821006             get_sr16 r0, thread_index_in_subgroup
+0482d006             get_sr16 r48, thread_index_in_subgroup
+04855006             get_sr16 r16, subgroup_index_in_threadgroup
+04a41006             get_sr16 r0, thread_position_in_threadgroup_x
+04a45006             get_sr16 r16, thread_position_in_threadgroup_x
+04a49006             get_sr16 r32, thread_position_in_threadgroup_x
+04a4d006             get_sr16 r48, thread_position_in_threadgroup_x
+05800ca09e000000060290010100802400004002 texture  r64, e0, r64, r31, mode=0, select=0, x=0, y=0, z=0, slot1, slot1, filter
+05800ca09e000000060290010100902000004000 texture  r0, e0, r0, r95, mode=0, select=0, x=0, y=0, z=0, slot1, slot1, filter
+05804ca09e0000004e0290010100802000004000 texture  r32, e0, r32, r63, mode=0, select=0, x=0, y=0, z=0, slot1, slot1, filter
+0604                 wait     wait1
+0608                 wait     wait2
+060c                 wait     wait12
+0610                 wait     wait3
+0618                 wait     wait23
+061c                 wait     wait123
+0620                 wait     wait4
+0628                 wait     wait24
+070254000300         end_tile 768
+070454610900         threadgroup_barrier
+070454840a00         memory_barrier
+070454c40800         raster_order_fence
+071254000300         join_export
+09003d0010c0         fmul     r0, ^r0l, ^r0h, dstate, wait6
+09012e830082         ffma     r0, ^r0, $r1, $r1, dstate
+09012e8321b00208     ffma     r0, ^r0.neg, $r1, 1.0, dstate
+09012e850084         ffma     r0, ^r0, $r2, $r2, dstate
+09012e8521b00208     ffma     r0, ^r0.neg, $r2, 1.0, dstate
+09013903             fmul     r0, ^r0, ^r1
+09013907             fmul     r0, ^r0, ^r3
+09013c0400c0         fadd     r0, ^r0, ^r2l, dstate, wait6
+09013e0521b00200     ffma     r0, ^r0, ^r2, 1.0, dstate
+09013e0521c10200     ffma     r0, ^r0, ^r2, 2.125, dstate
+09013e0521ff0200     ffma     r0, ^r0, ^r2, 31.0, dstate
+09013e0581090000     ffma     r0, ^r0, ^r2, ^r4h, dstate
+09013e0881040200     ffma     r0, ^r0, ^r4l, ^r2, dstate
+09043801             fadd     r0, ^r2l, ^r0
+09043c010800         fadd     r0, ^r2h, ^r0, dstate
+09043d010800         fmul     r0, ^r2h, ^r0, dstate
+09052d8141000000     fmul     e0, ^r2, $r0, slot1, dstate
+0981340181000002     fadd     r0, 0.0, ^r0, sat, dstate
+0981340181000082     fadd     r0, 0.0, ^r0, sat, dstate, wait6
+0981340981000082     fadd     r0, 0.0, ^r4, sat, dstate, wait6
+0981340b81000002     fadd     r0, 0.0, ^r5, sat, dstate
+0983742101000200     fadd     r16, $r1.neg, ^r16, dstate
+0985340101000200     fadd     r0, $r2.neg, ^r0, dstate
+0987669921a00200     ffma     r16, $r3, $r12, 0.5, dstate
+098b340101000200     fadd     r0, $r5.neg, ^r0, dstate
+098d340101000200     fadd     r0, $r6.neg, ^r0, dstate
+09c135018800         fmul     r0, 2.125, ^r0, dstate
+09f135018800         fmul     r0, 17.0, ^r0, dstate
+09ff34018800         fadd     r0, 31.0, ^r0, dstate
+0a0122330502         icmp_pred r0, u25, p0, ult
+0a012380060007020000 icmp_pred r0, 0, p0, ieq
+0a012380060007220000 icmp_pred r0, 0, p0, ieq, wait1
+0a03220507c0         icmp_pred r1, r2, p0, ilt, wait6
+0a03220b0500         icmp_pred r1, r5, p0, ult
+0a03220f0500         icmp_pred r1, r7, p0, ult
+0a032380060007020000 icmp_pred r1, 0, p0, ieq
+0a033a050700         icmp_pred ^r1, ^r2, p0, ilt
+0a033b05060000c00000 fcmp_pred ^r1, ^r2, p0, feq, wait6
+0a033b05060007c00000 icmp_pred ^r1, ^r2, p0, ieq, wait6
+0a0522070540         icmp_pred r2, r3, p0, ult, wait2
+0a05221b0502         icmp_pred r2, u13, p0, ult
+0a0522230502         icmp_pred r2, u17, p0, ult
+0a052380060007020000 icmp_pred r2, 0, p0, ieq
+0a052380060007030000 icmp_pred r66, 0, p0, ieq
+0a052380060007220000 icmp_pred r2, 0, p0, ieq, wait1
+0a052a810202         fcmp_pred ^r2, 0.0, p0, fgt
+0a052b80060087020000 icmp_pred u66, 0, p0, ieq
+0a053ab10202         fcmp_pred ^r2, 1.0.neg, p0, fgt
+0b010ee3120a00000000 bitop    r0, ^r0, 99, xor
+0b010f81100200000000 bitop    r0, ^r0, 1, and
+0b010f83100200000000 bitop    r0, ^r0, 3, and
+0b010f89120a00000000 bitop    r0, ^r0, 9, or
+0b010f8f100200000000 bitop    r0, ^r0, 15, and
+0b011e03020800000000 bitop    r0, ^r0, ^r1, xor
+0b011eff020a00000000 bitop    r0, ^r0, 254, xor
+0b011f03000000000000 bitop    r0, ^r0, ^r1, and
+0b0127bf821d00800000 bitop    r64, u128, $r95, or, dstate, wait6
+0b012f00420000001000 bitop    e0, ^r0, r0l, mov, slot1, per_lane, dstate
+0b012fbf821c00800000 bitop    r64, u64, $r95, or, dstate, wait6
+0b013f01420800000000 bitop    e0, ^r0, ^r0, or, slot1, dstate
+0b033f03420800000000 bitop    e0, ^r1, ^r1, or, slot1, dstate
+0b052f00420000001000 bitop    e0, ^r2, r0l, mov, slot1, per_lane, dstate
+0b053f05420800000000 bitop    e0, ^r2, ^r2, or, slot1, dstate
+0b073f07420800000000 bitop    e0, ^r3, ^r3, or, slot1, dstate
+0b093f09420800000000 bitop    e0, ^r4, ^r4, or, slot1, dstate
+0b0b2f00420000001000 bitop    e0, ^r5, r0l, mov, slot1, per_lane, dstate
+0b0b3f0b420800000000 bitop    e0, ^r5, ^r5, or, slot1, dstate
+0b113f11420800000000 bitop    e0, ^r8, ^r8, or, slot1, dstate
+0b114f00220000000000 stack_store r8, word=16, slot1
+0b133f13420800000000 bitop    e0, ^r9, ^r9, or, slot1, dstate
+0b138f00220100000000 stack_store r73, word=32, slot1
+0b153f15420800000000 bitop    e0, ^r10, ^r10, or, slot1, dstate
+0b198f00220100000000 stack_store r76, word=32, slot1
+0b1b3f1b420800000000 bitop    e0, ^r13, ^r13, or, slot1, dstate
+0b1c0108             mov      r0, u14
+0b240108             mov      r0, u18
+0b274f00220000000000 stack_store r19, word=16, slot1
+0b2d4f00220000000000 stack_store r22, word=16, slot1
+0b2d4f00220000040000 stack_store r22, word=16, slot2
+0b2f8f00220100040000 stack_store r87, word=32, slot2
+0b333f33420800000000 bitop    e0, ^r25, ^r25, or, slot1, dstate
+0b338f00220000040000 stack_store r25, word=32, slot2
+0b7f27bf821c00800000 bitop    r64, u63, $r95, or, dstate, wait6
+0b7f2fbf821c00800000 bitop    r64, u127, $r95, or, dstate, wait6
+0b812781420800000000 bitop    e0, $r0, $r0, or, slot1, dstate
+0b832783420800000000 bitop    e0, $r1, $r1, or, slot1, dstate
+0c00                 mov      r0, 0
+0c01                 mov      r0, 1
+0c02                 mov      r0, 2
+0c04                 mov      r0, 4
+0c05                 mov      r0, 5
+0c06                 mov      r0, 6
+0c07                 mov      r0, 7
+0c08                 mov      r0, 8
+0c80090700200000     atomic_result r0, slot1
+0c80090700200010     atomic_result r64, slot1
+0c80092700200000     atomic_result r0, slot2
+0c80092700200010     atomic_result r64, slot2
+0c80094700200000     atomic_result r0, slot3
+0c80094700200010     atomic_result r64, slot3
+0c80096700200000     atomic_result r0, slot4
+0c80096700200010     atomic_result r64, slot4
+0c80420000000000     mov      r16, 0
+0c80423e0000000c     mov      r16, 1065353216
+0c80423e0200000c     mov      r16, 1065353344
+0c80424000000000     mov      r16, 1073741824
+0c8042420000e003     mov      r16, 1115422720
+0c80427e0000f80f     mov      r16, 2147418112
+0c80820000000000     mov      r32, 0
+0c80820000000100     mov      r32, 8192
+0c8a410100000000     stack_load r16, word=5, slot1
+0c9ac10100000000     stack_load r48, word=13, slot1
+0c9c1006             get_sr   r0, threadgroup_position_in_grid_x
+0ca01006             get_sr   r0, thread_position_in_grid_x
+0ca0412100000010     stack_load r80, word=16, slot2
+0ca05006             get_sr   r16, thread_position_in_grid_x
+0ca09006             get_sr   r32, thread_position_in_grid_x
+0ca0d006             get_sr   r48, thread_position_in_grid_x
+0ca11006             get_sr   r0, thread_position_in_grid_y
+0ca21006             get_sr   r0, thread_position_in_grid_z
+0ca8412100000010     stack_load r80, word=20, slot2
+0cbe416100000000     stack_load r16, word=31, slot4
+0cc21006             get_sr   r0, coverage_mask
+0d900ca09c000000060290010100802400004002 texture  r65, e0, r65, r30, mode=0, select=0, x=0, y=0, z=0, slot1, slot1, filter
+0e000000             stop
+0f005400000000000000 jmp_exec_any 0
+0f005402fbffffffff00 jmp_exec_any -1278
+0f005402fdffffffff00 jmp_exec_any -766
+0f005402feffffffff00 jmp_exec_any -510
+0f005406feffffffff00 jmp_exec_any -506
+0f005408fdffffffff00 jmp_exec_any -760
+0f00540cfeffffffff00 jmp_exec_any -500
+0f005412feffffffff00 jmp_exec_any -494
+0f015400000000000000 jmp_exec_none 0
+0f015400020000000000 jmp_exec_none 512
+0f015400030000000000 jmp_exec_none 768
+0f015402030000000000 jmp_exec_none 770
+0f015404030000000000 jmp_exec_none 772
+0f015406020000000000 jmp_exec_none 518
+0f0154060a0000000000 jmp_exec_none 2566
+0f01540a000000000000 jmp_exec_none 10
+0f040419             else
+0f055401             if       p0
+0f05541a             begin_loop
+0f055421             if       p0, not
+0f0604010000         pop_exec
+0f0604020000         end_loop
+11051d020000         fmul     r1l, ^r2, ^r1l
+12032a810002         fmax     r1, ^r1, 0.0
+12032ab10002         fmax     r1, ^r1, 1.0
+12032ac11002         fmax     r1, ^r1, 2.125
+12032aff1002         fmax     r1, ^r1, 31.0
+12033aa10102         fmin     r1, ^r1, 0.5.neg
+12033ab10002         fmax     r1, ^r1, 1.0.neg
+12033e090420         umax     r1, ^r1, ^r4, bit18, wait1
+128136030500         umin     r1, $r0, ^r1, bit18
+128136030600         imax     r1, $r0, ^r1, bit18
+128326890100         fmin     r1, $r1, $r4, bit18
+128b26830600         imax     r1, $r5, $r1, bit18
+12a3669f0100         fmin     r17, $r17, $r15, bit18
+12b9e6e30701         imin     r49, $r92, $r49, bit18
+13000001             zext16   r1
+13004001             zext16   r17
+13008001             zext16   r33
+1300c001             zext16   r49
+1482d006             get_sr16 r49, thread_index_in_subgroup
+17015428030a1809512f9204 cube     r40, ^r5, ^r70, ^r33, mode=1
+17015428030a190b55219200 cube     r40, $r5, $r70, $r33, mode=0
+17015428030a190b55219208 cube     r40, $r5, $r70, $r33, mode=2
+17045404000406ea     unpack_norm dr2, $r1, u8norm
+1704540400040eca     unpack_norm dr2, $r1, u16norm, wide
+1704540800041caa     unpack_norm dr4, ^r1, s16norm, wide
+17045408000606ba     unpack_norm dr4, $r1, s8norm, hi
+17075404030000582212 ballot   r2, r0
+17075404030400582212 ballot   r2, r1
+17075406030000582212 ballot   r3, r0
+17075406030400582212 ballot   r3, r1
+17075406030800582212 ballot   r3, r2
+17075406031000582212 ballot   r3, r4
+17075408030c00582212 ballot   r4, r3
+1707540a030800582212 ballot   r5, r2
+19032d8b01000002     fmul     r1, ^r1, $r5, sat, dstate
+19032e850084         ffma     r1, ^r1, $r2, $r2, dstate
+19033905             fmul     r1, ^r1, ^r2
+19033d0141000000     fmul     e1, ^r1, ^r0, slot1, dstate
+19033d070200008001000000 fmul     r1, ^r1.abs, ^r3, dstate, wait6
+1a033b05060002c00000 fcmp_pred ^r1, ^r2, p0, fge, not, wait6
+1b032f00420000001000 bitop    e1, ^r1, r0l, mov, slot1, per_lane, dstate
+1b033f03420800000000 bitop    e1, ^r1, ^r1, or, slot1, dstate
+1b080108             mov      r1, u4
+1b0c0108             mov      r1, u6
+1b0d3f0d420800000000 bitop    e1, ^r6, ^r6, or, slot1, dstate
+1b120108             mov      r1, u9
+1b140108             mov      r1, u10
+1b160108             mov      r1, u11
+1b180108             mov      r1, u12
+1b832783420800000000 bitop    e1, $r1, $r1, or, slot1, dstate
+1c88410100000000     stack_load r17, word=4, slot1
+1c9081a100000000     stack_load r33, word=8, slot6
+1c98010100000000     stack_load r1, word=12, slot1
+1ca01006             get_sr   r1, thread_position_in_grid_x
+1cc21006             get_sr   r1, coverage_mask
+1da40ca397b42003800100000100 texture  r3, e28, 9, 15, mode=800, select=0, x=0, y=0, z=0, slot6, slot6
+1f015400020000881504 isub     r0, 0, ^r0
+1f015400020004281301 isub     r0, ^r0, 1
+1f015400020006281101 isub     r0, $r0, 1
+1f01540002001028170d isub     r0, ^r0, ^r2l.sx
+1f015400020010a81705 isub     r0, ^r0, ^r2
+1f015400020014281301 isub     r0, ^r0, 5
+1f01540002001428170d isub     r0, ^r0, ^r2h.sx
+1f0154000200188c1104 isub     r0, 0, $r3
+1f015416000818a81705 isub     u11, ^r2, ^r3
+1f01541a00000aa81505 isub     u13, $r0, ^r1
+1f01541a000c30aa1705 isub     u13, ^r3, ^r70
+1f01542200102aa81505 isub     u17, $r4, ^r5
+1f01543c000802a81505 isub     u30, $r2, ^r0
+1f01543e000c10a81705 isub     u31, ^r3, ^r2
+1f015440000402a81505 isub     u32, $r1, ^r0
+1f015442001008a81705 isub     u33, ^r4, ^r1
+1f0354940202         ldcf     r20, cf5, slot3
+2285268b0100         fmin     r2, $r2, $r5, bit18
+2285268d0100         fmin     r2, $r2, $r6, bit18
+228526930100         fmin     r2, $r2, $r9, bit18
+2285269d0100         fmin     r2, $r2, $r14, bit18
+229566a50701         imin     r18, $r74, $r18, bit18
+22b166890500         umin     r18, $r24, $r4, bit18
+2700540002000400f0100100 shl      r0, r0, 1, width=0
+2700540002000800f0100100 shl      r0, r0, 2, width=0
+2700540002000c00f0100100 shl      r0, r0, 3, width=0
+2700540002001000f0100100 shl      r0, r0, 4, width=0
+2700540002001400f0100100 shl      r0, r0, 5, width=0
+2700540002001800f0100100 shl      r0, r0, 6, width=0
+2700540002002000f0110100 shl      r0, ^r0, 8, width=0
+2700540002004000f0100100 shl      r0, r0, 16, width=0
+2700540002042000f0100500 shl      r0, r1, r4
+2700540002140000f0100500 shl      r0, r5, r0
+2700540002180000f0100500 shl      r0, r6, r0
+270054020204e800f0100500 shl      r1, r1, r29
+2700540202080800f0130500 shl      r1, ^r2, ^r1
+2700540202100800f0130500 shl      r1, ^r4, ^r1
+2700540402040000f0100500 shl      r2, r1, r0
+2700540402181000f0100500 shl      r2, r6, r2
+2705540002004e04     popcount r0, $r0
+2705540202044e04     popcount r1, $r1
+2705540402084e04     popcount r2, $r2
+27055404020c4e04     popcount r2, $r3
+27055406020c4e04     popcount r3, $r3
+2705540602104e04     popcount r3, $r4
+2705540802104e04     popcount r4, $r4
+2705540802144e04     popcount r4, $r5
+2705545003c0df00     popcount r40, u240
+270754000300b4080200 f_to_u32 r0, ^r0
+27075402030496080200 f_to_u32 r1, $r1
+270754020304b4080200 f_to_u32 r1, ^r1
+27075404030896080200 f_to_u32 r2, $r2
+27075404030896480300 f_to_s32 r2, $r2
+270754040308b4080200 f_to_u32 r2, ^r2
+27075406030c96080200 f_to_u32 r3, $r3
+27075406030c96480300 f_to_s32 r3, $r3
+270754080308b4080200 f_to_u32 r4, ^r2
+27075408031096080200 f_to_u32 r4, $r4
+27075408031096480300 f_to_s32 r4, $r4
+2707540a030c96480300 f_to_s32 r5, $r3
+2707540a031496480300 f_to_s32 r5, $r5
+2707540c031896480300 f_to_s32 r6, $r6
+2707540e030c96480300 f_to_s32 r7, $r3
+2707540e031096480300 f_to_s32 r7, $r4
+29052987             fmul     r2, ^r2, $r3
+29052d870200008001000000 fmul     r2, ^r2.abs, $r3, dstate, wait6
+29052d8b01000002     fmul     r2, ^r2, $r5, sat, dstate
+29052e870086         ffma     r2, ^r2, $r3, $r3, dstate
+29052e890088         ffma     r2, ^r2, $r4, $r4, dstate
+29053907             fmul     r2, ^r2, ^r3
+298335050200008001000000 fmul     r2, $r1.abs, ^r2, dstate, wait6
+298335070200008001000000 fmul     r2, $r1.abs, ^r3, dstate, wait6
+29852191             fmul     r2, $r2, $r8
+298526910090         ffma     r2, $r2, $r8, $r8, dstate
+29c134058000         fadd     r2, 2.0, ^r2, dstate
+29c134058020         fadd     r2, 2.0, ^r2, dstate, wait1
+29c134058040         fadd     r2, 2.0, ^r2, dstate, wait2
+29c134058060         fadd     r2, 2.0, ^r2, dstate, wait3
+29c134058080         fadd     r2, 2.0, ^r2, dstate, wait4
+29c1340580a0         fadd     r2, 2.0, ^r2, dstate, wait5
+29c1340580c0         fadd     r2, 2.0, ^r2, dstate, wait6
+29e5e1e9             fmul     r50, $r50, $r52
+29e5e6e900e8         ffma     r50, $r50, $r52, $r52, dstate
+2a012301060007000000 icmp_pred r0, r0, p1, ieq
+2a04220c0304         fcmp_pred r2l, r70l, p1, flt
+2a0b230b060007000000 icmp_pred r5, r5, p1, ieq
+2b816781420800000000 bitop    e18, $r0, $r0, or, slot1, dstate
+2b852785420800000000 bitop    e2, $r2, $r2, or, slot1, dstate
+2f0054000300b0400200 floor    r0, ^r0, alu
+2f0054020304b0400000 rint     r1, ^r1, alu
+2f0054020304b0400200 floor    r1, ^r1, alu
+2f0054020304b0400600 trunc    r1, ^r1, alu
+2f005404030090400200 floor    r2, r0, alu
+2f005404030490400200 floor    r2, r1, alu
+2f005404030890400400 ceil     r2, r2, alu
+2f0054040314b0400000 rint     r2, ^r5, alu
+2f005404031cb0400000 rint     r2, ^r7, alu
+2f005406030890400400 ceil     r3, r2, alu
+2f005406030cb0400000 rint     r3, ^r3, alu
+2f005408030490400400 ceil     r4, r1, alu
+2f005408030c90400400 ceil     r4, r3, alu
+2f00540a030c90400400 ceil     r5, r3, alu
+2f00540c031490400400 ceil     r6, r5, alu
+2f00540e030890400400 ceil     r7, r2, alu
+2f00540e030c90400400 ceil     r7, r3, alu
+2f00543e027c8c600000 rint     r31, r31
+2f00543e027c8c600200 floor    r31, r31
+2f00543e027c8c600400 ceil     r31, r31
+2f00543e027c8c600600 trunc    r31, r31
+2f00543e027c8d600000 rint     r31, r95
+2f00543e027c8d600200 floor    r31, r95
+2f00543e027c8d600400 ceil     r31, r95
+2f00543e027c8d600600 trunc    r31, r95
+2f00543e037c90400600 trunc    r31, r31, alu
+2f00543e037c91400600 trunc    r31, r95, alu
+2f00545002c0b3000000 rint     r40, u240
+2f00545002c0b3000200 floor    r40, u240
+2f00545002c0b3000400 ceil     r40, u240
+2f00545002c0b3000600 trunc    r40, u240
+2f0054be027c8c600000 rint     r95, r31
+2f0054be027c8c600200 floor    r95, r31
+2f0054be027c8c600400 ceil     r95, r31
+2f0054be027c8c600600 trunc    r95, r31
+2f0054be027c8d600000 rint     r95, r95
+2f0054be027c8d600200 floor    r95, r95
+2f0054be027c8d600400 ceil     r95, r95
+2f0054be027c8d600600 trunc    r95, r95
+2f0054be037c90400600 trunc    r95, r31, alu
+2f015404030490400000 srsqrt   r2, r1, alu
+2f01540a030890400000 srsqrt   r5, r2, alu
+2f01543e037c90400000 srsqrt   r31, r31, alu
+2f01543e037c91400000 srsqrt   r31, r95, alu
+2f0154be037c8a400000 srsqrt   r95, r31, alu
+2f0154be037c8b400000 srsqrt   r95, r95, alu
+2f01553e037c8a400000 srsqrt   r31, r31, alu, wait5
+2f01553e037c8b400000 srsqrt   r31, r95, alu, wait5
+2f0254000300b0400000 log2     r0, ^r0, alu
+2f0254020304b0400000 log2     r1, ^r1, alu
+2f0254040308b0400000 log2     r2, ^r2, alu
+2f025406030490400000 log2     r3, r1, alu
+2f02543e027c8c600000 log2     r31, r31
+2f02543e027c8d600000 log2     r31, r95
+2f02545002c0b3000000 log2     r40, u240
+2f0254be027c8c600000 log2     r95, r31
+2f0254be027c8d600000 log2     r95, r95
+2f0354020304b0400000 sin_factor r1, ^r1, alu
+2f035404030490400000 sin_factor r2, r1, alu
+2f035406030890400000 sin_factor r3, r2, alu
+2f035408030890400000 sin_factor r4, r2, alu
+2f055414030600021000 iter     r10, cf3
+2f05541403060b020800 iter     r10, $r11, cf3
+32063c080100         hmin     r3, ^r3l, ^r4l, bit18
+32083c060000         hmax     r3, ^r4l, ^r3l, bit18
+32093e070500         umin     r3, ^r4, ^r3, bit18
+328136070400         umax     r3, $r0, ^r3, bit18
+328326850400         umax     r3, $r1, $r2, bit18
+328726a10500         umin     r3, $r3, $r16, bit18
+329d66cb0700         imin     r19, $r14, $r37, bit18
+37055412035c90400000 dfdx     r9, r23
+37055412035c92400000 dfdx     r9, $r23
+37055412037c91400000 dfdx     r9, r95
+37055412037c93400000 dfdx     r9, $r95
+37075412035c90400000 dfdy     r9, r23
+37075412035c92400000 dfdy     r9, $r23
+37075412037c91400000 dfdy     r9, r95
+37075412037c93400000 dfdy     r9, $r95
+39073d0b01000002     fmul     r3, ^r3, ^r5, sat, dstate
+39073d1101000002     fmul     r3, ^r3, ^r8, sat, dstate
+3b073f07420800000000 bitop    e3, ^r3, ^r3, or, slot1, dstate
+3b852785420800000000 bitop    e3, $r2, $r2, or, slot1, dstate
+40080c860000         hadd     r4l, ^r4l, $r3l
+41071c810402         fadd     r4h, ^r3, 0.0.neg
+410d1c810003         fadd     r4l, ^r70, 0.0.neg
+410d1c810403         fadd     r4h, ^r70, 0.0.neg
+418714810002         fadd     r4l, $r3, 0.0.neg
+418b14810402         fadd     r4h, $r5, 0.0.neg
+42052e870500         umin     r4, ^r2, $r3, bit18
+42053e070500         umin     r4, ^r2, ^r3, bit18
+42092e1f0502         umin     r4, ^r4, u15, bit18
+45a00cb8b0000000000290000100002800004000 texture  r8, e0, ^r2, 0, mode=0, select=7, x=0, y=0, z=0, slot1, slot1, filter
+45a00cb8b0000401000290000100002800004000 texture  r8, e0, ^r2, 0, mode=260, select=7, x=0, y=0, z=0, slot1, slot1, filter
+45a00cb8b0240000000290000100002800004000 texture  r8, e0, ^r2, 0, mode=0, select=7, x=0, y=0, z=0, slot2, slot2, filter
+45a00cb8b0240401000290000100002800004000 texture  r8, e0, ^r2, 0, mode=260, select=7, x=0, y=0, z=0, slot2, slot2, filter
+45a00cb8b0480000000290000100002800004000 texture  r8, e0, ^r2, 0, mode=0, select=7, x=0, y=0, z=0, slot3, slot3, filter
+45a00cb8b0480401000290000100002800004000 texture  r8, e0, ^r2, 0, mode=260, select=7, x=0, y=0, z=0, slot3, slot3, filter
+45a00cb8b06c0000000290000100002800004000 texture  r8, e0, ^r2, 0, mode=0, select=7, x=0, y=0, z=0, slot4, slot4, filter
+45a00cb8b06c0401000290000100002800004000 texture  r8, e0, ^r2, 0, mode=260, select=7, x=0, y=0, z=0, slot4, slot4, filter
+45a00cb8b6000401000290010100a02800004000 texture  r8, e0, ^r2, ^r3, mode=260, select=7, x=0, y=0, z=0, slot1, slot1, filter
+45a00cb8b6240401000290010100a02800004000 texture  r8, e0, ^r2, ^r3, mode=260, select=7, x=0, y=0, z=0, slot2, slot2, filter
+45a00cb8b6480401000290010100a02800004000 texture  r8, e0, ^r2, ^r3, mode=260, select=7, x=0, y=0, z=0, slot3, slot3, filter
+45a00cb8b66c0401000290010100a02800004000 texture  r8, e0, ^r2, ^r3, mode=260, select=7, x=0, y=0, z=0, slot4, slot4, filter
+45c04cb9b8480408800010000100 texture  r40, e8, 17, 16, mode=2052, select=7, x=0, y=0, z=0, slot3, slot3, filter
+45c04cb9b848810280881000010e texture  r40, e8, 17, 16, mode=641, select=7, x=1, y=-1, z=0, slot3, slot3, filter
+470454040328042c1000 shuffle  r2, r10, r1
+470454060310142c1000 shuffle  r3, r4, r5
+470454060328002c1000 shuffle  r3, r10, r0
+470454060328082c1000 shuffle  r3, r10, r2
+4704540a0318fc2c1000 shuffle  r5, r6, r63
+4704540a031cf82c1000 shuffle  r5, r7, r62
+4704540a03e0182c1000 shuffle  r5, r56, r6
+4704540a03e0fc2c1000 shuffle  r5, r56, r63
+49052887             fadd     r4, ^r2, $r3
+49052c870020         fadd     r4, ^r2, $r3, dstate, wait1
+49053807             fadd     r4, ^r2, ^r3
+49053c070020         fadd     r4, ^r2, ^r3, dstate, wait1
+49061c810802         fadd     r4, ^r3h, 0.0.neg
+49092e8b008a         ffma     r4, ^r4, $r5, $r5, dstate
+4909390b             fmul     r4, ^r4, ^r5
+49112e938308020000000100 ffma     r4, ^r8.abs, $r9, ^r4, dstate
+49852087             fadd     r4, $r2, $r3
+498524870020         fadd     r4, $r2, $r3, dstate, wait1
+4985248700c0         fadd     r4, $r2, $r3, dstate, wait6
+49853007             fadd     r4, $r2, ^r3
+498534070020         fadd     r4, $r2, ^r3, dstate, wait1
+4a043b0c060000040000 fcmp_pred ^r2l, ^r70l, p2, feq
+4b0f3f0f420800000000 bitop    e4, ^r7, ^r7, or, slot1, dstate
+4b113f11420800000000 bitop    e4, ^r8, ^r8, or, slot1, dstate
+4b133f13420800000000 bitop    e4, ^r9, ^r9, or, slot1, dstate
+4b153f15420800000000 bitop    e4, ^r10, ^r10, or, slot1, dstate
+4b852785420800000000 bitop    e4, $r2, $r2, or, slot1, dstate
+4cc21006             get_sr   r4, coverage_mask
+5088068601880000     hfma     r5l, $r4l, $r3l, $r4l
+528926290402         umax     r5, $r4, u20, bit18
+5704540a0001         write_coverage e5
+5706541820410000     st_vary  e12, slot=9
+5710540000000080a8750100 block_image_store e0, ts0, mode=1448, format=7
+571054000020008028700100 block_image_store e0, ts2, mode=40, format=7
+5710540800300080a8550100 block_image_store e4, ts3, mode=1448, format=5
+5710541000f0008028350100 block_image_store e8, ts15, mode=1320, format=3
+571054180010008028120100 block_image_store e12, ts1, mode=552, format=1
+5b093f09420800000000 bitop    e5, ^r4, ^r4, or, slot1, dstate
+5cc21006             get_sr   r5, coverage_mask
+5cdd1006             get_sr   r5, vertex_id
+608805860000         hmul     r6l, $r4l, $r3l
+628d268f0700         imin     r6, $r6, $r7, bit18
+628d26970700         imin     r6, $r6, $r11, bit18
+62cba6bd0400         umax     r38, $r37, $r30, bit18
+6700440000000000110002402200 device_load r0, dr0, offset=16, shift=1, i32, slot1
+670044000000000011040f402200 device_load r0, ^dr0, offset=120, shift=1, i32, slot1
+670044000000000011842b402200 device_load r0, ^dr0, offset=348, shift=1, i32, slot1
+6700440000000000190003402200 device_load r0, dr0, offset=24, shift=1, i32x2, slot1
+6700440000000000190406402200 device_load r0, ^dr0, offset=48, shift=1, i32x2, slot1
+670044000000000041c500402200 device_load r0, ^dr0, offset=6, shift=1, i16, slot6
+6700440000000000510500402200 device_load r0, ^dr0, offset=0, shift=1, i32, slot6
+6700440000000000510500482200 device_load r0, ^dr0, offset=16384, shift=1, i32, slot6
+6700440000012000510100404600 device_load r0, du0, r1, offset=0, shift=3, i32, slot6
+6700440001062000990000404600 device_load r0, du2, r6, offset=0, shift=3, i32x2, slot3
+6700440001802000010000404400 device_load r0, du2, ^r0, offset=0, shift=2, i16, slot1
+6700440001802000110000404600 device_load r0, du2, ^r0, offset=0, shift=3, i32, slot1
+6700440001802000190000404600 device_load r0, du2, ^r0, offset=0, shift=3, i32x2, slot1
+6700440004002000010000404400 device_load r0, du8, r0, offset=0, shift=2, i16, slot1
+6700440201812000110000404600 device_load r1, du2, ^r1, offset=0, shift=3, i32, slot1
+6700440201812000510000404600 device_load r1, du2, ^r1, offset=0, shift=3, i32, slot2
+6700440606012000110000406600 device_load r3, dr6, r1, offset=0, shift=3, i32, slot1
+6700440e04062000110000406600 device_load r7, dr4, r6, offset=0, shift=3, i32, slot1
+6700440e14052000110000406600 device_load r7, dr20, r5, offset=0, shift=3, i32, slot1
+670044100e062000110000406600 device_load r8, dr14, r6, offset=0, shift=3, i32, slot1
+670044200e072000170000406000 device_load r16, dr14, r7, offset=0, shift=0, i32x4, slot1
+670044220a112000210000406200 device_load r17, dr10, r17, offset=0, shift=1, i8, slot1
+670044240a122000210000406200 device_load r18, dr10, r18, offset=0, shift=1, i8, slot1
+670044260a132000210000406200 device_load r19, dr10, r19, offset=0, shift=1, i8, slot1
+6701540000020b80002200006003 atomic   r22, dr2, r0, add, ret
+6701540000058b8b000200006002 atomic   r22, du10, r23, add, ret
+6701540000068181002200006003 atomic   r2, dr6, r3, add, ret
+6701540000068284002200006003 atomic   r4, dr6, r9, add, ret
+6701540000078383000200006002 atomic   r6, du14, r7, add, ret
+6701540000080283002200006003 atomic   r4, dr8, r6, add, ret
+6701540000088183002200006003 atomic   r2, dr8, r7, add, ret
+6701540000098282000200006002 atomic   r4, du18, r5, add, ret
+6701540000098282004000007e02 atomic   r4, du18, r5, xor
+67015400000a8282000200006002 atomic   r4, du20, r5, add, ret
+67015400000a8282006000006003 atomic   r4, dr10, r5, add
+67015400000a8384002200006003 atomic   r6, dr10, r9, add, ret
+67015400000b8282000200006002 atomic   r4, du22, r5, add, ret
+67015400000b8484000200006002 atomic   r8, du22, r9, add, ret
+67015400000c8484000200006002 atomic   r8, du24, r9, add, ret
+6701540000108282002200006003 atomic   r4, dr16, r5, add, ret
+6702540608080000440d00c00800 local_load r3, r2l, root=8
+6702540808040000440d00c00800 local_load r4, r1l, root=8
+6702540a08040000440d00c00800 local_load r5, r1l, root=8
+6702540a0c1c8000440d00c00800 local_load r5, ^r7l, root=12
+6702540c08140000440d00c00800 local_load r6, r5l, root=8
+6702541008080000440d00c00800 local_load r8, r2l, root=8
+6702541008100000440d00c00800 local_load r8, r4l, root=8
+6702541208080000440d00c00800 local_load r9, r2l, root=8
+67035405040302001200004c local_atomic r5, r3, r2, root=8, add
+67035406020809001200004c local_atomic r6, r8, r9, root=4, add
+6706541200000e4e00000020 ld_tile  r9, r7l, offset=0, slot1
+6706541200000e4e01000020 ld_tile  r9, r7l, offset=0, slot3
+6706541200000e4e02000020 ld_tile  r9, r7l, offset=0, slot5
+6706541200000ece00000020 ld_tile  r9, r7l, offset=0, slot2
+6706541200000ece01000020 ld_tile  r9, r7l, offset=0, slot4
+6706541200000ece02000020 ld_tile  r9, r7l, offset=0, slot6
+670e5400000001ce02000000 ld_tile  r0, offset=0, slot6
+670e54be0000014e00000000 ld_tile  r95, offset=0, slot1
+671654320800014e00000010 ld_tile  r25, r8, offset=0, mask=1, slot1
+671654320800024e00000010 ld_tile  r25, r8, offset=0, mask=2, slot1
+671654320800044e00000010 ld_tile  r25, r8, offset=0, mask=4, slot1
+671654320800084e00000010 ld_tile  r25, r8, offset=0, mask=8, slot1
+69153e13830c020000000100 ffma     r6, ^r10.abs, ^r9, ^r6, dstate
+6b0d3f0d420800000000 bitop    e6, ^r6, ^r6, or, slot1, dstate
+6b113f11420800000000 bitop    e6, ^r8, ^r8, or, slot1, dstate
+6b193f19420800000000 bitop    e6, ^r12, ^r12, or, slot1, dstate
+6d840ca092242c05800100000100 texture  r13, e4, 1, 5, mode=1324, select=0, x=0, y=0, z=0, slot2, slot2
+6d840ca8b2240400800120000100 texture  r13, e4, 1, 5, mode=4, select=5, x=0, y=0, z=0, slot2, slot2, query_lod
+6d840cac92240805800100000100 texture  r13, e4, 1, 5, mode=1288, select=1, x=0, y=0, z=0, slot2, slot2, gather
+6d840cb8b2240000800110000100 texture  r13, e4, 1, 5, mode=0, select=7, x=0, y=0, z=0, slot2, slot2, filter
+6d840cb8b2240001800110000100 texture  r13, e4, 1, 5, mode=256, select=7, x=0, y=0, z=0, slot2, slot2, filter
+6d840cb8b2240401800110000100 texture  r13, e4, 1, 5, mode=260, select=7, x=0, y=0, z=0, slot2, slot2, filter
+6d840cb8b2241401800110000100 texture  r13, e4, 1, 5, mode=276, select=7, x=0, y=0, z=0, slot2, slot2, filter
+6d840cb8b224190280891000010e texture  r13, e4, 1, 5, mode=537, select=7, x=1, y=-1, z=0, slot2, slot2, filter
+6d840cb8b2241c00800110000100 texture  r13, e4, 1, 5, mode=28, select=7, x=0, y=0, z=0, slot2, slot2, filter
+6d840cb8b2248024500380000100002000004000 texture  r13, e4, r40, 5, mode=9344, select=7, x=0, y=0, z=0, slot2, slot2
+6f0054060602490100000300 stack_load r3, r3, offset=0
+729126830700         imin     r7, $r8, $r1, bit18
+79213d2341000000     fmul     e7, ^r16, ^r17, slot1, dstate
+79213d2341000028     fmul     e7, ^r16, ^r17, slot3, dstate, wait4
+79213d2341000044     fmul     e7, ^r16, ^r17, slot2, dstate, wait5
+79213d2341000080     fmul     e7, ^r16, ^r17, slot1, dstate, wait6
+79213d2341200014     fmul     e7, ^r16, ^r17, slot6, dstate, wait1
+79213d2341400010     fmul     e7, ^r16, ^r17, slot5, dstate, wait2
+79213d234180000c     fmul     e7, ^r16, ^r17, slot4, dstate, wait3
+7b1b3f1b420800000000 bitop    e7, ^r13, ^r13, or, slot1, dstate
+828d66b10701         imin     r24, $r70, $r24, bit18
+829126930700         imin     r8, $r8, $r9, bit18
+870254000700         begin_tile 1792
+89112e938314020000000100 ffma     r8, ^r8.abs, $r9, ^r10, dstate
+8b0f3f0f420800000000 bitop    e8, ^r7, ^r7, or, slot1, dstate
+8cd89006             get_sr   r40, instance_id
+8f045422             while    p0, bit29
+8f04542a             while    p2, bit29
+8f0554030001         break    3, p1
+8f0554030002         break    3, p2
+9704540c0208185044c2 pack_unorm_4x8 r6, r2, r3
+9704540d0210085044c2 pack_unorm_4x8 r6, r4, r1, hi
+9704560e020410504482 pack_unorm_2x16 r7, r1, r2
+9f0054000200022158212200 imad     r0, $r0, 64, $r2
+9f0054000200023158212200 imad     r0, $r0, 64, $r3
+9f00540002000800d0260a00 imad     r0, ^r0, ^r1, 0
+9f00540002000a04d0200a00 imad     r0, $r0, $r1, 0
+9f0054000200122058212200 imad     r0, $r0, 4, $r2
+9f0054000200123058212200 imad     r0, $r0, 4, $r3
+9f00540002004204d0200a00 imad     r0, $r0, $r8, 0
+9f00540002008a00d0240200 imad     r0, $r0, u17, 0
+9f00540002102a04e0200a00 umul_wide dr0, $r4, $r5
+9f00540402000a04e0200a00 umul_wide dr2, $r0, $r1
+9f00540402001200e0240a00 umul_wide dr2, $r0, ^r2
+9f00540402003204e0200a00 umul_wide dr2, $r0, $r6
+9f00540402041200e0240a00 umul_wide dr2, $r1, ^r2
+9f00540402081800e0261e00 imul_wide dr2, ^r2, ^r3
+9f00540402180200e0240a00 umul_wide dr2, $r6, ^r0
+9f00540802000a00e0240a00 umul_wide dr4, $r0, ^r1
+9f00540802000a04e0200a00 umul_wide dr4, $r0, $r1
+9f00540802082000e0261e00 imul_wide dr4, ^r2, ^r4
+9f00541002002a04e0201e00 imul_wide dr8, $r0, $r5
+9f00541002003204e0201e00 imul_wide dr8, $r0, $r6
+9f00541402143a04e0201e00 imul_wide dr10, $r5, $r7
+9f00541802144204e0201e00 imul_wide dr12, $r5, $r8
+9f00541c02205204e0201e00 imul_wide dr14, $r8, $r10
+9f00541c02387a04e0201e00 imul_wide dr14, $r14, $r15
+9f005422000c3292d8252a00 imad     u17, $r3, ^r70, $r9
+9f005450000c3002e0260a00 umul_wide du40, ^r3, ^r70
+9f005450000c3206e0201e00 imul_wide du40, $r3, $r70
+9f015400020006281101 iadd     r0, $r0, 1
+9f01540002000e281101 iadd     r0, $r0, 3
+9f015400020010ac1305 iadd     r0, ^r0, $r2
+9f015400020018a81705 iadd     r0, ^r0, ^r3
+9f015400020018ac1305 iadd     r0, ^r0, $r3
+9f01540002001e281101 iadd     r0, $r0, 7
+9f01540002003e281101 iadd     r0, $r0, 15
+9f015400020048a81701 iadd     r0, ^r0, u9
+9f015408000800a81301 iadd     u4, ^r2, 0
+9f01540a000400a81301 iadd     u5, ^r1, 0
+9f01540a000402a81101 iadd     u5, $r1, 0
+9f01540a000c00a81301 iadd     u5, ^r3, 0
+9f01540c000000a81301 iadd     u6, ^r0, 0
+9f01540c000800a81301 iadd     u6, ^r2, 0
+9f01540c001000a81301 iadd     u6, ^r4, 0
+9f01540e000000a81301 iadd     u7, ^r0, 0
+9f015414000418a81705 iadd     u10, ^r1, ^r3
+9f015428000820a81705 iadd     u20, ^r2, ^r4
+9f015428000c10a81705 iadd     u20, ^r3, ^r2
+9f015428001010a81705 iadd     u20, ^r4, ^r2
+9f01542c001028a81705 iadd     u22, ^r4, ^r5
+9f01542c001418a81705 iadd     u22, ^r5, ^r3
+9f015432000028a81705 iadd     u25, ^r0, ^r5
+9f015490010c32aa1505 iadd     u200, $r3, ^r70
+a28a0784820803000086 fcmpsel  r10, $r5l, $r2l, ^r4, $r3, flt, bit18
+a2bba6a50400         umax     r42, $r29, $r18, bit18
+a5980ca3b1900000000110000100 texture  r20, e24, 6, 3, mode=0, select=4, x=0, y=0, z=0, slot5, slot5, filter
+a5980cbab1909c01000110000100 texture  r20, e16, 6, 3, mode=412, select=7, x=0, y=0, z=0, slot5, slot5, filter
+a700540002000000f0100101 shr      r0, r0, 0, width=16
+a700540002000000f010c101 shr      r0, r0, 0, width=28
+a700540002000000f011a100 shr      r0, ^r0, 0, width=10
+a700540002000400f0100100 shr      r0, r0, 1, width=0
+a700540002001000f0100100 shr      r0, r0, 4, width=0
+a700540002007400f0110100 shr      r0, ^r0, 29, width=0
+a700540002047800f0100100 shr      r0, r1, 30, width=0
+a700540002080000f011c101 shr      r0, ^r2, 0, width=28
+a700541002244000f0100500 shr      r8, r9, r8
+a700541802346000f0100500 shr      r12, r13, r12
+a700541802446000f0100500 shr      r12, r17, r12
+a700542002448000f0100500 shr      r16, r17, r16
+a700542202488800f0100500 shr      r17, r18, r17
+a700542c025cb000f0100500 shr      r22, r23, r22
+a700542c029cb000f0100500 shr      r22, r39, r22
+a700544e02bc3801f0100500 shr      r39, r47, r39
+a7015400020010d8e200 asr      r0, ^r0, ^r2
+a7015400020040386200 asr      r0, r0, 16
+a7015400020060786200 asr      r0, ^r0, 24
+a7015400020800d8e200 asr      r0, ^r2, ^r0
+a7015402020440386200 asr      r1, r1, 16
+a701540402007c386200 asr      r2, r0, 31
+a7015404020840386200 asr      r2, r2, 16
+a7015406020c40386200 asr      r3, r3, 16
+a701540802080c786200 asr      r4, ^r2, 3
+a7015408021040386200 asr      r4, r4, 16
+a701545002b480df6200 asr      r40, ^r45, u240
+a701545002c053d9c200 asr      r40, u240, ^r42
+a704543e027c4e04     bitrev   r31, $r31
+a704543e027c4f04     bitrev   r31, $r95
+a704543e027c5c04     bitrev   r31, ^r31
+a704543e027c5d04     bitrev   r31, ^r95
+a705540002004e04     ffs      r0, $r0
+a7055400020c4e04     ffs      r0, $r3
+a705540202084e04     ffs      r1, $r2
+a705540202644e04     ffs      r1, $r25
+a7055404020c4e04     ffs      r2, $r3
+a7055406020c5c04     ffs      r3, ^r3
+a705540802105c04     ffs      r4, ^r4
+a705540802544e04     ffs      r4, $r21
+a70654000200082010a0ca892408 pack_format r0, ^r0, ^r1, ^r2
+a70654000200082060a0ea8b2411 pack_format r0, ^r0, ^r1, ^r2, ^r3
+a70654000204022010a08a892408 pack_format r0, $r1, ^r0, ^r2
+a707540003048c20     u32_to_f r0, r1
+a7075400030c8c20     u32_to_f r0, r3
+a707540203008c20     u32_to_f r1, r0
+a707540403008c20     u32_to_f r2, r0
+a707540403048c20     u32_to_f r2, r1
+a707540403188c20     u32_to_f r2, r6
+a7075404031c8c20     u32_to_f r2, r7
+a70754080308ac20     u32_to_f r4, ^r2
+a707540e03d48c60     s32_to_f r7, r53
+a707540e03e48c60     s32_to_f r7, r57
+a707541203bc8c60     s32_to_f r9, r47
+a707541203cc8c60     s32_to_f r9, r51
+a7075416032c8c60     s32_to_f r11, r11
+a707541803308c60     s32_to_f r12, r12
+a707541803c48c60     s32_to_f r12, r49
+a707541a03588c60     s32_to_f r13, r22
+a90a1c810002         fadd     r10, ^r5l, 0.0.neg
+af005402030000482000 rcp      r1, r0, alu
+af005404030000482000 rcp      r2, r0, alu
+af005404030400482000 rcp      r2, r1, alu
+af005406030800482000 rcp      r3, r2, alu
+af005408030800482000 rcp      r4, r2, alu
+af00540a031000482000 rcp      r5, r4, alu
+af00540c031400482000 rcp      r6, r5, alu
+af00540e031c00482000 rcp      r7, r7, alu
+af00543e027c00463000 rcp      r31, r31
+af00543e027c01463000 rcp      r31, r95
+af00543e037c00442000 rcp      r31, r31, alu
+af00543e037c01442000 rcp      r31, r95, alu
+af0054be027c00463000 rcp      r95, r31
+af0054be027c01463000 rcp      r95, r95
+af0054be037c00442000 rcp      r95, r31, alu
+af0054be037c01442000 rcp      r95, r95, alu
+af0154020304b0400000 rsqrt    r1, ^r1, alu
+af01543e027c8c600000 rsqrt    r31, r31
+af01543e027c8d600000 rsqrt    r31, r95
+af01543e037c90400000 rsqrt    r31, r31, alu
+af01543e037c91400000 rsqrt    r31, r95, alu
+af01545002c0b3000000 rsqrt    r40, u240
+af0154be027c8c600000 rsqrt    r95, r31
+af0154be027c8d600000 rsqrt    r95, r95
+af0154be037c90400000 rsqrt    r95, r31, alu
+af0254020304b0400000 exp2     r1, ^r1, alu
+af0254040308b0400000 exp2     r2, ^r2, alu
+af025406030cb0400000 exp2     r3, ^r3, alu
+af02543e027c8c600000 exp2     r31, r31
+af02543e027c8d600000 exp2     r31, r95
+af02543e037c90400000 exp2     r31, r31, alu
+af02545002c0b3000000 exp2     r40, u240
+af0254be027c8c600000 exp2     r95, r31
+af0254be027c8d600000 exp2     r95, r95
+af04540803180b03     interpolation_position r4, r70, sample
+af045408031c0a01     interpolation_position r4, r7
+bf01540603101609     simd_prefix_iadd r3, r4
+bf01540a03041609     simd_prefix_iadd r5, r1
+bf01540a03081609     simd_prefix_iadd r5, r2
+bf01540a03181609     simd_prefix_iadd r5, r6
+bf01540c03101609     simd_prefix_iadd r6, r4
+bf01540c03141609     simd_prefix_iadd r6, r5
+bf01541003181609     simd_prefix_iadd r8, r6
+bf01541003241609     simd_prefix_iadd r8, r9
+bf035407030e1003     simd_reduce_umax $r3h, ^r3h
+bf03540a020c1001     simd_reduce_umax r5l, r3l
+bf03540a020c1401     simd_reduce_umax r5, r3
+d71054000040000421040000883a8900 image_write e0, ^dr2, float
+d71054100040000c20040000881a8900 image_write e8, dr6
+d714540c0001         zs_store e6, stencil
+d714540c0003         zs_store e6, depth
+d714540c0007         zs_store e6, depth_stencil
+dd804cbab26c0c045a0290010100a02800004000 texture  r59, e16, ^r40, ^r41, mode=1036, select=7, x=0, y=0, z=0, slot4, slot4, filter
+ddf84cbe906c0000800100000100 texture  r59, e16, 31, 1, mode=0, select=3, x=0, y=0, z=0, slot4, slot4, gather
+e700540000002100010000101100 device_store r0, du0, ^r0, offset=0, shift=2, i16
+e700540000002100210000901000 device_store r0, du0, ^r0, offset=0, shift=1, i8
+e700540001022100190000101200 device_store r0, du2, ^r2, offset=0, shift=4, i32x2
+e700540001042100170000101000 device_store r0, du2, ^r4, offset=0, shift=0, i32x4
+e7005400010721001d0000101000 device_store r0, du2, ^r7, offset=0, shift=0, i32x3
+e700540002002100114000901900 device_store r0, dr2, ^r0, offset=8, shift=3, i32
+e700540002012000110000901900 device_store r0, dr2, r1, offset=0, shift=3, i32
+e70054000201200011200a901900 device_store r0, dr2, r1, offset=324, shift=3, i32
+e700540002022000112000901100 device_store r0, du4, r2, offset=4, shift=3, i32
+e700540004022000110000901900 device_store r0, dr4, r2, offset=0, shift=3, i32
+e700540004032000198001901100 device_store r0, du8, r3, offset=48, shift=3, i32x2
+e700540004072000198001901100 device_store r0, du8, r7, offset=48, shift=3, i32x2
+e700540006012000110000901900 device_store r0, dr6, r1, offset=0, shift=3, i32
+e700540006022000110000901900 device_store r0, dr6, r2, offset=0, shift=3, i32
+e70054000a032000118000901900 device_store r0, dr10, r3, offset=16, shift=3, i32
+e70054000a042000116000901900 device_store r0, dr10, r4, offset=12, shift=3, i32
+e702540208180000440200300200 local_store r1, r6l, root=8
+e702540608040000440200300200 local_store r3, r1l, root=8
+e7025406081c0000440200300200 local_store r3, r7l, root=8
+e702540808080000440200300200 local_store r4, r2l, root=8
+e702540808180000440200300200 local_store r4, r6l, root=8
+e702540a08100000440200300200 local_store r5, r4l, root=8
+e702540a081c0000440200300200 local_store r5, r7l, root=8
+e702540a08240000440200300200 local_store r5, r9l, root=8
+e70654120004014e00000000 st_tile  r9, offset=2
+e706541200040e4e08000008 st_tile  r9, ^r7l, offset=2
+ef00540a080209030060 stack_store r5, r4, offset=0
+f13d4dba0000         fmul     r31l, ^r30, $r29l
+f13d4dba0001         fmul     r31l, ^r94, $r29l
+f13d4dba0004         fmul     r31l, ^r30, $r93l
+f901767f428082160002 ffma     r95, u0, u255, $r64, sat, dstate
+f901767f428082170002 ffma     r95, u128, u255, $r64, sat, dstate
+f901767f4380821600020300 ffma     r95, u0.abs, u255.abs, $r64, sat, dstate
+f9017c1f0015         fadd     r95, ^r64, ^r79, dstate
+f9017c21021500020000 fadd     r95, ^r64, ^r80, sat, dstate
+f9017c21021500220000 fadd     r95, ^r64, ^r80, sat, dstate, wait4
+f9017c21021500420000 fadd     r95, ^r64, ^r80, sat, dstate, wait5
+f9017c21021500820000 fadd     r95, ^r64, ^r80, sat, dstate, wait6
+f9017e21824002150002 ffma     r95, ^r64, ^r80, ^r32, sat, dstate
+f9017e21824002150022 ffma     r95, ^r64, ^r80, ^r32, sat, dstate, wait4
+f9152f8d00000000     fmul     r15, ^r10, $r6, cf0, dstate
+f9152f8d00010000     fmul     r15, ^r10, $r6, cf1, dstate
+f9152f8d00020000     fmul     r15, ^r10, $r6, cf2, dstate
+f9152f8d00030000     fmul     r15, ^r10, $r6, cf3, dstate
+f9152f8d00040000     fmul     r15, ^r10, $r6, cf4, dstate
+f9152f8d00050000     fmul     r15, ^r10, $r6, cf5, dstate
+f9152f8d00060000     fmul     r15, ^r10, $r6, cf6, dstate
+f9152f8d00070000     fmul     r15, ^r10, $r6, cf7, dstate
+fb3ffe3f421d00000000 bitop    e127, ^r95, ^r95, xor, slot1, dstate

@@ -31,3 +31,27 @@ agx2_disassemble(uint8_t *code, size_t max_len, FILE *fp)
 
    return errors;
 }
+
+/* Apple9 (G16, G17P) */
+signed agx3_disassemble_instr(BITSET_WORD *code, FILE *fp, unsigned offset,
+                                bool verbose);
+
+/* Each instruction reads 20 bytes, so code must be readable to max_len + 20 */
+static inline bool
+agx3_disassemble(uint8_t *code, size_t max_len, FILE *fp)
+{
+   unsigned i = 0;
+   bool errors = false;
+
+   while (i < max_len) {
+      signed ret =
+         agx3_disassemble_instr((BITSET_WORD *)(code + i), fp, i, true);
+      if (ret < 0)
+         fprintf(fp, "XXX error here\n");
+
+      errors |= ret < 0;
+      i += abs(ret);
+   }
+
+   return errors;
+}
