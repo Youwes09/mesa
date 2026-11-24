@@ -130,15 +130,6 @@ struct hk_root_descriptor_table {
          /* Apple9 depth_clip_control: 1/2 maps [-w, w] to [0, w], 0 keeps z */
          float clip_z_coeff;
 
-         /* Apple9 stipple: pattern low, repeat high, full when not stippling */
-         uint32_t line_stipple;
-
-         /* Per-viewport (scale.xy, offset.xy) for line stipple, or 0 */
-         uint64_t stipple_viewports;
-
-         /* Line stipple along strips: struct hk_line_stipple_counters */
-         uint64_t stipple_counters;
-
          /* Apple9 polygon-mode points, see hk_apple9_pp_emit_triangle */
          struct agx_apple9_polygon_point_params polygon_points;
          float polygon_points_viewport[4];

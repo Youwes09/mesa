@@ -97,7 +97,7 @@ struct hk_mesh_info {
  */
 #define HK_MESH_PRIMITIVE_SLOT VARYING_SLOT_VAR31
 
-/* Offset component; the first two hold polygon points or the stipple word */
+/* Offset component; the first two hold polygon points */
 #define HK_MESH_PRIMITIVE_COMPONENT 2
 
 static inline bool
@@ -173,8 +173,6 @@ hk_per_vertex_copies_used(const struct hk_per_vertex_copies *map)
 struct hk_mesh_rast_key {
    struct hk_mesh_info info;
    uint8_t clip_distance_array_size, cull_distance_array_size;
-   /* Lines are stippled, see hk_nir_line_stipple.c */
-   bool line_stipple;
    /* Triangles are drawn as polygon-mode points, see hk_nir_mesh_rast */
    bool polygon_points;
    struct hk_per_vertex_copies copies;
@@ -183,37 +181,6 @@ struct hk_mesh_rast_key {
 };
 
 void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
-
-/* Apple9 line stipple, see hk_nir_line_stipple.c */
-struct nir_def *hk_nir_line_stipple_window(struct nir_builder *b,
-                                           struct nir_def *pos,
-                                           struct nir_def *viewport);
-struct nir_def *hk_nir_line_stipple_length(struct nir_builder *b,
-                                           struct nir_def *w0,
-                                           struct nir_def *w1);
-struct nir_def *hk_nir_line_stipple_word(struct nir_builder *b,
-                                         struct nir_def *w0, struct nir_def *w1,
-                                         struct nir_def *base);
-void hk_nir_store_line_stipple(struct nir_builder *b, struct nir_def *word);
-void hk_nir_line_stipple_passthrough(nir_shader *gs, bool strip, bool viewport);
-
-/* Strip counters (hk_nir_line_stipple_prefix): given, or 0 for the heap */
-struct hk_line_stipple_counters {
-   uint64_t counters;
-   uint64_t heap;
-};
-
-struct hk_line_stipple_prefix_key {
-   /* Restarts unrolled the strips to a list of segments */
-   bool restart;
-   /* The vertex stage writes the viewport index */
-   bool viewport;
-   uint8_t pad[2];
-};
-
-void hk_nir_line_stipple_prefix(struct nir_builder *b, const void *key);
-void hk_nir_lower_gs_line_stipple(nir_shader *gs);
-bool hk_nir_lower_line_stipple_fs(nir_shader *fs);
 
 struct hk_shader_info {
    union {

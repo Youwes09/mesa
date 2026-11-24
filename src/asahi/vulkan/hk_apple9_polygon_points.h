@@ -45,7 +45,5 @@ extern const struct poly_gs_rast_triangles hk_apple9_polygon_point_triangles;
 /* Read the facing and primitive ID of polygon points from the polygon slot */
 bool hk_nir_lower_polygon_point_fs(nir_shader *fs, unsigned slot);
 
-/* Back-facing and primitive ID, in the generic slot producers cannot reach.
- * A draw has lines or points, never both, so the line stipple word shares it.
- */
+/* Back-facing and primitive ID, in the generic slot producers cannot reach */
 #define HK_POLYGON_POINT_SLOT VARYING_SLOT_VAR31

@@ -850,41 +850,6 @@ hk_nir_mesh_rast(nir_builder *b_, const void *key_)
                        .io_semantics.num_slots = 1);
    }
 
-   /* Mesh lines are independent: both vertices carry the line's word */
-   if (key->line_stipple && info->prim == MESA_PRIM_LINES) {
-      nir_def *viewport = nir_imm_int(&b, 0);
-      if (info->primitive_slots & VARYING_BIT_VIEWPORT) {
-         viewport = nir_load_global(
-            &b, 1, 32,
-            hk_mesh_slot(&b, info, group, true, p, VARYING_SLOT_VIEWPORT, NULL),
-            .align_mul = 4);
-      }
-
-      nir_def *window[2];
-      for (unsigned k = 0; k < 2; ++k) {
-         nir_def *corner_index = nir_load_global(
-            &b, 1, 32,
-            nir_iadd_imm(&b,
-                         hk_mesh_slot(&b, info, group, true, p,
-                                      VARYING_SLOT_PRIMITIVE_INDICES, NULL),
-                         4 * k),
-            .align_mul = 4);
-         corner_index =
-            nir_umin_imm(&b, corner_index, MAX2(info->max_vertices, 1) - 1);
-         nir_def *pos =
-            nir_load_global(&b, 4, 32,
-                            hk_mesh_slot(&b, info, group, false, corner_index,
-                                         VARYING_SLOT_POS, NULL),
-                            .align_mul = 4);
-         window[k] = hk_nir_line_stipple_window(&b, pos, viewport);
-      }
-
-      hk_nir_store_line_stipple(
-         &b, hk_nir_line_stipple_word(&b, window[0], window[1],
-                                      nir_imm_float(&b, 0.0)));
-      outputs |= BITFIELD64_BIT(AGX_LINE_STIPPLE_SLOT);
-   }
-
    /* Every vertex of the primitive carries flat copies of the per-vertex
     * fragment inputs of its corners, in API vertex order. Points and lines
     * repeat their last vertex.

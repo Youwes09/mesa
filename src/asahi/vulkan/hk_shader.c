@@ -87,13 +87,10 @@ struct hk_fs_key {
    /* Whether a depth/stencil feedback loop can be enabled at draw time */
    bool dynamic_zs_self_dep;
 
-   /* Whether the shader may draw stippled lines, see hk_nir_line_stipple.c */
-   bool line_stipple;
-
    /* Whether the shader may draw polygon-mode points */
    bool polygon_points;
 
-   uint8_t pad[3];
+   uint8_t pad[4];
 };
 static_assert(sizeof(struct hk_fs_key) == 8, "packed");
 
@@ -335,28 +332,12 @@ hk_may_draw_polygon_points(const struct vk_graphics_pipeline_state *state,
           BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_POLYGON_MODE);
 }
 
-/* Whether these shaders may stipple lines, which only Apple9 exposes */
-static bool
-hk_may_stipple_lines(const struct vk_graphics_pipeline_state *state,
-                     const struct vk_features *features)
-{
-   if (!features || !features->stippledBresenhamLines)
-      return false;
-
-   if (state == NULL || state->rs == NULL)
-      return true;
-
-   return state->rs->line.stipple.enable ||
-          BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE);
-}
-
 static void
 hk_populate_fs_key(struct hk_fs_key *key,
                    const struct vk_graphics_pipeline_state *state,
                    const struct vk_features *features)
 {
    memset(key, 0, sizeof(*key));
-   key->line_stipple = hk_may_stipple_lines(state, features);
    key->polygon_points = hk_may_draw_polygon_points(state, features);
 
    /* Pipelines allow draw-time feedback loops only with the dynamic state */
@@ -2744,7 +2725,7 @@ hk_api_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
    vk_shader_free(&dev->vk, pAllocator, &obj->vk);
 }
 
-/* Task/mesh lowering and the stipple test divide after agx_preprocess_nir */
+/* Task/mesh lowering divides after agx_preprocess_nir */
 static void
 hk_lower_late_division(nir_shader *nir)
 {
@@ -2850,12 +2831,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          nir->info.fs.uses_discard = true;
       }
 
-      /* Demote fragments of stippled lines, see hk_nir_line_stipple.c */
-      if (apple9 && key->fs.line_stipple) {
-         NIR_PASS(_, nir, hk_nir_lower_line_stipple_fs);
-         hk_lower_late_division(nir);
-      }
-
       /* Polygon-mode points read facing and primitive ID from their slot */
       if (apple9 && key->fs.polygon_points)
          NIR_PASS(_, nir, hk_nir_lower_polygon_point_fs, HK_POLYGON_POINT_SLOT);
@@ -2901,11 +2876,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       nir_shader *count = NULL, *rast = NULL, *pre_gs = NULL;
       nir_shader *rast_points = NULL;
-
-      /* Line strips are emitted segment by segment for line stipple */
-      if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_LINE_STRIP &&
-          hk_may_stipple_lines(state, vk_features))
-         hk_nir_lower_gs_line_stipple(nir);
 
       /* Polygon-point triangles get their own rasterization program */
       if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP &&
@@ -2986,7 +2956,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       if (apple9 && vk_features &&
           (dev->vk.enabled_features.fragmentShaderBarycentric ||
            dev->vk.enabled_features.primitivesGeneratedQuery ||
-           dev->vk.enabled_features.stippledBresenhamLines ||
            hk_may_draw_polygon_points(state, vk_features))) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }

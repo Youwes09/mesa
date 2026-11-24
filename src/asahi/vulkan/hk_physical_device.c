@@ -1609,8 +1609,6 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       KEEP(globalPriorityQuery),
       KEEP(shaderFloatControls2),
       KEEP(bresenhamLines),
-      /* Emulated in the fragment shader, see hk_nir_line_stipple.c */
-      .stippledBresenhamLines = true,
       KEEP(dynamicRenderingLocalRead),
       KEEP(samplerYcbcrConversion),
       KEEP(indexTypeUint8),
@@ -1711,7 +1709,6 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
       KEEP(extendedDynamicState3SampleLocationsEnable),
       KEEP(extendedDynamicState3ProvokingVertexMode),
       KEEP(extendedDynamicState3LineRasterizationMode),
-      .extendedDynamicState3LineStippleEnable = true,
       .extendedDynamicState3DepthClipNegativeOneToOne = true,
       /* 2D views clamp gradient samples in hardware; other implicit samples
        * select the clamped LOD explicitly, without anisotropy. */
