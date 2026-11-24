@@ -83,29 +83,7 @@ enum agx_apple9_sampler_field {
 /* Packed sample positions, in the PPP multisample control format */
 #define AGX_APPLE9_SAMPLE_POSITIONS_OFFSET                                     \
    (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 8)
-/* Software polygon point state (struct agx_apple9_polygon_point_params) */
-#define AGX_APPLE9_POLYGON_POINT_OFFSET                                        \
+#define AGX_APPLE9_RUNTIME_SYSVAL_SIZE                                         \
    (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 16)
-#define AGX_APPLE9_RUNTIME_SYSVAL_SIZE (AGX_APPLE9_POLYGON_POINT_OFFSET + 32)
-
-enum agx_apple9_polygon_point_flags {
-   AGX_APPLE9_PP_CULL_FRONT = 1 << 0,
-   AGX_APPLE9_PP_CULL_BACK = 1 << 1,
-   AGX_APPLE9_PP_FRONT_CCW = 1 << 2,
-   AGX_APPLE9_PP_DEPTH_CLIP = 1 << 3,
-   AGX_APPLE9_PP_DEPTH_BIAS = 1 << 4,
-   /* The depth bias unit depends on the polygon's depth (float formats) */
-   AGX_APPLE9_PP_DEPTH_BIAS_FLOAT = 1 << 5,
-};
-
-struct agx_apple9_polygon_point_params {
-   uint32_t flags;
-   float bias_constant, bias_slope, bias_clamp;
-   /* Minimum resolvable depth difference of unorm formats */
-   float bias_unit;
-   /* Viewport 0 maxDepth - minDepth */
-   float depth_range;
-   uint32_t pad[2];
-};
 
 #endif

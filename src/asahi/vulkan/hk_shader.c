@@ -28,7 +28,6 @@
 
 #include "asahi/libagx/mesh.h"
 #include "agx_bo.h"
-#include "hk_apple9_polygon_points.h"
 #include "hk_cmd_buffer.h"
 #include "hk_descriptor_set_layout.h"
 #include "hk_device.h"
@@ -87,10 +86,7 @@ struct hk_fs_key {
    /* Whether a depth/stencil feedback loop can be enabled at draw time */
    bool dynamic_zs_self_dep;
 
-   /* Whether the shader may draw polygon-mode points */
-   bool polygon_points;
-
-   uint8_t pad[4];
+   uint8_t pad[5];
 };
 static_assert(sizeof(struct hk_fs_key) == 8, "packed");
 
@@ -317,28 +313,12 @@ hk_populate_vs_key(struct hk_vs_key *key,
    }
 }
 
-/* Whether these shaders may draw polygon points, given fillModeNonSolid */
-static bool
-hk_may_draw_polygon_points(const struct vk_graphics_pipeline_state *state,
-                           const struct vk_features *features)
-{
-   if (features && !features->fillModeNonSolid)
-      return false;
-
-   if (state == NULL || state->rs == NULL)
-      return true;
-
-   return state->rs->polygon_mode == VK_POLYGON_MODE_POINT ||
-          BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_POLYGON_MODE);
-}
-
 static void
 hk_populate_fs_key(struct hk_fs_key *key,
                    const struct vk_graphics_pipeline_state *state,
                    const struct vk_features *features)
 {
    memset(key, 0, sizeof(*key));
-   key->polygon_points = hk_may_draw_polygon_points(state, features);
 
    /* Pipelines allow draw-time feedback loops only with the dynamic state */
    if (state == NULL) {
@@ -724,14 +704,6 @@ hk_hash_graphics_state(struct vk_physical_device *device,
       struct hk_vs_key key;
       hk_populate_vs_key(&key, state);
       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
-   }
-
-   /* Pre-rasterization stages compile what polygon-mode points need */
-   if (stages & (VK_SHADER_STAGE_VERTEX_BIT |
-                 VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
-                 VK_SHADER_STAGE_GEOMETRY_BIT)) {
-      const bool polygon_points = hk_may_draw_polygon_points(state, features);
-      _mesa_blake3_update(&blake3_ctx, &polygon_points, sizeof(polygon_points));
    }
 
    /* A partition of a linked pipeline holds both stages */
@@ -1446,7 +1418,6 @@ hk_lower_per_primitive_input(nir_builder *b, nir_intrinsic_instr *intr,
    if (hk_mesh_varying_in_memory(sem.location)) {
       nir_def *record = nir_load_input(
          b, 1, 32, nir_imm_int(b, 0), .range = 1, .dest_type = nir_type_uint32,
-         .component = HK_MESH_PRIMITIVE_COMPONENT,
          .io_semantics.location = HK_MESH_PRIMITIVE_SLOT,
          .io_semantics.num_slots = 1);
       b->shader->info.inputs_read |= BITFIELD64_BIT(HK_MESH_PRIMITIVE_SLOT);
@@ -2831,10 +2802,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          nir->info.fs.uses_discard = true;
       }
 
-      /* Polygon-mode points read facing and primitive ID from their slot */
-      if (apple9 && key->fs.polygon_points)
-         NIR_PASS(_, nir, hk_nir_lower_polygon_point_fs, HK_POLYGON_POINT_SLOT);
-
       if (apple9)
          hk_apple9_lower_fs(nir, hk_only_variant(obj));
 
@@ -2875,18 +2842,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       struct hk_shader *count_variant = hk_count_gs_variant(obj);
 
       nir_shader *count = NULL, *rast = NULL, *pre_gs = NULL;
-      nir_shader *rast_points = NULL;
 
-      /* Polygon-point triangles get their own rasterization program */
-      if (apple9 && nir->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP &&
-          hk_may_draw_polygon_points(state, &dev->vk.enabled_features)) {
-         NIR_PASS(_, nir, poly_nir_lower_gs_triangles, &count, &rast,
-                  &rast_points, &pre_gs, &count_variant->info.gs,
-                  &hk_apple9_polygon_point_triangles);
-      } else {
-         NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
-                  &count_variant->info.gs);
-      }
+      NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
+               &count_variant->info.gs);
 
       agx_preprocess_nir(count);
       agx_preprocess_nir(rast);
@@ -2897,14 +2855,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       shader->info.gs = count_variant->info.gs;
       main_variant->info.gs = count_variant->info.gs;
 
-      if (rast_points) {
-         agx_preprocess_nir(rast_points);
-         shader = &obj->variants[HK_GS_VARIANT_RAST_POINTS];
-         hk_lower_hw_vs(rast_points, shader, false);
-         shader->info.gs = count_variant->info.gs;
-         shader->info.gs.mode = MESA_PRIM_POINTS;
-      }
-
       struct {
          nir_shader *in;
          struct hk_shader *out;
@@ -2913,12 +2863,11 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          {pre_gs, hk_pre_gs_variant(obj)},
          {count, count_variant},
          {rast, &obj->variants[HK_GS_VARIANT_RAST]},
-         {rast_points, &obj->variants[HK_GS_VARIANT_RAST_POINTS]},
       };
 
       for (unsigned v = 0; v < ARRAY_SIZE(variants); ++v) {
          if (variants[v].in) {
-            if (variants[v].in != rast && variants[v].in != rast_points) {
+            if (variants[v].in != rast) {
                hk_lower_to_compute(dev, variants[v].in,
                                    variants[v].in == pre_gs ? 1 : 64);
             }
@@ -2934,7 +2883,6 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                ralloc_free(pre_gs);
                ralloc_free(count);
                ralloc_free(rast);
-               ralloc_free(rast_points);
                return result;
             }
          }
@@ -2955,8 +2903,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       /* Apple9 API shaders may need it for these features at draw time */
       if (apple9 && vk_features &&
           (dev->vk.enabled_features.fragmentShaderBarycentric ||
-           dev->vk.enabled_features.primitivesGeneratedQuery ||
-           hk_may_draw_polygon_points(state, vk_features))) {
+           dev->vk.enabled_features.primitivesGeneratedQuery)) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 

@@ -130,14 +130,6 @@ struct hk_root_descriptor_table {
          /* Apple9 depth_clip_control: 1/2 maps [-w, w] to [0, w], 0 keeps z */
          float clip_z_coeff;
 
-         /* Apple9 polygon-mode points, see hk_apple9_pp_emit_triangle */
-         struct agx_apple9_polygon_point_params polygon_points;
-         float polygon_points_viewport[4];
-         uint32_t polygon_points_active;
-
-         /* Which point of each triangle a polygon-point GS draw emits */
-         uint32_t polygon_point;
-
          /* Mapping from varying slots written by the last vertex stage to UVS
           * indices. This mapping must be compatible with the fragment shader.
           */
@@ -920,8 +912,6 @@ hk_bound_hw_vs(struct hk_graphics_state *gfx)
 
    if (gfx->shaders[MESA_SHADER_MESH])
       return &gfx->mesh_rast->variants[HK_VS_VARIANT_HW];
-   else if (gs && gfx->descriptors.root.draw.polygon_points_active)
-      return &gs->variants[HK_GS_VARIANT_RAST_POINTS];
    else if (gs)
       return &gs->variants[HK_GS_VARIANT_RAST];
    else if (tes)

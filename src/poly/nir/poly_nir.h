@@ -52,42 +52,6 @@ bool poly_nir_lower_gs(struct nir_shader *gs, struct nir_shader **gs_count,
                        struct nir_shader **gs_copy, struct nir_shader **pre_gs,
                        struct poly_gs_info *info);
 
-/* Triangle an output vertex completes with the two before it in its strip */
-struct poly_gs_rast_triangle {
-   /* Whether the vertex completes a triangle, and if odd, wound (1, 0, 2) */
-   nir_def *complete, *odd;
-
-   /* The input primitive, as the geometry shader's gl_PrimitiveIDIn */
-   nir_def *primitive_id;
-
-   /* Location-indexed mask of flat outputs (poly_geometry_params) */
-   nir_def *flat_mask;
-
-   /* Written slots and their values at the strip's last three vertices */
-   uint64_t outputs;
-   nir_variable **vertex[3];
-};
-
-struct poly_gs_rast_triangles {
-   /* Write the outputs of the rasterization shader for the triangle */
-   void (*emit)(struct nir_builder *b, const struct poly_gs_rast_triangle *tri,
-                void *data);
-
-   /* Whether the invocation writes transform feedback, or NULL to always */
-   nir_def *(*writes_xfb)(struct nir_builder *b, void *data);
-
-   void *data;
-};
-
-/* poly_nir_lower_gs, with a triangle rasterization shader for strips */
-bool poly_nir_lower_gs_triangles(struct nir_shader *gs,
-                                 struct nir_shader **gs_count,
-                                 struct nir_shader **gs_copy,
-                                 struct nir_shader **gs_triangles,
-                                 struct nir_shader **pre_gs,
-                                 struct poly_gs_info *info,
-                                 const struct poly_gs_rast_triangles *triangles);
-
 bool poly_nir_lower_gs_cull_mask(struct nir_shader *gs,
                                  struct nir_shader **gs_count,
                                  struct nir_shader **gs_copy,

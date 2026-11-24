@@ -97,8 +97,6 @@ struct hk_mesh_info {
  */
 #define HK_MESH_PRIMITIVE_SLOT VARYING_SLOT_VAR31
 
-/* Offset component; the first two hold polygon points */
-#define HK_MESH_PRIMITIVE_COMPONENT 2
 
 static inline bool
 hk_mesh_varying_in_memory(unsigned slot)
@@ -173,11 +171,7 @@ hk_per_vertex_copies_used(const struct hk_per_vertex_copies *map)
 struct hk_mesh_rast_key {
    struct hk_mesh_info info;
    uint8_t clip_distance_array_size, cull_distance_array_size;
-   /* Triangles are drawn as polygon-mode points, see hk_nir_mesh_rast */
-   bool polygon_points;
    struct hk_per_vertex_copies copies;
-   /* With polygon points, the fragment shader's flat inputs */
-   uint64_t flat;
 };
 
 void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
@@ -336,9 +330,6 @@ enum hk_gs_variant {
    /* Pre-GS compute shader */
    HK_GS_VARIANT_PRE,
 
-   /* Polygon-point rasterization VS, empty unless triangles may draw so */
-   HK_GS_VARIANT_RAST_POINTS,
-
    HK_GS_VARIANTS,
 };
 
@@ -348,7 +339,6 @@ static const char *hk_gs_variant_name[] = {
    [HK_GS_VARIANT_MAIN] = "Main",
    [HK_GS_VARIANT_COUNT] = "Count",
    [HK_GS_VARIANT_PRE] = "Pre-GS",
-   [HK_GS_VARIANT_RAST_POINTS] = "Rasterization (polygon points)",
 };
 /* clang-format on */
 

@@ -20,7 +20,6 @@
 #include "agx_usc.h"
 #include "agx_uvs.h"
 
-#include "hk_apple9_polygon_points.h"
 #include "hk_buffer.h"
 #include "hk_cmd_buffer.h"
 #include "hk_device.h"
@@ -4887,120 +4886,6 @@ hk_sw_vs_outputs_fit(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    return false;
 }
 
-/* Whether a draw rasterizes triangles as polygon points */
-static bool
-hk_polygon_points_active(struct hk_cmd_buffer *cmd)
-{
-   struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-
-   if (!agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) ||
-       dyn->rs.polygon_mode != VK_POLYGON_MODE_POINT)
-      return false;
-
-   struct hk_api_shader *mesh = gfx->shaders[MESA_SHADER_MESH];
-   if (mesh)
-      return hk_only_variant(mesh)->info.mesh.prim == MESA_PRIM_TRIANGLES;
-
-   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
-   if (gs && !gs->is_passthrough)
-      return gs->variants[HK_GS_VARIANT_RAST_POINTS].code_size != 0;
-
-   enum mesa_prim prim = gfx->shaders[MESA_SHADER_TESS_EVAL]
-                            ? gfx->tess.prim
-                            : vk_topology_to_mesa(dyn->ia.primitive_topology);
-   return u_reduced_prim(prim) == MESA_PRIM_TRIANGLES;
-}
-
-/* The rasterization state polygon points apply themselves */
-static void
-hk_update_polygon_points(struct hk_cmd_buffer *cmd)
-{
-   struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct hk_descriptor_state *desc = &gfx->descriptors;
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   uint32_t active = hk_polygon_points_active(cmd);
-
-   if (desc->root.draw.polygon_points_active != active) {
-      desc->root.draw.polygon_points_active = active;
-      desc->root_dirty = true;
-
-      /* Geometry stages switch rasterization program and relink varyings */
-      gfx->shaders_dirty |= BITFIELD_BIT(MESA_SHADER_GEOMETRY);
-   }
-
-   if (!active)
-      return;
-
-   VkFormat depth = gfx->render.depth_att.vk_format;
-   bool force_unorm =
-      dyn->rs.depth_bias.representation ==
-      VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-   bool float_depth = !force_unorm && (depth == VK_FORMAT_D32_SFLOAT ||
-                                       depth == VK_FORMAT_D32_SFLOAT_S8_UINT);
-
-   struct agx_apple9_polygon_point_params params = {
-      .flags =
-         ((dyn->rs.cull_mode & VK_CULL_MODE_FRONT_BIT)
-             ? AGX_APPLE9_PP_CULL_FRONT
-             : 0) |
-         ((dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT) ? AGX_APPLE9_PP_CULL_BACK
-                                                      : 0) |
-         (dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE
-             ? AGX_APPLE9_PP_FRONT_CCW
-             : 0) |
-         (vk_rasterization_state_depth_clip_enable(&dyn->rs)
-             ? AGX_APPLE9_PP_DEPTH_CLIP
-             : 0) |
-         (dyn->rs.depth_bias.enable ? AGX_APPLE9_PP_DEPTH_BIAS : 0) |
-         (float_depth ? AGX_APPLE9_PP_DEPTH_BIAS_FLOAT : 0),
-      .bias_constant = dyn->rs.depth_bias.constant_factor,
-      .bias_slope = dyn->rs.depth_bias.slope_factor,
-      .bias_clamp = dyn->rs.depth_bias.clamp,
-      .bias_unit = depth == VK_FORMAT_D16_UNORM ? 0x1p-16 : 0x1p-24,
-   };
-
-   float viewport[4] = {0};
-   if (dyn->vp.viewport_count) {
-      const VkViewport *vp = &dyn->vp.viewports[0];
-      params.depth_range = vp->maxDepth - vp->minDepth;
-      viewport[0] = vp->width * 0.5f;
-      viewport[1] = vp->height * 0.5f;
-      viewport[2] = vp->x + vp->width * 0.5f;
-      viewport[3] = vp->y + vp->height * 0.5f;
-   }
-
-   if (memcmp(&desc->root.draw.polygon_points, &params, sizeof(params)) ||
-       memcmp(desc->root.draw.polygon_points_viewport, viewport,
-              sizeof(viewport))) {
-      desc->root.draw.polygon_points = params;
-      memcpy(desc->root.draw.polygon_points_viewport, viewport,
-             sizeof(viewport));
-      desc->root_dirty = true;
-   }
-}
-
-/* Draw the GS rasterization program once per point a clipped triangle has */
-static void
-hk_apple9_draw_polygon_points(struct hk_cmd_buffer *cmd, uint32_t draw_id,
-                              struct agx_draw draw)
-{
-   struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
-   unsigned points = desc->root.draw.polygon_points_active &&
-                           !cmd->state.gfx.shaders[MESA_SHADER_MESH]
-                        ? HK_PP_MAX_VERTICES
-                        : 1;
-
-   for (unsigned i = 0; i < points; ++i) {
-      if (desc->root.draw.polygon_point != i) {
-         desc->root.draw.polygon_point = i;
-         desc->root_dirty = true;
-      }
-
-      hk_apple9_draw(cmd, draw_id, draw);
-   }
-}
-
 static void
 hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
@@ -5011,7 +4896,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    if (!IS_SHADER_DIRTY(VERTEX) && !IS_SHADER_DIRTY(TESS_EVAL) &&
        !IS_SHADER_DIRTY(GEOMETRY) && !IS_SHADER_DIRTY(FRAGMENT) &&
-       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) && !IS_DIRTY(RS_POLYGON_MODE))
+       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY))
       return;
 
    /* If there's an application geometry shader, there's nothing to un/bind */
@@ -5042,9 +4927,6 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
       needed |= suffix.per_vertex_copies || suffix.per_vertex_bary[0] ||
                 suffix.per_vertex_bary[1];
    }
-
-   /* ...or to draw triangles as polygon points */
-   needed |= hk_polygon_points_active(cmd);
 
    /* If we don't need a GS but we do have a passthrough, unbind it */
    if (!needed) {
@@ -5192,7 +5074,6 @@ hk_flush_gfx_state(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
    /* TODO: Try to reduce draw overhead of this */
    hk_handle_passthrough_gs(cmd, draw);
-   hk_update_polygon_points(cmd);
 
    hk_flush_shaders(cmd);
 
@@ -5441,7 +5322,6 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
          hk_apple9_merge_tess_info(cmd);
       hk_handle_passthrough_gs(cmd, draw_);
-      hk_update_polygon_points(cmd);
       hk_flush_shaders(cmd);
       if (cmd->state.gfx.descriptors.push_dirty)
          hk_cmd_buffer_flush_push_descriptors(cmd, &cmd->state.gfx.descriptors);
@@ -5482,7 +5362,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
             draw = hk_apple9_launch_tess(cmd, draw);
          if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
             draw = hk_apple9_launch_gs(cmd, draw);
-         hk_apple9_draw_polygon_points(cmd, draw_id, draw);
+         hk_apple9_draw(cmd, draw_id, draw);
       }
       return;
    }
@@ -5707,13 +5587,8 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_shader *main = hk_only_variant(mesh);
    struct hk_shader *task_main = task ? hk_only_variant(task) : NULL;
    const struct hk_mesh_info *info = &main->info.mesh;
-   hk_update_polygon_points(cmd);
-   bool polygon_points = gfx->descriptors.root.draw.polygon_points_active;
-
-   /* Polygon-mode points draw every point a clipped triangle can have */
    unsigned vertices =
-      MAX2(info->max_primitives, 1) *
-      (polygon_points ? HK_PP_MAX_VERTICES : mesa_vertices_per_prim(info->prim));
+      MAX2(info->max_primitives, 1) * mesa_vertices_per_prim(info->prim);
 
    /* The rasterizing shader also writes the per-vertex input flat copies */
    const struct hk_shader *fs =
@@ -5723,9 +5598,6 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    rast_key.info = *info;
    rast_key.clip_distance_array_size = main->info.clip_distance_array_size;
    rast_key.cull_distance_array_size = main->info.cull_distance_array_size;
-   rast_key.polygon_points = polygon_points;
-   if (polygon_points)
-      rast_key.flat = fs->info.fs.interp.flat;
    rast_key.copies.count = fs->info.fs.per_vertex_copies;
    memcpy(rast_key.copies.location, fs->info.fs.per_vertex_location,
           sizeof(rast_key.copies.location));
