@@ -822,6 +822,20 @@ lower_doubles_instr(nir_builder *b, nir_instr *instr, void *_data)
                                   alu->def.num_components);
       switch (alu->op) {
       case nir_op_fdiv:
+         /* Exact reciprocal of a constant, unlike lower_rcp */
+         if (nir_src_is_const(alu->src[1].src)) {
+            nir_const_value rcp[NIR_MAX_VEC_COMPONENTS];
+            for (unsigned c = 0; c < alu->def.num_components; ++c) {
+               double d = nir_src_comp_as_float(alu->src[1].src,
+                                                alu->src[1].swizzle[c]);
+               rcp[c] = nir_const_value_for_float(1.0 / d, 64);
+            }
+
+            return nir_fmul(b, src,
+                            nir_build_imm(b, alu->def.num_components, 64,
+                                          rcp));
+         }
+
          return nir_fmul(b, src, nir_frcp(b, src1));
       case nir_op_fsub:
          return nir_fadd(b, src, nir_fneg(b, src1));
