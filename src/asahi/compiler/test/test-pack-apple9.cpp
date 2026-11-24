@@ -1426,7 +1426,7 @@ TEST_F(Apple9Pack, HalfConversionsOfRegisters)
    check(I, {0xa9, 0x0a, 0x1c, 0x81, 0x00, 0x02});
 
    I = agx_f32_to_f16_to(b, r(4), k(r(70)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_TO_HALF);
    check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03});
 }
 

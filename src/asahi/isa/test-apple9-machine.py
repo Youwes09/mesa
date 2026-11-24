@@ -75,9 +75,10 @@ else:
         if BOOLEAN.get(el.get(key), el.get(key)) != value:
             error(f'machine {key}: XML {el.get(key)}, table {value}')
 
-# Forms
+# Forms. Those marked packed="false" describe encodings the packer does not use
 forms = {f.get('name'): f for f in root.iter('form')}
-for name in sorted(set(table) ^ set(forms)):
+unpacked = {n for n, f in forms.items() if f.get('packed') == 'false'}
+for name in sorted(set(table) ^ (set(forms) - unpacked)):
     error(f'form {name} only in the {"table" if name in table else "XML"}')
 
 def sequences(spec):

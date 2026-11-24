@@ -498,10 +498,11 @@ static const struct agx_apple9_encoding_info encodings[] = {
                                AGX_APPLE9_EVIDENCE_HARDWARE),
             },
       },
-   [AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT] =
+   /* Writes one destination half, leaving the other undefined */
+   [AGX_APPLE9_ENC_FLOAT_TO_HALF] =
       {
-         .name = "float_to_half_zext",
-         .length = 10,
+         .name = "float_to_half",
+         .length = 6,
          .operand_count = 2,
          .allocator_safe = true,
          .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
@@ -509,7 +510,7 @@ static const struct agx_apple9_encoding_info encodings[] = {
          .operands =
             {
                GPR(AGX_APPLE9_OPERAND_DEST, AGX_APPLE9_WIDTH_32,
-                   63, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,
+                   95, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,
                    AGX_APPLE9_EVIDENCE_HARDWARE),
                GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32,
                    95, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,

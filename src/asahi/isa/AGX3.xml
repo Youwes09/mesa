@@ -633,7 +633,7 @@
     <dstate/>
     <index_45_47/>
 
-    <ins name="fadd_f16" display="fadd" op="00001" form="float_to_half_zext pack_half_2x16 half2"/>
+    <ins name="fadd_f16" display="fadd" op="00001" form="float_to_half float_to_half_zext pack_half_2x16 half2"/>
     <ins name="fmul_f16" display="fmul" op="10001" form="half2"/>
     <ins name="hadd" op="00000" form="half2"/>
     <ins name="hmul" op="10000" form="half2"/>
@@ -1676,6 +1676,8 @@
     (agx_apple9_machine.c). A form's encoding lists the instructions it is
     packed as: alternatives separated by ";", instructions in sequence, "|"
     between instructions that can fill a position, "*n" repeating one.
+    Forms with packed="false" are not in the table: the packer does not use
+    them.
   -->
   <machine gpr_count="96" half_register_count="192" hardware_register_interlocks="true" software_waits="false" spilling_supported="true" publication_count="128" uniform_count="256" fill_word_count="1024" save_word_count="2048"/>
 
@@ -1720,7 +1722,12 @@
     <operand role="src0" files="gpr,uniform" max="95" uniform_max="255"/>
   </form>
 
-  <form name="float_to_half_zext" length="10" encoding="fadd_f16; fadd_f16 zext16" dependency="index_45_47">
+  <form name="float_to_half" length="6" encoding="fadd_f16" dependency="index_45_47">
+    <operand role="dest" max="95"/>
+    <operand role="src0" max="95"/>
+  </form>
+
+  <form name="float_to_half_zext" length="10" encoding="fadd_f16 zext16" dependency="index_45_47" packed="false">
     <operand role="dest" max="63"/>
     <operand role="src0" max="95"/>
   </form>

@@ -265,7 +265,7 @@ float_special_uniform 2f00545002c0b3000600
 float_special_uniform 2f02545002c0b3000000
 float_special_uniform af01545002c0b3000000
 float_special_uniform af02545002c0b3000000
-float_to_half_zext 410d1c810403
+float_to_half 410d1c810403
 float_to_sint 27075404030896480300
 float_to_sint 27075406030c96480300
 float_to_sint 27075408031096480300

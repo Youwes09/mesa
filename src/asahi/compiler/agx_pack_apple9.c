@@ -495,7 +495,7 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
    pack_compact_retain(bytes, retain(src), false);
    a9_init(
       p,
-      widen ? AGX_APPLE9_ENC_HALF_TO_FLOAT : AGX_APPLE9_ENC_FLOAT_TO_HALF_ZEXT,
+      widen ? AGX_APPLE9_ENC_HALF_TO_FLOAT : AGX_APPLE9_ENC_FLOAT_TO_HALF,
       bytes, 6);
 }
 
