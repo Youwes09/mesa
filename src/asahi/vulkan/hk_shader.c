@@ -387,259 +387,11 @@ hk_apple9_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
       sample = nir_load_barycentric_sample(
          b, intr->def.bit_size, .interp_mode = nir_intrinsic_interp_mode(intr));
       break;
-   case nir_intrinsic_load_barycentric_coord_pixel:
-   case nir_intrinsic_load_barycentric_coord_centroid:
-      sample = nir_load_barycentric_coord_sample(
-         b, intr->def.bit_size, .interp_mode = nir_intrinsic_interp_mode(intr));
-      break;
    default:
       return false;
    }
 
    nir_def_replace(&intr->def, sample);
-   return true;
-}
-
-/* Per-vertex inputs and barycentrics follow the API vertex order. Points read
- * their one vertex for every index and lines read their second vertex as the
- * third. The rasterizer orders a first-provoking triangle fan's vertices
- * (centre, then the rim), a rotation of the API order (rim, centre). The
- * primitive class (bits 0-1) and the rotation (bit 2) are draw state, so
- * select at run time from the root table.
- */
-static nir_def *
-hk_apple9_rasterized_prim(nir_builder *b)
-{
-   return hk_nir_load_root(b, 1, 16,
-                           hk_root_descriptor_offset(draw.rasterized_prim));
-}
-
-static nir_def *
-hk_apple9_load_vertex(nir_builder *b, nir_intrinsic_instr *intr,
-                      unsigned vertex)
-{
-   nir_intrinsic_instr *load =
-      nir_instr_as_intrinsic(nir_instr_clone(b->shader, &intr->instr));
-   nir_def *index = nir_imm_int(b, vertex);
-   nir_builder_instr_insert(b, &load->instr);
-   nir_src_rewrite(&load->src[0], index);
-   return &load->def;
-}
-
-static bool
-hk_apple9_lower_api_vertex_order(nir_shader *nir)
-{
-   struct util_dynarray loads;
-   util_dynarray_init(&loads, NULL);
-   nir_foreach_function_impl(impl, nir) {
-      nir_foreach_block(block, impl) {
-         nir_foreach_instr(instr, block) {
-            if (instr->type != nir_instr_type_intrinsic)
-               continue;
-            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-            if ((intr->intrinsic == nir_intrinsic_load_input_vertex &&
-                 nir_src_is_const(intr->src[0])) ||
-                intr->intrinsic == nir_intrinsic_load_barycentric_coord_pixel ||
-                intr->intrinsic ==
-                   nir_intrinsic_load_barycentric_coord_centroid ||
-                intr->intrinsic ==
-                   nir_intrinsic_load_barycentric_coord_sample ||
-                intr->intrinsic ==
-                   nir_intrinsic_load_barycentric_coord_at_sample ||
-                intr->intrinsic ==
-                   nir_intrinsic_load_barycentric_coord_at_offset)
-               util_dynarray_append(&loads, intr);
-         }
-      }
-   }
-
-   util_dynarray_foreach(&loads, nir_intrinsic_instr *, it) {
-      nir_intrinsic_instr *intr = *it;
-      nir_builder b = nir_builder_at(nir_after_instr(&intr->instr));
-      nir_def *prim = hk_apple9_rasterized_prim(&b);
-      nir_def *rotate = nir_ine_imm(&b, nir_iand_imm(&b, prim, 4), 0);
-      nir_def *result;
-
-      if (intr->intrinsic != nir_intrinsic_load_input_vertex) {
-         /* API weights (w0, w1, w2) are the rasterizer's (w1, w2, w0). */
-         nir_def *w = &intr->def;
-         nir_def *rotated =
-            nir_vec3(&b, nir_channel(&b, w, 1), nir_channel(&b, w, 2),
-                     nir_channel(&b, w, 0));
-         result = nir_bcsel(&b, rotate, rotated, w);
-      } else {
-         unsigned k = nir_src_as_uint(intr->src[0]);
-         nir_def *class = nir_iand_imm(&b, prim, 3);
-         nir_def *v[3];
-         for (unsigned i = 0; i < 3; ++i)
-            v[i] = i == k ? &intr->def : hk_apple9_load_vertex(&b, intr, i);
-         result = nir_bcsel(&b, rotate, v[(k + 1) % 3], v[k]);
-         if (k == 2)
-            result = nir_bcsel(&b, nir_ieq_imm(&b, class, 1), v[1], result);
-         if (k != 0)
-            result = nir_bcsel(&b, nir_ieq_imm(&b, class, 2), v[0], result);
-      }
-      nir_def_rewrite_uses_after(&intr->def, result);
-   }
-
-   bool progress = loads.size != 0;
-   util_dynarray_fini(&loads);
-   return nir_progress(progress, nir_shader_get_entrypoint(nir),
-                       nir_metadata_control_flow);
-}
-
-/* Per-vertex inputs are read as flat copies: the stage feeding the
- * rasterizer writes the values of the primitive's three API vertices to every
- * vertex. Flat varyings keep the provoking vertex's values when the
- * rasterizer clips at its guard band, so this is exact for clipped
- * primitives, where the raw-vertex coefficients hold the clipper's vertices.
- * Likewise the hardware barycentrics are relative to the clipped piece, so
- * barycentrics interpolate one-hot weights of the API vertices instead. The
- * copies take three consecutive VAR slots and the weights one VAR slot per
- * interpolation mode, which neither the producer writes nor the fragment
- * shader reads.
- */
-static bool
-hk_is_barycentric_coord(nir_intrinsic_op op)
-{
-   return op == nir_intrinsic_load_barycentric_coord_pixel ||
-          op == nir_intrinsic_load_barycentric_coord_centroid ||
-          op == nir_intrinsic_load_barycentric_coord_sample ||
-          op == nir_intrinsic_load_barycentric_coord_at_sample ||
-          op == nir_intrinsic_load_barycentric_coord_at_offset;
-}
-
-static nir_def *
-hk_barycentric_for_coord(nir_builder *b, nir_intrinsic_instr *intr)
-{
-   enum glsl_interp_mode mode = nir_intrinsic_interp_mode(intr);
-   switch (intr->intrinsic) {
-   case nir_intrinsic_load_barycentric_coord_pixel:
-      return nir_load_barycentric_pixel(b, 32, .interp_mode = mode);
-   case nir_intrinsic_load_barycentric_coord_centroid:
-      return nir_load_barycentric_centroid(b, 32, .interp_mode = mode);
-   case nir_intrinsic_load_barycentric_coord_sample:
-      return nir_load_barycentric_sample(b, 32, .interp_mode = mode);
-   case nir_intrinsic_load_barycentric_coord_at_sample:
-      return nir_load_barycentric_at_sample(b, 32, intr->src[0].ssa,
-                                            .interp_mode = mode);
-   case nir_intrinsic_load_barycentric_coord_at_offset:
-      return nir_load_barycentric_at_offset(b, 32, intr->src[0].ssa,
-                                            .interp_mode = mode);
-   default:
-      UNREACHABLE("not a barycentric coordinate");
-   }
-}
-
-static bool
-hk_apple9_lower_per_vertex_copies(nir_shader *fs,
-                                  struct hk_per_vertex_copies *map)
-{
-   memset(map, 0, sizeof(*map));
-   nir_function_impl *impl = nir_shader_get_entrypoint(fs);
-   uint64_t used = fs->info.inputs_read;
-   bool bary[2] = {false, false};
-
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         if (hk_is_barycentric_coord(intr->intrinsic)) {
-            bary[nir_intrinsic_interp_mode(intr) == INTERP_MODE_NOPERSPECTIVE] =
-               true;
-            continue;
-         }
-         if (intr->intrinsic != nir_intrinsic_load_input_vertex)
-            continue;
-         if (!nir_src_is_const(intr->src[0]) || !nir_src_is_const(intr->src[1]))
-            return false;
-         unsigned location = nir_intrinsic_io_semantics(intr).location +
-                             nir_src_as_uint(intr->src[1]);
-         if (location < VARYING_SLOT_VAR0 || location >= VARYING_SLOT_VAR0 + 32)
-            return false;
-         uint8_t var = location - VARYING_SLOT_VAR0;
-         unsigned j;
-         for (j = 0; j < map->count && map->location[j] != var; ++j)
-            ;
-         if (j == map->count) {
-            if (map->count == HK_MAX_PER_VERTEX_COPIES)
-               return false;
-            map->location[map->count++] = var;
-         }
-      }
-   }
-   if (!map->count && !bary[0] && !bary[1])
-      return false;
-
-   /* Allocate from the top of the VAR range. */
-   int next = 31;
-   for (unsigned j = 0; j < map->count; ++j) {
-      while (next >= 2 &&
-             (used & BITFIELD64_RANGE(VARYING_SLOT_VAR0 + next - 2, 3)))
-         --next;
-      if (next < 2)
-         return false;
-      map->copy_base[j] = next - 2;
-      used |= BITFIELD64_RANGE(VARYING_SLOT_VAR0 + next - 2, 3);
-      next -= 3;
-   }
-   for (unsigned m = 0; m < 2; ++m) {
-      if (!bary[m])
-         continue;
-      while (next >= 0 && (used & BITFIELD64_BIT(VARYING_SLOT_VAR0 + next)))
-         --next;
-      if (next < 0)
-         return false;
-      map->bary[m] = next + 1;
-      used |= BITFIELD64_BIT(VARYING_SLOT_VAR0 + next);
-      --next;
-   }
-
-   nir_builder b = nir_builder_create(impl);
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-         b.cursor = nir_before_instr(&intr->instr);
-
-         if (hk_is_barycentric_coord(intr->intrinsic)) {
-            unsigned m =
-               nir_intrinsic_interp_mode(intr) == INTERP_MODE_NOPERSPECTIVE;
-            nir_def *weights = nir_load_interpolated_input(
-               &b, 3, 32, hk_barycentric_for_coord(&b, intr),
-               nir_imm_int(&b, 0), .dest_type = nir_type_float32,
-               .io_semantics = {
-                  .location = VARYING_SLOT_VAR0 + map->bary[m] - 1,
-                  .num_slots = 1,
-               });
-            nir_def_replace(&intr->def, weights);
-            continue;
-         }
-
-         if (intr->intrinsic != nir_intrinsic_load_input_vertex)
-            continue;
-         unsigned location = nir_intrinsic_io_semantics(intr).location +
-                             nir_src_as_uint(intr->src[1]);
-         unsigned j;
-         for (j = 0; map->location[j] != location - VARYING_SLOT_VAR0; ++j)
-            ;
-         unsigned vertex = nir_src_as_uint(intr->src[0]);
-
-         nir_def *flat = nir_load_input(
-            &b, intr->def.num_components, intr->def.bit_size,
-            nir_imm_int(&b, 0), .component = nir_intrinsic_component(intr),
-            .dest_type = nir_intrinsic_dest_type(intr),
-            .io_semantics = {
-               .location = VARYING_SLOT_VAR0 + map->copy_base[j] + vertex,
-               .num_slots = 1,
-            });
-         nir_def_replace(&intr->def, flat);
-      }
-   }
-   nir_progress(true, impl, nir_metadata_control_flow);
-   nir_shader_gather_info(fs, impl);
    return true;
 }
 
@@ -665,10 +417,6 @@ hk_apple9_interpolates_off_center(nir_shader *nir)
             case nir_intrinsic_load_barycentric_sample:
             case nir_intrinsic_load_barycentric_at_sample:
             case nir_intrinsic_load_barycentric_at_offset:
-            case nir_intrinsic_load_barycentric_coord_centroid:
-            case nir_intrinsic_load_barycentric_coord_sample:
-            case nir_intrinsic_load_barycentric_coord_at_sample:
-            case nir_intrinsic_load_barycentric_coord_at_offset:
                return true;
             default:
                break;
@@ -2707,22 +2455,10 @@ hk_lower_late_division(nir_shader *nir)
    NIR_PASS(_, nir, agx_nir_lower_accurate_frcp);
 }
 
-/* Apple9 FS lowering: barycentrics, per-vertex inputs and hardware quirks */
+/* Apple9 FS lowering for hardware quirks */
 static void
 hk_apple9_lower_fs(nir_shader *nir, struct hk_shader *shader)
 {
-   struct hk_per_vertex_copies copies;
-   if (hk_apple9_lower_per_vertex_copies(nir, &copies)) {
-      shader->info.fs.per_vertex_copies = copies.count;
-      memcpy(shader->info.fs.per_vertex_location, copies.location,
-             sizeof(copies.location));
-      memcpy(shader->info.fs.per_vertex_copy_base, copies.copy_base,
-             sizeof(copies.copy_base));
-      memcpy(shader->info.fs.per_vertex_bary, copies.bary, sizeof(copies.bary));
-   }
-
-   NIR_PASS(_, nir, hk_apple9_lower_api_vertex_order);
-
    /* Shading per sample interpolates at the sample */
    if (nir->info.fs.uses_sample_shading) {
       NIR_PASS(_, nir, nir_shader_intrinsics_pass,
@@ -2902,8 +2638,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       /* Apple9 API shaders may need it for these features at draw time */
       if (apple9 && vk_features &&
-          (dev->vk.enabled_features.fragmentShaderBarycentric ||
-           dev->vk.enabled_features.primitivesGeneratedQuery)) {
+          dev->vk.enabled_features.primitivesGeneratedQuery) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 

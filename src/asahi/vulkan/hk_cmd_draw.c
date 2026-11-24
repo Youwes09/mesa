@@ -2288,101 +2288,6 @@ hk_upload_tess_params(struct hk_cmd_buffer *cmd, struct poly_tess_params *out,
       hk_only_variant(cmd->state.gfx.shaders[MESA_SHADER_TESS_CTRL]));
 }
 
-/* The Apple9 passthrough geometry shader key is the common key followed by
- * the fragment shader's flat copies of per-vertex inputs, as in its info.
- */
-struct hk_apple9_passthrough_suffix {
-   uint8_t per_vertex_copies;
-   uint8_t per_vertex_location[HK_MAX_PER_VERTEX_COPIES];
-   uint8_t per_vertex_copy_base[HK_MAX_PER_VERTEX_COPIES];
-   uint8_t per_vertex_bary[2];
-};
-
-/* Before every emitted vertex, write the per-vertex values of the input
- * primitive's API vertices 0, 1 and 2 to their flat copies, and the emitted
- * API vertex's one-hot barycentric weights. Points repeat their vertex and
- * lines their second vertex. The passthrough GS emits API vertex i as its
- * i-th vertex.
- */
-
-static void
-hk_apple9_write_per_vertex_copies(
-   nir_shader *s, const struct hk_apple9_passthrough_suffix *suffix)
-{
-   enum mesa_prim prim = s->info.gs.input_primitive;
-   unsigned start = prim == MESA_PRIM_LINES_ADJACENCY ? 1 : 0;
-   unsigned step = prim == MESA_PRIM_TRIANGLES_ADJACENCY ? 2 : 1;
-   unsigned vertices =
-      mesa_vertices_per_prim(u_decomposed_prim(u_reduced_prim(prim)));
-   nir_function_impl *impl = nir_shader_get_entrypoint(s);
-   nir_builder b = nir_builder_create(impl);
-   unsigned emitted = 0;
-
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic ||
-             nir_instr_as_intrinsic(instr)->intrinsic !=
-                nir_intrinsic_emit_vertex)
-            continue;
-         b.cursor = nir_before_instr(instr);
-         for (unsigned m = 0; m < 2; ++m) {
-            if (!suffix->per_vertex_bary[m])
-               continue;
-            unsigned slot = VARYING_SLOT_VAR0 + suffix->per_vertex_bary[m] - 1;
-            for (unsigned c = 0; c < 3; ++c) {
-               nir_store_output(
-                  &b, nir_imm_float(&b, c == emitted ? 1.0 : 0.0),
-                  nir_imm_int(&b, 0),
-                  .io_semantics = {.location = slot, .num_slots = 1},
-                  .component = c, .src_type = nir_type_float32,
-                  .write_mask = 1);
-            }
-            s->info.outputs_written |= BITFIELD64_BIT(slot);
-         }
-         ++emitted;
-         for (unsigned j = 0; j < suffix->per_vertex_copies; ++j) {
-            for (unsigned k = 0; k < 3; ++k) {
-               unsigned api_vertex = MIN2(k, vertices - 1);
-               nir_def *value = nir_load_per_vertex_input(
-                  &b, 4, 32, nir_imm_int(&b, start + api_vertex * step),
-                  nir_imm_int(&b, 0),
-                  .io_semantics =
-                     {
-                        .location =
-                           VARYING_SLOT_VAR0 + suffix->per_vertex_location[j],
-                        .num_slots = 1,
-                     },
-                  .dest_type = nir_type_uint32);
-               unsigned copy =
-                  VARYING_SLOT_VAR0 + suffix->per_vertex_copy_base[j] + k;
-               for (unsigned c = 0; c < 4; ++c) {
-                  nir_store_output(
-                     &b, nir_channel(&b, value, c), nir_imm_int(&b, 0),
-                     .io_semantics = {.location = copy, .num_slots = 1},
-                     .component = c, .src_type = nir_type_uint32,
-                     .write_mask = 1);
-               }
-               s->info.outputs_written |= BITFIELD64_BIT(copy);
-            }
-         }
-      }
-   }
-   nir_progress(true, impl, nir_metadata_control_flow);
-}
-
-static void
-hk_apple9_passthrough_gs(struct nir_builder *b, const void *key)
-{
-   const struct poly_passthrough_gs_key *common = key;
-   size_t key_size =
-      poly_passthrough_gs_key_size(common->xfb_info.output_count);
-   struct hk_apple9_passthrough_suffix suffix;
-   memcpy(&suffix, (const uint8_t *)key + key_size, sizeof(suffix));
-
-   poly_nir_passthrough_gs(b, key);
-   hk_apple9_write_per_vertex_copies(b->shader, &suffix);
-}
-
 static struct hk_api_shader *
 hk_build_meta_shader_locked(struct hk_device *dev, struct hk_internal_key *key,
                             hk_internal_builder_t builder)
@@ -2508,8 +2413,8 @@ hk_draw_without_restart(struct hk_cmd_buffer *cmd, struct agx_draw draw,
 }
 
 /* Whether a vertex-shader pipeline exposes its provoking vertex: through a
- * flat, per-vertex or barycentric fragment input, or a layer or viewport index
- * written by the vertex shader. Primitive ID is not taken from a vertex, and a
+ * flat fragment input, or a layer or viewport index written by the vertex
+ * shader. Primitive ID is not taken from a vertex, and a
  * fragment shader's layer reads zero unless the vertex shader writes it. A
  * vertex-written primitive shading rate would observe it too, once supported. */
 static bool
@@ -2525,7 +2430,6 @@ hk_apple9_provoking_observed(struct hk_cmd_buffer *cmd)
    if (!fs || fs == dev->null_fs)
       return false;
 
-   /* Flat inputs, or barycentrics and per-vertex inputs from flat copies */
    const struct hk_shader *shader = hk_only_variant(fs);
    const struct agx_varyings_fs *varyings = &shader->b.info.varyings.fs;
    for (unsigned i = 0; i < varyings->nr_bindings; ++i) {
@@ -2533,9 +2437,7 @@ hk_apple9_provoking_observed(struct hk_cmd_buffer *cmd)
          return true;
    }
 
-   return shader->info.fs.per_vertex_copies ||
-          shader->info.fs.per_vertex_bary[0] ||
-          shader->info.fs.per_vertex_bary[1];
+   return false;
 }
 
 /* Native Apple9 fans flat shade consistently only from their first vertex.
@@ -4895,8 +4797,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
 
    if (!IS_SHADER_DIRTY(VERTEX) && !IS_SHADER_DIRTY(TESS_EVAL) &&
-       !IS_SHADER_DIRTY(GEOMETRY) && !IS_SHADER_DIRTY(FRAGMENT) &&
-       !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY))
+       !IS_SHADER_DIRTY(GEOMETRY) && !IS_DIRTY(IA_PRIMITIVE_TOPOLOGY))
       return;
 
    /* If there's an application geometry shader, there's nothing to un/bind */
@@ -4910,24 +4811,6 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    for (unsigned i = 0; i < ARRAY_SIZE(gfx->pg_query); ++i)
       needed |= gfx->pg_query[i] != 0;
 
-   /* ...or to give the fragment shader flat copies of per-vertex inputs */
-   struct hk_apple9_passthrough_suffix suffix;
-   memset(&suffix, 0, sizeof(suffix));
-   struct hk_api_shader *fs_api = gfx->shaders[MESA_SHADER_FRAGMENT];
-   if (agx_is_apple9(&dev->dev) && fs_api) {
-      const struct hk_shader *fs = hk_only_variant(fs_api);
-      suffix.per_vertex_copies = fs->info.fs.per_vertex_copies;
-      memcpy(suffix.per_vertex_location, fs->info.fs.per_vertex_location,
-             sizeof(suffix.per_vertex_location));
-      memcpy(suffix.per_vertex_copy_base, fs->info.fs.per_vertex_copy_base,
-             sizeof(suffix.per_vertex_copy_base));
-      memcpy(suffix.per_vertex_bary, fs->info.fs.per_vertex_bary,
-             sizeof(suffix.per_vertex_bary));
-
-      needed |= suffix.per_vertex_copies || suffix.per_vertex_bary[0] ||
-                suffix.per_vertex_bary[1];
-   }
-
    /* If we don't need a GS but we do have a passthrough, unbind it */
    if (!needed) {
       if (gs != NULL) {
@@ -4939,7 +4822,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    /* Else, we need to bind a passthrough GS */
    size_t key_size = poly_passthrough_gs_key_size(xfb_outputs);
-   struct poly_passthrough_gs_key *key = alloca(key_size + sizeof(suffix));
+   struct poly_passthrough_gs_key *key = alloca(key_size);
 
    *key = (struct poly_passthrough_gs_key){
       .prim = u_decomposed_prim(hk_gs_in_prim(cmd)),
@@ -4977,13 +4860,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    perf_debug(cmd, "Binding passthrough GS for%s\n", xfb_outputs ? " XFB" : "");
 
-   if (agx_is_apple9(&dev->dev)) {
-      memcpy((uint8_t *)key + key_size, &suffix, sizeof(suffix));
-      gs = hk_meta_shader(dev, hk_apple9_passthrough_gs, key,
-                          key_size + sizeof(suffix));
-   } else {
-      gs = hk_meta_shader(dev, poly_nir_passthrough_gs, key, key_size);
-   }
+   gs = hk_meta_shader(dev, poly_nir_passthrough_gs, key, key_size);
 
    gs->is_passthrough = true;
    hk_cmd_bind_graphics_shader(cmd, MESA_SHADER_GEOMETRY, gs);
@@ -5590,21 +5467,11 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    unsigned vertices =
       MAX2(info->max_primitives, 1) * mesa_vertices_per_prim(info->prim);
 
-   /* The rasterizing shader also writes the per-vertex input flat copies */
-   const struct hk_shader *fs =
-      hk_only_variant(gfx->shaders[MESA_SHADER_FRAGMENT]);
    struct hk_mesh_rast_key rast_key;
    memset(&rast_key, 0, sizeof(rast_key));
    rast_key.info = *info;
    rast_key.clip_distance_array_size = main->info.clip_distance_array_size;
    rast_key.cull_distance_array_size = main->info.cull_distance_array_size;
-   rast_key.copies.count = fs->info.fs.per_vertex_copies;
-   memcpy(rast_key.copies.location, fs->info.fs.per_vertex_location,
-          sizeof(rast_key.copies.location));
-   memcpy(rast_key.copies.copy_base, fs->info.fs.per_vertex_copy_base,
-          sizeof(rast_key.copies.copy_base));
-   memcpy(rast_key.copies.bary, fs->info.fs.per_vertex_bary,
-          sizeof(rast_key.copies.bary));
 
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_api_shader *rast =

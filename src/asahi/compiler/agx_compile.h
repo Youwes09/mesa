@@ -89,8 +89,6 @@ struct agx_rodata {
 /* UVS slots: position, user scalars, point size, the layer/viewport word and
  * eight clip distances. */
 #define AGX_APPLE9_MAX_UVS_SLOTS (4 + AGX_APPLE9_MAX_VARYING_COMPONENTS + 10)
-/* Varying scalars a fragment shader may read per vertex. */
-#define AGX_APPLE9_MAX_PER_VERTEX 32
 /* Interpolation modes are indexed by compacted scalar, independent of API
  * locations. Two words cover the complete publication-addressing namespace. */
 struct agx_apple9_interp_mask {

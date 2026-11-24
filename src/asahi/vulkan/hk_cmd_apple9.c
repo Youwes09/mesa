@@ -1043,16 +1043,6 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    gfx->descriptors.root.draw.samples_log2 = util_logbase2(pipeline.samples);
    gfx->descriptors.root.draw.clip_z_coeff =
       dyn->vp.depth_clip_negative_one_to_one ? 0.5f : 0.0f;
-   gfx->descriptors.root.draw.rasterized_prim =
-      (points  ? 2
-       : lines ? 1
-               : 0) |
-      (!emulated &&
-             dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
-             dyn->rs.provoking_vertex ==
-                VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT
-          ? 4
-          : 0);
    if (hk_apple9_reads_draw_id(gfx))
       gfx->descriptors.root.draw.draw_id = draw_id;
    gfx->descriptors.root_dirty = true;

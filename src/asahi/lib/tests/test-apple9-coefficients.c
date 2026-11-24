@@ -50,7 +50,7 @@ main(void)
                                   AGX_APPLE9_MAX_VARYING_COMPONENTS};
    for (unsigned c = 0; c < ARRAY_SIZE(components); ++c) {
       for (unsigned mode = 0; mode < 4; ++mode) {
-         for (unsigned extras = 0; extras < 16; ++extras) {
+         for (unsigned extras = 0; extras < 8; ++extras) {
             struct agx_apple9_render_stage vs = {
                .bo = &bo,
                .binary = code,
@@ -67,10 +67,6 @@ main(void)
             fs.apple9_reads_z = extras & 1;
             fs.reads_point_coord = extras & 2;
             fs.reads_primitive_id = extras & 4;
-            fs.barycentric_mask = (extras & 8) ? 3 : 0;
-            fs.per_vertex_count = MIN2(components[c], 3);
-            for (unsigned i = 0; i < fs.per_vertex_count; ++i)
-               fs.per_vertex[i] = i;
             for (unsigned i = 0; i < components[c]; ++i) {
                if (mode == 1 || (mode == 3 && i % 3 == 0))
                   agx_apple9_interp_mask_set(&fs.apple9_flat_mask, i);

@@ -997,9 +997,8 @@ agx_apple9_pack_fetch_sampler(void *out)
 #define APPLE9_CF_BINDINGS      0x203d00u
 #define APPLE9_CF_BINDINGS_SIZE AGX_APPLE9_CF_BINDINGS_SIZE
 /* One binding per user scalar in the worst case, then 1/W, primitive ID,
- * Z, point coordinates, two barycentric pairs and the per-vertex inputs. */
-static_assert(4 + 4 * (AGX_APPLE9_MAX_VARYING_COMPONENTS + 1 + 1 + 1 + 1 + 2 +
-                       AGX_APPLE9_MAX_PER_VERTEX) <=
+ * Z and point coordinates. */
+static_assert(4 + 4 * (AGX_APPLE9_MAX_VARYING_COMPONENTS + 1 + 1 + 1 + 1) <=
                  APPLE9_CF_BINDINGS_SIZE,
               "coefficient table must fit its worst-case bindings");
 
@@ -1020,8 +1019,7 @@ apple9_build_cf_bindings(uint8_t *table, unsigned components,
                          struct agx_apple9_interp_mask linear_mask,
                          struct agx_apple9_interp_mask flat_mask,
                          unsigned provoking_vertex, bool reads_z,
-                         bool reads_point_coord, bool reads_primitive_id,
-                         const struct agx_apple9_render_stage *fragment)
+                         bool reads_point_coord, bool reads_primitive_id)
 {
    const enum agx_shade_model flat_shade =
       provoking_vertex == 1   ? AGX_SHADE_MODEL_FLAT_VERTEX_1
@@ -1029,10 +1027,8 @@ apple9_build_cf_bindings(uint8_t *table, unsigned components,
                               : AGX_SHADE_MODEL_FLAT_VERTEX_2;
    assert(components <= AGX_APPLE9_MAX_VARYING_COMPONENTS);
    memset(table, 0, APPLE9_CF_BINDINGS_SIZE);
-   unsigned extra = 2 * util_bitcount(fragment->barycentric_mask) +
-                    fragment->per_vertex_count;
-   unsigned slots = components + 1 + reads_z + 2 * reads_point_coord +
-                    reads_primitive_id + extra;
+   unsigned slots =
+      components + 1 + reads_z + 2 * reads_point_coord + reads_primitive_id;
    apple9_put_u32(table, slots | (slots << 8));
    /* Coefficient zero is 1/W. Keep stable scalar indices across all modes. */
    apple9_put_u32(table + 4, 0x0c);
@@ -1076,25 +1072,6 @@ apple9_build_cf_bindings(uint8_t *table, unsigned components,
          table + 4 + binding++ * 4,
          0x4d | ((components + 1 + reads_primitive_id + reads_z) << 16));
    }
-   unsigned coefficient =
-      components + 1 + reads_primitive_id + reads_z + 2 * reads_point_coord;
-   /* Barycentric weights of vertices 0 and 1: source 5 with the perspective
-    * (7) or linear (3) shade model. */
-   for (unsigned linear = 0; linear < 2; ++linear) {
-      if (!(fragment->barycentric_mask & BITFIELD_BIT(linear)))
-         continue;
-      apple9_put_u32(table + 4 + binding++ * 4, 1 | ((linear ? 3 : 7) << 2) |
-                                                   (5 << 5) |
-                                                   (coefficient << 16));
-      coefficient += 2;
-   }
-   /* Shade model 6 sets a scalar's plane terms to the raw values of vertices
-    * 0, 1 and 2. */
-   for (unsigned i = 0; i < fragment->per_vertex_count; ++i) {
-      unsigned source = fragment->per_vertex[i] + 1 + reads_z;
-      apple9_put_u32(table + 4 + binding++ * 4,
-                     (6 << 2) | (source << 8) | (coefficient++ << 16));
-   }
    assert(4 + 4 * binding <= APPLE9_CF_BINDINGS_SIZE);
    return binding;
 }
@@ -1120,7 +1097,7 @@ agx_apple9_init_coefficients(struct agx_device *dev,
          (uint8_t *)allocation.cpu + offset, fragment->varying_components,
          fragment->apple9_linear_mask, fragment->apple9_flat_mask, pv,
          fragment->apple9_reads_z, fragment->reads_point_coord,
-         fragment->reads_primitive_id, fragment);
+         fragment->reads_primitive_id);
       fragment->coefficients[pv] = agx_usc_addr(dev, allocation.gpu + offset);
    }
    if (count == 1)
@@ -1488,7 +1465,7 @@ agx_apple9_prepare_draw_alloc(
          pipeline->fragment->apple9_flat_mask, draw->provoking_vertex,
          pipeline->fragment->apple9_reads_z,
          pipeline->fragment->reads_point_coord,
-         pipeline->fragment->reads_primitive_id, pipeline->fragment);
+         pipeline->fragment->reads_primitive_id);
       struct agx_ptr cf = usc_alloc(usc_allocator, sizeof(contents), 64);
       if (!cf.cpu)
          return false;
