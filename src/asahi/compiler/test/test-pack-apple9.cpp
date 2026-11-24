@@ -1609,6 +1609,33 @@ TEST_F(Apple9Pack, Texture)
    }
 }
 
+/* A register texture selects the 20-byte forms, for samples and gradients */
+TEST_F(Apple9Pack, RegisterTextureForms)
+{
+   agx_index dst = r(70);
+   dst.channels_m1 = 3;
+   agx_index coords = e(2);
+   coords.channels_m1 = 1;
+
+   agx_instr *I = agx_texture_sample_to(
+      b, dst, coords, agx_null(), agx_null(), k(r(40)), agx_immediate(3),
+      agx_null(), AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, 0xf, false, false, false,
+      AGX_GATHER_NONE, false);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED);
+   check(I, {0x35, 0x82, 0x0c, 0xb8, 0xb1, 0x00, 0x00, 0x00, 0x50, 0x03,
+             0x90, 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x00, 0x40, 0x02});
+
+   coords = e(8);
+   coords.channels_m1 = 7;
+   I = agx_texture_sample_to(b, dst, coords, agx_null(), agx_null(), r(40),
+                             agx_immediate(3), agx_null(), AGX_DIM_2D,
+                             AGX_LOD_MODE_LOD_GRAD, 0xf, false, false, false,
+                             AGX_GATHER_NONE, false);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED);
+   check(I, {0x35, 0x80, 0x0c, 0xb9, 0xb1, 0x00, 0x04, 0x01, 0x50, 0x03,
+             0x90, 0x00, 0x01, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40, 0x02});
+}
+
 /* Forms without a measured mode are not encodable */
 TEST_F(Apple9Pack, TextureForms)
 {
