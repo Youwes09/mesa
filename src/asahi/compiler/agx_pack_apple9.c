@@ -2893,6 +2893,10 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
       return;
    }
 
+   form = t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
+          : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED
+                     : AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED;
+
    /* Bit 73 selects the 20-byte form, reading indices from registers */
    bytes[9] |= 0x02;
    bytes[15] = 0x20 | (retain(texture) ? 0 : 0x08);

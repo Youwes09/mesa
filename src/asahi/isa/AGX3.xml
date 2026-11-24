@@ -1513,7 +1513,7 @@
     <modifier name="query_lod" bit="85"/>
   </ins>
 
-  <ins name="texture_reg" display="texture" length="20" form="texture_sample texture_lod texture_grad">
+  <ins name="texture_reg" display="texture" length="20" form="texture_sample_indexed texture_lod_indexed texture_grad_indexed">
     <template>05 80 0c b8 b0 00 00 00 00 02 10 00 01 00 00 20 00 00 40 00</template>
     <dest kind="reg" bit="3:7 22 153"/>
     <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
@@ -1531,7 +1531,7 @@
     <modifier name="query_lod" bit="85"/>
   </ins>
 
-  <ins name="texture_reg2" display="texture" length="20" form="texture_sample texture_lod texture_grad">
+  <ins name="texture_reg2" display="texture" length="20" form="texture_sample_indexed texture_lod_indexed texture_grad_indexed">
     <template>05 80 0c b8 b0 00 00 00 00 02 10 01 01 00 80 20 00 00 40 00</template>
     <dest kind="reg" bit="3:7 22 153"/>
     <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
@@ -2136,8 +2136,16 @@
     <operand role="src3" max="95"/>
   </form>
 
-  <form name="texture_lod" length="14" encoding="texture|texture_reg|texture_reg2">
+  <form name="texture_lod" length="14" encoding="texture">
     <operand role="dest" max="63"/>
+    <operand role="src0" max="31" align="8"/>
+    <operand role="src1" max="31"/>
+    <operand role="src2" max="31"/>
+    <operand role="src3" max="31"/>
+  </form>
+
+  <form name="texture_lod_indexed" length="20" encoding="texture_reg|texture_reg2">
+    <operand role="dest" max="95"/>
     <operand role="src0" max="31" align="8"/>
     <operand role="src1" max="31"/>
     <operand role="src2" max="31"/>
@@ -2179,13 +2187,24 @@
     <operand role="src8" max="95" evidence="byte_diff"/>
   </form>
 
-  <form name="texture_grad" length="14" encoding="texture|texture_reg|texture_reg2">
+  <form name="texture_grad" length="14" encoding="texture">
     <operand role="dest" max="63"/>
     <operand role="src0" max="31" align="8"/>
   </form>
 
-  <form name="texture_sample" length="14" encoding="texture|texture_reg|texture_reg2">
+  <form name="texture_grad_indexed" length="20" encoding="texture_reg|texture_reg2">
+    <operand role="dest" max="95"/>
+    <operand role="src0" max="31" align="8"/>
+  </form>
+
+  <form name="texture_sample" length="14" encoding="texture">
     <operand role="dest" max="63"/>
+    <operand role="src0" max="31" align="4"/>
+    <operand role="src1" max="31"/>
+  </form>
+
+  <form name="texture_sample_indexed" length="20" encoding="texture_reg|texture_reg2">
+    <operand role="dest" max="95"/>
     <operand role="src0" max="31" align="4"/>
     <operand role="src1" max="31"/>
   </form>

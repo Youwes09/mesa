@@ -1564,12 +1564,19 @@ TEST_F(Apple9Pack, Texture)
       I->scoreboard = c.slot;
       I->src[0].channels_m1 = agx_apple9_texture_params(I) - 1;
 
-      EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
-                            ? AGX_APPLE9_ENC_TEXTURE_SAMPLE
-                         : c.lod == AGX_LOD_MODE_LOD_GRAD ||
-                               c.lod == AGX_LOD_MODE_LOD_GRAD_MIN
-                            ? AGX_APPLE9_ENC_TEXTURE_GRAD
-                            : AGX_APPLE9_ENC_TEXTURE_LOD);
+      bool grad =
+         c.lod == AGX_LOD_MODE_LOD_GRAD || c.lod == AGX_LOD_MODE_LOD_GRAD_MIN;
+      if (c.reg_tex) {
+         EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
+                               ? AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED
+                            : grad ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
+                                   : AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED);
+      } else {
+         EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
+                               ? AGX_APPLE9_ENC_TEXTURE_SAMPLE
+                            : grad ? AGX_APPLE9_ENC_TEXTURE_GRAD
+                                   : AGX_APPLE9_ENC_TEXTURE_LOD);
+      }
       check(I, c.bytes);
    }
 }
