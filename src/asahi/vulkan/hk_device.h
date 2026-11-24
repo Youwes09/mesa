@@ -84,8 +84,6 @@ struct hk_device {
    /* G16 private texel-fetch sampler, addressable as a native table entry
     * relative to the USC aperture. */
    struct agx_bo *apple9_fetch_sampler;
-   /* Reload sampler shares the immutable sampler BO, at a 64-byte boundary. */
-   uint64_t apple9_reload_sampler;
    /* Last G16 program id handed out, see hk_linked_shader::apple9_stage */
    uint64_t apple9_last_program_id;
    /* USC space charged to shared index aliases, including allocator guards. */

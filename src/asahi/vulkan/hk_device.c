@@ -470,7 +470,6 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
       agx_apple9_pack_sampler(samplers + 64, false, false, 1, 0, 14,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
-      dev->apple9_reload_sampler = dev->apple9_fetch_sampler->va->addr + 64;
 
       dev->apple9_compute_sysvals =
          agx_bo_create(&dev->dev, AGX_APPLE9_RUNTIME_SYSVAL_SIZE, 0, 0,
