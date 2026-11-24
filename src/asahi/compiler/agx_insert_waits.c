@@ -222,15 +222,7 @@ dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count,
    return !BITSET_TEST_COUNT(block->reg_live_out, reg, count);
 }
 
-/*
- * Apple9 instructions with a dependency field wait for one slot themselves,
- * which may take a longer form. Without dependency_retains_sources, the
- * completed operands are released, so they must die here. A VARY_STORE
- * waits for its export register like that when it is the register's last
- * reader, as Gravity's compiler commits each export (its test
- * VaryingStoresWaitForPublicationCompletion). Other export operands always
- * wait separately.
- */
+/* Fold a wait into the dependency field. Released operands must die here */
 static bool
 apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
 {

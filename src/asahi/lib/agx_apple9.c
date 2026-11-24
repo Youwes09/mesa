@@ -4,7 +4,7 @@
  */
 
 #include "agx_apple9.h"
-#include "asahi/compiler/agx_apple9_ir.h"
+#include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/lib/pool.h"
 #include "pipe/p_defines.h"
 #include "agx_apple9_launch.h"
@@ -1283,11 +1283,9 @@ apple9_build_body_entry(uint8_t *out, uint64_t entry, uint64_t body)
    if ((entry | body) & 1 || displacement < -(int64_t)UINT32_MAX ||
        displacement > UINT32_MAX)
       return false;
-   struct agx_apple9_packed_instruction packed;
-   if (!agx_apple9_pack_branch(true, displacement, &packed))
+   if (!agx_apple9_encode_branch(out, true, displacement))
       return false;
-   memcpy(out, packed.bytes, packed.length);
-   apple9_put_u32(out + packed.length, 0x0e); /* No active lanes: terminate. */
+   apple9_put_u32(out + 10, 0x0e); /* No active lanes: terminate */
    return true;
 }
 

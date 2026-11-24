@@ -437,8 +437,6 @@ typedef struct {
        */
       nir_phi_instr *phi;
 
-      /* Target-selected instruction carried through shared allocation. */
-      struct agx_apple9_vir_instr *apple9;
    };
 
    /* For local access */
@@ -617,12 +615,6 @@ struct agx_ra_target {
     * single evicted source spills the whole phi. */
    bool spill_partial_phi_sources;
    bool cost_register_constraints;
-   bool disable_uniform_rematerialization;
-   /* Optional candidate-search bound, after spilling/SSA repair and before
-    * register assignment. False rejects this candidate without allocating it.
-    * A caller must retain a completed allocation when using this callback. */
-   bool (*within_spill_budget)(const struct agx_context *ctx, void *data);
-   void *spill_budget_data;
 };
 
 typedef struct agx_context {
@@ -630,15 +622,11 @@ typedef struct agx_context {
    struct agx_ra_target ra_target;
    /* Static diagnostic set when constrained register allocation fails. */
    const char *ra_error;
-   /* Opaque target instructions may refine the shared scheduling classes. */
-   enum agx_schedule_class (*schedule_class)(const agx_instr *instruction);
    /* Optional target implicit-resource graph, replacing scheduling classes.
     * Readers may overlap; a writer orders all preceding readers and writers.
     * Resource bit assignments belong to the target. */
    void (*schedule_resources)(const agx_instr *instruction, uint32_t *reads,
                               uint32_t *writes);
-   /* Set when uniform rematerialization marked at least one value. */
-   bool uniform_remat_used;
    /* Relative dependency separation in issue positions, not hardware cycles. */
    unsigned (*schedule_delay)(const agx_instr *instruction);
    /* Half-registers a latency schedule may add to a block's peak pressure. */
@@ -1125,7 +1113,6 @@ static inline bool
 instr_after_logical_end(const agx_instr *I)
 {
    switch (I->op) {
-   case AGX_OPCODE_APPLE9_CF:
    case AGX_OPCODE_JMP_EXEC_ANY:
    case AGX_OPCODE_JMP_EXEC_NONE:
    case AGX_OPCODE_POP_EXEC:

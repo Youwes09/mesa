@@ -611,8 +611,3 @@ op("cube", _, srcs = 3, imms = [IMM], isa = APPLE9)
 # Packs float channels into one RGB10A2 or RG11B10F word (fourth source null)
 op("pack_format", _, srcs = 4, imms = [FORMAT], isa = APPLE9)
 
-# Allocation IR for target-selected Apple9 instructions. Encoding remains in
-# the Apple9 backend; common SSA and allocation passes see explicit dataflow.
-op("apple9", _, dests = VARIABLE, srcs = VARIABLE, can_eliminate = False, can_reorder = False)
-op("apple9_pure", _, dests = VARIABLE, srcs = VARIABLE, can_eliminate = True, can_reorder = False)
-op("apple9_cf", _, dests = 0, srcs = VARIABLE, can_eliminate = False, can_reorder = False)

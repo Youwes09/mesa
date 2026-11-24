@@ -3,10 +3,12 @@
  */
 #include "compiler/nir/nir_builder.h"
 #include "gallium/include/pipe/p_defines.h"
-#include "agx_compile_apple9.h"
+#include "asahi/lib/agx_apple9_layout.h"
+#include "agx_compile.h"
+#include "agx_nir.h"
 #include "agx_nir_texture.h"
 
-void
+static void
 agx_nir_legalize_apple9_texture_sources(nir_shader *nir)
 {
    /* Frontends and common image lowering can supply narrow LODs/coordinates.
@@ -25,58 +27,6 @@ agx_nir_legalize_apple9_texture_sources(nir_shader *nir)
    nir_legalize_16bit_sampler_srcs(nir, constraints);
 }
 
-static bool
-lower_texture_lod(nir_builder *b, nir_instr *instr, UNUSED void *data)
-{
-   if (instr->type != nir_instr_type_tex)
-      return false;
-
-   nir_tex_instr *tex = nir_instr_as_tex(instr);
-   if (tex->op != nir_texop_txl && tex->op != nir_texop_txb &&
-       tex->op != nir_texop_txf)
-      return false;
-
-   /* A separate source type makes this pass idempotent and prevents later
-    * selection from treating packed integer bits as a floating-point LOD. */
-   if (nir_tex_instr_src_index(tex, nir_tex_src_backend1) >= 0)
-      return false;
-   int source = nir_tex_instr_src_index(
-      tex, tex->op == nir_texop_txb ? nir_tex_src_bias : nir_tex_src_lod);
-   if (source < 0 || tex->src[source].src.ssa->bit_size != 32 ||
-       tex->src[source].src.ssa->num_components != 1)
-      return false;
-
-   b->cursor = nir_before_instr(instr);
-   nir_def *lod = tex->src[source].src.ssa;
-   nir_def *packed;
-   if (tex->op == nir_texop_txf) {
-      /* Integer levels occupy the integral part of the same signed Q6 field. */
-      packed = nir_ishl_imm(b, lod, 22);
-   } else {
-      /* Preserve the established clamp order and floor, including negative
-       * fractional inputs. Expose the entire conversion before preamble
-       * extraction, so uniform LOD and bias do not repeat it in the main. */
-      uint32_t fp_math_ctrl = b->fp_math_ctrl;
-      b->fp_math_ctrl = nir_fp_no_fast_math;
-      nir_def *clamped = nir_fmin(b, nir_fmax(b, lod, nir_imm_float(b, -32.0f)),
-                                  nir_imm_float(b, 2047.0f / 64.0f));
-      nir_def *fixed =
-         nir_f2i32(b, nir_ffloor(b, nir_fmul_imm(b, clamped, 64.0f)));
-      packed = nir_ishl_imm(b, nir_iand_imm(b, fixed, 0xfff), 16);
-      b->fp_math_ctrl = fp_math_ctrl;
-   }
-   nir_src_rewrite(&tex->src[source].src, packed);
-   tex->src[source].src_type = nir_tex_src_backend1;
-   return true;
-}
-
-bool
-agx_nir_lower_apple9_texture_lod(nir_shader *shader)
-{
-   return nir_shader_instructions_pass(shader, lower_texture_lod,
-                                       nir_metadata_control_flow, NULL);
-}
-
 /* A texel offset is applied separately at each selected mip level, before
  * wrapping and filtering. Express that contract with ordinary NIR fetches;
  * the backend supplies its private nearest sampler for those fetches. */
@@ -93,7 +43,7 @@ descriptor_word(nir_builder *b, nir_def *handle, unsigned offset)
       .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
 }
 
-nir_def *
+static nir_def *
 agx_apple9_texture_info(nir_builder *b, const nir_tex_instr *tex,
                         unsigned field)
 {
@@ -155,7 +105,6 @@ compare_depth(nir_builder *b, nir_def *ref, nir_def *depth, unsigned func)
 
 struct offset_sample {
    nir_tex_instr *tex;
-   const struct agx_apple9_sampler_key *state;
    unsigned dims;
    nir_def *coord, *offset, *comparator, *layer;
    nir_def *base_size[3];
@@ -316,9 +265,6 @@ fetch(nir_builder *b, const struct offset_sample *s, nir_def *coord,
       &txf->def);
    if (!s->tex->is_shadow)
       return value;
-   if (s->state)
-      return compare_depth(b, s->comparator, nir_channel(b, value, 0),
-                           s->state->compare_func);
    nir_def *result = nir_imm_float(b, 0);
    for (unsigned f = PIPE_FUNC_NEVER; f <= PIPE_FUNC_ALWAYS; ++f)
       result = nir_bcsel(
@@ -350,8 +296,7 @@ filter_level(nir_builder *b, const struct offset_sample *s, nir_def *lod,
       nir_def *border = nir_imm_false(b);
       for (unsigned c = 0; c < s->dims; ++c) {
          nir_def *i = nir_iadd_imm(b, base[c], (tap >> c) & 1);
-         coord[c] = s->state ? wrap_texel(b, i, size[c], s->state->wrap[c])
-                             : wrap_dynamic(b, i, size[c], s->wrap[c]);
+         coord[c] = wrap_dynamic(b, i, size[c], s->wrap[c]);
          border = nir_ior(
             b, border,
             nir_iand(b,
@@ -394,21 +339,9 @@ static nir_def *
 first_level(nir_builder *b, const struct offset_sample *s, nir_def *lod,
             nir_def *lambda)
 {
-   if (!s->state) {
-      nir_def *filter =
-         nir_bcsel(b, nir_fge(b, nir_imm_float(b, 0), lambda), s->mag, s->min);
-      return filter_dynamic(b, s, lod, filter);
-   }
-   bool min = s->state->min_filter == PIPE_TEX_FILTER_LINEAR;
-   bool mag = s->state->mag_filter == PIPE_TEX_FILTER_LINEAR;
-   if (min == mag)
-      return filter_level(b, s, lod, min);
-   nir_push_if(b, nir_fge(b, nir_imm_float(b, 0), lambda));
-   nir_def *magnified = filter_level(b, s, lod, mag);
-   nir_push_else(b, NULL);
-   nir_def *minified = filter_level(b, s, lod, min);
-   nir_pop_if(b, NULL);
-   return nir_if_phi(b, magnified, minified);
+   nir_def *filter =
+      nir_bcsel(b, nir_fge(b, nir_imm_float(b, 0), lambda), s->mag, s->min);
+   return filter_dynamic(b, s, lod, filter);
 }
 
 /* textureGather returns one component of each texel in the level-zero 2x2
@@ -436,9 +369,7 @@ gather(nir_builder *b, const struct offset_sample *s)
       nir_def *border = nir_imm_false(b);
       for (unsigned c = 0; c < 2; ++c) {
          nir_def *i = nir_iadd_imm(b, base[c], taps[tap][c]);
-         coord[c] = s->state
-                       ? wrap_texel(b, i, s->base_size[c], s->state->wrap[c])
-                       : wrap_dynamic(b, i, s->base_size[c], s->wrap[c]);
+         coord[c] = wrap_dynamic(b, i, s->base_size[c], s->wrap[c]);
          border = nir_ior(
             b, border,
             nir_iand(b,
@@ -561,7 +492,7 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
    return &nt->def;
 }
 
-bool
+static bool
 agx_apple9_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
 {
    int offset = nir_tex_instr_src_index(tex, nir_tex_src_offset);
@@ -597,9 +528,7 @@ agx_apple9_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
 
 /* With bias_applied, the sampler LOD bias is already in the LOD or bias */
 static bool
-lower_texture_offsets(nir_shader *nir,
-                      const struct agx_apple9_sampler_key key[32],
-                      bool bias_applied, const char **reason)
+lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
 {
    agx_nir_legalize_apple9_texture_sources(nir);
    nir_function_impl *impl = nir_shader_get_entrypoint(nir);
@@ -632,36 +561,15 @@ lower_texture_offsets(nir_shader *nir,
                "Apple9 software sampling requires a bound 2D, array, or 3D texture";
             return false;
          }
-         /* Static wraps are specialized only for the modes the software
-          * filter evaluates without border colours. Others read the runtime
-          * sampler state, whose border path covers every preset and custom
-          * colour. */
-         const struct agx_apple9_sampler_key *state =
-            key ? &key[tex->sampler_index] : NULL;
          unsigned dims = tex->sampler_dim == GLSL_SAMPLER_DIM_3D ? 3 : 2;
-         for (unsigned c = 0; state && c < dims; ++c) {
-            unsigned wrap = state->wrap[c];
-            if (wrap != PIPE_TEX_WRAP_REPEAT &&
-                wrap != PIPE_TEX_WRAP_MIRROR_REPEAT &&
-                wrap != PIPE_TEX_WRAP_CLAMP_TO_EDGE)
-               state = NULL;
-         }
          struct offset_sample s = {
             .tex = tex,
-            .state = state,
             .dims = dims,
             .coord =
                tex->src[nir_tex_instr_src_index(tex, nir_tex_src_coord)].src.ssa,
             .offset = offset >= 0 ? tex->src[offset].src.ssa : NULL};
          b.cursor = nir_before_instr(instr);
-         if (s.state) {
-            for (unsigned c = 0; c < s.dims; ++c)
-               s.wrap[c] = nir_imm_int(&b, s.state->wrap[c]);
-            s.min_lod = nir_imm_float(&b, s.state->min_lod);
-            s.max_lod = nir_imm_float(&b, s.state->max_lod);
-            s.bias = nir_imm_float(&b, bias_applied ? 0 : s.state->lod_bias);
-            s.border = nir_imm_ivec4(&b, 0, 0, 0, 0);
-         } else {
+         {
             for (unsigned c = 0; c < s.dims; ++c)
                s.wrap[c] =
                   agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_WRAP_S + c);
@@ -746,25 +654,11 @@ lower_texture_offsets(nir_shader *nir,
                &b, nir_f2i32(&b, nir_fceil(&b, nir_fadd_imm(&b, level, 0.5))),
                -1),
             nir_imm_int(&b, 0));
-         nir_def *lod =
-            !s.state
-               ? nir_bcsel(
-                    &b, nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_NONE),
-                    nir_imm_int(&b, 0),
-                    nir_bcsel(
-                       &b, nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_NEAREST),
-                       nearest_lod, nir_f2i32(&b, nir_ffloor(&b, level))))
-            : s.state->mip_filter == PIPE_TEX_MIPFILTER_NONE
-               ? nir_imm_int(&b, 0)
-            : s.state->mip_filter == PIPE_TEX_MIPFILTER_NEAREST
-               ? nir_imax(&b,
-                          nir_iadd_imm(
-                             &b,
-                             nir_f2i32(&b, nir_fceil(&b, nir_fadd_imm(&b, level,
-                                                                      0.5))),
-                             -1),
-                          nir_imm_int(&b, 0))
-               : nir_f2i32(&b, nir_ffloor(&b, level));
+         nir_def *lod = nir_bcsel(
+            &b, nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_NONE),
+            nir_imm_int(&b, 0),
+            nir_bcsel(&b, nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_NEAREST),
+                      nearest_lod, nir_f2i32(&b, nir_ffloor(&b, level))));
          bool floating = tex->is_shadow || nir_alu_type_get_base_type(
                                               tex->dest_type) == nir_type_float;
          /* Runtime sampler state: let the hardware filter each level when
@@ -774,9 +668,8 @@ lower_texture_offsets(nir_shader *nir,
           * selects the magnification filter), or the sampler's LOD clamp
           * would move the explicit LOD off the integer level.
           */
-         nir_def *native = NULL;
-         nir_def *fast = NULL;
-         if (!s.state) {
+         nir_def *native, *fast;
+         {
             nir_def *next = nir_imin(&b, nir_iadd_imm(&b, lod, 1), last);
             nir_def *linear = nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_LINEAR);
             fast = nir_iand(
@@ -800,24 +693,16 @@ lower_texture_offsets(nir_shader *nir,
             nir_push_else(&b, NULL);
          }
          nir_def *value = first_level(&b, &s, lod, lambda);
-         if (!s.state && floating) {
+         if (floating) {
             nir_push_if(&b, nir_ieq_imm(&b, s.mip, PIPE_TEX_MIPFILTER_LINEAR));
             nir_def *next = nir_imin(&b, nir_iadd_imm(&b, lod, 1), last);
             nir_def *second = filter_dynamic(&b, &s, next, s.min);
             nir_def *mixed = nir_flrp(&b, value, second, nir_ffract(&b, level));
             nir_pop_if(&b, NULL);
             value = nir_if_phi(&b, mixed, value);
-         } else if (s.state &&
-                    s.state->mip_filter == PIPE_TEX_MIPFILTER_LINEAR) {
-            nir_def *next = nir_imin(&b, nir_iadd_imm(&b, lod, 1), last);
-            nir_def *second = filter_level(
-               &b, &s, next, s.state->min_filter == PIPE_TEX_FILTER_LINEAR);
-            value = nir_flrp(&b, value, second, nir_ffract(&b, level));
          }
-         if (fast) {
-            nir_pop_if(&b, NULL);
-            value = nir_if_phi(&b, native, value);
-         }
+         nir_pop_if(&b, NULL);
+         value = nir_if_phi(&b, native, value);
          nir_def_rewrite_uses(&tex->def, value);
          nir_instr_remove(instr);
          progress = true;
@@ -828,14 +713,6 @@ lower_texture_offsets(nir_shader *nir,
    return true;
 }
 
-bool
-agx_nir_lower_apple9_texture_offsets(nir_shader *nir,
-                                     const struct agx_apple9_sampler_key key[32],
-                                     const char **reason)
-{
-   return lower_texture_offsets(nir, key, false, reason);
-}
-
 /* Runs after agx_nir_lower_texture, which applied the sampler LOD bias */
 bool
 agx_nir_lower_apple9_sampler_state_runtime(nir_shader *nir)
@@ -844,18 +721,7 @@ agx_nir_lower_apple9_sampler_state_runtime(nir_shader *nir)
    agx_nir_legalize_apple9_texture_sources(nir);
    bool progress = nir_shader_tex_pass(nir, normalize_runtime_coordinates,
                                        nir_metadata_control_flow, NULL);
-   progress |= lower_texture_offsets(nir, NULL, true, &reason);
+   progress |= lower_texture_offsets(nir, true, &reason);
    assert(reason == NULL && "offsets on cube maps or buffers are invalid");
    return progress;
-}
-
-/* Vulkan samplers are mutable descriptor contents, available at recording time.
- * Gallium continues to specialize the same filtering implementation with keys. */
-bool
-agx_nir_lower_apple9_runtime_sampler_state(nir_shader *nir, const char **reason)
-{
-   agx_nir_legalize_apple9_texture_sources(nir);
-   nir_shader_tex_pass(nir, normalize_runtime_coordinates,
-                       nir_metadata_control_flow, NULL);
-   return agx_nir_lower_apple9_texture_offsets(nir, NULL, reason);
 }

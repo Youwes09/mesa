@@ -118,9 +118,7 @@ create_dag(agx_context *ctx, agx_block *block, void *memctx,
       }
 
       /* Classify the instruction and add dependencies according to the class */
-      enum agx_schedule_class dep = ctx->schedule_class
-                                       ? ctx->schedule_class(I)
-                                       : agx_opcodes_info[I->op].schedule_class;
+      enum agx_schedule_class dep = agx_opcodes_info[I->op].schedule_class;
       assert(dep != AGX_SCHEDULE_CLASS_INVALID && "invalid instruction seen");
 
       bool barrier = dep == AGX_SCHEDULE_CLASS_BARRIER;

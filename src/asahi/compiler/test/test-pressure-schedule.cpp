@@ -28,7 +28,7 @@ class ResourceSchedule : public testing::Test {
                    agx_index source = agx_null(), bool dest = false)
    {
       agx_instr *I =
-         agx_alloc_instr(b, AGX_OPCODE_APPLE9, dest, !agx_is_null(source));
+         agx_alloc_instr(b, AGX_OPCODE_UNIT_TEST, dest, !agx_is_null(source));
       I->imm = read | (write << 8) | (delay << 16);
       if (dest)
          I->dest[0] = agx_temp(b->shader, AGX_SIZE_32);

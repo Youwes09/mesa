@@ -5,10 +5,6 @@
 libasahi_agx_files = files(
   'agx_compile.c',
   'agx_apple9_machine.c',
-  'agx_apple9_ir.c',
-  'agx_apple9_opt.c',
-  'agx_apple9_ra.c',
-  'agx_compile_apple9.c',
   'agx_apple9_storage.c',
   'agx_nir_lower_apple9_images.c',
   'agx_nir_lower_apple9_texture.c',
@@ -120,23 +116,12 @@ libasahi_compiler = static_library(
 )
 
 if with_tests
-  apple9_ra_budget_test = executable('apple9-ra-budget',
-    'test/apple9-ra-budget.c',
-    c_args : [c_msvc_compat_args, no_override_init_args],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_nir, idep_mesautil],
-    link_with : [libasahi_compiler],
-  )
-  test('apple9-ra-budget', apple9_ra_budget_test, suite : ['asahi'])
   test(
     'agx_tests',
     executable(
       'agx_tests',
       files(
          'test/test-compact-constants.cpp',
-         'test/test-apple9.cpp',
-         'test/test-apple9-opt.cpp',
-         'test/test-apple9-shared-ra.cpp',
          'test/test-pressure-schedule.cpp',
          'test/test-register-allocate.cpp',
          'test/test-minifloat.cpp',
