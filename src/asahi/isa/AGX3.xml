@@ -1963,7 +1963,7 @@
     <operand role="src1" max="95" flags="allocatable,scattered"/>
   </form>
 
-  <form name="logic_uniform" length="10" encoding="bitop" dependency="mask_45_47_61_63">
+  <form name="logic_uniform" length="10" encoding="bitop" dependency="mask_45_47_61_63" packed="false">
     <operand role="dest" max="95" flags="allocatable,scattered"/>
     <operand role="src0" max="95" flags="allocatable,scattered"/>
   </form>
@@ -2024,7 +2024,7 @@
     <operand role="src1" files="gpr,uniform,immediate" max="95" uniform_max="255"/>
   </form>
 
-  <form name="predicate_compare_loop" length="10" encoding="fcmp_pred_ext|icmp_pred_ext" dependency="index_61_63">
+  <form name="predicate_compare_loop" length="10" encoding="fcmp_pred_ext|icmp_pred_ext" dependency="index_61_63" packed="false">
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
   </form>
@@ -2061,14 +2061,14 @@
     <operand role="src1" max="95"/>
   </form>
 
-  <form name="block_store_params" length="30" encoding="bitop_export*3">
+  <form name="block_store_params" length="30" encoding="bitop_export*3" packed="false">
     <operand role="dest" max="15" align="8"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
     <operand role="src2" max="95"/>
   </form>
 
-  <form name="block_store_extended_params" length="40" encoding="bitop_export*4">
+  <form name="block_store_extended_params" length="40" encoding="bitop_export*4" packed="false">
     <operand role="dest" max="15" align="8"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
@@ -2076,7 +2076,7 @@
     <operand role="src3" max="95"/>
   </form>
 
-  <form name="image_write_params" length="80" encoding="bitop_export*8">
+  <form name="image_write_params" length="80" encoding="bitop_export*8" packed="false">
     <operand role="dest" max="24" align="16"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
@@ -2114,21 +2114,21 @@
     <operand role="src3" max="15"/>
   </form>
 
-  <form name="texture_coords" length="16" encoding="fmul_export*2">
+  <form name="texture_coords" length="16" encoding="fmul_export*2" packed="false">
     <operand role="dest" max="31" align="4"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
     <operand role="src2" max="95"/>
   </form>
 
-  <form name="texture_lod_params" length="30" encoding="bitop_export*3">
+  <form name="texture_lod_params" length="30" encoding="bitop_export*3" packed="false">
     <operand role="dest" max="31" align="8"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
     <operand role="src2" max="95"/>
   </form>
 
-  <form name="texture_volume_params" length="40" encoding="bitop_export*4">
+  <form name="texture_volume_params" length="40" encoding="bitop_export*4" packed="false">
     <operand role="dest" max="31" align="8"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
@@ -2152,7 +2152,7 @@
     <operand role="src3" max="31"/>
   </form>
 
-  <form name="texture_grad_params" length="60" encoding="bitop_export*6">
+  <form name="texture_grad_params" length="60" encoding="bitop_export*6" packed="false">
     <operand role="dest" max="31" align="8"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
@@ -2162,7 +2162,7 @@
     <operand role="src5" max="95"/>
   </form>
 
-  <form name="texture_grad_array_params" length="80" encoding="bitop_export*8" evidence="byte_diff">
+  <form name="texture_grad_array_params" length="80" encoding="bitop_export*8" evidence="byte_diff" packed="false">
     <operand role="dest" max="31" align="8" evidence="byte_diff"/>
     <operand role="src0" max="95" evidence="byte_diff"/>
     <operand role="src1" max="95" evidence="byte_diff"/>
@@ -2174,7 +2174,7 @@
     <operand role="src7" max="95" evidence="byte_diff"/>
   </form>
 
-  <form name="texture_grad_volume_params" length="90" encoding="bitop_export*9" evidence="byte_diff">
+  <form name="texture_grad_volume_params" length="90" encoding="bitop_export*9" evidence="byte_diff" packed="false">
     <operand role="dest" max="31" align="8" evidence="byte_diff"/>
     <operand role="src0" max="95" evidence="byte_diff"/>
     <operand role="src1" max="95" evidence="byte_diff"/>
