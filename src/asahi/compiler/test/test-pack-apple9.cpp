@@ -891,11 +891,11 @@ TEST_F(Apple9Pack, FloatExport)
    /* The wait (bits 45-47, 61-63) is independent of the completion slot */
    for (unsigned input = 0; input <= 6; ++input) {
       wait(I, input);
-      I->scoreboard = 6 - input;
+      I->scoreboard = 5 - input % 6;
       std::vector<uint8_t> p = pack(I);
       EXPECT_EQ((p[5] >> 5) | ((p[7] >> 5) << 3),
                 input ? 1u << (input - 1) : 0u);
-      EXPECT_EQ((p[7] >> 2) & 7, 6u - input);
+      EXPECT_EQ((p[7] >> 2) & 7, 5u - input % 6);
    }
 }
 

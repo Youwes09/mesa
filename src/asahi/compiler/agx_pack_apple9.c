@@ -147,6 +147,14 @@ hw_slot(unsigned slot)
    return slot + 1;
 }
 
+/* Completion slot fields take IR slots 0-5 (hardware slots 1-6) */
+static unsigned
+completion_slot(const agx_instr *I)
+{
+   pack_assert(I, I->scoreboard < 6);
+   return I->scoreboard;
+}
+
 /* Inline float constants are eeeemmm1; exponents below 8 name a uniform */
 static bool
 encode_minifloat(uint32_t bits, uint8_t *encoded)
@@ -428,7 +436,7 @@ pack_float2_export(const agx_instr *I, struct a9_packed *p)
    pack_compact_retain(bytes, retain(a), retain(b));
    pack_compact_registers(bytes, export_word(I, I->dest[0]), gpr(I, a),
                           gpr(I, b));
-   set_bits(bytes, 58, 3, I->scoreboard);
+   set_bits(bytes, 58, 3, completion_slot(I));
    a9_init(p, AGX_APPLE9_ENC_FLOAT2_EXPORT, bytes, 8);
 }
 
@@ -1589,7 +1597,7 @@ pack_logic(const agx_instr *I, struct a9_packed *p)
    if (to_export) {
       bytes[4] |= 0x40;
       set_bits(bytes, 21, 1, 1);
-      set_bits(bytes, 58, 3, I->scoreboard);
+      set_bits(bytes, 58, 3, completion_slot(I));
    }
 
    if (is_uniform(a))
@@ -1647,7 +1655,7 @@ pack_publication_pair(const agx_instr *I, struct a9_packed *p)
       pack_compact_registers(m, word + c, gpr(I, src), gpr(I, src));
       m[4] |= 0x40;
       set_bits(m, 21, 1, 1);
-      set_bits(m, 58, 3, I->scoreboard);
+      set_bits(m, 58, 3, completion_slot(I));
 
       set_bits(m, 25, 6, 0);
       set_bits(m, 42, 1, 0);
@@ -1865,7 +1873,7 @@ pack_device_load(const agx_instr *I, const struct a9_state *st,
 
    static const uint8_t width_bits[] = {0x00, 0x08, 0x0c, 0x06};
    static const uint8_t width_tail[] = {0x46, 0x48, 0x40, 0x40};
-   uint16_t token = load_slot_token[I->scoreboard];
+   uint16_t token = load_slot_token[completion_slot(I)];
    bytes[8] = (token >> 8) | width_bits[components - 1];
    bytes[9] = token & 0xff;
    bytes[12] = width_tail[components - 1];
@@ -2042,7 +2050,7 @@ pack_device_atomic(const agx_instr *I, struct a9_packed *p)
 
    if (returning) {
       unsigned dst = gpr(I, I->dest[0]);
-      unsigned slot = hw_slot(I->scoreboard);
+      unsigned slot = hw_slot(completion_slot(I));
       const uint8_t result[8] = {
          ((dst & 0x0f) << 4) | 0x0c,
          0x80,
@@ -2153,7 +2161,7 @@ pack_stack(const agx_instr *I, struct a9_packed *p)
 {
    bool load = I->op == AGX_OPCODE_STACK_LOAD;
    agx_index offset = I->src[load ? 0 : 1];
-   unsigned slot = I->scoreboard;
+   unsigned slot = completion_slot(I);
 
    pack_assert(I, I->format == AGX_FORMAT_I32 && I->mask == 1);
 
@@ -2828,7 +2836,7 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
       0x0c | (((dst >> 5) & 1) << 6),
       0xb8 | (coord >> 3),
       0xb0 | (smp >> 1),
-      (I->scoreboard << 2) | (I->scoreboard << 5),
+      (completion_slot(I) << 2) | (completion_slot(I) << 5),
       mode & 0xff,
       mode >> 8,
       texture_hi,
@@ -3131,7 +3139,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       uint8_t mask_byte = mask.value;
 
       if (load) {
-         unsigned tag = 0x4e | (I->scoreboard << 7);
+         unsigned tag = 0x4e | (completion_slot(I) << 7);
          const uint8_t bytes[12] = {
             0x67,
             coords    ? 0x16
@@ -3228,7 +3236,7 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
 
       const uint8_t bytes[6] = {0x1f,          0x03,
                                 0x54,          dst | ((cf.value & 1) << 7),
-                                cf.value >> 1, I->scoreboard};
+                                cf.value >> 1, completion_slot(I)};
       a9_init(p, AGX_APPLE9_ENC_ITER_FLAT, bytes, 6);
       return;
    }
