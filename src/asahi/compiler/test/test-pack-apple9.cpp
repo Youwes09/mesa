@@ -1723,6 +1723,56 @@ TEST_F(Apple9Pack, GraphicsSystemRegisters)
    check(I, {0x2c, 0xc3, 0x10, 0x06});
 }
 
+/* Source modifiers and saturation select the longer ALU forms */
+TEST_F(Apple9Pack, ModifierForms)
+{
+   agx_instr *I = agx_fadd_to(b, r(4), agx_abs(k(r(2))), r(3));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED);
+   check(I, {0x49, 0x05, 0x2c, 0x87, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00});
+
+   I = agx_fmul_to(b, r(4), r(2), agx_abs(k(r(3))));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_MUL_ABS_EXTENDED);
+   check(I, {0x49, 0x85, 0x35, 0x07, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
+             0x00, 0x00});
+
+   I = agx_fadd_to(b, r(4), agx_neg(k(r(2))), k(r(3)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED);
+   check(I, {0x49, 0x05, 0x3c, 0x07, 0x01, 0x00, 0x02, 0x00});
+
+   I = agx_fmul_to(b, r(4), k(r(2)), f(0.5));
+   I->saturate = true;
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_EXTENDED);
+   check(I, {0x49, 0xa1, 0x35, 0x05, 0x81, 0x00, 0x00, 0x02});
+
+   I = agx_ffma_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED);
+   check(I, {0x49, 0x05, 0x3e, 0x07, 0x83, 0x0a, 0x02, 0x00, 0x00, 0x00,
+             0x01, 0x00});
+
+   I = agx_ffma_to(b, r(4), k(r(2)), k(r(3)), k(r(5)));
+   I->saturate = true;
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED);
+   check(I, {0x49, 0x05, 0x3e, 0x07, 0x82, 0x0a, 0x02, 0x00, 0x00, 0x02});
+
+   I = agx_fcmpsel_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)), k(r(6)),
+                      AGX_FCOND_LT);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED);
+   check(I, {0x42, 0x05, 0x1f, 0x07, 0x83, 0x0a, 0x03, 0x00, 0x80, 0x0c,
+             0x00, 0x00, 0x01, 0x00});
+
+   I = agx_floor_to(b, r(4), u(9));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM);
+   check(I, {0x2f, 0x00, 0x54, 0x08, 0x03, 0x24, 0xb0, 0x00, 0x02, 0x00});
+
+   I = agx_asr_to(b, r(12), k(r(13)), k(r(14)));
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_SHIFT_ARITH_REGISTER);
+   check(I, {0xa7, 0x01, 0x54, 0x18, 0x02, 0x34, 0x70, 0xd8, 0xe2, 0x00});
+
+   I = agx_get_sr_to(b, r(7), AGX_SR_COVERAGE_MASK);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_COVERAGE);
+   check(I, {0x7c, 0xc2, 0x10, 0x06});
+}
+
 /* Normalized unpacking and packing */
 TEST_F(Apple9Pack, NormalizedPacking)
 {
