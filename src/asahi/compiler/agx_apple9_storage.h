@@ -142,7 +142,8 @@ struct nir_builder;
 struct nir_def;
 
 /* table_indices: descriptors hold texture_index rather than a texture entry */
-bool agx_nir_lower_apple9_storage(struct nir_shader *nir, bool table_indices);
+bool agx_nir_lower_apple9_storage(struct nir_shader *nir, bool table_indices,
+                                  bool reinterpret);
 bool agx_nir_lower_apple9_sparse_residency(struct nir_shader *nir);
 bool agx_nir_lower_apple9_texel_buffers(struct nir_shader *nir);
 

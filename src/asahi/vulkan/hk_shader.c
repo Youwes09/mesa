@@ -1786,7 +1786,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    }
 
    if (agx_is_apple9(&dev->dev)) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_storage, false);
+      NIR_PASS(_, nir, agx_nir_lower_apple9_storage, false, false);
       NIR_PASS(_, nir, agx_nir_lower_images);
       /* Storage-image queries read the descriptor, sampled ones metadata */
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
