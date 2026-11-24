@@ -83,4 +83,19 @@ if with_tests
             files('AGX3.xml')],
     suite : ['asahi']
   )
+
+  test(
+    'apple9_machine',
+    prog_python,
+    args : [files('test-apple9-machine.py', 'AGX3.xml'),
+            executable(
+              'apple9_machine_dump',
+              files('test/apple9-machine-dump.c',
+                    '../compiler/agx_apple9_machine.c'),
+              include_directories : [inc_include, inc_src],
+              gnu_symbol_visibility : 'hidden',
+            ),
+            files('test/apple9-forms.txt')],
+    suite : ['asahi']
+  )
 endif
