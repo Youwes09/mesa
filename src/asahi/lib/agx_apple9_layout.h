@@ -42,12 +42,8 @@
    (AGX_APPLE9_TEXTURE_INFO_OFFSET + 32 * AGX_APPLE9_TEXTURE_INFO_STRIDE)
 #define AGX_APPLE9_FIRST_FAN_OFFSET       (AGX_APPLE9_POINT_SIZE_OFFSET + 4)
 #define AGX_APPLE9_POLYGON_STIPPLE_OFFSET (AGX_APPLE9_POINT_SIZE_OFFSET + 16)
-/* Line stipple word, then the viewport 0 scale and offset as vec3s */
-#define AGX_APPLE9_LINE_STIPPLE_OFFSET                                         \
+#define AGX_APPLE9_GRAPHICS_SYSVAL_SIZE                                        \
    (AGX_APPLE9_POLYGON_STIPPLE_OFFSET + 32 * 4)
-#define AGX_APPLE9_VIEWPORT_SCALE_OFFSET  (AGX_APPLE9_LINE_STIPPLE_OFFSET + 16)
-#define AGX_APPLE9_VIEWPORT_OFFSET_OFFSET (AGX_APPLE9_LINE_STIPPLE_OFFSET + 32)
-#define AGX_APPLE9_GRAPHICS_SYSVAL_SIZE   (AGX_APPLE9_LINE_STIPPLE_OFFSET + 48)
 
 /* Optional per-dispatch sampler state for APIs with mutable samplers */
 #define AGX_APPLE9_RUNTIME_SAMPLER_OFFSET AGX_APPLE9_GRAPHICS_SYSVAL_SIZE
@@ -87,13 +83,9 @@ enum agx_apple9_sampler_field {
 /* Packed sample positions, in the PPP multisample control format */
 #define AGX_APPLE9_SAMPLE_POSITIONS_OFFSET                                     \
    (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 8)
-/* Per-viewport line stipple transform, vec4 (scale.xy, offset.xy) each */
-#define AGX_APPLE9_VIEWPORT_TABLE_OFFSET                                       \
-   (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 16)
-#define AGX_APPLE9_VIEWPORT_TABLE_COUNT 16
 /* Software polygon point state (struct agx_apple9_polygon_point_params) */
 #define AGX_APPLE9_POLYGON_POINT_OFFSET                                        \
-   (AGX_APPLE9_VIEWPORT_TABLE_OFFSET + AGX_APPLE9_VIEWPORT_TABLE_COUNT * 16)
+   (AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 16)
 #define AGX_APPLE9_RUNTIME_SYSVAL_SIZE (AGX_APPLE9_POLYGON_POINT_OFFSET + 32)
 
 enum agx_apple9_polygon_point_flags {

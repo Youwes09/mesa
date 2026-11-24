@@ -1630,13 +1630,6 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       struct asahi_fs_shader_key *key = &key_->fs;
 
-      /* Stipple divides by the factor after agx_preprocess_nir lowered idiv */
-      if (key->line_stipple) {
-         NIR_PASS(_, nir, agx_nir_lower_line_stipple_fs);
-         NIR_PASS(_, nir, nir_lower_idiv,
-                  &(nir_lower_idiv_options){.allow_fp16 = true});
-      }
-
       /* Discards must be lowering before lowering MSAA to handle discards */
       NIR_PASS(_, nir, agx_nir_lower_discard_zs_emit);
       NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog, &epilog_key);
@@ -2621,13 +2614,6 @@ agx_update_fs(struct agx_batch *batch)
    /* Get main shader */
    struct asahi_fs_shader_key key = {0};
 
-   /* Line stipple tests the passthrough GS counter in the fragment shader */
-   struct agx_uncompiled_shader *gs = ctx->stage[MESA_SHADER_GEOMETRY].shader;
-   key.line_stipple =
-      rast_prim(batch->reduced_prim, ctx->rast->base.fill_front) ==
-         MESA_PRIM_LINES &&
-      gs && gs->is_line_stipple_passthrough;
-
    if (ctx->stage[MESA_SHADER_FRAGMENT].shader->info.uses_fbfetch) {
       key.nr_samples = nr_samples;
 
@@ -2836,11 +2822,9 @@ agx_delete_uncompiled_shader(struct agx_device *dev,
       for (unsigned j = 0; j < 3; ++j) {
          for (unsigned k = 0; k < 2; ++k) {
             for (unsigned l = 0; l < 2; ++l) {
-               for (unsigned m = 0; m < 3; ++m) {
-                  if (so->passthrough_progs[i][j][k][l][m])
-                     agx_delete_uncompiled_shader(
-                        dev, so->passthrough_progs[i][j][k][l][m]);
-               }
+               if (so->passthrough_progs[i][j][k][l])
+                  agx_delete_uncompiled_shader(
+                     dev, so->passthrough_progs[i][j][k][l]);
             }
          }
       }
@@ -5537,51 +5521,6 @@ agx_apple9_reads_generated_primitive_id(struct agx_context *ctx)
           (fs->info.inputs_read & VARYING_BIT_PRIMITIVE_ID);
 }
 
-static enum mesa_prim agx_tess_output_prim(struct agx_uncompiled_shader *tcs,
-                                           struct agx_uncompiled_shader *tes);
-
-/* GL line stipple is emulated on Apple9 with an internal passthrough GS and a
- * fragment shader variant, for line primitives without an application GS. */
-static bool
-agx_line_stipple(struct agx_context *ctx, enum mesa_prim mode)
-{
-   if (!agx_apple9_direct_render_enabled(agx_device(ctx->base.screen)) ||
-       !ctx->rast->base.line_stipple_enable ||
-       ctx->stage[MESA_SHADER_GEOMETRY].shader)
-      return false;
-
-   if (mode == MESA_PRIM_PATCHES) {
-      if (agx_tess_output_prim(ctx->stage[MESA_SHADER_TESS_CTRL].shader,
-                               ctx->stage[MESA_SHADER_TESS_EVAL].shader) !=
-          MESA_PRIM_LINES)
-         return false;
-   } else if (mode != MESA_PRIM_LINES && mode != MESA_PRIM_LINE_STRIP &&
-              mode != MESA_PRIM_LINE_LOOP) {
-      return false;
-   }
-
-   /* The emulation owns one varying slot. */
-   struct agx_uncompiled_shader *last =
-      ctx->stage[MESA_SHADER_TESS_EVAL].shader
-         ?: ctx->stage[MESA_SHADER_VERTEX].shader;
-   struct agx_uncompiled_shader *fs = ctx->stage[MESA_SHADER_FRAGMENT].shader;
-   uint64_t slot = BITFIELD64_BIT(AGX_LINE_STIPPLE_SLOT);
-   if ((last->info.outputs_written & slot) ||
-       (fs && (fs->info.inputs_read & slot))) {
-      perf_debug_ctx(ctx, "Line stipple ignored: varying slot in use");
-      return false;
-   }
-
-   /* It also needs one more vec4 of the producer's publications. */
-   if (util_bitcount64(last->info.outputs_written & ~VARYING_BIT_POS) >=
-       AGX_LINE_STIPPLE_MAX_USER_OUTPUTS) {
-      perf_debug_ctx(ctx, "Line stipple ignored: no free varying");
-      return false;
-   }
-
-   return true;
-}
-
 static bool
 agx_needs_passthrough_gs(struct agx_context *ctx,
                          const struct pipe_draw_info *info,
@@ -5621,11 +5560,6 @@ agx_needs_passthrough_gs(struct agx_context *ctx,
       return true;
    }
 
-   if (agx_line_stipple(ctx, info->mode)) {
-      perf_debug_ctx(ctx, "Using passthrough GS due to line stipple");
-      return true;
-   }
-
    /* Edge flags are emulated with a geometry shader */
    if (has_edgeflags(ctx, info->mode)) {
       perf_debug_ctx(ctx, "Using passthrough GS due to edge flags");
@@ -5662,42 +5596,13 @@ agx_tess_output_prim(struct agx_uncompiled_shader *tcs,
    }
 }
 
-/* Strip-continuous stipple sums the earlier segments of a strip in every
- * segment's GS invocation. Bound that work: longer strips restart the pattern
- * at each segment instead (the GS applies the same bound to indirect draws).
- */
-static bool
-agx_line_stipple_continuous(struct agx_context *ctx,
-                            const struct pipe_draw_info *info,
-                            const struct pipe_draw_indirect_info *indirect,
-                            const struct pipe_draw_start_count_bias *draws,
-                            unsigned num_draws)
-{
-   if (info->mode != MESA_PRIM_LINE_STRIP && info->mode != MESA_PRIM_LINE_LOOP)
-      return false;
-   if (indirect)
-      return true;
-   for (unsigned i = 0; i < num_draws; ++i) {
-      if (draws[i].count > AGX_LINE_STIPPLE_MAX_STRIP_SEGMENTS) {
-         perf_debug_ctx(ctx,
-                        "Line stipple restarts per segment: %u-vertex strip",
-                        draws[i].count);
-         return false;
-      }
-   }
-   return true;
-}
-
 static struct agx_uncompiled_shader *
 agx_get_passthrough_gs(struct agx_context *ctx,
                        struct agx_uncompiled_shader *prev_cso,
-                       enum mesa_prim mode, bool xfb_passthrough,
-                       bool continuous)
+                       enum mesa_prim mode, bool xfb_passthrough)
 {
    bool edgeflags = has_edgeflags(ctx, mode);
    bool primitive_id = agx_apple9_reads_generated_primitive_id(ctx);
-   /* 0: none, 1: counter restarts per segment, 2: continuous along strips */
-   unsigned stipple = agx_line_stipple(ctx, mode) ? (continuous ? 2 : 1) : 0;
 
    if (mode == MESA_PRIM_PATCHES) {
       mode = agx_tess_output_prim(ctx->stage[MESA_SHADER_TESS_CTRL].shader,
@@ -5713,10 +5618,9 @@ agx_get_passthrough_gs(struct agx_context *ctx,
    unsigned poly_mode =
       edgeflags ? ctx->rast->base.fill_front : PIPE_POLYGON_MODE_FILL;
 
-   if (prev_cso->passthrough_progs[mode][poly_mode][edgeflags][primitive_id]
-                                  [stipple])
+   if (prev_cso->passthrough_progs[mode][poly_mode][edgeflags][primitive_id])
       return prev_cso
-         ->passthrough_progs[mode][poly_mode][edgeflags][primitive_id][stipple];
+         ->passthrough_progs[mode][poly_mode][edgeflags][primitive_id];
 
    struct blob_reader reader;
    blob_reader_init(&reader, prev_cso->early_serialized_nir.data,
@@ -5731,15 +5635,9 @@ agx_get_passthrough_gs(struct agx_context *ctx,
 
    ralloc_free(prev);
 
-   if (stipple)
-      NIR_PASS(_, gs, agx_nir_lower_line_stipple_gs, stipple == 2);
-
    struct agx_uncompiled_shader *cso = pipe_shader_from_nir(&ctx->base, gs);
    cso->is_xfb_passthrough = xfb_passthrough;
-   cso->is_line_stipple_passthrough = stipple != 0;
-   prev_cso
-      ->passthrough_progs[mode][poly_mode][edgeflags][primitive_id][stipple] =
-      cso;
+   prev_cso->passthrough_progs[mode][poly_mode][edgeflags][primitive_id] = cso;
    return cso;
 }
 
@@ -5761,9 +5659,7 @@ agx_apply_passthrough_gs(struct agx_context *ctx,
    /* Draw with passthrough */
    ctx->base.bind_gs_state(
       &ctx->base,
-      agx_get_passthrough_gs(
-         ctx, prev_cso, info->mode, xfb_passthrough,
-         agx_line_stipple_continuous(ctx, info, indirect, draws, num_draws)));
+      agx_get_passthrough_gs(ctx, prev_cso, info->mode, xfb_passthrough));
    ctx->base.draw_vbo(&ctx->base, info, drawid_offset, indirect, draws,
                       num_draws);
    ctx->base.bind_gs_state(&ctx->base, NULL);
@@ -6521,20 +6417,6 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       return;
    }
 
-   /* A stippled strip's pattern restarts only at primitive restart. The GS
-    * path decomposes restart into independent lines, so split the draw into
-    * plain strips first. */
-   if (info->index_size && info->primitive_restart &&
-       (info->mode == MESA_PRIM_LINE_STRIP ||
-        info->mode == MESA_PRIM_LINE_LOOP) &&
-       agx_line_stipple(ctx, info->mode)) {
-      perf_debug_ctx(ctx, "Splitting stippled line strips at restart");
-      for (unsigned i = 0; i < num_draws; ++i)
-         util_draw_vbo_without_prim_restart(pctx, info, drawid_offset, indirect,
-                                            &draws[i]);
-      return;
-   }
-
    bool xfb_passthrough = false;
    if (agx_needs_passthrough_gs(ctx, info, indirect, &xfb_passthrough)) {
       agx_apply_passthrough_gs(ctx, info, drawid_offset, indirect, draws,
@@ -6718,16 +6600,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
          /* TODO: tri fans */
          batch->uniforms.provoking_vertex = !rs->flatshade_first ? 2 : 0;
-         batch->uniforms.line_stipple =
-            rs->line_stipple_pattern | ((rs->line_stipple_factor + 1) << 16);
       }
-
-      /* Line stipple uses viewport 0 only; a vertex-shader viewport index
-       * (ARB_shader_viewport_layer_array) is not applied to the counter. */
-      batch->uniforms.viewport_scale[0] = ctx->viewport[0].scale[0];
-      batch->uniforms.viewport_scale[1] = ctx->viewport[0].scale[1];
-      batch->uniforms.viewport_offset[0] = ctx->viewport[0].translate[0];
-      batch->uniforms.viewport_offset[1] = ctx->viewport[0].translate[1];
 
       if (IS_DIRTY(QUERY)) {
          for (unsigned i = 0; i < ARRAY_SIZE(ctx->pipeline_statistics); ++i) {

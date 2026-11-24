@@ -143,10 +143,6 @@ struct PACKED agx_draw_uniforms {
    /* glPointSize value */
    float fixed_point_size;
 
-   /* Viewport 0 transform, for line stipple lengths in geometry shaders */
-   float viewport_scale[2];
-   float viewport_offset[2];
-
    /* Value of the multisample control register, containing sample positions in
     * each byte (x in low nibble, y in high nibble).
     */
@@ -154,9 +150,6 @@ struct PACKED agx_draw_uniforms {
 
    /* gl_DrawID for a direct multidraw */
    uint32_t draw_id;
-
-   /* Line stipple pattern in the low half, factor in the high half */
-   uint32_t line_stipple;
 
    /* Sprite coord replacement mask */
    uint16_t sprite_mask;
@@ -308,7 +301,7 @@ struct agx_uncompiled_shader {
    } info;
 
    struct hash_table *variants;
-   struct agx_uncompiled_shader *passthrough_progs[MESA_PRIM_COUNT][3][2][2][3];
+   struct agx_uncompiled_shader *passthrough_progs[MESA_PRIM_COUNT][3][2][2];
    struct agx_uncompiled_shader *passthrough_tcs[32];
 
    /* agx_fast_link_key -> agx_linked_shader */
@@ -319,8 +312,6 @@ struct agx_uncompiled_shader {
    uint8_t xfb_buffers_written;
    bool has_xfb_info;
    bool is_xfb_passthrough;
-   /* Internal passthrough GS that also forwards line stipple state */
-   bool is_line_stipple_passthrough;
 
    enum mesa_prim gs_mode;
 
@@ -562,12 +553,9 @@ struct agx_vertex_elements {
 struct asahi_fs_shader_key {
    enum pipe_format rt_formats[PIPE_MAX_COLOR_BUFS];
    uint8_t nr_samples;
-
-   /* Test the line stipple counter of the passthrough geometry shader */
-   bool line_stipple;
-   bool padding[2];
+   bool padding[7];
 };
-static_assert(sizeof(struct asahi_fs_shader_key) == 36, "no holes");
+static_assert(sizeof(struct asahi_fs_shader_key) == 40, "no holes");
 
 /* Placeholder for the texture_base uniform until agx_nir_layout_uniforms */
 #define AGX_APPLE9_IMAGE_TABLE_UNIFORM 0xffff

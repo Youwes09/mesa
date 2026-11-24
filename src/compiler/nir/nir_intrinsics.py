@@ -2633,19 +2633,6 @@ intrinsic("sample_mask_agx", src_comp=[1, 1])
 intrinsic("load_polygon_stipple_agx", src_comp=[1], dest_comp=1, bit_sizes=[32],
           flags=[CAN_REORDER, CAN_ELIMINATE])
 
-# Line stipple state: pattern in bits 0..15, repeat factor (1..256) above.
-system_value("line_stipple_agx", 1)
-
-# Geometry shader input position of an arbitrary vertex of the current
-# instance's input stream (software input assembly), for strip-continuous
-# line stipple.
-intrinsic("load_strip_position_poly", src_comp=[1], dest_comp=4, bit_sizes=[32],
-          flags=[CAN_ELIMINATE, CAN_REORDER])
-
-# The same for any vertex shader output, named by its I/O semantics.
-intrinsic("load_strip_output_poly", src_comp=[1], dest_comp=0, bit_sizes=[32],
-          indices=[IO_SEMANTICS], flags=[CAN_ELIMINATE, CAN_REORDER])
-
 # The fixed-function sample mask specified in the API (e.g. glSampleMask)
 system_value("api_sample_mask_agx", 1, bit_sizes=[16])
 
