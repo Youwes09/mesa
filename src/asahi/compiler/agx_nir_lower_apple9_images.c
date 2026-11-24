@@ -10,9 +10,9 @@
 #include "util/format/u_format.h"
 #include "util/set.h"
 #include "agx_apple9_storage.h"
-#include "agx_compile_apple9.h"
 #include "agx_nir_texture.h"
 #include "libagx.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 /* Fetch through the view's linear 2D entry, but load RGB32 as three words */
 static bool

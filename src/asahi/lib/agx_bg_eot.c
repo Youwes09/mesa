@@ -4,7 +4,6 @@
  */
 
 #include "agx_bg_eot.h"
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
 #include "agx_compile.h"
@@ -18,6 +17,9 @@
 #include "nir_builder.h"
 #include "nir_serialize.h"
 #include "pool.h"
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 static bool
 lower_tex_handle_to_u0(nir_builder *b, nir_intrinsic_instr *intr, void *data)

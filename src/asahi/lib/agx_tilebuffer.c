@@ -5,9 +5,11 @@
 
 #include "agx_tilebuffer.h"
 #include <assert.h>
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "util/format/u_format.h"
 #include "layout.h"
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 /* Maximum number of bytes per tile on G13G. This may change in future versions
  * of the architecture.

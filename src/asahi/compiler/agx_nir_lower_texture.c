@@ -10,7 +10,6 @@
 #include "compiler/nir/nir_builder.h"
 #include "agx_apple9_storage.h"
 #include "agx_compile.h"
-#include "agx_compile_apple9.h"
 #include "agx_compiler.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
@@ -21,6 +20,7 @@
 #include "nir_intrinsics.h"
 #include "nir_intrinsics_indices.h"
 #include "shader_enums.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 /* Residency flags are inverted from NIR */
 #define AGX_RESIDENT (0)

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <stdbool.h>
+
 /* Texture backend flags */
 #define AGX_TEXTURE_FLAG_NO_CLAMP (1 << 0)
 
@@ -28,3 +30,27 @@
 #define AGX_TEXTURE_BUFFER_MAX_HEIGHT 16384
 #define AGX_TEXTURE_BUFFER_MAX_SIZE                                            \
    (AGX_TEXTURE_BUFFER_WIDTH * AGX_TEXTURE_BUFFER_MAX_HEIGHT)
+
+/* Apple9 backend texture flags, disjoint from the AGX_TEXTURE_FLAG_* bits */
+
+/* A seamful cube sample, of the faces as layers of the cube's 2D array alias */
+#define AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY (1 << 8)
+/* Texel fetch whose level, layer and sample are already bounded */
+#define AGX_APPLE9_TEXTURE_FETCH_BOUNDED (1 << 10)
+/* The final form has no offset encoding, so lower the offset in NIR */
+#define AGX_APPLE9_TEXTURE_OFFSET_FALLBACK (1 << 12)
+/* Explicit level from the offset lowering, already including the LOD bias */
+#define AGX_APPLE9_TEXTURE_BIASED_LEVEL (1 << 13)
+
+struct nir_builder;
+struct nir_def;
+struct nir_shader;
+struct nir_tex_instr;
+
+/* Runtime sampler record field (enum agx_apple9_sampler_field) of tex */
+struct nir_def *agx_apple9_sampler_field(struct nir_builder *b,
+                                         const struct nir_tex_instr *tex,
+                                         unsigned field);
+
+/* Unnormalized coordinates and offsets the instructions cannot encode */
+bool agx_nir_lower_apple9_sampler_state_runtime(struct nir_shader *nir);

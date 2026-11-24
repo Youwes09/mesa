@@ -6,8 +6,8 @@
 #include "asahi/lib/agx_apple9_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "agx_compile.h"
-#include "agx_compile_apple9.h"
 #include "agx_nir.h"
+#include "agx_nir_texture.h"
 
 /* Lower handles to USC aperture offsets, texture handles to table indices. Run
  * before the argument lowering, so set uniforms are numbered as on Apple8.

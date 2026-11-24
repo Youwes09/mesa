@@ -8,8 +8,9 @@
 #include "util/bitset.h"
 #include "util/set.h"
 #include "agx_apple9_machine.h"
-#include "agx_compile_apple9.h"
 #include "agx_nir.h"
+#include "agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 static bool
 apple9_const_operand(nir_scalar s, nir_op op, nir_scalar *value, uint32_t *c)

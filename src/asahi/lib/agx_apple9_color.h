@@ -179,4 +179,13 @@ agx_apple9_block_export_format(enum pipe_format format)
    }
 }
 
+/* RGB32 buffer views are three scalar texels in the physical descriptor */
+static inline bool
+agx_apple9_texture_is_rgb32(enum pipe_format format)
+{
+   return format == PIPE_FORMAT_R32G32B32_FLOAT ||
+          format == PIPE_FORMAT_R32G32B32_UINT ||
+          format == PIPE_FORMAT_R32G32B32_SINT;
+}
+
 #endif

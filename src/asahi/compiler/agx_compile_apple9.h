@@ -17,6 +17,7 @@
 #include "agx_apple9_profile.h"
 #include "agx_compile.h"
 #include "agx_nir.h"
+#include "agx_nir_texture.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -97,32 +98,7 @@ bool agx_compile_apple9_tiny(nir_shader *nir, struct agx_shader_part *out,
 bool agx_compile_apple9_fragment(nir_shader *nir, struct agx_shader_part *out,
                                  const char **reason);
 
-enum agx_apple9_sampler_field {
-   AGX_APPLE9_SAMP_WRAP_S,
-   AGX_APPLE9_SAMP_WRAP_T,
-   AGX_APPLE9_SAMP_WRAP_R,
-   AGX_APPLE9_SAMP_MIN,
-   AGX_APPLE9_SAMP_MAG,
-   AGX_APPLE9_SAMP_MIP,
-   AGX_APPLE9_SAMP_COMPARE,
-   AGX_APPLE9_SAMP_MIN_LOD,
-   AGX_APPLE9_SAMP_MAX_LOD,
-   AGX_APPLE9_SAMP_BIAS,
-   AGX_APPLE9_SAMP_BORDER,
-   AGX_APPLE9_SAMP_PIXEL_COORDS,
-   AGX_APPLE9_SAMP_MAX_ANISOTROPY,
-   /* Nonzero if cube maps are sampled without filtering across faces */
-   AGX_APPLE9_SAMP_SEAMFUL_CUBE,
-};
 
-/* RGB32 buffer views use three scalar texels in the physical descriptor. */
-static inline bool
-agx_apple9_texture_is_rgb32(enum pipe_format format)
-{
-   return format == PIPE_FORMAT_R32G32B32_FLOAT ||
-          format == PIPE_FORMAT_R32G32B32_UINT ||
-          format == PIPE_FORMAT_R32G32B32_SINT;
-}
 
 /* Standard independent RGB/alpha blending, plus the RGBA write mask. */
 struct agx_apple9_blend {
@@ -198,14 +174,10 @@ struct nir_tex_instr;
 struct nir_def *agx_apple9_texture_info(struct nir_builder *b,
                                         const struct nir_tex_instr *tex,
                                         unsigned field);
-struct nir_def *agx_apple9_sampler_field(struct nir_builder *b,
-                                         const struct nir_tex_instr *tex,
-                                         unsigned field);
 bool agx_nir_lower_apple9_runtime_sampler_state(nir_shader *nir,
                                                 const char **reason);
 /* A NULL key reads the runtime sampler metadata; otherwise specialize to key. */
 
-bool agx_nir_lower_apple9_sampler_state_runtime(nir_shader *nir);
 
 bool agx_nir_lower_apple9_texture_offsets(
    nir_shader *nir, const struct agx_apple9_sampler_key key[32],
@@ -225,22 +197,10 @@ struct agx_apple9_texture_mapping {
  * offset sample has no sampler index yet. */
 uint32_t agx_nir_apple9_offset_samplers(const nir_shader *nir);
 
-/* Apple9 backend texture flags. They share nir_tex_instr::backend_flags with
- * the AGX_TEXTURE_FLAG_* bits in agx_nir_texture.h, so keep them disjoint. */
-#define AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY (1 << 8)
+
+/* Old-compiler texture flags */
 #define AGX_APPLE9_TEXTURE_LOD_QUERY     (1 << 9)
-/* Texel fetch whose level, layer and sample are already bounded. */
-#define AGX_APPLE9_TEXTURE_FETCH_BOUNDED (1 << 10)
-/* Handle sources hold native table indices rather than descriptor offsets. */
 #define AGX_APPLE9_TEXTURE_HANDLE_INDEX (1 << 11)
-/* The sample's final form has no measured offset encoding: lower its texel
- * offset in NIR instead of encoding it. */
-#define AGX_APPLE9_TEXTURE_OFFSET_FALLBACK (1 << 12)
-/* Explicit-level sample from the offset lowering, whose level already
- * includes the sampler's LOD bias: the per-draw sampler bias must not be
- * applied again. */
-#define AGX_APPLE9_TEXTURE_BIASED_LEVEL (1 << 13)
-/* A cube sample of a seamless sampler, after the seamful one was split off */
 #define AGX_APPLE9_TEXTURE_CUBE_SEAMLESS (1 << 14)
 
 bool agx_nir_lower_apple9_sampler_state(

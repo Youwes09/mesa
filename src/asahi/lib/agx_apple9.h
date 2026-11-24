@@ -20,7 +20,8 @@ struct agx_ptr;
 
 #include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
-#include "asahi/compiler/agx_compile_apple9.h"
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_launch.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
@@ -81,7 +82,6 @@ struct agx_apple9_render_stage {
    uint8_t resource_count;
    uint8_t resource_binding[AGX_APPLE9_MAX_GRAPHICS_BUFFERS];
    uint32_t texture_mask, sampler_mask, image_mask;
-   struct agx_apple9_texture_mapping texture_mapping;
    bool uses_texel_fetch;
    bool uses_discard;
    bool writes_depth;

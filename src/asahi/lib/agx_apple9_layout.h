@@ -53,6 +53,25 @@
 #define AGX_APPLE9_RUNTIME_SAMPLER_OFFSET AGX_APPLE9_GRAPHICS_SYSVAL_SIZE
 #define AGX_APPLE9_RUNTIME_SAMPLER_STRIDE 64
 
+/* The 32-bit words of a runtime sampler record */
+enum agx_apple9_sampler_field {
+   AGX_APPLE9_SAMP_WRAP_S,
+   AGX_APPLE9_SAMP_WRAP_T,
+   AGX_APPLE9_SAMP_WRAP_R,
+   AGX_APPLE9_SAMP_MIN,
+   AGX_APPLE9_SAMP_MAG,
+   AGX_APPLE9_SAMP_MIP,
+   AGX_APPLE9_SAMP_COMPARE,
+   AGX_APPLE9_SAMP_MIN_LOD,
+   AGX_APPLE9_SAMP_MAX_LOD,
+   AGX_APPLE9_SAMP_BIAS,
+   AGX_APPLE9_SAMP_BORDER,
+   AGX_APPLE9_SAMP_PIXEL_COORDS,
+   AGX_APPLE9_SAMP_MAX_ANISOTROPY,
+   /* Nonzero if cube maps are sampled without filtering across faces */
+   AGX_APPLE9_SAMP_SEAMFUL_CUBE,
+};
+
 /* hk descriptors live in the USC aperture, handles are offsets from its base */
 #define AGX_APPLE9_USC_BASE                   (1ull << 40)
 #define AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY   2

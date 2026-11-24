@@ -13,12 +13,12 @@
 
 #include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_compile.h"
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "asahi/compiler/agx_nir.h"
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_abi.h"
+#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_helpers.h"
 #include "asahi/lib/agx_ppp.h"

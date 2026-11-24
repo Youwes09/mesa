@@ -4,7 +4,6 @@
  */
 
 #include <stdint.h>
-#include "asahi/compiler/agx_compile_apple9.h"
 #include "compiler/glsl_types.h"
 #include "compiler/nir/nir_format_convert.h"
 #include "util/format/u_format.h"
@@ -14,6 +13,9 @@
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_builder_opcodes.h"
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 #define AGX_NUM_TEXTURE_STATE_REGS 16
 #define ALL_SAMPLES                0xFF
