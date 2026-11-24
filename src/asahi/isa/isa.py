@@ -25,7 +25,9 @@ class BitRange:
             self.mask = self.size_mask << start
 
     def parse(spec: str):
-        if ':' in spec:
+        if spec in ['=0', '=1']:
+            return ConstantBit(int(spec[1]))
+        elif ':' in spec:
             start, end = [int(x) for x in spec.split(':')]
             return BitRange(start, end)
         else:
@@ -39,6 +41,21 @@ class BitRange:
             return f'{self.start}'
         else:
             return f'{self.start}:{self.end}'
+
+# A bit of an operand value that its instruction does not encode
+class ConstantBit:
+    def __init__(self, value):
+        self.value = value
+        self.start = -1
+        self.size = 1
+        self.size_mask = 1
+        self.mask = 0
+
+    def specialize(self, length):
+        return self
+
+    def __repr__(self):
+        return f'={self.value}'
 
 class Bits:
     def __init__(self, spec = None):
@@ -65,7 +82,10 @@ class Bits:
         n = 0
 
         for r in self.ranges:
-            accum |= ((x >> r.start) & r.size_mask) << n
+            if isinstance(r, ConstantBit):
+                accum |= r.value << n
+            else:
+                accum |= ((x >> r.start) & r.size_mask) << n
             n += r.size
 
         return accum
@@ -97,8 +117,7 @@ def deposit_bits(mask, value):
     accum = 0
     value_i = 0
 
-    assert(mask < (1 << 128))
-    for m in range(128):
+    for m in range(mask.bit_length()):
         if mask & (1 << m):
             if (value & (1 << value_i)) != 0:
                 accum |= (1 << m)
@@ -155,11 +174,17 @@ class Immediate:
         self.bits = Bits(el.attrib['bit'])
         self.shift = int(el.attrib.get('shift', 0))
 
+        # Printed before the value, for immediates that are not obvious
+        self.prefix = el.attrib.get('prefix', '')
+
 class Operand:
     def __init__(self, el, is_dest):
         self.kind = el.attrib['kind']
         self.bits = Bits(el.attrib['bit'])
         self.is_dest = is_dest
+
+        # Operand role in the form, if not its position among the sources
+        self.role = el.attrib.get('role')
 
     def specialize(self, length):
         obj = copy.copy(self)
@@ -247,6 +272,8 @@ class Instruction:
                     assert(0)
             elif el.tag == 'ins':
                 assert(xml.tag == 'group')
+            elif el.tag == 'template':
+                pass
             else:
                 print(name)
                 assert(0)
@@ -269,6 +296,20 @@ class Instruction:
         self.dests = dests
         self.sources = srcs
         self.immediates = imms
+        self.attrib = dict(xml.attrib)
+        self.attrib.update(substitutions)
+
+        # A template gives every bit that no field or exact element covers
+        templates = [el for el in xml if el.tag == 'template']
+        if len(templates) > 0:
+            assert(len(templates) == 1 and len(length) == 1)
+            template = bytes.fromhex(templates[0].text)
+            ensure(len(template) == length[0], f'Template length of {name}')
+            value = int.from_bytes(template, 'little')
+            full = (1 << (8 * length[0])) - 1
+            fixed = full & ~self.mask()
+            self.exact.mask |= fixed
+            self.exact.value |= value & fixed
 
     def mask(self):
         mask = self.exact.mask
@@ -278,6 +319,7 @@ class Instruction:
 
 class ISA:
     def __init__(self, el):
+        self.name = el.get('name', 'agx2')
         self.enums = {}
         self.instrs = {}
         self.encodings = {}
@@ -317,5 +359,10 @@ class ISA:
                         ensure(ins.name not in self.instrs, f'Multiple instructions named {ins.name}')
                         self.instrs[ins.name] = ins
 
+        self.length = max([max(i.length) for i in self.instrs.values()])
+
+def load(path):
+    return ISA(ET.parse(path).getroot())
+
 xmlfile = os.path.join(os.path.dirname(__file__), 'AGX2.xml')
-isa = ISA(ET.parse(xmlfile).getroot())
+isa = load(xmlfile)

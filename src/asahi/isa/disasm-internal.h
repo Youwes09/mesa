@@ -12,6 +12,11 @@
 #include "util/u_math.h"
 #include "disasm.h"
 
+/* Words of the longest instruction, overridden by longer instruction sets */
+#ifndef DISASM_WORDS
+#define DISASM_WORDS 4
+#endif
+
 struct disasm_ctx {
    FILE *fp;
    bool any_operands;
@@ -32,9 +37,9 @@ struct disasm_spec {
    unsigned length_bit;
    unsigned length_short;
    unsigned length_long;
-   BITSET_WORD mask[4];
-   BITSET_WORD exact[4];
-   BITSET_WORD known[4];
+   BITSET_WORD mask[DISASM_WORDS];
+   BITSET_WORD exact[DISASM_WORDS];
+   BITSET_WORD known[DISASM_WORDS];
 };
 
 static void
@@ -153,6 +158,14 @@ print_immediate(struct disasm_ctx *ctx, bool is_signed, uint32_t value)
    fprintf(ctx->fp, is_signed ? "%d" : "%u", value);
 }
 
+UNUSED static void
+print_prefixed_immediate(struct disasm_ctx *ctx, const char *prefix,
+                         bool is_signed, uint64_t value)
+{
+   introduce_operand(ctx);
+   fprintf(ctx->fp, is_signed ? "%s%" PRId64 : "%s%" PRIu64, prefix, value);
+}
+
 static void
 _print_enum(struct disasm_ctx *ctx, const char **arr, unsigned n,
             unsigned value)
@@ -183,12 +196,12 @@ static signed
 _disassemble_instr(BITSET_WORD *code, FILE *fp, struct disasm_spec *specs,
                    unsigned nr_specs, unsigned offset, bool verbose)
 {
-   BITSET_WORD tmp[4];
+   BITSET_WORD tmp[DISASM_WORDS];
    memcpy(tmp, code, sizeof(tmp));
    struct disasm_spec *spec = NULL;
    unsigned n = 0;
    bool match = false;
-   BITSET_WORD masked[4] = {0};
+   BITSET_WORD masked[DISASM_WORDS] = {0};
 
    for (unsigned i = 0; i < nr_specs; ++i) {
       spec = &specs[i];
@@ -220,7 +233,7 @@ _disassemble_instr(BITSET_WORD *code, FILE *fp, struct disasm_spec *specs,
    struct disasm_ctx ctx = {.fp = fp};
 
    if (match) {
-      BITSET_WORD unknown[4];
+      BITSET_WORD unknown[DISASM_WORDS];
       __bitset_andnot(unknown, masked, spec->known, ARRAY_SIZE(masked));
       int i;
       BITSET_FOREACH_SET(i, unknown, n * 8) {

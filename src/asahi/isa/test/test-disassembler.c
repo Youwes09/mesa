@@ -11,6 +11,11 @@
 #include "asahi/isa/disasm.h"
 #include "util/macros.h"
 
+/* The instruction set under test */
+#ifndef DISASSEMBLE_INSTR
+#define DISASSEMBLE_INSTR agx2_disassemble_instr
+#endif
+
 static inline uint8_t
 parse_nibble(const char c)
 {
@@ -49,7 +54,7 @@ main(int argc, const char **argv)
       return 1;
    }
 
-   char line[128];
+   char line[256];
    unsigned nr_fail = 0, nr_pass = 0;
 
    while (fgets(line, sizeof(line), fp) != NULL) {
@@ -62,7 +67,7 @@ main(int argc, const char **argv)
          continue;
 
       /* Parse the hex */
-      uint8_t code[16];
+      uint8_t code[32] = {0};
       const char *cursor = line;
       const char *end = line + len;
       uint32_t i = 0;
@@ -78,7 +83,7 @@ main(int argc, const char **argv)
          ++cursor;
 
       FILE *outputp = open_memstream(&output, &sz);
-      signed ret = agx2_disassemble_instr((void *)code, outputp, 0, false);
+      signed ret = DISASSEMBLE_INSTR((void *)code, outputp, 0, false);
       unsigned instr_len = abs(ret);
       fclose(outputp);
 

@@ -5,12 +5,24 @@ import sys
 import os
 import textwrap
 import binascii
+import test.disasm
 from test.disasm import disasm
+
+# test-disasm.py CASES [--isa XML] [-u]
+args = sys.argv[1:]
+update = False
+if '--isa' in args:
+    i = args.index('--isa')
+    test.disasm.use(args[i + 1])
+    del args[i:i + 2]
+if len(args) >= 2:
+    assert(args[1] in ['-u', '--update'])
+    update = True
 
 errors = False
 new_cases = []
 
-for case in open(sys.argv[1]).read().strip().split('\n'):
+for case in open(args[0]).read().strip().split('\n'):
     first = case.split(' ')[0]
     ref = case[len(first):].strip()
 
@@ -35,9 +47,8 @@ for case in open(sys.argv[1]).read().strip().split('\n'):
     errors |= error
 
 # If there were errors, optionally update expectations.
-if len(sys.argv) >= 3:
-    assert(sys.argv[2] in ['-u', '--update'])
-    open(sys.argv[1], 'w').write(''.join(new_cases))
+if update:
+    open(args[0], 'w').write(''.join(new_cases))
 
 if errors:
     print('Fail.')

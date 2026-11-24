@@ -1,10 +1,17 @@
 # Copyright 2025 Valve Corporation
 # SPDX-License-Identifier: MIT
 
-from isa import isa
+import isa as isa_xml
 import math
 import sys
 import binascii
+
+isa = isa_xml.isa
+
+# Disassemble an instruction set other than AGX2
+def use(path):
+    global isa
+    isa = isa_xml.load(path)
 
 def match_instr(raw):
     for key in isa.instrs:
@@ -54,7 +61,7 @@ def operand(desc, length):
     base = desc.get('base')
     kind = desc.get('kind')
     cache = desc.get('cache', False)
-    discard = desc.get('discard', False)
+    discard = desc.get('discard', False) or desc.get('lu', 0) != 0
 
     hint = desc.get('hint')
     if hint is not None:
@@ -120,6 +127,7 @@ def disasm(raw_in):
         return length, "<unknown instr>"
 
     imms = [map_value(imm.bits.extract(raw), imm.kind, imm.bits.size()) for imm in instr.immediates]
+    imms = [x if x is None or not imm.prefix else imm.prefix + x for x, imm in zip(imms, instr.immediates)]
     mods = [map_mod(mod.bits.extract(raw), mod) for mod in instr.modifiers if mod.name != 'length']
     dests = [map_op(d.bits.extract(raw), d.kind, raw, instr, d.bits.size()) for d in instr.dests]
     srcs = [map_op(s.bits.extract(raw), s.kind, raw, instr, s.bits.size()) for s in instr.sources]

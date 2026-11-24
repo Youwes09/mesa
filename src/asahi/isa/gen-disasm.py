@@ -4,9 +4,15 @@
 # Copyright 2025 Valve Corporation
 # SPDX-License-Identifier: MIT
 
+import sys
 from mako.template import Template
 from mako import exceptions
-from isa import isa
+import isa as isa_xml
+
+isa = isa_xml.load(sys.argv[1])
+
+# Instruction words, at least four as the AGX2 tables have
+words = max(4, (isa.length + 3) // 4)
 
 # XXX: deduplicate
 def to_alphanum(name):
@@ -44,7 +50,7 @@ def safe_name(name):
     return name.lower()
 
 def chunk(x):
-    chunks = [hex((x >> (32 * i)) & ((1 << 32) - 1)) for i in range(4)]
+    chunks = [hex((x >> (32 * i)) & ((1 << 32) - 1)) for i in range(words)]
     while len(chunks) > 1 and chunks[-1] == '0x0':
         chunks.pop()
 
@@ -58,12 +64,23 @@ def extract_bits(x, bitset="r"):
     n = 0
 
     for r in x.bits.ranges:
-        parts.append(f'bits({bitset}, {r.start}, {r.size}, {n})')
+        if isinstance(r, isa_xml.ConstantBit):
+            if r.value:
+                parts.append(f'(1ull << {n})')
+        else:
+            # Extract at most a word at a time
+            for i in range(0, r.size, 32):
+                size = min(32, r.size - i)
+                parts.append(f'bits({bitset}, {r.start + i}, {size}, {n + i})')
         n += r.size
 
-    return ' | '.join(parts)
+    return ' | '.join(parts) or '0'
+
 
 template = """
+% if words != 4:
+#define DISASM_WORDS ${words}
+% endif
 #include "disasm-internal.h"
 
 % for en in isa.enums:
@@ -94,6 +111,8 @@ print_${k}(struct disasm_ctx *ctx, BITSET_WORD *orig, uint64_t v, bool source)
           .kind = KIND_${case.kind.name.upper()},
 % if case.kind.kind == 'signed':
           .value = util_sign_extend(${extract_bits(case.kind)} << ${case.kind.shift}, ${case.kind.bits.size()}),
+% elif len(case.kind.bits.ranges) > 1 and case.kind.shift:
+          .value = (${extract_bits(case.kind)}) << ${case.kind.shift},
 % else:
           .value = ${extract_bits(case.kind)} << ${case.kind.shift},
 % endif
@@ -135,7 +154,15 @@ print_${instr.name}(struct disasm_ctx *ctx, BITSET_WORD *r)
    print_${op.kind}(ctx, r, ${extract_bits(op)}, true);
 % endfor
 % for imm in instr.immediates:
+% if imm.kind in isa.enums:
+   print_enum(ctx, enum_${imm.kind}, ${extract_bits(imm)});
+% elif imm.kind == 'signed' and imm.bits.size() != 32:
+   print_prefixed_immediate(ctx, "${imm.prefix}", true, util_sign_extend(${extract_bits(imm)}, ${imm.bits.size()}));
+% elif imm.prefix:
+   print_prefixed_immediate(ctx, "${imm.prefix}", ${'true' if imm.kind == 'signed' else 'false'}, ${extract_bits(imm)});
+% else:
    print_immediate(ctx, ${'true' if imm.kind == 'signed' else 'false'}, ${extract_bits(imm)});
+% endif
 % endfor
 % for mod in instr.modifiers:
 % if mod.name != 'length':
@@ -157,12 +184,12 @@ struct disasm_spec decodings[] = {
 };
 
 signed
-agx2_disassemble_instr(BITSET_WORD *code, FILE *fp, unsigned offset, bool verbose)
+${isa.name}_disassemble_instr(BITSET_WORD *code, FILE *fp, unsigned offset, bool verbose)
 {
   return _disassemble_instr(code, fp, decodings, ARRAY_SIZE(decodings), offset, verbose);
 }"""
 
 try:
-    print(Template(template).render(isa = isa, safe_name = safe_name, chunk = chunk, instr_is_trivial = instr_is_trivial, extract_bits = extract_bits))
+    print(Template(template).render(isa = isa, words = words, safe_name = safe_name, chunk = chunk, instr_is_trivial = instr_is_trivial, extract_bits = extract_bits))
 except:
     print(exceptions.text_error_template().render())
