@@ -546,7 +546,8 @@ __roundAndPackFloat64(uint zSign,
 
    if (increment) {
       __add64(zFrac0, zFrac1, 0u, 1u, zFrac0, zFrac1);
-      zFrac1 &= ~((zFrac2 + uint(zFrac2 == 0u)) & uint(roundNearestEven));
+      /* A tie (only the round bit set) rounds to even */
+      zFrac1 &= ~(uint(zFrac2 + zFrac2 == 0u) & uint(roundNearestEven));
    } else {
       zExp = mix(zExp, 0, (zFrac0 | zFrac1) == 0u);
    }
