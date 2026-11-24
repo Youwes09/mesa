@@ -839,8 +839,15 @@ hk_map_compression(struct hk_device *dev, const VkImageCreateInfo *info,
    case VK_IMAGE_TILING_LINEAR:
       return false;
 
-   case VK_IMAGE_TILING_OPTIMAL:
+   case VK_IMAGE_TILING_OPTIMAL: {
+      /* Importers derive the layout from their own create info */
+      const VkExternalMemoryImageCreateInfo *external =
+         vk_find_struct_const(info->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
+      if (external && external->handleTypes)
+         return false;
+
       return hk_can_compress_create_info(dev, plane, info);
+   }
 
    case VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT:
       return ail_is_drm_modifier_compressed(modifier);
