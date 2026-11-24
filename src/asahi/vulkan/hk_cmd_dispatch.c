@@ -463,12 +463,12 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
           (!grid.count[0] || !grid.count[1] || !grid.count[2]))
          return;
       /* An API dispatch may run ahead of a render kept open for merging
-       * when nothing orders it after the render. Indirect grids,
-       * statistics and predication stay in place. */
+       * when nothing orders it after the render. Indirect grids and
+       * statistics stay in place. */
       const VkPipelineStageFlags2 saved_move = cmd->merge_move_stage;
       if (!cmd->in_meta)
          cmd->merge_move_stage =
-            agx_is_indirect(grid) || hk_cond_render_applies(cmd) ||
+            agx_is_indirect(grid) ||
                   hk_stat_enabled(hk_pipeline_stat_addr(
                      cmd,
                      VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT))
@@ -487,18 +487,6 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
             cmd, agx_1d(1), AGX_BARRIER_ALL,
             cmd->state.cs.descriptors.root.cs.group_count_addr, stat,
             p->local_size[0] * p->local_size[1] * p->local_size[2]);
-      }
-      if (hk_cond_render_applies(cmd)) {
-         /* Predicated dispatches read zero group counts when skipped. */
-         struct hk_descriptor_state *desc = &cmd->state.cs.descriptors;
-         desc->root.cs.group_count_addr = hk_predicate_indirect(
-            cmd, desc->root.cs.group_count_addr, 3, false);
-         if (!desc->root.cs.group_count_addr)
-            return;
-         grid = agx_grid_indirect(desc->root.cs.group_count_addr);
-         cs = hk_cmd_buffer_get_cs(cmd, true);
-         if (!cs)
-            return;
       }
       if (!agx_is_indirect(grid)) {
          for (unsigned d = 0; d < 3; ++d)

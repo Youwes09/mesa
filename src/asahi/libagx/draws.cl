@@ -9,7 +9,7 @@
 #include "libagx_dgc.h"
 
 /* Convert the XFB byte counter on the GPU so that the ordinary indirect
- * draw path also handles instancing, conditional rendering and GS/TES.
+ * draw path also handles instancing and GS/TES.
  * Subtract before dividing, saturating instead of wrapping below the offset.
  */
 KERNEL(1)
@@ -204,19 +204,6 @@ libagx_robust_index_apple9(global uint32_t *out_draw,
    out_draw[2] = offs_B / index_size_B;
    out_draw[3] = in_draw[3];
    out_draw[4] = in_draw[4];
-}
-
-/* Conditional rendering: copy indirect draw or dispatch arguments, or zero
- * them when the predicate fails, so the command does no work.
- */
-KERNEL(1)
-libagx_predicate_indirect_apple9(global uint32_t *out, constant uint32_t *in,
-                                 constant uint32_t *predicate,
-                                 uint32_t inverted, uint32_t words)
-{
-   bool pass = (*predicate != 0) != (inverted != 0);
-   for (uint i = 0; i < words; ++i)
-      out[i] = pass ? in[i] : 0;
 }
 
 /* Precondition: len must be < the group size */

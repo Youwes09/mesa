@@ -1850,11 +1850,8 @@ hk_CmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t attachmentCount,
 
    struct hk_meta_save save;
    hk_meta_begin(cmd, &save, VK_PIPELINE_BIND_POINT_GRAPHICS);
-   /* Attachment clears are subject to conditional rendering. */
    cmd->sync_scope = HK_SYNC_GRAPHICS;
-   cmd->state.cond_render.meta = true;
    vk_meta_clear_attachments(&cmd->vk, &dev->meta, &render_info,
                              attachmentCount, pAttachments, rectCount, pRects);
-   cmd->state.cond_render.meta = false;
    hk_meta_end(cmd, &save, VK_PIPELINE_BIND_POINT_GRAPHICS);
 }

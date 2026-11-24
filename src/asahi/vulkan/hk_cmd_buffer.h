@@ -693,15 +693,6 @@ struct hk_cmd_buffer {
    struct {
       struct hk_graphics_state gfx;
       struct hk_compute_state cs;
-
-      /* VK_EXT_conditional_rendering: draws, dispatches and attachment
-       * clears run only when the 32-bit predicate is non-zero (zero if
-       * inverted). Meta operations other than clears are unpredicated.
-       */
-      struct {
-         uint64_t predicate;
-         bool active, inverted, meta;
-      } cond_render;
    } state;
 
    struct hk_uploader uploader[HK_CMD_POOL_COUNT];
@@ -1241,9 +1232,6 @@ hk_cmd_buffer_end_compute(struct hk_cmd_buffer *cmd)
 
 void hk_optimize_empty_vdm(struct hk_cmd_buffer *cmd);
 
-bool hk_cond_render_applies(struct hk_cmd_buffer *cmd);
-uint64_t hk_predicate_indirect(struct hk_cmd_buffer *cmd, uint64_t in,
-                               unsigned words, bool graphics);
 
 static void
 hk_cmd_buffer_end_graphics(struct hk_cmd_buffer *cmd)

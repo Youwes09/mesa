@@ -5130,9 +5130,6 @@ hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw,
    }
 }
 
-static struct agx_draw hk_apple9_predicate_draw(struct hk_cmd_buffer *cmd,
-                                                struct agx_draw draw);
-
 /* Index size and primitive restart come from command buffer state, not the
  * draw entry points (hk_draw_indexed passes neither). Everything that routes
  * or launches a draw reads both, so G16 completes the draw before any of it. */
@@ -5173,11 +5170,6 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
                break;
             }
          }
-      }
-      if (hk_cond_render_applies(cmd)) {
-         draw_ = hk_apple9_predicate_draw(cmd, draw_);
-         if (!draw_.b.ptr)
-            return;
       }
       draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
       draw_.index_size = cmd->state.gfx.index.size;
@@ -5492,11 +5484,8 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    const struct agx_apple9_compute_profile *profile =
       &main->only_linked->b.apple9.profile;
 
-   /* Draws without a task shader and with a known grid are set up here.
-    * Predicated draws read a grid of zeroes when skipped.
-    */
-   bool predicated = hk_cond_render_applies(cmd);
-   bool cpu_setup = direct && !task && !predicated;
+   /* Draws without a task shader and with a known grid are set up here */
+   bool cpu_setup = direct && !task;
    uint64_t direct_count =
       direct ? (uint64_t)direct[0] * direct[1] * direct[2] : 0;
    uint64_t records_B = direct_count * info->group_stride_B;
@@ -5506,9 +5495,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    }
    if (direct && !cpu_setup)
       grid_addr = hk_pool_upload(cmd, direct, 3 * sizeof(uint32_t), 4);
-   if (predicated)
-      grid_addr = hk_predicate_indirect(cmd, grid_addr, 3, true);
-   /* Upload or predication failed: the command buffer is in error. */
+   /* Upload failed: the command buffer is in error. */
    if (!cpu_setup && !grid_addr)
       return;
 
@@ -5986,68 +5973,11 @@ hk_CmdBeginConditionalRenderingEXT(
    VkCommandBuffer commandBuffer,
    const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
 {
-   VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
-   VK_FROM_HANDLE(hk_buffer, buffer, pConditionalRenderingBegin->buffer);
-   hk_cmd_render_merge_flush(cmd);
-
-   uint64_t predicate =
-      hk_buffer_address(buffer, pConditionalRenderingBegin->offset, true);
-   cmd->state.cond_render.predicate = predicate;
-   cmd->state.cond_render.active = true;
-   cmd->state.cond_render.inverted = pConditionalRenderingBegin->flags &
-                                     VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT;
+   UNREACHABLE("stub");
 }
 
 VKAPI_ATTR void VKAPI_CALL
 hk_CmdEndConditionalRenderingEXT(VkCommandBuffer commandBuffer)
 {
-   VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
-   hk_cmd_render_merge_flush(cmd);
-   cmd->state.cond_render.active = false;
-}
-
-bool
-hk_cond_render_applies(struct hk_cmd_buffer *cmd)
-{
-   return cmd->state.cond_render.active &&
-          (!cmd->in_meta || cmd->state.cond_render.meta);
-}
-
-/* Returns indirect arguments of `words` 32-bit words that are a copy of
- * `in`, or zero when the conditional rendering predicate fails. */
-uint64_t
-hk_predicate_indirect(struct hk_cmd_buffer *cmd, uint64_t in, unsigned words,
-                      bool graphics)
-{
-   /* A failed allocation has already put the command buffer in error, and it
-    * will not be submitted: return 0 rather than predicating to address 0. */
-   uint64_t out = in ? hk_pool_alloc(cmd, words * sizeof(uint32_t), 16).gpu : 0;
-   if (!out)
-      return 0;
-   libagx_predicate_indirect_apple9(
-      cmd, agx_1d(1), AGX_BARRIER_ALL | (graphics ? AGX_PREGFX : 0), out, in,
-      cmd->state.cond_render.predicate, cmd->state.cond_render.inverted, words);
-   return out;
-}
-
-static struct agx_draw
-hk_apple9_predicate_draw(struct hk_cmd_buffer *cmd, struct agx_draw draw)
-{
-   unsigned words = draw.indexed ? 5 : 4;
-   uint64_t in_draw = draw.b.ptr;
-   if (!agx_is_indirect(draw.b)) {
-      uint32_t desc[5] = {
-         draw.b.count[0], draw.b.count[1], draw.start,
-         draw.indexed ? (uint32_t)draw.index_bias : draw.start_instance,
-         draw.start_instance};
-      in_draw = hk_pool_upload(cmd, desc, sizeof(desc), 4);
-   }
-   uint64_t out_draw = hk_predicate_indirect(cmd, in_draw, words, true);
-   if (draw.indexed) {
-      return agx_draw_indexed_indirect(out_draw, draw.index_buffer,
-                                       draw.index_buffer_range_B,
-                                       draw.index_size, draw.restart);
-   } else {
-      return agx_draw_indirect(out_draw);
-   }
+   UNREACHABLE("stub");
 }
