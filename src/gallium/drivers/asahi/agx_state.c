@@ -2349,41 +2349,6 @@ build_fs_prolog(nir_builder *b, const void *key)
             nir_metadata_control_flow, NULL);
 }
 
-/* Apple9 push words hold the address of the draw parameters, see agx_abi.h */
-static bool
-lower_vs_prolog_draw_params_apple9(nir_builder *b, nir_intrinsic_instr *intr,
-                                   void *data)
-{
-   unsigned *first_vertex = data;
-   if (intr->intrinsic != nir_intrinsic_load_preamble ||
-       (nir_intrinsic_base(intr) != *first_vertex &&
-        nir_intrinsic_base(intr) != *first_vertex + 2))
-      return false;
-
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def *params = nir_load_preamble(b, 1, 64, .base = *first_vertex);
-   unsigned offset = (nir_intrinsic_base(intr) - *first_vertex) * 2;
-
-   nir_def_replace(&intr->def, nir_load_global_constant(
-                                  b, 1, 32, nir_iadd_imm(b, params, offset),
-                                  .align_mul = 4));
-   return true;
-}
-
-static void
-build_vs_prolog_apple9(nir_builder *b, const void *key_)
-{
-   const struct agx_vs_prolog_key *key = key_;
-   agx_nir_vs_prolog(b, key);
-
-   unsigned nr = DIV_ROUND_UP(BITSET_LAST_BIT(key->component_mask), 4);
-   unsigned first_vertex = AGX_ABI_VUNI_FIRST_VERTEX(nr);
-
-   NIR_PASS(_, b->shader, nir_shader_intrinsics_pass,
-            lower_vs_prolog_draw_params_apple9, nir_metadata_control_flow,
-            &first_vertex);
-}
-
 static struct agx_linked_shader *
 asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
                 struct agx_fast_link_key *key)
@@ -2412,8 +2377,8 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
       assert(so->type == MESA_SHADER_VERTEX || key->prolog.vs.static_vi);
 
       prolog = agx_build_meta_shader_internal(
-         ctx, apple9 ? build_vs_prolog_apple9 : agx_nir_vs_prolog,
-         &key->prolog.vs, sizeof(key->prolog.vs), true, false, 0);
+         ctx, agx_nir_vs_prolog, &key->prolog.vs, sizeof(key->prolog.vs), true,
+         false, 0);
    } else {
       /* No prolog/epilog needed */
       assert(so->type == MESA_SHADER_TESS_EVAL);
