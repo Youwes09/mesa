@@ -1668,7 +1668,10 @@ pack_publication_pair(const agx_instr *I, struct a9_packed *p)
          m[8] |= 0x10;
    }
 
-   a9_init(p, AGX_APPLE9_ENC_PUBLICATION_PAIR, bytes, 10 * moves);
+   a9_init(p,
+           split ? AGX_APPLE9_ENC_PUBLICATION_SPLIT
+                 : AGX_APPLE9_ENC_PUBLICATION_PAIR,
+           bytes, 10 * moves);
 }
 
 /* r0-r15 = 0-0x7f in two bytes; value bit 7 means no write */

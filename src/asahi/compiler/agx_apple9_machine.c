@@ -2307,6 +2307,22 @@ static const struct agx_apple9_encoding_info encodings[] = {
                  95, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,
                  AGX_APPLE9_EVIDENCE_HARDWARE)},
       },
+   /* One move filling both words of the pair, a word per lane half */
+   [AGX_APPLE9_ENC_PUBLICATION_SPLIT] =
+      {
+         .name = "publication_split",
+         .length = 10,
+         .operand_count = 2,
+         .allocator_safe = true,
+         .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
+         .operands =
+            {GPR(AGX_APPLE9_OPERAND_DEST, AGX_APPLE9_WIDTH_32,
+                 62, 4, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_PUBLICATION,
+                 AGX_APPLE9_EVIDENCE_HARDWARE),
+             GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32,
+                 95, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,
+                 AGX_APPLE9_EVIDENCE_HARDWARE)},
+      },
    [AGX_APPLE9_ENC_DEPTH_STORE] =
       {
          .name = "depth_store",

@@ -892,7 +892,7 @@
     <mask_45_47_61_63/>
   </ins>
 
-  <ins name="bitop_export" display="bitop" length="10" form="logic_export publication_pair block_store_params block_store_extended_params image_write_params texture_lod_params texture_volume_params texture_grad_params texture_grad_array_params texture_grad_volume_params">
+  <ins name="bitop_export" display="bitop" length="10" form="logic_export publication_pair publication_split block_store_params block_store_extended_params image_write_params texture_lod_params texture_volume_params texture_grad_params texture_grad_array_params texture_grad_volume_params">
     <template>0b 05 1f 01 40 00 00 00 00 00</template>
     <dest kind="export" bit="4:7 22:23 44"/>
     <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
@@ -2221,10 +2221,15 @@
     <operand role="src1" max="63" flags="allocatable,publication"/>
   </form>
 
-  <form name="publication_pair" length="20" encoding="bitop_export*2; bitop_export">
+  <form name="publication_pair" length="20" encoding="bitop_export*2">
     <operand role="dest" max="62" align="4" flags="allocatable,publication"/>
     <operand role="src0" max="95"/>
     <operand role="src1" max="95"/>
+  </form>
+
+  <form name="publication_split" length="10" encoding="bitop_export">
+    <operand role="dest" max="62" align="4" flags="allocatable,publication"/>
+    <operand role="src0" max="95"/>
   </form>
 
   <form name="tile_access" length="6" encoding="begin_tile" prior="true" exempt="publication"/>

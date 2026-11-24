@@ -1330,6 +1330,22 @@ TEST_F(Apple9Pack, UnverifiedSynchronization)
       check(agx_wait(b, slot), {0x06, (uint8_t)(1u << (slot + 2))});
 }
 
+/* Depth/stencil export pair: two moves, or one move by lane half */
+TEST_F(Apple9Pack, PublicationPair)
+{
+   agx_index pair = e(6);
+   pair.channels_m1 = 1;
+
+   agx_instr *I = agx_publication_pair_to(b, pair, r(10), k(r(41)), false);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PUBLICATION_PAIR);
+   check(I, {0x6b, 0x95, 0x27, 0x00, 0x42, 0x00, 0x00, 0x00, 0x10, 0x00,
+             0x7b, 0x53, 0x2f, 0x00, 0x42, 0x00, 0x00, 0x00, 0x10, 0x00});
+
+   I = agx_publication_pair_to(b, pair, k(r(10)), k(r(10)), true);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PUBLICATION_SPLIT);
+   check(I, {0x6b, 0x15, 0x2f, 0x00, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00});
+}
+
 /* Unverified: fragment outputs and tile access */
 TEST_F(Apple9Pack, UnverifiedFragmentOutputs)
 {
