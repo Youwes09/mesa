@@ -677,7 +677,8 @@ apple9_texture_route_loads(nir_shader *nir, struct set *safe)
 /* Fetch through the native entry of the storage descriptor at `tex` */
 static nir_def *
 apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
-                    nir_intrinsic_instr *handle, nir_def *coord)
+                    nir_intrinsic_instr *handle, nir_def *coord,
+                    bool table_indices)
 {
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(intr);
    bool cube = dim == GLSL_SAMPLER_DIM_CUBE;
@@ -686,13 +687,23 @@ apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
                       : dim == GLSL_SAMPLER_DIM_3D ? 3
                                                    : 2) +
                      (array && dim != GLSL_SAMPLER_DIM_3D);
-   nir_def *native = nir_bindless_image_agx(
-      b,
-      nir_iadd_imm(b, handle->src[0].ssa,
-                   offsetof(struct agx_apple9_storage_descriptor, texture) -
-                      AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
-                         AGX_APPLE9_TEXTURE_TABLE_STRIDE),
-      .desc_set = nir_intrinsic_desc_set(handle));
+   nir_def *native;
+   if (table_indices) {
+      native = nir_load_global_constant(
+         b, 1, 32,
+         nir_iadd_imm(
+            b, nir_load_from_texture_handle_agx(b, intr->src[0].ssa),
+            offsetof(struct agx_apple9_storage_descriptor, texture_index)),
+         .align_mul = 4);
+   } else {
+      native = nir_bindless_image_agx(
+         b,
+         nir_iadd_imm(b, handle->src[0].ssa,
+                      offsetof(struct agx_apple9_storage_descriptor, texture) -
+                         AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
+                            AGX_APPLE9_TEXTURE_TABLE_STRIDE),
+         .desc_set = nir_intrinsic_desc_set(handle));
+   }
    nir_tex_instr *tex = nir_tex_instr_create(b->shader, 3);
    tex->op = nir_texop_txf;
    tex->sampler_dim = cube ? GLSL_SAMPLER_DIM_2D : dim;
@@ -781,6 +792,7 @@ agx_apple9_native_store_shader(const nir_shader *nir)
 struct apple9_storage_lowering {
    struct set *texture_loads;
    bool native_stores;
+   bool table_indices;
 };
 
 /* Untyped stores, such as meta copies of raw texels, would encode as float */
@@ -848,7 +860,8 @@ apple9_native_store(nir_builder *b, nir_intrinsic_instr *intr,
 
 static bool
 apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
-                                bool load, bool route, bool native_stores)
+                                bool load, bool route,
+                                const struct apple9_storage_lowering *lower)
 {
    if (nir_def_instr(intr->src[0].ssa)->type != nir_instr_type_intrinsic)
       return false;
@@ -934,7 +947,8 @@ apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
                         nir_ult(b, nir_u2u32(b, intr->src[2].ssa), samples));
    }
    /* Address ahead of the bounds check, so its uniform part can be hoisted */
-   bool native = !load && apple9_can_native_store(b, intr, native_stores);
+   bool native =
+      !load && apple9_can_native_store(b, intr, lower->native_stores);
    bool native_array = array || cube || dim == GLSL_SAMPLER_DIM_3D;
    nir_def *ok = route    ? apple9_native_ok(b, tex)
                  : native ? apple9_native_write_ok(b, tex, native_array)
@@ -960,7 +974,8 @@ apple9_lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr,
       nir_def *fetched = NULL;
       if (route) {
          nir_push_if(b, ok);
-         fetched = apple9_texture_load(b, intr, handle, coord);
+         fetched =
+            apple9_texture_load(b, intr, handle, coord, lower->table_indices);
          nir_push_else(b, NULL);
          bool layered = array || cube || dim == GLSL_SAMPLER_DIM_3D;
          addr = libagx_image_texel_address(
@@ -1305,7 +1320,7 @@ apple9_lower_storage_image(nir_builder *b, nir_intrinsic_instr *intr,
    if (format == PIPE_FORMAT_NONE)
       return apple9_lower_formatless_storage(
          b, intr, load, load && _mesa_set_search(lower->texture_loads, intr),
-         lower->native_stores);
+         lower);
    const struct util_format_description *desc = util_format_description(format);
    unsigned size_B = util_format_get_blocksize(format);
    if ((desc->layout != UTIL_FORMAT_LAYOUT_PLAIN &&
@@ -1506,7 +1521,7 @@ apple9_lower_rect_image(nir_builder *b, nir_intrinsic_instr *intr, void *_)
 
 /* Storage, texel buffers and sparse residency, before agx_nir_lower_images */
 bool
-agx_nir_lower_apple9_storage(nir_shader *nir)
+agx_nir_lower_apple9_storage(nir_shader *nir, bool table_indices)
 {
    bool progress = false;
 
@@ -1523,6 +1538,7 @@ agx_nir_lower_apple9_storage(nir_shader *nir)
    struct apple9_storage_lowering lower = {
       .texture_loads = texture_loads,
       .native_stores = agx_apple9_native_store_shader(nir),
+      .table_indices = table_indices,
    };
    NIR_PASS(progress, nir, nir_shader_intrinsics_pass,
             apple9_lower_storage_image, nir_metadata_none, &lower);

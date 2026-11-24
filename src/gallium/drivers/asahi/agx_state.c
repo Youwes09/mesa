@@ -2033,7 +2033,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    /* Apple9 storage images go through storage descriptors, queries included */
    bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
    if (apple9) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_storage);
+      NIR_PASS(_, nir, agx_nir_lower_apple9_storage, true);
       NIR_PASS(_, nir, agx_nir_lower_images);
       NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
                nir_metadata_all, NULL);
@@ -3655,6 +3655,16 @@ agx_apple9_storage_pbe_count(const struct pipe_image_view *view, bool *layered)
    return *layered ? view->u.tex.last_layer - view->u.tex.first_layer + 1 : 1;
 }
 
+/* Texture table entries of a view: one to read, and its PBE entries */
+static unsigned
+agx_apple9_storage_slots(const struct pipe_image_view *view)
+{
+   bool layered;
+   return view->resource->target == PIPE_BUFFER
+             ? 0
+             : 1 + agx_apple9_storage_pbe_count(view, &layered);
+}
+
 /* PBE entries of a view, one per layer, at index `slot` of the texture table */
 static void
 agx_apple9_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
@@ -3719,13 +3729,17 @@ agx_apple9_pack_storage(struct agx_batch *batch,
    desc->metadata.elements =
       view->u.tex.level | (view->u.tex.first_layer << 16);
 
-   if (agx_apple9_translate_texture(desc->texture, &desc->common.tex))
-      desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+   /* The read entry, then the PBE entries, from texture table index `slot` */
+   uint8_t *entry = table + slot * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+   desc->texture_index = slot;
 
-   if (table) {
-      agx_apple9_pack_storage_pbes(
-         desc, view, table + slot * AGX_APPLE9_TEXTURE_TABLE_STRIDE, slot);
-   }
+   if (agx_apple9_translate_texture(entry, &desc->common.tex))
+      desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+   else
+      agx_apple9_set_null_texture(entry);
+
+   agx_apple9_pack_storage_pbes(
+      desc, view, entry + AGX_APPLE9_TEXTURE_TABLE_STRIDE, slot + 1);
 }
 
 /* Native texture record of a view. Layouts only allow views Apple9 samples */
@@ -3794,18 +3808,16 @@ agx_apple9_upload_tables(struct agx_batch *batch,
    unsigned table_size =
       aliases ? AGX_APPLE9_CUBE_ALIAS_INDEX(nr_textures) : nr_textures;
 
-   /* Image writes index PBE entries from the texture root, after the views */
-   unsigned pbes = 0;
-   u_foreach_bit(i, st->image_mask & BITFIELD_MASK(nr_images)) {
-      bool layered;
-      pbes += agx_apple9_storage_pbe_count(&st->images[i], &layered);
-   }
+   /* Image entries are indexed from the texture root too, after the views */
+   unsigned image_slots = 0;
+   u_foreach_bit(i, st->image_mask & BITFIELD_MASK(nr_images))
+      image_slots += agx_apple9_storage_slots(&st->images[i]);
 
    uint8_t *table = NULL;
-   if (table_size + pbes) {
+   if (table_size + image_slots) {
       struct agx_ptr t = agx_pool_alloc_aligned(
-         &batch->pool, (table_size + pbes) * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-         64);
+         &batch->pool,
+         (table_size + image_slots) * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
       uint8_t *out = t.cpu;
       table = out;
 
@@ -3862,9 +3874,8 @@ agx_apple9_upload_tables(struct agx_batch *batch,
          struct pipe_image_view *view = &st->images[i];
          agx_batch_track_image(batch, view, stage);
 
-         bool layered;
          agx_apple9_pack_storage(batch, &out[i], view, table, table_size);
-         table_size += agx_apple9_storage_pbe_count(view, &layered);
+         table_size += agx_apple9_storage_slots(view);
       }
 
       batch->stage_uniforms[stage].texture_base = t.gpu;

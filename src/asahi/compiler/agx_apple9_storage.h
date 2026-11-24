@@ -76,7 +76,12 @@ struct agx_apple9_storage_descriptor {
    uint32_t native_ok;
    /* enum agx_apple9_store_encode of the view format */
    uint32_t store_encode;
-   uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   union {
+      /* Native texture entry, indexed by its USC address (Honeykrisp) */
+      uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+      /* Or its index from the texture root (Gallium) */
+      uint32_t texture_index;
+   };
 };
 static_assert(sizeof(struct agx_apple9_storage_descriptor) == 128,
               "Apple9 storage descriptor retains the 128-byte ABI");
@@ -136,7 +141,8 @@ struct nir_shader;
 struct nir_builder;
 struct nir_def;
 
-bool agx_nir_lower_apple9_storage(struct nir_shader *nir);
+/* table_indices: descriptors hold texture_index rather than a texture entry */
+bool agx_nir_lower_apple9_storage(struct nir_shader *nir, bool table_indices);
 bool agx_nir_lower_apple9_sparse_residency(struct nir_shader *nir);
 bool agx_nir_lower_apple9_texel_buffers(struct nir_shader *nir);
 
