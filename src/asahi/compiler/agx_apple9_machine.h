@@ -336,19 +336,6 @@ extern const struct agx_apple9_machine agx_apple9_machine;
 const struct agx_apple9_encoding_info *
 agx_apple9_encoding_info(enum agx_apple9_encoding encoding);
 
-const struct agx_apple9_operand_constraint *
-agx_apple9_find_operand(enum agx_apple9_encoding encoding,
-                        enum agx_apple9_operand_role role);
-
-bool agx_apple9_encoding_accepts_gpr(enum agx_apple9_encoding encoding,
-                                     enum agx_apple9_operand_role role,
-                                     unsigned gpr, unsigned bits);
-
-/* Validate all GPR operands in descriptor order, including coupled limits. */
-bool agx_apple9_encoding_accepts_gpr_tuple(enum agx_apple9_encoding encoding,
-                                           const unsigned *gprs,
-                                           unsigned operand_count,
-                                           unsigned bits);
 
 #ifdef __cplusplus
 }

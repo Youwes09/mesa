@@ -114,30 +114,6 @@ agx_apple9_interp_mask_test(struct agx_apple9_interp_mask mask, unsigned index)
    return ((index < 64 ? mask.lo : mask.hi) >> (index & 63)) & 1;
 }
 
-static inline bool
-agx_apple9_interp_mask_equal(struct agx_apple9_interp_mask a,
-                             struct agx_apple9_interp_mask b)
-{
-   return a.lo == b.lo && a.hi == b.hi;
-}
-
-/* Interpolants from compatibility GL and programmable shaders. Clip distances
- * also have a separate copy in the rasterizer system-value group. */
-static inline bool
-agx_apple9_varying_supported(unsigned location)
-{
-   return (location >= VARYING_SLOT_COL0 && location <= VARYING_SLOT_TEX7) ||
-          location == VARYING_SLOT_BFC0 || location == VARYING_SLOT_BFC1 ||
-          location == VARYING_SLOT_PRIMITIVE_ID ||
-          location == VARYING_SLOT_VIEWPORT ||
-          location == VARYING_SLOT_CLIP_VERTEX ||
-          location == VARYING_SLOT_CLIP_DIST0 ||
-          location == VARYING_SLOT_CLIP_DIST1 ||
-          location == VARYING_SLOT_CULL_PRIMITIVE ||
-          location == VARYING_SLOT_CULL_PRIMITIVE + 1 ||
-          (location >= VARYING_SLOT_VAR0 && location <= VARYING_SLOT_VAR31);
-}
-
 struct agx_apple9_varying_layout {
    uint8_t mask[64]; /* Per-component masks indexed by gl_varying_slot. */
    /* Physical UVS order is smooth, flat, then linear, as required by the
@@ -156,26 +132,6 @@ agx_apple9_varying_group(uint64_t flat, uint64_t linear, unsigned location)
                                                 : 0;
 }
 
-/* Returns the packed user scalar index, excluding the four position words. */
-static inline int
-agx_apple9_varying_index(const struct agx_apple9_varying_layout *layout,
-                         unsigned location, unsigned component)
-{
-   if (!layout || !agx_apple9_varying_supported(location) || component >= 4)
-      return -1;
-   unsigned semantic = location;
-   if (!(layout->mask[semantic] & BITFIELD_BIT(component)))
-      return -1;
-   unsigned index =
-      util_bitcount(layout->mask[semantic] & BITFIELD_MASK(component));
-   for (unsigned i = 0; i < ARRAY_SIZE(layout->mask); ++i) {
-      if (layout->group[i] < layout->group[semantic] ||
-          (layout->group[i] == layout->group[semantic] && i < semantic))
-         index += util_bitcount(layout->mask[i]);
-   }
-   return index;
-}
-
 /* Software capacity of the graphics address table, separate from launcher
  * slots. */
 #define AGX_APPLE9_MAX_GRAPHICS_BUFFERS 32
@@ -183,40 +139,6 @@ agx_apple9_varying_index(const struct agx_apple9_varying_layout *layout,
 struct agx_shader_info {
    mesa_shader_stage stage;
    uint32_t binary_size;
-
-   /* Apple9 graphics API UBO binding mask (distinct from hardware slots). */
-   uint32_t apple9_ubo_mask;
-   struct agx_apple9_varying_layout apple9_varyings;
-   struct agx_apple9_interp_mask apple9_linear_mask, apple9_flat_mask;
-   uint16_t apple9_publication_count;
-   /* Per-thread frame bytes for Apple9 atomics that return a value. */
-   uint8_t apple9_atomic_frame_size;
-   /* Apple9 setup code is entered by the launcher, independently of USC
-    * preshader configuration used by earlier generations. */
-   uint32_t apple9_preamble_offset, apple9_preamble_size;
-   bool apple9_reads_z;
-   bool apple9_reads_primitive_id;
-   bool apple9_reads_tile;
-   bool apple9_writes_point_size;
-   uint8_t apple9_clip_distance_count;
-   bool apple9_reads_point_coord;
-   /* Barycentric weights (bit 0 perspective, bit 1 linear) and the varying
-    * scalars read per vertex, in the order of their coefficients. Both follow
-    * the point coordinates.
-    */
-   uint8_t apple9_barycentric_mask;
-   uint8_t apple9_per_vertex_count;
-   uint8_t apple9_per_vertex[AGX_APPLE9_MAX_PER_VERTEX];
-   /* Ordered graphics table entries: API UBOs 0..31, vertex bindings 32..63. */
-   uint32_t apple9_resource_ssbo_mask, apple9_resource_write_mask;
-   uint8_t apple9_resource_count;
-   uint8_t apple9_resource_binding[AGX_APPLE9_MAX_GRAPHICS_BUFFERS];
-   /* Live API bindings; descriptor tables compact each mask independently. */
-   uint32_t apple9_texture_mask, apple9_sampler_mask, apple9_image_mask;
-   bool apple9_uses_texel_fetch;
-   bool apple9_uses_discard;
-   /* Fragment shader with pixel_interlock_{ordered,unordered}. */
-   bool apple9_pixel_interlock;
 
    /* How an Apple9 compute shader is launched */
    struct agx_apple9_compute_profile apple9_compute;

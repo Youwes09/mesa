@@ -42,7 +42,6 @@ bool agx_nir_needs_texture_crawl(struct nir_instr *instr);
 
 /* Apple9 lowerings for FP32 subnormal flushing, conversions and sine */
 bool agx_nir_lower_apple9_math(struct nir_shader *shader);
-bool agx_nir_opt_apple9_bounds(struct nir_shader *shader);
 bool agx_nir_lower_apple9_compute_derivatives(struct nir_shader *shader);
 bool agx_nir_lower_apple9_denorms(struct nir_shader *shader);
 bool agx_nir_lower_apple9_denorm_preserve(struct nir_shader *shader);
