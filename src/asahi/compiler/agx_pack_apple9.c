@@ -2046,10 +2046,12 @@ pack_device_atomic(const agx_instr *I, struct a9_packed *p)
       bytes[13] |= 0x01;
    }
 
-   a9_init(p,
-           indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT
-                    : AGX_APPLE9_ENC_DEVICE_ATOMIC,
-           bytes, 14);
+   enum agx_apple9_encoding form =
+      returning ? (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN
+                            : AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN)
+                : (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT
+                            : AGX_APPLE9_ENC_DEVICE_ATOMIC);
+   a9_init(p, form, bytes, 14);
 
    if (returning) {
       unsigned dst = gpr(I, I->dest[0]);

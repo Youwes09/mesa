@@ -1302,7 +1302,7 @@
     invocation's private frame, and the result instruction following it loads
     it into the destination, completing on its slot.
   -->
-  <ins name="atomic" length="14" form="device_atomic">
+  <ins name="atomic" length="14" form="device_atomic device_atomic_return">
     <template>67 01 54 00 00 00 00 80 00 40 00 00 40 02</template>
     <src kind="reg" bit="47:53" role="atomic_data"/>
     <src kind="uniform64" bit="40:46 =0" role="-"/>
@@ -1312,7 +1312,7 @@
     <mask_12_17/>
   </ins>
 
-  <ins name="atomic_indirect" display="atomic" length="14" form="device_atomic_indirect">
+  <ins name="atomic_indirect" display="atomic" length="14" form="device_atomic_indirect device_atomic_indirect_return">
     <template>67 01 54 00 00 00 00 80 00 60 00 00 40 03</template>
     <src kind="reg" bit="47:53" role="atomic_data"/>
     <src kind="reg64" bit="40:46" role="src1"/>
@@ -1322,7 +1322,7 @@
     <mask_12_17/>
   </ins>
 
-  <ins name="atomic_result" length="8" form="device_atomic_result device_atomic device_atomic_indirect">
+  <ins name="atomic_result" length="8" form="device_atomic_result device_atomic_return device_atomic_indirect_return">
     <template>0c 80 09 07 00 20 00 00</template>
     <dest kind="dst" bit="4:7 22:23 60 =0 =0" role="src0"/>
     <modifier name="slot" kind="slot" bit="29:31"/>
@@ -2300,12 +2300,26 @@
     <operand role="store_data" widths="16,32,64" max="95" align="1"/>
   </form>
 
-  <form name="device_atomic" length="14" encoding="atomic; atomic atomic_result" dependency="mask_12_17">
+  <form name="device_atomic" length="14" encoding="atomic" dependency="mask_12_17">
     <operand role="index" max="95" flags="allocatable,scattered,clobber"/>
     <operand role="atomic_data" max="95" flags="allocatable,scattered,clobber"/>
   </form>
 
-  <form name="device_atomic_indirect" length="14" encoding="atomic_indirect; atomic_indirect atomic_result" dependency="mask_12_17">
+  <form name="device_atomic_indirect" length="14" encoding="atomic_indirect" dependency="mask_12_17">
+    <operand role="index" max="95" flags="allocatable,scattered,clobber"/>
+    <operand role="atomic_data" max="95" flags="allocatable,scattered,clobber"/>
+    <operand role="src1" max="94" flags="allocatable,clobber"/>
+    <operand role="src2" max="95" flags="allocatable,clobber"/>
+  </form>
+
+  <form name="device_atomic_return" length="22" encoding="atomic atomic_result" dependency="mask_12_17">
+    <operand role="dest" max="95"/>
+    <operand role="index" max="95" flags="allocatable,scattered,clobber"/>
+    <operand role="atomic_data" max="95" flags="allocatable,scattered,clobber"/>
+  </form>
+
+  <form name="device_atomic_indirect_return" length="22" encoding="atomic_indirect atomic_result" dependency="mask_12_17">
+    <operand role="dest" max="95"/>
     <operand role="index" max="95" flags="allocatable,scattered,clobber"/>
     <operand role="atomic_data" max="95" flags="allocatable,scattered,clobber"/>
     <operand role="src1" max="94" flags="allocatable,clobber"/>
@@ -2365,7 +2379,7 @@
     <operand role="src1" max="63"/>
   </form>
 
-  <form name="device_atomic_result" length="8" encoding="atomic_result">
+  <form name="device_atomic_result" length="8" encoding="atomic_result" packed="false">
     <operand role="src0" max="95"/>
   </form>
 

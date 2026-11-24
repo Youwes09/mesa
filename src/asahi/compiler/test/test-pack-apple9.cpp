@@ -1238,6 +1238,7 @@ TEST_F(Apple9Pack, DeviceAtomics)
 {
    agx_instr *I =
       agx_atomic_to(b, r(30), r(22), u64(5), r(23), AGX_ATOMIC_OPC_ADD);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN);
    std::vector<uint8_t> p = pack(I);
    const uint8_t add[] = {0x67, 0x01, 0x54, 0x00, 0x00, 0x05, 0x8b,
                           0x8b, 0x00, 0x02, 0x00, 0x00, 0x60, 0x02};
@@ -1253,6 +1254,7 @@ TEST_F(Apple9Pack, DeviceAtomics)
    EXPECT_EQ(memcmp(p.data(), cmpxchg, sizeof(cmpxchg)), 0);
 
    I = agx_atomic_to(b, agx_null(), r(4), u64(9), r(5), AGX_ATOMIC_OPC_XOR);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC);
    check(I, {0x67, 0x01, 0x54, 0x00, 0x00, 0x09, 0x82, 0x82, 0x00, 0x40, 0x00,
              0x00, 0x7e, 0x02});
 
@@ -1417,6 +1419,10 @@ TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT);
    check(I, {0x67, 0x01, 0x54, 0x00, 0x00, 0x0a, 0x82, 0x82, 0x00, 0x60, 0x00,
              0x00, 0x60, 0x03});
+
+   I = agx_atomic_to(b, r(6), r(4), r64(10), r(5), AGX_ATOMIC_OPC_ADD);
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN);
+   EXPECT_EQ(pack(I).size(), 22u);
 }
 
 /* FP16 arithmetic on the low halves of registers */

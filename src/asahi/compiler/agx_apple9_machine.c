@@ -2672,21 +2672,61 @@ static const struct agx_apple9_encoding_info encodings[] = {
                   AGX_APPLE9_EVIDENCE_HARDWARE),
             },
       },
-   [AGX_APPLE9_ENC_DEVICE_ATOMIC_RESULT] =
+   /* Returning atomics, followed by the record of the old value */
+   [AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN] =
       {
-         .name = "device_atomic_result",
-         .length = 8,
-         .operand_count = 1,
+         .name = "device_atomic_return",
+         .length = 22,
+         .dependency_layout = AGX_APPLE9_DEPENDENCY_MASK_12_17,
+         .operand_count = 3,
          .allocator_safe = true,
          .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
          .operands =
             {
-               /* The long low-nibble-c instruction following a returning
-                * atomic has a seven-bit destination: four bits in the
-                * first nibble, two at 22..23, and the last at bit 60. */
-               GPR(AGX_APPLE9_OPERAND_SRC0, AGX_APPLE9_WIDTH_32,
-                   95, 2, AGX_APPLE9_OPERAND_ALLOCATABLE,
+               /* The result record's destination: four bits in the first
+                * nibble, two at 22..23, the last at bit 60 */
+               GPR(AGX_APPLE9_OPERAND_DEST, AGX_APPLE9_WIDTH_32, 95, 2,
+                   AGX_APPLE9_OPERAND_ALLOCATABLE,
                    AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_INDEX, AGX_APPLE9_WIDTH_32, 95,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_SCATTERED | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_ATOMIC_DATA, AGX_APPLE9_WIDTH_32, 95,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_SCATTERED | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
+            },
+      },
+   [AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN] =
+      {
+         .name = "device_atomic_indirect_return",
+         .length = 22,
+         .dependency_layout = AGX_APPLE9_DEPENDENCY_MASK_12_17,
+         .operand_count = 5,
+         .allocator_safe = true,
+         .evidence = AGX_APPLE9_EVIDENCE_HARDWARE,
+         .operands =
+            {
+               GPR(AGX_APPLE9_OPERAND_DEST, AGX_APPLE9_WIDTH_32, 95, 2,
+                   AGX_APPLE9_OPERAND_ALLOCATABLE,
+                   AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_INDEX, AGX_APPLE9_WIDTH_32, 95,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_SCATTERED | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_ATOMIC_DATA, AGX_APPLE9_WIDTH_32, 95,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_SCATTERED | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_SRC1, AGX_APPLE9_WIDTH_32, 94,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
+               GPR(
+                  AGX_APPLE9_OPERAND_SRC2, AGX_APPLE9_WIDTH_32, 95,
+                  2, AGX_APPLE9_OPERAND_ALLOCATABLE | AGX_APPLE9_OPERAND_CLOBBER,
+                  AGX_APPLE9_EVIDENCE_HARDWARE),
             },
       },
 };
