@@ -1160,11 +1160,9 @@ compute_w_entry(struct spill_ctx *ctx)
 
       /* Heuristic: if any phi source is spilled, spill the whole phi. This is
        * suboptimal, but it massively reduces pointless fill/spill chains with
-       * massive phi webs. A target may instead keep a phi whose source some
-       * predecessor still holds; coupling code reloads it on the other edges.
+       * massive phi webs.
        */
-      if (!(ctx->shader->ra_target.spill_partial_phi_sources ? any_found
-                                                             : all_found))
+      if (!all_found)
          continue;
 
       util_dynarray_append(
@@ -1434,79 +1432,13 @@ validate_next_use_info(UNUSED agx_context *ctx,
 #endif
 }
 
-/* A spilled loop-invariant SSA value has the same bits on every iteration.
- * If it is already available at the unique preheader exit, write its scratch
- * copy there once. Do not extend a register live range through the preheader:
- * require either an existing scratch copy or membership in its exit W set.
- * Loop-carried phis are excluded because their destination is not live-in.
- */
-static void
-hoist_loop_invariant_spills(agx_context *ctx, unsigned n,
-                            const struct spill_block *blocks,
-                            const unsigned *loop_end)
-{
-   if (!ctx->ra_target.defer_spill_lowering)
-      return;
-
-   agx_foreach_block(ctx, header) {
-      unsigned end = loop_end[header->index];
-      if (!end)
-         continue;
-      agx_block *preheader = NULL;
-      unsigned entries = 0;
-      agx_foreach_predecessor(header, pred) {
-         if (!loop_contains(loop_end, header->index, (*pred)->index)) {
-            preheader = *pred;
-            ++entries;
-         }
-      }
-      if (entries != 1 || preheader->successors[1] ||
-          preheader->successors[0] != header)
-         continue;
-
-      BITSET_WORD *available = calloc(BITSET_WORDS(n), sizeof(BITSET_WORD));
-      BITSET_WORD *stored = calloc(BITSET_WORDS(n), sizeof(BITSET_WORD));
-      const struct spill_block *sb = &blocks[preheader->index];
-      for (unsigned i = 0; i < sb->nW_exit; ++i)
-         BITSET_SET(available, sb->W_exit[i]);
-      for (unsigned i = 0; i < sb->nS_exit; ++i)
-         BITSET_SET(stored, sb->S_exit[i]);
-
-      agx_foreach_block_from(ctx, header, block) {
-         if (block->index > end)
-            break;
-         agx_foreach_instr_in_block_safe(block, I) {
-            if (I->op != AGX_OPCODE_MOV || I->dest[0].reg_class != RA_MEM ||
-                I->src[0].reg_class == RA_MEM ||
-                I->src[0].type != AGX_INDEX_NORMAL)
-               continue;
-            unsigned v = I->src[0].value;
-            if (v >= n || I->dest[0].value != n + v ||
-                !u_sparse_bitset_test(&header->live_in, v) ||
-                (!BITSET_TEST(available, v) && !BITSET_TEST(stored, v)))
-               continue;
-            if (!BITSET_TEST(stored, v)) {
-               agx_builder b =
-                  agx_init_builder(ctx, agx_after_block_logical(preheader));
-               agx_mov_to(&b, I->dest[0], I->src[0]);
-               BITSET_SET(stored, v);
-            }
-            agx_remove_instruction(I);
-         }
-      }
-      free(available);
-      free(stored);
-   }
-}
-
 void
 agx_spill(agx_context *ctx, unsigned k, bool remat_only)
 {
    void *memctx = ralloc_context(NULL);
 
    /* We need extra registers for memory-memory swaps */
-   k -= MAX2(ctx->ra_target.reserved_registers,
-             remat_only ? 2 : ctx->target.spill_reserved_halves);
+   k -= remat_only ? 2 : ctx->target.spill_reserved_halves;
 
    uint8_t *channels = rzalloc_array(memctx, uint8_t, ctx->alloc);
    dist_t *next_uses = rzalloc_array(memctx, dist_t, ctx->alloc);
@@ -1610,7 +1542,6 @@ agx_spill(agx_context *ctx, unsigned k, bool remat_only)
       }
    }
 
-   hoist_loop_invariant_spills(ctx, n, blocks, loop_end);
    ralloc_free(memctx);
 
    /* Spilling breaks SSA, so we need to repair before validating */

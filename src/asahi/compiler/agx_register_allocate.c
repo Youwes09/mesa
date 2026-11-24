@@ -315,13 +315,6 @@ struct ra_ctx {
    /* Cached preferences for the value being placed. */
    unsigned affinity_ssa, affinity_reg;
 
-   /* Soft placement hints. Instruction constraints remain the only hard
-    * restrictions, since different uses can need incompatible banks. */
-   const struct agx_reg_constraint *preferred;
-   const unsigned *scarcity;
-   /* scarcity_floor[l][r]: the least scarcity of any 1 << l register window
-    * starting at r or above, a lower bound for placement_floor. */
-   const unsigned (*scarcity_floor)[AGX_NUM_REGS + 1];
    unsigned demand;
 };
 
@@ -345,7 +338,7 @@ reserved_size(agx_context *ctx)
    else
       size = 0;
 
-   return MAX2(size, ctx->ra_target.reserved_registers);
+   return size;
 }
 
 static unsigned preferred_phi_register(struct ra_ctx *rctx, unsigned ssa,
@@ -563,12 +556,9 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
    return max_demand;
 }
 
-/* Window sizes (1 << l halves) with a precomputed scarcity floor. */
-#define RA_SCARCITY_FLOOR_SIZES 6
-
 struct placement_cost {
    uint64_t dead, edge, affinity;
-   unsigned moves, collect, preference, materialization, growth, scarcity, reg;
+   unsigned moves, collect, reg;
 };
 
 /* Collects retain their tuple placement preference separately from phi edges. */
@@ -769,35 +759,13 @@ placement_cost(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count)
       cost.affinity -= pref->affinity;
    }
    cost.collect = rctx->affinity_reg != ~0u && rctx->affinity_reg != reg;
-   if (!rctx->preferred)
-      return cost;
-   struct agx_reg_constraint c = rctx->preferred[ssa];
-   if (c.min <= c.max) {
-      cost.preference = reg < c.min || reg > c.max || (reg % c.align);
-   }
-
-   /* A constant outside the immediate destination bank needs a staging
-    * move. Prefer a directly encodable free register after honouring phi,
-    * tuple and operand preferences, but before conserving scarce banks. */
-   unsigned immediate_regs = rctx->shader->target.mov_imm_halves;
-   if (rctx->instr->op == AGX_OPCODE_MOV_IMM &&
-       rctx->instr->dest[0].value == ssa)
-      cost.materialization = reg + count > immediate_regs;
-
-   /* Leave scarce banks available without raising the footprint beyond the
-    * pressure already required by this program (or an existing fixed use). */
-   unsigned limit = MAX2(rctx->demand, *rctx->count[RA_GPR]);
-   cost.growth = reg + count > limit ? reg + count - limit : 0;
-   for (unsigned h = reg; h < reg + count; ++h)
-      cost.scarcity += rctx->scarcity[h];
    return cost;
 }
 
 /* A lower bound of placement_cost for every register from reg upwards, given
  * per-field floors over the phi preferences and the highest preferred GPR.
  * Each field it raises only grows with the register: the tuple affinity is
- * one register, the preferred window ends at its maximum, and immediate
- * encodability and footprint growth are thresholds on the register's end. */
+ * one register. */
 static struct placement_cost
 placement_floor(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count,
                 const struct placement_cost *floors, unsigned last_preference)
@@ -810,20 +778,6 @@ placement_floor(struct ra_ctx *rctx, unsigned ssa, unsigned reg, unsigned count,
       cost.affinity = rctx->affinity_total;
    }
    cost.collect = rctx->affinity_reg != ~0u && rctx->affinity_reg < reg;
-   if (!rctx->preferred)
-      return cost;
-   struct agx_reg_constraint c = rctx->preferred[ssa];
-   cost.preference = c.min <= c.max && reg > c.max;
-   unsigned immediate_regs = rctx->shader->target.mov_imm_halves;
-   if (rctx->instr->op == AGX_OPCODE_MOV_IMM &&
-       rctx->instr->dest[0].value == ssa)
-      cost.materialization = reg + count > immediate_regs;
-   unsigned limit = MAX2(rctx->demand, *rctx->count[RA_GPR]);
-   cost.growth = reg + count > limit ? reg + count - limit : 0;
-   unsigned l = util_logbase2(count);
-   if (rctx->scarcity_floor && l < RA_SCARCITY_FLOOR_SIZES &&
-       reg <= AGX_NUM_REGS)
-      cost.scarcity = rctx->scarcity_floor[l][reg];
    return cost;
 }
 
@@ -840,14 +794,6 @@ placement_cheaper(struct placement_cost a, struct placement_cost b)
       return a.affinity < b.affinity;
    if (a.collect != b.collect)
       return a.collect < b.collect;
-   if (a.preference != b.preference)
-      return a.preference < b.preference;
-   if (a.materialization != b.materialization)
-      return a.materialization < b.materialization;
-   if (a.growth != b.growth)
-      return a.growth < b.growth;
-   if (a.scarcity != b.scarcity)
-      return a.scarcity < b.scarcity;
    return a.reg < b.reg;
 }
 
@@ -855,8 +801,6 @@ static bool
 find_regs_simple(struct ra_ctx *rctx, enum ra_class cls, unsigned count,
                  unsigned align, unsigned ssa, unsigned *out)
 {
-   bool found = false;
-   struct placement_cost best = {.moves = ~0u};
    rctx->affinity_ssa = ~0u;
 
    /* A value that is not exported first tries registers no export wants */
@@ -874,20 +818,12 @@ find_regs_simple(struct ra_ctx *rctx, enum ra_class cls, unsigned count,
 
    for (unsigned reg = 0; reg + count <= rctx->bound[cls]; reg += align) {
       if (!BITSET_TEST_COUNT(rctx->used_regs[cls], reg, count)) {
-         if (!rctx->preferred || cls != RA_GPR) {
-            *out = reg;
-            return true;
-         }
-         struct placement_cost cost = placement_cost(rctx, ssa, reg, count);
-         if (!found || placement_cheaper(cost, best)) {
-            *out = reg;
-            best = cost;
-            found = true;
-         }
+         *out = reg;
+         return true;
       }
    }
 
-   return found;
+   return false;
 }
 
 /*
@@ -1462,12 +1398,6 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
    /* Unlike unconstrained splitting, the legal bank may be completely full.
     * Choose a legal region, then move its occupants to the rest of the file.
     * Only this instruction's already-placed operands are pinned. */
-   /* The base of the tuple occupying each register, recorded once and only
-    * when an occupied candidate is costed, so each candidate inspects only
-    * its own registers. */
-   unsigned tuple_base[AGX_NUM_REGS];
-   bool have_tuple_base = false;
-
    unsigned chosen = ~0;
    struct placement_cost best = {.moves = ~0u};
    /* Per-field lower bounds of the ranked cost. Once the best candidate is
@@ -1525,34 +1455,7 @@ place_constrained_value(struct ra_ctx *rctx, agx_index value,
       if (occupied && (any_free || (chosen != ~0u && !best.moves)))
          continue;
       struct placement_cost cost = placement_cost(rctx, ssa, reg, count);
-      if (occupied && rctx->preferred && !have_tuple_base) {
-         for (unsigned h = reserved_size(rctx->shader);
-              h < rctx->bound[RA_GPR];) {
-            if (!BITSET_TEST(rctx->used_regs[RA_GPR], h)) {
-               ++h;
-               continue;
-            }
-            unsigned width = rctx->ncomps[rctx->reg_to_ssa[h]];
-            for (unsigned k = 0; k < width; ++k)
-               tuple_base[h + k] = h;
-            h += width;
-         }
-         have_tuple_base = true;
-      }
-      if (!occupied) {
-         /* No register to move. */
-      } else if (rctx->preferred) {
-         /* Even a one-half overlap evicts the complete tuple. Counting only
-          * the overlapping halves can prefer a much more expensive move. */
-         unsigned previous = ~0u;
-         for (unsigned h = reg; h < reg + count; ++h) {
-            if (!BITSET_TEST(rctx->used_regs[RA_GPR], h) ||
-                tuple_base[h] == previous)
-               continue;
-            previous = tuple_base[h];
-            cost.moves += rctx->ncomps[rctx->reg_to_ssa[previous]];
-         }
-      } else {
+      if (occupied) {
          for (unsigned h = reg; h < reg + count; ++h)
             cost.moves += BITSET_TEST(rctx->used_regs[RA_GPR], h);
       }
@@ -2079,12 +1982,6 @@ agx_ra_assign_local(struct ra_ctx *rctx)
 
    agx_foreach_instr_in_block(block, I) {
       rctx->instr = I;
-      /* Early killing frees allocation space, but deferred destructive spill
-       * stores still need to know whether the original value survives. */
-      bool dead_spill_source = rctx->shader->ra_target.preserve_source_kills &&
-                               I->op == AGX_OPCODE_MOV &&
-                               I->dest[0].reg_class == RA_MEM &&
-                               I->src[0].reg_class != RA_MEM && I->src[0].kill;
 
       /* Optimization: if a split contains the last use of a vector, the split
        * can be removed by assigning the destinations overlapping the source.
@@ -2148,9 +2045,7 @@ agx_ra_assign_local(struct ra_ctx *rctx)
       /* Search for regions of contiguous killed sources to early-kill. */
       rctx->early_killed = false;
 
-      if (I->nr_dests == 1 && !I->reg_constraints &&
-          (!rctx->shader->ra_target.late_kill_sources ||
-           I->op == AGX_OPCODE_MOV || I->op == AGX_OPCODE_COLLECT)) {
+      if (I->nr_dests == 1 && !I->reg_constraints) {
          unsigned first_src = 0;
          unsigned end = 0;
          unsigned start = 0;
@@ -2208,8 +2103,6 @@ agx_ra_assign_local(struct ra_ctx *rctx)
          agx_set_sources(rctx, I);
 
       agx_set_dests(rctx, I);
-      if (dead_spill_source)
-         I->src[0].kill = true;
    }
 
    /* Sparse-bitset iteration is ordered by SSA name. Store just the live-out
@@ -2371,42 +2264,6 @@ lower_exports(agx_context *ctx)
    agx_emit_parallel_copies(&b, copies, nr);
 }
 
-static void
-constraint_preferences(agx_context *ctx, struct agx_reg_constraint *preferred,
-                       unsigned *scarcity, unsigned max_regs)
-{
-   for (unsigned v = 0; v < ctx->alloc; ++v)
-      preferred[v] = (struct agx_reg_constraint){0, max_regs - 1, 1};
-
-   agx_foreach_instr_global(ctx, I) {
-      if (!I->reg_constraints)
-         continue;
-      agx_foreach_ssa_src(I, s) {
-         struct agx_reg_constraint c = I->reg_constraints[I->nr_dests + s];
-         if (I->src[s].reg_class != RA_GPR ||
-             (c.min == c.max && c.max < reserved_size(ctx)))
-            continue;
-         struct agx_reg_constraint *p = &preferred[I->src[s].value];
-         p->min = MAX2(p->min, c.min);
-         p->max = MIN2(p->max, c.max);
-         p->align = MAX2(p->align, c.align);
-      }
-      for (unsigned o = 0; o < I->nr_dests + I->nr_srcs; ++o) {
-         agx_index idx = o < I->nr_dests ? I->dest[o] : I->src[o - I->nr_dests];
-         if (idx.type != AGX_INDEX_NORMAL || idx.reg_class != RA_GPR)
-            continue;
-         struct agx_reg_constraint c = I->reg_constraints[o];
-         unsigned width = util_next_power_of_two(agx_index_size_16(idx));
-         unsigned end = MIN2(c.max + width, max_regs);
-         if (end <= c.min || (c.min == 0 && end == max_regs))
-            continue;
-         unsigned weight = DIV_ROUND_UP(max_regs, end - c.min);
-         for (unsigned h = c.min; h < end; ++h)
-            scarcity[h] += weight;
-      }
-   }
-}
-
 static bool
 is_clobbered(const agx_instr *I, unsigned s)
 {
@@ -2522,8 +2379,7 @@ agx_ra(agx_context *ctx)
          }
 
          /* Spilling must still fit one instruction and the temporaries */
-         unsigned needed = MAX2(ctx->ra_target.reserved_registers,
-                                ctx->target.spill_reserved_halves);
+         unsigned needed = ctx->target.spill_reserved_halves;
          agx_foreach_ssa_dest(I, v) {
             if (I->dest[v].reg_class == RA_GPR)
                needed += util_next_power_of_two(agx_index_size_16(I->dest[v]));
@@ -2562,8 +2418,7 @@ agx_ra(agx_context *ctx)
    /* If we need multiple waves, see if we can rematerialize constants to save
     * waves. If we only have a single wave regardless, this is pointless.
     */
-   if (!ctx->ra_target.disable_occupancy_rematerialization &&
-       effective_demand > agx_round_registers(1) && !spilling) {
+   if (effective_demand > agx_round_registers(1) && !spilling) {
       unsigned effective_demand_remat = agx_calc_register_demand(ctx, true);
 
       /* Worst-case assume we need 6 16-bit registers for constants, for a
@@ -2845,33 +2700,6 @@ agx_ra(agx_context *ctx)
    assert(max_regs >= (6 * 2) && "space for vertex shader preloading");
    assert(max_regs <= max_possible_regs);
 
-   struct agx_reg_constraint *preferred = NULL;
-   unsigned scarcity[AGX_NUM_REGS] = {0};
-   if (ctx->ra_target.cost_register_constraints) {
-      preferred = calloc(ctx->alloc, sizeof(*preferred));
-      if (preferred)
-         constraint_preferences(ctx, preferred, scarcity, max_regs);
-   }
-
-   unsigned (*scarcity_floor)[AGX_NUM_REGS + 1] = NULL;
-   if (preferred) {
-      scarcity_floor =
-         malloc(RA_SCARCITY_FLOOR_SIZES * sizeof(*scarcity_floor));
-      for (unsigned l = 0; scarcity_floor && l < RA_SCARCITY_FLOOR_SIZES; ++l) {
-         unsigned width = 1u << l;
-         scarcity_floor[l][AGX_NUM_REGS] = UINT_MAX;
-         for (int r = AGX_NUM_REGS - 1; r >= 0; --r) {
-            unsigned sum = UINT_MAX;
-            if (r + width <= AGX_NUM_REGS) {
-               sum = 0;
-               for (unsigned h = r; h < r + width; ++h)
-                  sum += scarcity[h];
-            }
-            scarcity_floor[l][r] = MIN2(sum, scarcity_floor[l][r + 1]);
-         }
-      }
-   }
-
    struct agx_spill_interference *spill_graph =
       ctx->spill_home ? agx_spill_coalesce_prepare(ctx) : NULL;
    bool success = false;
@@ -2907,9 +2735,6 @@ agx_ra(agx_context *ctx)
              .count[RA_GPR] = &reg_count,
              .count[RA_MEM] = &mem_slot_count,
              .count[RA_EXPORT] = &export_count,
-             .preferred = preferred,
-             .scarcity = scarcity,
-             .scarcity_floor = scarcity_floor,
              .demand = demand,
              .affinity_ssa = ~0u,
              .export_targets = export_targets,
@@ -2948,22 +2773,8 @@ agx_ra(agx_context *ctx)
             agx_replace_index(ins->dest[d], agx_as_register(ins->dest[d]));
       }
 
-      /* Apple9 consumes the shared liveness result when selecting physical
-       * operand release bits. Duplicate operands have one SSA kill marker. */
-      unsigned source_kills = 0;
-      if (ctx->ra_target.preserve_source_kills) {
-         agx_foreach_ssa_src(ins, s) {
-            agx_foreach_ssa_src(ins, t) {
-               if (ins->src[t].kill && ins->src[s].value == ins->src[t].value &&
-                   ins->src[s].reg_class == ins->src[t].reg_class)
-                  source_kills |= BITFIELD_BIT(s);
-            }
-         }
-      }
       agx_foreach_ssa_src(ins, s) {
          agx_replace_src(ins, s, agx_as_register(ins->src[s]));
-         if (ctx->ra_target.preserve_source_kills)
-            ins->src[s].kill = (source_kills & BITFIELD_BIT(s)) != 0;
       }
 
       /* Lower away RA pseudo-instructions */
@@ -3089,13 +2900,12 @@ agx_ra(agx_context *ctx)
       }
    }
 
-   if (spilling && !ctx->ra_target.defer_spill_lowering)
+   if (spilling)
       agx_lower_spill(ctx);
 
    success = true;
 
 cleanup:
-   free(scarcity_floor);
    ralloc_free(spill_graph);
    agx_foreach_block(ctx, block) {
       free(block->ssa_to_reg_out);
@@ -3114,6 +2924,5 @@ cleanup:
    free(sizes);
    free(classes);
    free(visited);
-   free(preferred);
    return success;
 }

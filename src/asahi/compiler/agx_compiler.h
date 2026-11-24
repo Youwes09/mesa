@@ -594,32 +594,8 @@ agx_opcode_on_isa(enum agx_opcode op, enum agx_shader_isa isa)
                                        : agx_opcodes_info[op].apple8;
 }
 
-/* Allocation policy beyond the register files. Instruction selection and
- * spill lowering remain target-specific; SSA spilling and register assignment
- * are shared.
- */
-struct agx_context;
-
-struct agx_ra_target {
-   /* GPRs from r0 up that are never allocated */
-   unsigned reserved_registers;
-   bool late_kill_sources;
-   bool preserve_source_kills;
-   bool defer_spill_lowering;
-   /* An occupancy table from another target is not a rematerialization cost
-    * model. Targets without measured breakpoints can retain real spilling
-    * while declining this optional code-size/occupancy tradeoff. */
-   bool disable_occupancy_rematerialization;
-   /* At a join, keep a phi in registers when any predecessor holds its
-    * source in a register; the others reload it on their edge. Otherwise a
-    * single evicted source spills the whole phi. */
-   bool spill_partial_phi_sources;
-   bool cost_register_constraints;
-};
-
 typedef struct agx_context {
    struct agx_isa_target target;
-   struct agx_ra_target ra_target;
    /* Static diagnostic set when constrained register allocation fails. */
    const char *ra_error;
    /* Optional target implicit-resource graph, replacing scheduling classes.
