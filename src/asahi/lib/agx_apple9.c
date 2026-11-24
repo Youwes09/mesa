@@ -349,53 +349,12 @@ agx_apple9_compute_launch_size(const struct agx_apple9_compute_profile *profile)
    return abi ? AGX_APPLE9_COMPUTE_LAUNCH_SIZE : 0;
 }
 
-unsigned
-agx_apple9_compute_resource_count(
-   const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi && apple9_compute_profile_valid(profile, abi)
-             ? profile->resource_binding_count
-             : 0;
-}
-
 static size_t
 apple9_compute_resource_record_size_for_abi(
    const struct apple9_compute_abi_desc *abi)
 {
    return abi && abi->resource_record_size ? abi->resource_record_size
                                            : AGX_APPLE9_COMPUTE_RESOURCE_STRIDE;
-}
-
-size_t
-agx_apple9_compute_resource_record_size(
-   const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi && apple9_compute_profile_valid(profile, abi)
-             ? apple9_compute_resource_record_size_for_abi(abi)
-             : 0;
-}
-
-uint32_t
-agx_apple9_compute_required_threadgroup_memory_bytes(
-   const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi && apple9_compute_profile_valid(profile, abi)
-             ? profile->required_threadgroup_memory_bytes
-             : 0;
-}
-
-unsigned
-agx_apple9_compute_resource_binding(
-   const struct agx_apple9_compute_profile *profile, unsigned argument)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   if (!abi || argument >= profile->resource_binding_count)
-      return UINT8_MAX;
-
-   return profile->resource_binding[argument];
 }
 
 enum agx_apple9_compute_resource_kind
@@ -407,55 +366,6 @@ agx_apple9_compute_resource_kind(
       return AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
 
    return profile->resource_kind[argument];
-}
-
-uint32_t
-agx_apple9_compute_read_mask(const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi ? profile->resource_read_mask : 0;
-}
-
-uint32_t
-agx_apple9_compute_write_mask(const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi ? profile->resource_write_mask : 0;
-}
-
-bool
-agx_apple9_compute_grid_supported(
-   const struct agx_apple9_compute_profile *profile, const uint32_t global[3],
-   const uint32_t local[3])
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   if (!abi || !global || !local)
-      return false;
-
-   /* Direct CDM geometry is dispatch state,
-    * not part of either launch/archive ABI.  Keep the hardware's public M4
-    * threadgroup limit explicit and reject zero axes before encoding. */
-   uint64_t threads_per_group = 1;
-   for (unsigned d = 0; d < 3; ++d) {
-      if (!global[d] || !local[d] ||
-          (!profile->variable_local_size && local[d] != profile->local_size[d]))
-         return false;
-      if (local[d] > 1024 / threads_per_group)
-         return false;
-      /* Direct geometry counts threads in 32 bits. The API's 65535-group
-       * limit does not bind driver-internal dispatches. */
-      threads_per_group *= local[d];
-   }
-
-   return true;
-}
-
-bool
-agx_apple9_compute_indirect_dispatch_supported(
-   const struct agx_apple9_compute_profile *profile)
-{
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi && abi->supports_indirect_dispatch;
 }
 
 static bool apple9_build_body_entry(uint8_t *out, uint64_t entry,
@@ -852,16 +762,6 @@ agx_apple9_texture_format_supported(enum pipe_format format)
    default:
       return false;
    }
-}
-
-bool
-agx_apple9_sampler_wrap_supported(unsigned wrap)
-{
-   return wrap == PIPE_TEX_WRAP_CLAMP_TO_EDGE || wrap == PIPE_TEX_WRAP_REPEAT ||
-          wrap == PIPE_TEX_WRAP_MIRROR_REPEAT ||
-          wrap == PIPE_TEX_WRAP_CLAMP_TO_BORDER ||
-          wrap == PIPE_TEX_WRAP_CLAMP ||
-          wrap == PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE;
 }
 
 static unsigned

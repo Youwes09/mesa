@@ -41,7 +41,6 @@ struct agx_device;
 struct agx_bo;
 struct agx_shader_body;
 struct agx_pool;
-struct agx_apple9_graphics;
 
 /* Graphics launch programs of one compiled stage, built on first use for each
  * fragment tile allocation and sample count (vertex stages use 0/0) and then
@@ -334,47 +333,11 @@ bool agx_apple9_compute_enabled(const struct agx_device *dev);
 size_t agx_apple9_compute_launch_size(
    const struct agx_apple9_compute_profile *profile);
 
-unsigned agx_apple9_compute_resource_count(
-   const struct agx_apple9_compute_profile *profile);
-
-/* Exact per-dispatch resource-record footprint selected by the package ABI.
- * The direct-buffer ABI uses one 0x100-byte record containing one hidden
- * pointer, up to eighteen visible pointers, and inline group counts. */
-size_t agx_apple9_compute_resource_record_size(
-   const struct agx_apple9_compute_profile *profile);
-
-/* Exact total threadgroup-memory requirement carried by this profile.  The
- * value is validated against the selected opaque package ABI. */
-uint32_t agx_apple9_compute_required_threadgroup_memory_bytes(
-   const struct agx_apple9_compute_profile *profile);
-
 /* Map a package argument record to the caller's logical buffer namespace and
  * binding.  Compiler-generated profiles may mix UBO inputs with SSBO inputs
  * and outputs without changing native package argument order. */
 enum agx_apple9_compute_resource_kind agx_apple9_compute_resource_kind(
    const struct agx_apple9_compute_profile *profile, unsigned argument);
-
-unsigned agx_apple9_compute_resource_binding(
-   const struct agx_apple9_compute_profile *profile, unsigned argument);
-
-uint32_t
-agx_apple9_compute_read_mask(const struct agx_apple9_compute_profile *profile);
-
-uint32_t
-agx_apple9_compute_write_mask(const struct agx_apple9_compute_profile *profile);
-
-/*
- * Direct CDM geometry is dispatch state.  Fixed-local-size profiles require
- * the compiled tuple, while variable-local-size profiles validate the tuple
- * supplied by the dispatch command.
- */
-bool agx_apple9_compute_grid_supported(
-   const struct agx_apple9_compute_profile *profile, const uint32_t global[3],
-   const uint32_t local[3]);
-
-/* Indirect dispatch is a launch/package ABI property. */
-bool agx_apple9_compute_indirect_dispatch_supported(
-   const struct agx_apple9_compute_profile *profile);
 
 enum agx_apple9_compute_geometry_mode {
    AGX_APPLE9_COMPUTE_GEOMETRY_DIRECT,
@@ -484,7 +447,6 @@ bool agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
                               unsigned layer_count, bool layered,
                               unsigned dimension);
 
-bool agx_apple9_sampler_wrap_supported(unsigned wrap);
 void agx_apple9_pack_sampler(void *out, bool min_linear, bool mag_linear,
                              unsigned mip_filter, float min_lod, float max_lod,
                              unsigned wrap_s, unsigned wrap_t,

@@ -9,14 +9,6 @@
 
 /* Tile representations of Apple9 render targets */
 
-static inline unsigned
-agx_apple9_color_components(enum pipe_format format)
-{
-   return format == PIPE_FORMAT_NONE
-             ? 4
-             : util_format_description(format)->nr_channels;
-}
-
 static inline bool
 agx_apple9_color_is_half(enum pipe_format format)
 {
