@@ -643,6 +643,9 @@ typedef struct agx_context {
    /* Has r0l been zeroed yet due to control flow? */
    bool any_cf;
 
+   /* Release the depth/stencil domain once at the end (repeated tests) */
+   bool apple9_zs_release_at_end;
+
    /* Do we need r0h zero throughout the program to handle quad-divergent
     * shuffle?
     */

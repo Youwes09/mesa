@@ -1064,6 +1064,43 @@ agx_export_word_apple9(agx_builder *b, agx_index value)
    return pub;
 }
 
+/* Whether a coverage write or depth/stencil export tests depth and stencil */
+static bool
+agx_apple9_tests_zs(nir_intrinsic_instr *intr)
+{
+   if (intr->intrinsic == nir_intrinsic_store_zs_agx)
+      return true;
+
+   /* As on Apple8, writes that kill samples unconditionally run no tests */
+   return intr->intrinsic == nir_intrinsic_sample_mask_agx &&
+          !(nir_src_is_const(intr->src[1]) && nir_src_as_uint(intr->src[1]) == 0);
+}
+
+/* Releasing the depth/stencil domain ends testing, so release it once */
+static bool
+agx_apple9_tests_zs_repeatedly(nir_function_impl *impl)
+{
+   unsigned count = 0;
+
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic ||
+             !agx_apple9_tests_zs(nir_instr_as_intrinsic(instr)))
+            continue;
+
+         if (++count > 1)
+            return true;
+
+         for (nir_cf_node *n = &block->cf_node; n; n = n->parent) {
+            if (n->type == nir_cf_node_loop)
+               return true;
+         }
+      }
+   }
+
+   return false;
+}
+
 static void
 agx_test_zs_apple9(agx_builder *b, bool begin)
 {
@@ -1071,7 +1108,7 @@ agx_test_zs_apple9(agx_builder *b, bool begin)
 
    if (begin) {
       agx_begin_tile(b, 1);
-   } else if (ctx->key->fs.inside_sample_loop) {
+   } else if (ctx->apple9_zs_release_at_end) {
       ctx->out->apple9_zs_release = true;
    } else {
       agx_end_tile(b, 1);
@@ -1086,9 +1123,7 @@ agx_emit_sample_mask_apple9(agx_builder *b, nir_intrinsic_instr *instr)
    agx_index live =
       agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[1]), 16, false);
 
-   /* As on Apple8, writes that kill samples unconditionally run no tests */
-   bool tests =
-      !(nir_src_is_const(instr->src[1]) && nir_src_as_uint(instr->src[1]) == 0);
+   bool tests = agx_apple9_tests_zs(instr);
 
    b->shader->out->apple9_tile_domain =
       MAX2(b->shader->out->apple9_tile_domain, 0x600);
@@ -4866,6 +4901,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    if (ctx->stage == MESA_SHADER_FRAGMENT && !ctx->is_preamble) {
       ctx->any_cf = key->fs.inside_sample_loop;
+      ctx->apple9_zs_release_at_end =
+         agx_is_apple9(ctx) &&
+         (key->fs.inside_sample_loop || agx_apple9_tests_zs_repeatedly(impl));
    }
 
    /* A returning Apple9 device atomic writes the private frame's first word */
