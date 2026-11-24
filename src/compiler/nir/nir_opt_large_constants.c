@@ -289,7 +289,10 @@ get_small_constant_component(const nir_shader_compiler_options *options,
 
    bool is_float = true;
    uint32_t denom = 1;
-   if (bit_size < 16 || (bit_size == 16 && !options->support_16bit_alu)) {
+   /* No new 64-bit float math where doubles are lowered in software */
+   if (bit_size < 16 || (bit_size == 16 && !options->support_16bit_alu) ||
+       (bit_size == 64 &&
+        (options->lower_doubles_options & nir_lower_fp64_full_software))) {
       is_float = false;
    } else {
       for (unsigned i = 0; i < array_len; i++) {
