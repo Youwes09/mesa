@@ -1065,7 +1065,7 @@ pack_bit_unary(const agx_instr *I, struct a9_packed *p)
    a9_init(p, AGX_APPLE9_ENC_BIT_UNARY, bytes, 8);
 }
 
-/* FP32 special functions. Byte 4 is 3 if an ALU reads the result, else 2 */
+/* FP32 and FP16 special functions. Byte 4 is 3 if an ALU reads the result */
 static void
 pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 {
@@ -1115,6 +1115,14 @@ pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    unsigned dst = gpr(I, I->dest[0]);
    unsigned value = is_uniform(src) ? uniform_word(I, src) : gpr(I, src);
 
+   /* FP16 reads and writes low halves: byte 7, and bits 3-4 of byte 6 */
+   bool half = I->format == AGX_FORMAT_F16;
+   pack_assert(I, !half || is_gpr(src));
+   if (half) {
+      precision = reciprocal ? 0x46 : 0x60;
+      rounding |= reciprocal ? 0x10 : 0;
+   }
+
    uint8_t bytes[10] = {
       0x2f | (family << 7),
       function,
@@ -1123,6 +1131,7 @@ pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
       st->alu_reads_result ? 0x03 : 0x02,
       (value & 63) << 2,
       ((value >> 6) & 1) | (reciprocal ? (retain(src) ? 0x00 : 0x10)
+                            : half     ? (retain(src) ? 0x8c : 0xac)
                                        : (retain(src) ? 0x90 : 0xb0)),
       precision,
       rounding,
@@ -1139,8 +1148,9 @@ pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    set_bits(bytes, reciprocal ? 71 : 64, 1, src.neg);
 
    a9_init(p,
-           is_uniform(src) ? AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM
-                           : AGX_APPLE9_ENC_FLOAT_SPECIAL,
+           half              ? AGX_APPLE9_ENC_HALF_SPECIAL
+           : is_uniform(src) ? AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM
+                             : AGX_APPLE9_ENC_FLOAT_SPECIAL,
            bytes, 10);
 }
 

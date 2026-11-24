@@ -268,6 +268,10 @@ special_ok(const agx_instr *I)
    bool uniform_ok = rounding || I->op == AGX_OPCODE_RSQRT ||
                      I->op == AGX_OPCODE_EXP2 || I->op == AGX_OPCODE_LOG2;
 
+   /* FP16 operands come from registers */
+   if (I->format == AGX_FORMAT_F16 && !reg32(src))
+      return false;
+
    return reg32(I->dest[0]) && (reg32(src) || (uniform_ok && uni32(src))) &&
           !(I->saturate && rounding);
 }

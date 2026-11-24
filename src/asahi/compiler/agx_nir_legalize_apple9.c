@@ -7,8 +7,9 @@
 #include "agx_compile.h"
 #include "agx_nir.h"
 
-/* Apple9 has no 8/16-bit integer ALU, and only FP16 add, multiply and fma.
- * Narrow values have undefined high bits; other operations run at 32 bits.
+/* Apple9 has no 8/16-bit integer ALU, and only FP16 add, multiply, fma and
+ * special functions. Narrow values have undefined high bits; other operations
+ * run at 32 bits.
  */
 static unsigned
 alu_width(const nir_instr *instr, UNUSED void *data)
@@ -49,6 +50,17 @@ alu_width(const nir_instr *instr, UNUSED void *data)
    case nir_op_fabs:
    case nir_op_fmin:
    case nir_op_fmax:
+      return 0;
+
+   /* FP16 special functions */
+   case nir_op_frcp:
+   case nir_op_frsq:
+   case nir_op_fexp2:
+   case nir_op_flog2:
+   case nir_op_ffloor:
+   case nir_op_fceil:
+   case nir_op_ftrunc:
+   case nir_op_fround_even:
       return 0;
 
    /* FP16 compares select whole registers */

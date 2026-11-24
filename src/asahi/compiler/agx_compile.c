@@ -2669,6 +2669,45 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    return agx_fcmpsel_to(b, dst, s0, s1, s0, s1, fcond);
 }
 
+/* FP16 special function on low halves */
+static agx_instr *
+agx_emit_half_special(agx_builder *b, nir_op op, agx_index dst, agx_index s0)
+{
+   agx_instr *I;
+
+   switch (op) {
+   case nir_op_frcp:
+      I = agx_rcp_to(b, dst, s0);
+      break;
+   case nir_op_frsq:
+      I = agx_rsqrt_to(b, dst, s0);
+      break;
+   case nir_op_fexp2:
+      I = agx_exp2_to(b, dst, s0);
+      break;
+   case nir_op_flog2:
+      I = agx_log2_to(b, dst, s0);
+      break;
+   case nir_op_ffloor:
+      I = agx_floor_to(b, dst, s0);
+      break;
+   case nir_op_fceil:
+      I = agx_ceil_to(b, dst, s0);
+      break;
+   case nir_op_ftrunc:
+      I = agx_trunc_to(b, dst, s0);
+      break;
+   case nir_op_fround_even:
+      I = agx_roundeven_to(b, dst, s0);
+      break;
+   default:
+      UNREACHABLE("not an FP16 special function");
+   }
+
+   I->format = AGX_FORMAT_F16;
+   return I;
+}
+
 /* ALU operations Apple9 implements differently, or NULL for the rest */
 static agx_instr *
 agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
@@ -2679,6 +2718,16 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
    unsigned sz = instr->def.bit_size;
 
    switch (instr->op) {
+   case nir_op_frcp:
+   case nir_op_frsq:
+   case nir_op_fexp2:
+   case nir_op_flog2:
+   case nir_op_ffloor:
+   case nir_op_fceil:
+   case nir_op_ftrunc:
+   case nir_op_fround_even:
+      return sz == 16 ? agx_emit_half_special(b, instr->op, dst, s0) : NULL;
+
    case nir_op_f2f16:
    case nir_op_f2f16_rtne:
       assert(src_sz == 32 && "doubles are lowered");

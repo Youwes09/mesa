@@ -439,7 +439,7 @@ typedef struct {
 
    };
 
-   /* For local access */
+   /* For local access, and F16 for Apple9 FP16 special functions */
    enum agx_format format;
 
    /* Number of nested control flow layers to jump by. TODO: Optimize */

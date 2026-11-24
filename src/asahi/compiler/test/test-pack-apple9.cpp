@@ -1425,6 +1425,28 @@ TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
    EXPECT_EQ(pack(I).size(), 22u);
 }
 
+/* FP16 special functions on the low halves of registers */
+TEST_F(Apple9Pack, HalfSpecial)
+{
+   agx_instr *I = agx_rcp_to(b, r(18), k(r(7)));
+   I->format = AGX_FORMAT_F16;
+   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_SPECIAL);
+   check(I, {0xaf, 0x00, 0x54, 0x24, 0x03, 0x1c, 0x10, 0x46, 0x30, 0x00});
+
+   I = agx_rsqrt_to(b, r(18), r(70));
+   I->format = AGX_FORMAT_F16;
+   check(I, {0xaf, 0x01, 0x54, 0x24, 0x03, 0x18, 0x8d, 0x60, 0x00, 0x00});
+
+   I = agx_floor_to(b, r(4), k(r(5)));
+   I->format = AGX_FORMAT_F16;
+   check(I, {0x2f, 0x00, 0x54, 0x08, 0x03, 0x14, 0xac, 0x60, 0x02, 0x00});
+
+   I = agx_exp2_to(b, r(4), k(r(5)));
+   I->format = AGX_FORMAT_F16;
+   I->saturate = true;
+   check(I, {0xaf, 0x02, 0x54, 0x08, 0x03, 0x14, 0xac, 0x64, 0x00, 0x00});
+}
+
 /* FP16 arithmetic on the low halves of registers */
 TEST_F(Apple9Pack, HalfArithmetic)
 {
