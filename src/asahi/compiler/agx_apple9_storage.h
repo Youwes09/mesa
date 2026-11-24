@@ -85,7 +85,7 @@ static_assert(offsetof(struct agx_apple9_storage_descriptor, texture) ==
                     AGX_APPLE9_TEXTURE_TABLE_STRIDE,
               "native storage entry is one table slot past the image one");
 
-/* native_ok: flags in bits 0-2, USC-relative PBE table index in bits 3-29 */
+/* native_ok: flags in bits 0-2, PBE index from the texture root in 3-29 */
 #define AGX_APPLE9_STORAGE_PBE_SHIFT 3
 #define AGX_APPLE9_STORAGE_PBE_MASK  ((1u << 27) - 1)
 
