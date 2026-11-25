@@ -31,7 +31,7 @@ struct producer {
 };
 
 static struct producer
-apple9_producer(const agx_instr *I)
+classified_producer(const agx_instr *I)
 {
    struct producer p = {
       .async = true,
@@ -111,8 +111,8 @@ apple9_producer(const agx_instr *I)
 static struct producer
 producer(agx_context *ctx, agx_instr *I)
 {
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9)
-      return apple9_producer(I);
+   if (ctx->target.dependency_waits)
+      return classified_producer(I);
 
    return (struct producer){.async = instr_is_async(I), .fixed_slot = -1};
 }
@@ -130,7 +130,7 @@ struct slot {
    /* Set of export registers this slot is still reading */
    BITSET_DECLARE(export_reads, AGX_NUM_EXPORT_REGS);
 
-   /* Apple9: private frame words this slot is still storing */
+   /* Private frame words this slot is still storing */
    BITSET_DECLARE(frame_writes, AGX_NUM_MODELED_REGS / 2);
    bool any_frame_writes;
 
@@ -143,14 +143,14 @@ struct slot {
    uint8_t nr_pending;
 };
 
-/* Slots a barrier waits for: all on Apple8, non-exempt classes on Apple9 */
+/* Slots a barrier waits for: all, or those of the classes it orders */
 static uint8_t
 prior_completion(agx_context *ctx, agx_instr *I, struct slot *slots)
 {
    uint8_t classes = 0;
    uint8_t mask = 0;
 
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+   if (ctx->target.dependency_waits) {
       enum agx_apple9_encoding form = agx_apple9_encoding_for(I);
       if (form == AGX_APPLE9_ENC_PSEUDO)
          return 0;
@@ -174,8 +174,8 @@ prior_completion(agx_context *ctx, agx_instr *I, struct slot *slots)
    }
 
    for (unsigned slot = 0; slot < ctx->target.scoreboard_slots; ++slot) {
-      if (slots[slot].nr_pending && (ctx->target.isa != AGX_SHADER_ISA_APPLE9 ||
-                                     (slots[slot].completion & classes)))
+      if (slots[slot].nr_pending &&
+          (!ctx->target.dependency_waits || (slots[slot].completion & classes)))
          mask |= BITSET_BIT(slot);
    }
 
@@ -224,7 +224,7 @@ dies_at(agx_block *block, agx_instr *I, unsigned reg, unsigned count,
 
 /* Fold a wait into the dependency field. Released operands must die here */
 static bool
-apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
+fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
 {
    if (I->wait)
       return false;
@@ -265,7 +265,7 @@ apple9_fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
 
 /* Texture operations and image stores wait for export group 0 themselves */
 static bool
-apple9_waits_for_exports(const agx_instr *I)
+waits_for_exports(const agx_instr *I)
 {
    return I->op == AGX_OPCODE_TEXTURE_SAMPLE ||
           I->op == AGX_OPCODE_TEXTURE_LOAD || I->op == AGX_OPCODE_IMAGE_WRITE ||
@@ -301,11 +301,11 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 {
    struct slot slots[AGX_MAX_SLOTS] = {0};
    unsigned nr_slots = ctx->target.scoreboard_slots;
-   bool apple9 = ctx->target.isa == AGX_SHADER_ISA_APPLE9;
+   bool dependency = ctx->target.dependency_waits;
 
    /* Whether the block waits for every slot at its end, see below */
    bool waits_at_end =
-      block != agx_exit_block(ctx) || (apple9 && ctx->falls_through);
+      block != agx_exit_block(ctx) || (dependency && ctx->falls_through);
 
    assert(nr_slots <= ARRAY_SIZE(slots));
 
@@ -314,10 +314,11 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
       struct producer p = producer(ctx, I);
 
       /* Check for read-after-write */
-      bool exports_waited = apple9 && apple9_waits_for_exports(I);
+      bool exports_waited = dependency && waits_for_exports(I);
 
       /* An export reads its register after the block's final wait */
-      bool reads_nothing = apple9 && I->op == AGX_OPCODE_EXPORT && waits_at_end;
+      bool reads_nothing =
+         dependency && I->op == AGX_OPCODE_EXPORT && waits_at_end;
 
       agx_foreach_src(I, s) {
          if (I->src[s].type != AGX_INDEX_REGISTER || reads_nothing)
@@ -360,7 +361,7 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
       }
 
       /* Fills wait for pending saves of their word, or any word if indexed */
-      if (apple9 && I->op == AGX_OPCODE_STACK_LOAD) {
+      if (dependency && I->op == AGX_OPCODE_STACK_LOAD) {
          bool indexed = I->src[0].type != AGX_INDEX_IMMEDIATE;
 
          for (unsigned slot = 0; slot < nr_slots; ++slot) {
@@ -372,7 +373,7 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
          }
       }
 
-      /* Apple9 can fold a wait for an operand into the instruction */
+      /* A wait for an operand can fold into the instruction */
       uint8_t operand_mask = wait_mask;
 
       /* Check for barriers */
@@ -397,9 +398,9 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
          wait_mask |= BITSET_BIT(I->scoreboard);
 
       int folded = -1;
-      if (apple9) {
+      if (dependency) {
          u_foreach_bit(slot, operand_mask) {
-            if (apple9_fold_wait(block, I, slot, &slots[slot])) {
+            if (fold_wait(block, I, slot, &slots[slot])) {
                folded = slot;
                break;
             }
@@ -408,14 +409,14 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 
       /* Insert the appropriate waits, clearing the slots */
       uint8_t unfolded = wait_mask & ~(folded >= 0 ? BITFIELD_BIT(folded) : 0);
-      if (apple9 && unfolded) {
+      if (dependency && unfolded) {
          /* One instruction waits for every slot */
          agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
          agx_wait_slots(&b, unfolded);
       }
 
       u_foreach_bit(slot, wait_mask) {
-         if (slot != folded && !apple9) {
+         if (slot != folded && !dependency) {
             agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
             agx_wait(&b, slot);
          }
@@ -446,14 +447,14 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
                   BITSET_SET_COUNT(slot->export_reads, I->src[s].value,
                                    agx_index_size_16(I->src[s]));
                } else if (I->src[s].reg_class == RA_GPR &&
-                          !apple9_waits_for_exports(I)) {
+                          !waits_for_exports(I)) {
                   BITSET_SET_COUNT(slot->reads, I->src[s].value,
                                    agx_index_size_16(I->src[s]));
                }
             }
          }
 
-         if (apple9 && I->op == AGX_OPCODE_STACK_STORE) {
+         if (dependency && I->op == AGX_OPCODE_STACK_STORE) {
             assert(I->src[1].type == AGX_INDEX_IMMEDIATE && "indexed are sync");
             BITSET_SET(slot->frame_writes, I->src[1].value / 4);
             slot->any_frame_writes = true;
@@ -466,7 +467,7 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 
    /* If there are outstanding messages, wait for them. We don't do this for the
     * exit block, though, since nothing else will execute in the shader so
-    * waiting is pointless. On Apple9, a shader part that does not stop is
+    * waiting is pointless. With dependency waits, a part that does not stop is
     * followed by another, which must find its registers and exports written.
     */
    if (waits_at_end) {
@@ -475,7 +476,7 @@ agx_insert_waits_local(agx_context *ctx, agx_block *block)
 
       for (unsigned slot = 0; slot < nr_slots; ++slot) {
          if (slots[slot].nr_pending) {
-            if (apple9)
+            if (dependency)
                pending |= BITFIELD_BIT(slot);
             else
                agx_wait(&b, slot);
@@ -495,7 +496,7 @@ void
 agx_insert_waits(agx_context *ctx)
 {
    /* Folding a wait can depend on whether a source dies */
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9)
+   if (ctx->target.dependency_waits)
       agx_compute_postra_liveness(ctx);
 
    agx_foreach_block(ctx, block) {

@@ -642,6 +642,11 @@ struct agx_isa_target {
    /* Integer adds and multiply-adds can write uniform registers */
    bool uniform_dests;
 
+   /* Asynchronous results complete by class. Waits name a set of slots or fold
+    * into a dependency field, and barriers wait for the classes they order.
+    */
+   bool dependency_waits;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
