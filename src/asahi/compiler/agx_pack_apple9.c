@@ -3,25 +3,26 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "agx_apple9_encoding.h"
+#include "agx3_pack.h"
 #include "agx_apple9_machine.h"
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
 
-/* Apple9 (G16/G17) instruction packing. A released source register loses its
- * value, so only last uses (the discard flag) set the release bit.
+/* Apple9 (G16/G17) instruction packing: the instructions of AGX3.xml that
+ * encode an IR instruction, and their fields. A released source register
+ * loses its value, so only last uses (the discard flag) set the release bit.
  */
 
 /* Largest instruction or instruction pair packed for one IR instruction */
 #define A9_MAX_BYTES 24
 
 struct a9_packed {
-   uint8_t bytes[A9_MAX_BYTES];
+   uint8_t bytes[A9_MAX_BYTES + AGX3_MAX_LENGTH];
    unsigned length;
    enum agx_apple9_encoding form;
 
-   /* Second instruction of a pair, packed without a dependency field */
-   unsigned dependency_length;
+   /* Only select the form, without packing */
+   bool form_only;
 };
 
 struct a9_state {
@@ -45,29 +46,64 @@ pack_assert_internal(const agx_instr *I, bool condition, const char *msg)
 
 #define pack_assert(I, cond) pack_assert_internal(I, cond, #cond)
 
-static void
-set_bits(uint8_t *bytes, unsigned start, unsigned width, uint64_t value)
+/* Hardware slot (1-6) for an IR scoreboard slot (0-5) */
+static unsigned
+hw_slot(unsigned slot)
 {
-   assert(width < 64 && value < (1ull << width));
+   assert(slot < 6);
+   return slot + 1;
+}
 
-   for (unsigned bit = 0; bit < width; ++bit) {
-      unsigned byte = (start + bit) / 8;
-      unsigned shift = (start + bit) % 8;
-
-      bytes[byte] &= ~(1u << shift);
-      bytes[byte] |= ((value >> bit) & 1) << shift;
+/* Fields an instruction waits through, by the layout of its form */
+static void
+set_wait(struct agx3_fields *f, enum agx_apple9_dependency_layout layout,
+         unsigned slot)
+{
+   switch (layout) {
+   case AGX_APPLE9_DEPENDENCY_INDEX_45_47:
+      f->index_45_47 = slot;
+      return;
+   case AGX_APPLE9_DEPENDENCY_INDEX_61_63:
+      f->index_61_63 = slot;
+      return;
+   case AGX_APPLE9_DEPENDENCY_MASK_12_17:
+      f->mask_12_17 = BITFIELD_BIT(slot - 1);
+      return;
+   case AGX_APPLE9_DEPENDENCY_MASK_45_47_61_63:
+      f->mask_45_47_61_63 = BITFIELD_BIT(slot - 1);
+      return;
+   case AGX_APPLE9_DEPENDENCY_MASK_61_63_77_79:
+      f->mask_61_63_77_79 = BITFIELD_BIT(slot - 1);
+      return;
+   case AGX_APPLE9_DEPENDENCY_MASK_61_63_93_95:
+      f->mask_61_63_93_95 = BITFIELD_BIT(slot - 1);
+      return;
+   case AGX_APPLE9_DEPENDENCY_NONE:
+      UNREACHABLE("no dependency field");
    }
 }
 
+/* Appends an instruction of the form. The first one folds the wait. */
 static void
-a9_init(struct a9_packed *p, enum agx_apple9_encoding form,
-        const uint8_t *bytes, unsigned length)
+emit(const agx_instr *I, struct a9_packed *p, enum agx_apple9_encoding form,
+     agx3_pack_fn pack, struct agx3_fields f)
 {
-   assert(length <= A9_MAX_BYTES);
-   memset(p->bytes, 0, sizeof(p->bytes));
-   memcpy(p->bytes, bytes, length);
-   p->length = p->dependency_length = length;
    p->form = form;
+   if (p->form_only)
+      return;
+
+   if (p->length == 0 && I->wait) {
+      enum agx_apple9_dependency_layout layout =
+         agx_apple9_encoding_info(form)->dependency_layout;
+
+      pack_assert(I, layout != AGX_APPLE9_DEPENDENCY_NONE);
+      set_wait(&f, layout, hw_slot(I->wait_slot));
+   }
+
+   unsigned length = pack(p->bytes + p->length, &f);
+   pack_assert(I, length != 0 && "fields the instruction cannot encode");
+   p->length += length;
+   pack_assert(I, p->length <= A9_MAX_BYTES);
 }
 
 static bool
@@ -82,51 +118,6 @@ is_export(agx_index idx)
    return idx.type == AGX_INDEX_REGISTER && idx.reg_class == RA_EXPORT;
 }
 
-/* 32-bit register number of a GPR operand at least 32 bits wide */
-static unsigned
-gpr(const agx_instr *I, agx_index idx)
-{
-   pack_assert(I, is_gpr(idx));
-   pack_assert(I, idx.size != AGX_SIZE_16);
-   pack_assert(I, (idx.value % agx_size_align_16(idx.size)) == 0);
-   pack_assert(I,
-               idx.value + agx_index_size_16(idx) <= AGX_APPLE9_GPR_COUNT * 2);
-   return idx.value >> 1;
-}
-
-/* 32-bit register number holding a 16-bit GPR operand */
-static unsigned
-gpr_of_half(const agx_instr *I, agx_index idx)
-{
-   pack_assert(I, is_gpr(idx) && idx.size == AGX_SIZE_16);
-   pack_assert(I, idx.value < AGX_APPLE9_GPR_COUNT * 2);
-   return idx.value >> 1;
-}
-
-static unsigned
-export_word(const agx_instr *I, agx_index idx)
-{
-   pack_assert(I, is_export(idx) && idx.size == AGX_SIZE_32);
-   pack_assert(I, idx.value < AGX_APPLE9_PUBLICATION_COUNT * 2);
-   return idx.value >> 1;
-}
-
-/* 32-bit uniform word */
-static unsigned
-uniform_word(const agx_instr *I, agx_index idx)
-{
-   pack_assert(I, idx.type == AGX_INDEX_UNIFORM && idx.size == AGX_SIZE_32);
-   pack_assert(I, (idx.value & 1) == 0);
-   pack_assert(I, idx.value < AGX_APPLE9_UNIFORM_COUNT * 2);
-   return idx.value >> 1;
-}
-
-static bool
-retain(agx_index idx)
-{
-   return !idx.discard;
-}
-
 static bool
 is_imm(agx_index idx)
 {
@@ -139,12 +130,71 @@ is_uniform(agx_index idx)
    return idx.type == AGX_INDEX_UNIFORM;
 }
 
-/* Hardware slot (1-6) for an IR scoreboard slot (0-5) */
-static unsigned
-hw_slot(unsigned slot)
+/* A register, uniform or export operand */
+static struct agx3_operand
+plain(const agx_instr *I, agx_index idx)
 {
-   assert(slot < 6);
-   return slot + 1;
+   enum agx3_kind kind;
+   unsigned count;
+
+   if (is_gpr(idx)) {
+      kind = AGX3_KIND_REG;
+      count = AGX_APPLE9_GPR_COUNT;
+   } else if (is_export(idx)) {
+      kind = AGX3_KIND_EXPORT;
+      count = AGX_APPLE9_PUBLICATION_COUNT;
+   } else {
+      pack_assert(I, is_uniform(idx));
+      kind = AGX3_KIND_UNIFORM;
+      count = AGX_APPLE9_UNIFORM_COUNT;
+   }
+
+   pack_assert(I, idx.value + agx_index_size_16(idx) <= count * 2);
+
+   return (struct agx3_operand){
+      .kind = kind,
+      .value = idx.value,
+      .size32 = idx.size == AGX_SIZE_32,
+      .size64 = idx.size == AGX_SIZE_64,
+   };
+}
+
+/* A source, a register keeping its cache bit until its release */
+static struct agx3_operand
+src(const agx_instr *I, agx_index idx)
+{
+   struct agx3_operand op = plain(I, idx);
+   op.cache = is_gpr(idx) && !idx.discard;
+   op.lu = is_gpr(idx) && idx.discard;
+   return op;
+}
+
+/* A source released at its last use, without a cache bit */
+static struct agx3_operand
+released(const agx_instr *I, agx_index idx)
+{
+   struct agx3_operand op = plain(I, idx);
+   op.lu = is_gpr(idx) && idx.discard;
+   return op;
+}
+
+/* The low 16-bit half of a register */
+static struct agx3_operand
+low_half(struct agx3_operand op)
+{
+   op.size32 = false;
+   return op;
+}
+
+/* Integer constant */
+static struct agx3_operand
+constant(uint32_t value, bool size32)
+{
+   return (struct agx3_operand){
+      .kind = AGX3_KIND_IMM,
+      .value = value,
+      .size32 = size32,
+   };
 }
 
 /* Completion slot fields take IR slots 0-5 (hardware slots 1-6) */
@@ -221,79 +271,31 @@ agx_apple9_float_immediate_ok(agx_index idx, bool wide)
                : encode_minifloat(bits, &encoded);
 }
 
-/* Integer operand: 7 value bits, retain or uniform bit 7, release, file */
-static void
-pack_int_source(uint8_t *bytes, unsigned value, bool uniform, bool retained,
-                unsigned value_bit, unsigned discard_bit, unsigned file_bit)
+/* Float constant operand, the wide form with a fourth mantissa bit */
+static struct agx3_operand
+float_constant(const agx_instr *I, uint32_t bits, bool wide)
 {
-   set_bits(bytes, value_bit, 7, value & 0x7f);
-   set_bits(bytes, value_bit + 7, 1, uniform ? value >> 7 : retained);
-   set_bits(bytes, discard_bit, 1, uniform || !retained);
-   set_bits(bytes, file_bit, 1, !uniform);
+   uint8_t encoded;
+   bool low = false;
+
+   if (wide)
+      pack_assert(I, encode_minifloat_wide(bits, &encoded, &low));
+   else
+      pack_assert(I, encode_minifloat(bits, &encoded));
+
+   return (struct agx3_operand){
+      .kind = AGX3_KIND_A9FIMM,
+      .value = (encoded >> 1) | (low << 7),
+      .neg = bits >> 31,
+   };
 }
 
-/* 8-bit zero-extended constant, from one bit below the register field */
-static void
-pack_int_immediate(uint8_t *bytes, uint32_t value, unsigned value_bit,
-                   unsigned discard_bit, unsigned file_bit,
-                   unsigned descriptor_bit)
-{
-   assert(value <= UINT8_MAX);
-   set_bits(bytes, value_bit - 1, 8, value);
-   set_bits(bytes, value_bit + 7, 1, 0);
-   set_bits(bytes, discard_bit, 1, 0);
-   set_bits(bytes, file_bit, 1, 0);
-   set_bits(bytes, descriptor_bit, 1, 0);
-}
-
-/* 16-bit integer source: a high-half bit, sign-extending unless abs */
-static void
-pack_int_half(uint8_t *bytes, agx_index src, unsigned hi_bit,
-              unsigned width_bit, int sext_bit)
-{
-   set_bits(bytes, hi_bit, 1, src.value & 1);
-   set_bits(bytes, width_bit, 1, 0);
-   if (sext_bit >= 0)
-      set_bits(bytes, sext_bit, 1, !src.abs);
-}
-
-/* Register fields of the compact float, integer min/max and logic forms */
-static void
-pack_compact_registers(uint8_t *bytes, unsigned dst, unsigned a, unsigned b)
-{
-   set_bits(bytes, 4, 4, dst & 0xf);
-   set_bits(bytes, 22, 2, (dst >> 4) & 3);
-   set_bits(bytes, 44, 1, dst >> 6);
-   set_bits(bytes, 9, 6, a & 0x3f);
-   set_bits(bytes, 40, 1, a >> 6);
-   set_bits(bytes, 25, 6, b & 0x3f);
-   set_bits(bytes, 42, 1, b >> 6);
-}
-
-/* Compact uniform sources, packed last as they overlap the release bits */
-static void
-pack_compact_uniform(uint8_t *bytes, unsigned s, unsigned u)
-{
-   bytes[1 + 2 * s] = ((u & 63) << 1) | 1;
-   set_bits(bytes, s ? 41 : 39, 1, 1);
-   set_bits(bytes, s ? 20 : 19, 1, (u >> 6) & 1);
-   set_bits(bytes, s ? 42 : 40, 1, u >> 7);
-}
-
-/* A retained compact operand sets its cache bit and clears its release bit */
-static void
-pack_compact_retain(uint8_t *bytes, bool retain_a, bool retain_b)
-{
-   if (retain_a) {
-      set_bits(bytes, 15, 1, 1);
-      set_bits(bytes, 19, 1, 0);
-   }
-
-   if (retain_b) {
-      set_bits(bytes, 31, 1, 1);
-      set_bits(bytes, 20, 1, 0);
-   }
-}
+/* The -0.0 operand of conversions, which add it */
+static const struct agx3_operand negzero = {
+   .kind = AGX3_KIND_A9FIMM,
+   .value = 0x40,
+   .neg = true,
+};
 
 /* Floating-point add and multiply, in the smallest form that encodes them */
 static void
@@ -304,47 +306,36 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
 
    pack_assert(I, I->dest[0].size == AGX_SIZE_32);
 
-   /* Constants are always operand B */
+   /* Constants are operand A of the instruction */
    if (is_imm(a)) {
       agx_index t = a;
       a = b;
       b = t;
    }
 
+   uint64_t dest = agx3_encode_dst(plain(I, I->dest[0]));
+
    if (is_imm(b)) {
-      pack_assert(I, is_gpr(a) && !a.abs && a.size == AGX_SIZE_32);
-      pack_assert(I, !b.abs);
+      pack_assert(I, is_gpr(a) && a.size == AGX_SIZE_32 && !a.abs && !b.abs);
+
+      struct agx3_operand x = src(I, a);
+      x.neg = a.neg;
 
       uint32_t bits = imm_float_bits(b) ^ (b.neg ? 0x80000000u : 0);
-      uint8_t encoded;
-      bool low;
-      pack_assert(I, encode_minifloat_wide(bits, &encoded, &low));
+      struct agx3_fields f = {
+         .dest = dest,
+         .src = {agx3_encode_fsrc(float_constant(I, bits, true)),
+                 agx3_encode_fsrc(x)},
+         .dstate = 1,
+         .saturate = I->saturate,
+      };
 
-      bool extended = I->saturate;
-      uint8_t bytes[8] = {0x09, encoded, 0x34, 0x01, 0x80, 0x00};
-      if (mul)
-         set_bits(bytes, 16, 3, 5);
-
-      unsigned dst = gpr(I, I->dest[0]), src = gpr(I, a);
-      set_bits(bytes, 19, 1, bits >> 31);
-      set_bits(bytes, 35, 1, low);
-      set_bits(bytes, 4, 4, dst & 15);
-      set_bits(bytes, 22, 2, (dst >> 4) & 3);
-      set_bits(bytes, 44, 1, dst >> 6);
-      set_bits(bytes, 25, 6, src & 63);
-      set_bits(bytes, 42, 1, src >> 6);
-      set_bits(bytes, 43, 1, a.neg);
-      pack_compact_retain(bytes, false, retain(a));
-
-      if (extended) {
-         bytes[4] |= 1;
-         set_bits(bytes, 57, 1, 1);
-      }
-
-      a9_init(p,
-              extended ? AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_EXTENDED
-                       : AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_COMPACT,
-              bytes, extended ? 8 : 6);
+      if (I->saturate)
+         emit(I, p, AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_EXTENDED,
+              mul ? agx3_pack_fmul_mod : agx3_pack_fadd_mod, f);
+      else
+         emit(I, p, AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_COMPACT,
+              mul ? agx3_pack_fmul : agx3_pack_fadd, f);
       return;
    }
 
@@ -356,94 +347,69 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
       b = t;
    }
 
-   bool neg_a = a.neg, neg_b = b.neg;
-   bool any_abs = a.abs || b.abs;
+   struct agx3_operand x = src(I, a), y = src(I, b);
+   x.neg = a.neg;
+   x.abs = a.abs;
+   y.neg = b.neg;
+   y.abs = b.abs;
+
+   /* FP16 sources convert on read */
+   if (is_gpr(a) && a.size == AGX_SIZE_16)
+      x = low_half(x);
+   if (is_gpr(b) && b.size == AGX_SIZE_16)
+      y = low_half(y);
+
    bool hi = (is_gpr(a) && a.size == AGX_SIZE_16 && (a.value & 1)) ||
              (is_gpr(b) && b.size == AGX_SIZE_16 && (b.value & 1));
-   bool uniforms = is_uniform(a) || is_uniform(b);
-   unsigned dst = gpr(I, I->dest[0]);
+   bool low = I->dest[0].value < 128 && (!is_gpr(a) || a.value < 128) &&
+              (!is_gpr(b) || b.value < 128);
 
-   /* The four-byte form reaches r63 for the destination and sources */
-   bool low = dst < 64 && a.value < 128 && b.value < 128;
+   struct agx3_fields f = {
+      .dest = dest,
+      .src = {agx3_encode_fsrc(x), agx3_encode_fsrc(y)},
+      .dstate = 1,
+      .saturate = I->saturate,
+   };
 
-   enum agx_apple9_encoding form;
-   unsigned length;
-   if (any_abs) {
-      form = mul ? AGX_APPLE9_ENC_FLOAT2_MUL_ABS_EXTENDED
-                 : AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED;
-      length = mul ? 12 : 10;
-   } else if (neg_a || I->saturate) {
-      form = AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED;
-      length = 8;
-   } else if (!neg_b && !hi && !uniforms && !I->wait && low) {
-      form = AGX_APPLE9_ENC_FLOAT2_BASE;
-      length = 4;
+   if (a.abs || b.abs) {
+      emit(I, p,
+           mul ? AGX_APPLE9_ENC_FLOAT2_MUL_ABS_EXTENDED
+               : AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED,
+           mul ? agx3_pack_fmul_abs : agx3_pack_fadd_abs, f);
+   } else if (a.neg || I->saturate) {
+      emit(I, p, AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED,
+           mul ? agx3_pack_fmul_mod : agx3_pack_fadd_mod, f);
+   } else if (!b.neg && !hi && !is_uniform(a) && !is_uniform(b) && !I->wait &&
+              low) {
+      f.dstate = 0;
+      emit(I, p, AGX_APPLE9_ENC_FLOAT2_BASE,
+           mul ? agx3_pack_fmul_base : agx3_pack_fadd_base, f);
    } else {
-      form = AGX_APPLE9_ENC_FLOAT2_COMPACT;
-      length = 6;
+      emit(I, p, AGX_APPLE9_ENC_FLOAT2_COMPACT,
+           mul ? agx3_pack_fmul : agx3_pack_fadd, f);
    }
-
-   uint8_t bytes[12] = {0x09, 0x05, 0x1c, 0x01, 0x00, 0x00};
-   set_bits(bytes, 16, 3, mul ? 5 : 4);
-   set_bits(bytes, 43, 1, neg_b);
-   set_bits(bytes, 21, 1, 1);
-   pack_compact_retain(bytes, is_gpr(a) && retain(a), is_gpr(b) && retain(b));
-   pack_compact_registers(
-      bytes, dst,
-      is_gpr(a) ? (a.size == AGX_SIZE_16 ? gpr_of_half(I, a) : gpr(I, a)) : 0,
-      is_gpr(b) ? (b.size == AGX_SIZE_16 ? gpr_of_half(I, b) : gpr(I, b)) : 0);
-
-   if (is_uniform(a))
-      pack_compact_uniform(bytes, 0, uniform_word(I, a));
-   if (is_uniform(b))
-      pack_compact_uniform(bytes, 1, uniform_word(I, b));
-
-   /* FP16 sources convert on read; bits 35 and 36 select the high half */
-   agx_index srcs[2] = {a, b};
-   for (unsigned s = 0; s < 2; ++s) {
-      if (!is_gpr(srcs[s]) || srcs[s].size != AGX_SIZE_16)
-         continue;
-
-      set_bits(bytes, s ? 24 : 8, 1, 0);
-      set_bits(bytes, 35 + s, 1, srcs[s].value & 1);
-   }
-
-   if (form == AGX_APPLE9_ENC_FLOAT2_BASE)
-      set_bits(bytes, 18, 1, 0);
-
-   if (length >= 8) {
-      set_bits(bytes, 32, 2,
-               form == AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED ? 1 : 2);
-      set_bits(bytes, 49, 1, neg_a);
-      if (any_abs)
-         set_bits(bytes, 64, 2, a.abs | (b.abs << 1));
-   }
-
-   if (I->saturate)
-      set_bits(bytes, 57, 1, 1);
-
-   a9_init(p, form, bytes, length);
 }
 
-/* fmul into an export register, signalling the slot in bits 58-60 */
+/* fmul into an export register, completing on its slot */
 static void
 pack_float2_export(const agx_instr *I, struct a9_packed *p)
 {
    agx_index a = I->src[0], b = I->src[1];
    pack_assert(I, is_gpr(a) && is_gpr(b) && !a.abs && !a.neg && !b.abs);
 
-   uint8_t bytes[8] = {0x09, 0x05, 0x1c, 0x01, 0x41, 0x00};
-   set_bits(bytes, 16, 3, 5);
-   set_bits(bytes, 43, 1, b.neg);
-   set_bits(bytes, 21, 1, 1);
-   pack_compact_retain(bytes, retain(a), retain(b));
-   pack_compact_registers(bytes, export_word(I, I->dest[0]), gpr(I, a),
-                          gpr(I, b));
-   set_bits(bytes, 58, 3, completion_slot(I));
-   a9_init(p, AGX_APPLE9_ENC_FLOAT2_EXPORT, bytes, 8);
+   struct agx3_operand y = src(I, b);
+   y.neg = b.neg;
+
+   emit(I, p, AGX_APPLE9_ENC_FLOAT2_EXPORT, agx3_pack_fmul_export,
+        (struct agx3_fields){
+           .dest = agx3_encode_export(plain(I, I->dest[0])),
+           .src = {agx3_encode_fsrc(src(I, a)), agx3_encode_fsrc(y)},
+           .slot = completion_slot(I),
+           .dstate = 1,
+        });
 }
 
-/* fmul by 1/W, naming the coefficient in byte 5 */
+/* fmul by 1/W, naming the coefficient */
 static void
 pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
 {
@@ -452,85 +418,67 @@ pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg && !I->saturate);
    pack_assert(I, I->component < AGX_APPLE9_NUM_COEFFICIENTS);
 
-   unsigned dst = gpr(I, I->dest[0]), ra = gpr(I, a), rb = gpr(I, b);
-   pack_assert(I, dst < 64 && ra < 64 && rb < 64);
-
-   uint8_t bytes[8] = {0x09, 0x05, 0x1c, 0x01, 0x00, 0x00};
-   set_bits(bytes, 16, 3, 7);
-   set_bits(bytes, 21, 1, 1);
-   pack_compact_retain(bytes, retain(a), retain(b));
-   pack_compact_registers(bytes, dst, ra, rb);
-   bytes[5] = I->component;
-   a9_init(p, AGX_APPLE9_ENC_FLOAT2_PROJECT, bytes, 8);
+   emit(I, p, AGX_APPLE9_ENC_FLOAT2_PROJECT, agx3_pack_fmul_cf,
+        (struct agx3_fields){
+           .dest = agx3_encode_dst(plain(I, I->dest[0])),
+           .src = {agx3_encode_fsrc(src(I, a)), agx3_encode_fsrc(src(I, b))},
+           .cf = I->component,
+           .dstate = 1,
+        });
 }
 
 /* FP32/FP16 conversion as fadd x, -0.0; narrowing writes one dest half */
 static void
 pack_float_convert(const agx_instr *I, struct a9_packed *p)
 {
-   agx_index dst = I->dest[0], src = I->src[0];
-   pack_assert(I, !src.abs && !src.neg && !I->saturate);
+   agx_index dst = I->dest[0], s = I->src[0];
+   pack_assert(I, !s.abs && !s.neg && !I->saturate);
 
    /* f32_to_f16 and f16_to_f32 name the register whose low half is FP16 */
    bool widen = I->op == AGX_OPCODE_F16_TO_F32 ||
                 (I->op == AGX_OPCODE_FADD && dst.size == AGX_SIZE_32);
-   bool whole =
-      I->op == AGX_OPCODE_F32_TO_F16 || I->op == AGX_OPCODE_F16_TO_F32;
 
-   unsigned d = widen || whole ? gpr(I, dst) : gpr_of_half(I, dst);
-   unsigned s = !widen || whole ? gpr(I, src) : gpr_of_half(I, src);
+   struct agx3_operand d = plain(I, dst), x = src(I, s);
+   if (widen)
+      x = low_half(x);
+   else
+      d = low_half(d);
 
-   uint8_t bytes[6] = {0x01, 0x01, 0x1c, 0x81, 0x00, 0x02};
-   set_bits(bytes, 4, 4, d & 15);
-   set_bits(bytes, 22, 2, (d >> 4) & 3);
-   set_bits(bytes, 44, 1, d >> 6);
-   set_bits(bytes, 9, 6, s & 63);
-   set_bits(bytes, 40, 1, s >> 6);
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(d),
+      .src = {agx3_encode_fsrc(x), agx3_encode_fsrc(negzero)},
+   };
 
    if (widen) {
-      set_bits(bytes, 0, 4, 9);
-      set_bits(bytes, 8, 1, 0);
-      set_bits(bytes, 35, 1, !whole && (src.value & 1));
+      emit(I, p, AGX_APPLE9_ENC_HALF_TO_FLOAT, agx3_pack_fadd, f);
    } else {
-      set_bits(bytes, 34, 1, !whole && (dst.value & 1));
+      emit(I, p, AGX_APPLE9_ENC_FLOAT_TO_HALF, agx3_pack_fadd_f16, f);
    }
-
-   pack_compact_retain(bytes, retain(src), false);
-   a9_init(
-      p,
-      widen ? AGX_APPLE9_ENC_HALF_TO_FLOAT : AGX_APPLE9_ENC_FLOAT_TO_HALF,
-      bytes, 6);
 }
 
 /* Two FP32 to FP16 conversions into the low and high destination halves */
 static void
 pack_half_pair(const agx_instr *I, struct a9_packed *p)
 {
-   unsigned d = gpr(I, I->dest[0]);
-   uint8_t bytes[12];
+   struct agx3_operand d = low_half(plain(I, I->dest[0]));
 
    for (unsigned h = 0; h < 2; ++h) {
-      agx_index src = I->src[h];
-      pack_assert(I, !src.abs && !src.neg);
+      agx_index s = I->src[h];
+      pack_assert(I, is_gpr(s) && s.size == AGX_SIZE_32 && !s.abs && !s.neg);
+      pack_assert(I, s.value != I->dest[0].value);
 
-      unsigned s = gpr(I, src);
-      pack_assert(I, s != d);
+      /* The first conversion keeps a source the second reads */
+      struct agx3_operand x = src(I, s);
+      x.cache |= h == 0 && agx_is_equiv(I->src[0], I->src[1]);
+      x.lu = !x.cache;
 
-      uint8_t *part = bytes + 6 * h;
-      memcpy(part, (const uint8_t[]){0x01, 0x01, 0x1c, 0x81, 0x00, 0x02}, 6);
-      set_bits(part, 4, 4, d & 15);
-      set_bits(part, 22, 2, (d >> 4) & 3);
-      set_bits(part, 44, 1, d >> 6);
-      set_bits(part, 9, 6, s & 63);
-      set_bits(part, 40, 1, s >> 6);
-      set_bits(part, 34, 1, h);
-
-      bool same = agx_is_equiv(I->src[0], I->src[1]);
-      pack_compact_retain(part, retain(src) || (h == 0 && same), false);
+      d.value = I->dest[0].value + h;
+      emit(I, p, AGX_APPLE9_ENC_PACK_HALF_2X16, agx3_pack_fadd_f16,
+           (struct agx3_fields){
+              .dest = agx3_encode_dst(d),
+              .src = {agx3_encode_fsrc(x), agx3_encode_fsrc(negzero)},
+           });
    }
-
-   a9_init(p, AGX_APPLE9_ENC_PACK_HALF_2X16, bytes, 12);
-   p->dependency_length = 0;
 }
 
 /* FP16 add, multiply and FMA on low halves, leaving the high half undefined */
@@ -538,46 +486,48 @@ static void
 pack_half_alu(const agx_instr *I, struct a9_packed *p)
 {
    bool fma = I->op == AGX_OPCODE_HFMA;
-   unsigned count = fma ? 3 : 2;
+   struct agx3_operand s[3];
 
-   pack_assert(I, !I->saturate);
+   pack_assert(I, !I->saturate && I->dest[0].size == AGX_SIZE_32);
 
-   uint8_t bytes[8] = {
-      0,
-      0,
-      fma ? 0x1e : I->op == AGX_OPCODE_HMUL ? 0x1d : 0x1c,
-      0,
-      fma ? 0x81 : 0,
-      0,
-      0,
-      0,
-   };
+   for (unsigned i = 0; i < (fma ? 3 : 2); ++i) {
+      agx_index x = I->src[i];
+      pack_assert(I, is_gpr(x) && x.size == AGX_SIZE_32 && !x.abs &&
+                        (!x.neg || (I->op == AGX_OPCODE_HADD && i == 1)));
 
-   unsigned dst = gpr(I, I->dest[0]);
-   set_bits(bytes, 4, 4, dst & 15);
-   set_bits(bytes, 22, 2, (dst >> 4) & 3);
-   set_bits(bytes, fma ? 60 : 44, 1, dst >> 6);
-
-   for (unsigned s = 0; s < count; ++s) {
-      agx_index src = I->src[s];
-      unsigned reg = gpr(I, src);
-      pack_assert(
-         I, !src.abs && (!src.neg || (I->op == AGX_OPCODE_HADD && s == 1)));
-
-      set_bits(bytes, 9 + 16 * s, 6, reg & 63);
-      set_bits(bytes, s == 2 ? 38 : (fma ? 56 : 40) + 2 * s, 1, reg >> 6);
-
-      if (retain(src)) {
-         set_bits(bytes, 15 + 16 * s, 1, 1);
-         set_bits(bytes, s == 2 ? 39 : 19 + s, 1, 0);
-      }
+      s[i] = low_half(src(I, x));
+      s[i].neg = x.neg;
    }
 
-   if (I->op == AGX_OPCODE_HADD && I->src[1].neg)
-      set_bits(bytes, 43, 1, 1);
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(low_half(plain(I, I->dest[0]))),
+      .src = {agx3_encode_fsrc(s[0]), agx3_encode_fsrc(s[1])},
+   };
 
-   a9_init(p, fma ? AGX_APPLE9_ENC_HALF3 : AGX_APPLE9_ENC_HALF2, bytes,
-           fma ? 8 : 6);
+   if (fma) {
+      f.src[0] = agx3_encode_fsrc3(s[0]);
+      f.src[1] = agx3_encode_fsrc3(s[1]);
+      f.src[2] = agx3_encode_fsrc3(s[2]);
+      emit(I, p, AGX_APPLE9_ENC_HALF3, agx3_pack_hfma, f);
+   } else {
+      emit(I, p, AGX_APPLE9_ENC_HALF2,
+           I->op == AGX_OPCODE_HMUL ? agx3_pack_hmul : agx3_pack_hadd, f);
+   }
+}
+
+/* Operand of a fused multiply-add: a register, uniform or constant */
+static struct agx3_operand
+float3_source(const agx_instr *I, agx_index x, bool wide)
+{
+   struct agx3_operand op =
+      is_imm(x) ? float_constant(I, imm_float_bits(x), wide) : src(I, x);
+   op.abs = x.abs;
+
+   /* FP16 sources: operand B in its low half only, the addend in either */
+   if (is_gpr(x) && x.size == AGX_SIZE_16)
+      op.size32 = false;
+
+   return op;
 }
 
 /* Fused multiply-add */
@@ -595,14 +545,8 @@ pack_float3(const agx_instr *I, struct a9_packed *p)
 
    pack_assert(I, !is_imm(a) && I->dest[0].size == AGX_SIZE_32);
    pack_assert(I, a.size == AGX_SIZE_32);
+   pack_assert(I, !is_gpr(b) || b.size != AGX_SIZE_16 || !(b.value & 1));
 
-   unsigned dst = gpr(I, I->dest[0]);
-   bool inline_b = !is_gpr(b), inline_c = !is_gpr(c);
-   unsigned ra = is_gpr(a) ? gpr(I, a) : 0;
-   unsigned rb =
-      !inline_b ? (b.size == AGX_SIZE_16 ? gpr_of_half(I, b) : gpr(I, b)) : 0;
-   unsigned rc =
-      !inline_c ? (c.size == AGX_SIZE_16 ? gpr_of_half(I, c) : gpr(I, c)) : 0;
    bool half = (is_gpr(b) && b.size == AGX_SIZE_16) ||
                (is_gpr(c) && c.size == AGX_SIZE_16);
    bool neg_a = a.neg, neg_b = b.neg, neg_c = c.neg;
@@ -613,146 +557,63 @@ pack_float3(const agx_instr *I, struct a9_packed *p)
    if (is_imm(c) && !c.abs)
       neg_c ^= (c.value & 0x80) != 0;
 
-   bool compact = !I->wait && !I->saturate && !a.abs && !b.abs && !c.abs &&
-                  !neg_a && !neg_b && !neg_c && !half && is_gpr(a) &&
-                  is_gpr(c) && dst < 64 && ra < 64 && rc < 64 &&
-                  (is_gpr(b) ? rb < 64 : true) &&
-                  (is_uniform(b) ? uniform_word(I, b) < 64 : true);
+   struct agx3_operand x = float3_source(I, a, false);
+   struct agx3_operand y = float3_source(I, b, false);
+   struct agx3_operand z = float3_source(I, c, true);
 
-   enum agx_apple9_encoding form;
-   unsigned length;
-   if (compact) {
-      form = AGX_APPLE9_ENC_FLOAT3_COMPACT;
-      length = 6;
+   /* Bit 59 negates the product */
+   x.neg = neg_a ^ neg_b;
+   y.neg = false;
+   z.neg = neg_c;
+
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(plain(I, I->dest[0])),
+      .src = {agx3_encode_fsrc3(x), agx3_encode_fsrc3(y), agx3_encode_fsrc3(z)},
+      .dstate = 1,
+      .saturate = I->saturate,
+   };
+
+   bool low = I->dest[0].value < 128 && a.value < 128 && c.value < 128 &&
+              (!is_gpr(b) || b.value < 128) &&
+              (!is_uniform(b) || b.value < 128);
+
+   if (!I->wait && !I->saturate && !a.abs && !b.abs && !c.abs && !neg_a &&
+       !neg_b && !neg_c && !half && is_gpr(a) && is_gpr(c) && low) {
+      emit(I, p, AGX_APPLE9_ENC_FLOAT3_COMPACT, agx3_pack_ffma_compact, f);
    } else if (a.abs || b.abs) {
-      form = AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED;
-      length = 12;
+      emit(I, p, AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED, agx3_pack_ffma_mod,
+           f);
    } else if (I->saturate) {
-      form = AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED;
-      length = 10;
+      emit(I, p, AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED, agx3_pack_ffma_sat,
+           f);
    } else {
-      form = AGX_APPLE9_ENC_FLOAT3_EXTENDED;
-      length = 8;
+      emit(I, p, AGX_APPLE9_ENC_FLOAT3_EXTENDED, agx3_pack_ffma, f);
    }
-
-   uint8_t bytes[12] = {0x09, 0x01, 0x1e, 0x05, 0x81, 0x08, 0x02, 0x00};
-   set_bits(bytes, 21, 1, 1);
-   if (is_gpr(a) && retain(a)) {
-      set_bits(bytes, 15, 1, 1);
-      set_bits(bytes, 19, 1, 0);
-   }
-   if (is_gpr(b) && retain(b)) {
-      set_bits(bytes, 31, 1, 1);
-      set_bits(bytes, 20, 1, 0);
-   }
-   if (is_gpr(c) && retain(c)) {
-      set_bits(bytes, 47, 1, 1);
-      set_bits(bytes, 39, 1, 0);
-   }
-
-   set_bits(bytes, 4, 4, dst & 0xf);
-   set_bits(bytes, 22, 2, (dst >> 4) & 3);
-   set_bits(bytes, 60, 1, dst >> 6);
-   set_bits(bytes, 9, 6, ra & 0x3f);
-   set_bits(bytes, 56, 1, ra >> 6);
-   set_bits(bytes, 25, 6, rb & 0x3f);
-   set_bits(bytes, 58, 1, rb >> 6);
-   set_bits(bytes, 41, 6, rc & 0x3f);
-   set_bits(bytes, 38, 1, rc >> 6);
-
-   if (is_uniform(a)) {
-      unsigned u = uniform_word(I, a);
-      bytes[1] = ((u & 63) << 1) | 1;
-      set_bits(bytes, 55, 1, 1);
-      set_bits(bytes, 19, 1, (u >> 6) & 1);
-      set_bits(bytes, 56, 1, u >> 7);
-   }
-
-   if (inline_b) {
-      uint8_t encoded;
-      unsigned u = 0;
-      if (is_imm(b)) {
-         pack_assert(I, encode_minifloat(imm_float_bits(b), &encoded));
-      } else {
-         u = uniform_word(I, b);
-         encoded = ((u & 63) << 1) | 1;
-      }
-
-      bytes[3] = encoded;
-      set_bits(bytes, 57, 1, 1);
-      set_bits(bytes, 20, 1, (u >> 6) & 1);
-      set_bits(bytes, 58, 1, u >> 7);
-   }
-
-   if (inline_c) {
-      uint8_t encoded;
-      bool low = false;
-      unsigned u = 0;
-      if (is_imm(c)) {
-         pack_assert(I,
-                     encode_minifloat_wide(imm_float_bits(c), &encoded, &low));
-      } else {
-         u = uniform_word(I, c);
-         encoded = ((u & 63) << 1) | 1;
-      }
-
-      /* The addend's fourth mantissa bit replaces the byte's low bit */
-      bytes[5] = (encoded & ~1) | low;
-      set_bits(bytes, 37, 1, 1);
-      set_bits(bytes, 39, 1, (u >> 6) & 1);
-      set_bits(bytes, 38, 1, u >> 7);
-   }
-
-   set_bits(bytes, 35, 1, c.abs);
-   set_bits(bytes, 36, 1, neg_c);
-   set_bits(bytes, 59, 1, neg_a ^ neg_b);
-
-   /* FP16 sources: operand B in its low half only, the addend in either */
-   if (is_gpr(b) && b.size == AGX_SIZE_16) {
-      pack_assert(I, !(b.value & 1));
-      set_bits(bytes, 24, 1, 0);
-   }
-
-   if (is_gpr(c) && c.size == AGX_SIZE_16) {
-      set_bits(bytes, 49, 1, 0);
-      set_bits(bytes, 40, 1, c.value & 1);
-   }
-
-   if (compact) {
-      /* B's alternative file selector moves from bit 57 to bit 37 */
-      set_bits(bytes, 32, 2, 0);
-      set_bits(bytes, 37, 1, inline_b);
-      set_bits(bytes, 57, 1, 0);
-   } else if (form == AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED) {
-      set_bits(bytes, 32, 2, 3);
-      set_bits(bytes, 80, 2, a.abs | (b.abs << 1));
-   } else if (form == AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED) {
-      set_bits(bytes, 32, 2, 2);
-   }
-
-   if (I->saturate)
-      set_bits(bytes, 73, 1, 1);
-
-   a9_init(p, form, bytes, length);
 }
 
-/* Bit 33 clear writes an 8-bit uniform word, even for a 64-bit product */
-static unsigned
-uniform_destination(const agx_instr *I, uint8_t *bytes)
+/* Bit 33 clear writes the uniform file, sources being registers or zero */
+static void
+check_uniform_destination(const agx_instr *I)
 {
    agx_index dst = I->dest[0];
-   pack_assert(I, dst.type == AGX_INDEX_UNIFORM && !(dst.value & 1));
-   pack_assert(
-      I, dst.value + agx_index_size_16(dst) <= AGX_APPLE9_UNIFORM_COUNT * 2);
    pack_assert(I, dst.size != AGX_SIZE_64 || !(dst.value & 3));
-
-   set_bits(bytes, 33, 1, 0);
-   set_bits(bytes, 25, 8, dst.value >> 1);
 
    for (unsigned s = 0; s < I->nr_srcs; ++s)
       pack_assert(I, is_gpr(I->src[s]) || agx_is_equiv(I->src[s], agx_zero()));
+}
 
-   return dst.value >> 1;
+/* Integer add and multiply-add source: a register, uniform or 8-bit
+ * constant. 16-bit registers sign-extend unless abs zero-extends them.
+ */
+static struct agx3_operand
+int_source(const agx_instr *I, agx_index x)
+{
+   if (is_imm(x))
+      return constant(x.value, false);
+
+   struct agx3_operand op = src(I, x);
+   op.sx = is_gpr(x) && x.size == AGX_SIZE_16 && !x.abs;
+   return op;
 }
 
 /* Integer add. A negated B subtracts; a negated A swaps the operands */
@@ -769,40 +630,19 @@ pack_iadd(const agx_instr *I, struct a9_packed *p)
       b = t;
    }
 
-   bool sub = b.neg;
-   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
-   uint8_t bytes[10] = {
-      sub ? 0x1f : 0x9f, 0x01, 0x54, 0x00, 0x02, 0x00, 0x00, 0xa8, 0x17, 0x05};
-
+   bool uniform = is_uniform(I->dest[0]);
    if (uniform)
-      uniform_destination(I, bytes);
-   else
-      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+      check_uniform_destination(I);
 
-   agx_index srcs[2] = {a, b};
-   for (unsigned s = 0; s < 2; ++s) {
-      agx_index src = srcs[s];
-
-      if (is_imm(src)) {
-         pack_int_immediate(bytes, src.value, 42 + 9 * s, 65 + s, 72 + 2 * s,
-                            61 + 2 * s);
-      } else if (is_uniform(src)) {
-         pack_int_source(bytes, uniform_word(I, src), true, false, 42 + 9 * s,
-                         65 + s, 72 + 2 * s);
-      } else if (src.size == AGX_SIZE_16) {
-         pack_int_source(bytes, gpr_of_half(I, src), false, retain(src),
-                         42 + 9 * s, 65 + s, 72 + 2 * s);
-         pack_int_half(bytes, src, 41 + 9 * s, 61 + 2 * s, 73 + 2 * s);
-      } else {
-         pack_int_source(bytes, gpr(I, src), false, retain(src), 42 + 9 * s,
-                         65 + s, 72 + 2 * s);
-      }
-   }
-
-   a9_init(p,
-           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_ADD
-                   : AGX_APPLE9_ENC_INT_ADD_EXTENDED,
-           bytes, 10);
+   emit(I, p,
+        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_ADD
+                : AGX_APPLE9_ENC_INT_ADD_EXTENDED,
+        b.neg ? agx3_pack_isub : agx3_pack_iadd,
+        (struct agx3_fields){
+           .dest = agx3_encode_idst(plain(I, I->dest[0])),
+           .src = {agx3_encode_isrc_desc(int_source(I, a)),
+                   agx3_encode_isrc_desc(int_source(I, b))},
+        });
 }
 
 /* 32x32 to 64-bit multiply; abs zero-extends both factors */
@@ -813,32 +653,18 @@ pack_imul_wide(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, is_gpr(a) && is_gpr(b) && a.abs == b.abs);
    pack_assert(I, agx_is_equiv(I->src[2], agx_zero()) && !I->shift);
 
-   uint8_t bytes[12] = {0x9f, 0x00, 0x54, 0x00, 0x02, 0x00,
-                        0x00, 0x00, 0xe0, 0x26, 0x0a, 0x00};
-   if (!a.abs)
-      bytes[10] = 0x1e;
-
-   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
+   bool uniform = is_uniform(I->dest[0]);
    if (uniform)
-      uniform_destination(I, bytes);
-   else
-      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+      check_uniform_destination(I);
 
-   set_bits(bytes, 42, 7, gpr(I, a));
-   set_bits(bytes, 51, 7, gpr(I, b));
-   if (retain(a)) {
-      set_bits(bytes, 49, 1, 1);
-      set_bits(bytes, 73, 1, 0);
-   }
-   if (retain(b)) {
-      set_bits(bytes, 58, 1, 1);
-      set_bits(bytes, 74, 1, 0);
-   }
-
-   a9_init(p,
-           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE
-                   : AGX_APPLE9_ENC_INT_MUL_WIDE,
-           bytes, 12);
+   emit(I, p,
+        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE
+                : AGX_APPLE9_ENC_INT_MUL_WIDE,
+        a.abs ? agx3_pack_umul_wide : agx3_pack_imul_wide,
+        (struct agx3_fields){
+           .dest = agx3_encode_idst64(plain(I, I->dest[0])),
+           .src = {agx3_encode_reg(src(I, a)), agx3_encode_reg(src(I, b))},
+        });
 }
 
 /* Integer multiply-add. Constants go in factor B and the addend */
@@ -850,51 +676,37 @@ pack_imad(const agx_instr *I, struct a9_packed *p)
       return;
    }
 
-   agx_index srcs[3] = {I->src[0], I->src[1], I->src[2]};
+   agx_index s[3] = {I->src[0], I->src[1], I->src[2]};
    pack_assert(I, I->dest[0].size == AGX_SIZE_32 && !I->shift);
 
-   if (is_imm(srcs[0])) {
-      agx_index t = srcs[0];
-      srcs[0] = srcs[1];
-      srcs[1] = t;
+   if (is_imm(s[0])) {
+      agx_index t = s[0];
+      s[0] = s[1];
+      s[1] = t;
    }
 
-   pack_assert(I, !is_imm(srcs[0]));
+   pack_assert(I, !is_imm(s[0]));
 
-   uint8_t bytes[12] = {0x9f, 0x00, 0x54, 0x00, 0x02, 0x00,
-                        0x00, 0x00, 0xd0, 0x2f, 0x2a, 0x00};
-   bool uniform = I->dest[0].type == AGX_INDEX_UNIFORM;
+   for (unsigned i = 0; i < 3; ++i) {
+      pack_assert(I, !s[i].neg);
+      pack_assert(
+         I, i == 0 || !is_gpr(s[i]) || s[i].size != AGX_SIZE_16 || s[i].abs);
+   }
 
+   bool uniform = is_uniform(I->dest[0]);
    if (uniform)
-      uniform_destination(I, bytes);
-   else
-      set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
+      check_uniform_destination(I);
 
-   for (unsigned s = 0; s < 3; ++s) {
-      agx_index src = srcs[s];
-      pack_assert(I, !src.neg);
-
-      if (is_imm(src)) {
-         pack_int_immediate(bytes, src.value, 42 + 9 * s, 73 + s, 81 + 2 * s,
-                            70 + s);
-      } else if (is_uniform(src)) {
-         pack_int_source(bytes, uniform_word(I, src), true, false, 42 + 9 * s,
-                         73 + s, 81 + 2 * s);
-      } else if (src.size == AGX_SIZE_16) {
-         pack_assert(I, s == 0 || src.abs);
-         pack_int_source(bytes, gpr_of_half(I, src), false, retain(src),
-                         42 + 9 * s, 73 + s, 81 + 2 * s);
-         pack_int_half(bytes, src, 41 + 9 * s, 70 + s, s == 0 ? 82 : -1);
-      } else {
-         pack_int_source(bytes, gpr(I, src), false, retain(src), 42 + 9 * s,
-                         73 + s, 81 + 2 * s);
-      }
-   }
-
-   a9_init(p,
-           uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MAD
-                   : AGX_APPLE9_ENC_INT_MAD_EXTENDED,
-           bytes, 12);
+   emit(I, p,
+        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MAD
+                : AGX_APPLE9_ENC_INT_MAD_EXTENDED,
+        agx3_pack_imad,
+        (struct agx3_fields){
+           .dest = agx3_encode_idst(plain(I, I->dest[0])),
+           .src = {agx3_encode_isrc_desc(int_source(I, s[0])),
+                   agx3_encode_isrc_desc(int_source(I, s[1])),
+                   agx3_encode_isrc_desc(int_source(I, s[2]))},
+        });
 }
 
 /* ishl is bfi into zero, ushr bfeil from zero, by a constant or register */
@@ -903,7 +715,7 @@ pack_shift(const agx_instr *I, struct a9_packed *p)
 {
    bool arithmetic = I->op == AGX_OPCODE_ASR;
    bool left = I->op == AGX_OPCODE_BFI;
-   agx_index src = arithmetic ? I->src[0] : I->src[1];
+   agx_index x = arithmetic ? I->src[0] : I->src[1];
    agx_index amount = arithmetic ? I->src[1] : I->src[2];
    bool variable = !is_imm(amount);
    unsigned width = arithmetic ? 0 : I->bfi_mask;
@@ -911,57 +723,33 @@ pack_shift(const agx_instr *I, struct a9_packed *p)
    if (!arithmetic)
       pack_assert(I, agx_is_equiv(I->src[0], agx_zero()));
 
-   pack_assert(I, I->dest[0].size == AGX_SIZE_32 && src.size == AGX_SIZE_32);
+   pack_assert(I, I->dest[0].size == AGX_SIZE_32 && x.size == AGX_SIZE_32);
    pack_assert(I, !left || width == 0);
    pack_assert(I, !variable || width == 0);
-   pack_assert(I, variable || amount.value < 32);
-   pack_assert(I, width < 64);
 
-   uint8_t bytes[12] = {0xa7, 0, 0x54, 0, 0x02, 0, 0, 0, 0xf0, 0x11, 0x01, 0};
+   struct agx3_fields f = {
+      .dest = agx3_encode_reg(plain(I, I->dest[0])),
+      .src = {agx3_encode_usrc(released(I, x))},
+   };
+
+   if (variable)
+      f.src[1] = agx3_encode_usrc(released(I, amount));
+   else
+      f.amount = amount.value;
+
    if (arithmetic) {
-      bytes[1] = 1;
-      bytes[7] = variable ? 0xd8 : 0x78;
-      bytes[8] = variable ? 0xe2 : 0x62;
-      bytes[9] = 0;
+      emit(I, p,
+           variable ? AGX_APPLE9_ENC_SHIFT_ARITH_REGISTER
+                    : AGX_APPLE9_ENC_SHIFT_EXTENDED,
+           variable ? agx3_pack_asr_reg : agx3_pack_asr, f);
+   } else if (variable) {
+      emit(I, p, AGX_APPLE9_ENC_SHIFT_LOGICAL_REGISTER,
+           left ? agx3_pack_shl_reg : agx3_pack_shr_reg, f);
    } else {
-      if (left)
-         bytes[0] = 0x27;
-
-      if (variable) {
-         bytes[9] = 0x13;
-         bytes[10] = 0x05;
-      }
+      f.width = width;
+      emit(I, p, AGX_APPLE9_ENC_SHIFT_LOGICAL_IMMEDIATE,
+           left ? agx3_pack_shl : agx3_pack_shr, f);
    }
-
-   set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
-
-   unsigned release_bit = arithmetic ? 62 : 72;
-   unsigned file_bit = arithmetic ? 69 : 80;
-
-   agx_index srcs[2] = {src, amount};
-   for (unsigned s = 0; s < (variable ? 2 : 1); ++s) {
-      if (is_uniform(srcs[s])) {
-         pack_int_source(bytes, uniform_word(I, srcs[s]), true, false,
-                         s ? 51 : 42, release_bit + s, file_bit + 2 * s);
-      } else {
-         set_bits(bytes, s ? 51 : 42, 7, gpr(I, srcs[s]));
-         if (retain(srcs[s]))
-            set_bits(bytes, release_bit + s, 1, 0);
-      }
-   }
-
-   if (!variable)
-      set_bits(bytes, 50, 5, amount.value);
-
-   if (!arithmetic && !variable)
-      set_bits(bytes, 84, 6, width);
-
-   enum agx_apple9_encoding form =
-      arithmetic ? (variable ? AGX_APPLE9_ENC_SHIFT_ARITH_REGISTER
-                             : AGX_APPLE9_ENC_SHIFT_EXTENDED)
-                 : (variable ? AGX_APPLE9_ENC_SHIFT_LOGICAL_REGISTER
-                             : AGX_APPLE9_ENC_SHIFT_LOGICAL_IMMEDIATE);
-   a9_init(p, form, bytes, arithmetic ? 10 : 12);
 }
 
 /* Integer and float conversions between 32-bit types */
@@ -969,9 +757,8 @@ static void
 pack_convert(const agx_instr *I, struct a9_packed *p)
 {
    enum agx_convert mode = I->src[0].value;
-   agx_index src = I->src[1];
-   unsigned dst = gpr(I, I->dest[0]);
-   unsigned value = is_uniform(src) ? uniform_word(I, src) : gpr(I, src);
+   agx_index x = I->src[1];
+   uint64_t dest = agx3_encode_reg(plain(I, I->dest[0]));
 
    pack_assert(I, is_imm(I->src[0]));
 
@@ -981,52 +768,29 @@ pack_convert(const agx_instr *I, struct a9_packed *p)
       bool sign = mode == AGX_CONVERT_S32_TO_F;
       pack_assert(I, I->round == AGX_ROUND_RTE);
 
-      /* Byte 6 holds the source lifetime, byte 7 bit 6 the signedness */
-      uint8_t bytes[8] = {
-         0xa7,
-         0x07,
-         0x54,
-         dst << 1,
-         0x03,
-         (value & 63) << 2,
-         (retain(src) ? 0x8c : 0xac) | ((value >> 6) & 1),
-         sign ? 0x60 : 0x20,
-      };
-
-      if (is_uniform(src))
-         pack_int_source(bytes, value, true, false, 42, 53, 61);
-
-      a9_init(
-         p, sign ? AGX_APPLE9_ENC_SINT_TO_FLOAT : AGX_APPLE9_ENC_UINT_TO_FLOAT,
-         bytes, 8);
+      emit(I, p,
+           sign ? AGX_APPLE9_ENC_SINT_TO_FLOAT : AGX_APPLE9_ENC_UINT_TO_FLOAT,
+           sign ? agx3_pack_s32_to_f : agx3_pack_u32_to_f,
+           (struct agx3_fields){
+              .dest = dest,
+              .src = {agx3_encode_usrc(released(I, x))},
+           });
       return;
    }
 
    case AGX_CONVERT_F_TO_U32:
    case AGX_CONVERT_F_TO_S32: {
+      /* The signed format with an unsigned conversion saturates at 65535 */
       bool sign = mode == AGX_CONVERT_F_TO_S32;
       pack_assert(I, I->round == AGX_ROUND_RTZ);
 
-      /* The signed format with an unsigned conversion saturates at 65535 */
-      uint8_t bytes[10] = {
-         0x27,
-         0x07,
-         0x54,
-         dst << 1,
-         0x03,
-         (value & 63) << 2,
-         (retain(src) ? 0x96 : 0xb4) | ((value >> 6) & 1),
-         sign ? 0x48 : 0x08,
-         sign ? 0x03 : 0x02,
-         0x00,
-      };
-
-      if (is_uniform(src))
-         pack_int_source(bytes, value, true, false, 42, 53, 59);
-
-      a9_init(
-         p, sign ? AGX_APPLE9_ENC_FLOAT_TO_SINT : AGX_APPLE9_ENC_FLOAT_TO_UINT,
-         bytes, 10);
+      emit(I, p,
+           sign ? AGX_APPLE9_ENC_FLOAT_TO_SINT : AGX_APPLE9_ENC_FLOAT_TO_UINT,
+           sign ? agx3_pack_f_to_s32 : agx3_pack_f_to_u32,
+           (struct agx3_fields){
+              .dest = dest,
+              .src = {agx3_encode_usrc(src(I, x))},
+           });
       return;
    }
 
@@ -1039,182 +803,126 @@ pack_convert(const agx_instr *I, struct a9_packed *p)
 static void
 pack_bit_unary(const agx_instr *I, struct a9_packed *p)
 {
-   agx_index src = I->src[0];
-   unsigned dst = gpr(I, I->dest[0]);
-   unsigned value = is_uniform(src) ? uniform_word(I, src) : gpr(I, src);
-   bool count = I->op == AGX_OPCODE_POPCOUNT;
+   agx_index x = I->src[0];
+   agx3_pack_fn pack;
 
-   uint8_t bytes[8] = {
-      count ? 0x27 : 0xa7,
-      I->op == AGX_OPCODE_BITREV ? 0x04 : 0x05,
-      0x54,
-      dst << 1,
-      0x02,
-      (value & 63) << 2,
-      (retain(src) ? 0x4e : 0x5c) | ((value >> 6) & 1),
-      0x04,
-   };
-
-   if (is_uniform(src)) {
-      /* Measured for popcount, which then uses another destination format */
-      if (count) {
-         bytes[4] = 0x03;
-         bytes[6] = 0xcc;
-      }
-
-      pack_int_source(bytes, value, true, false, 42, 52, 58);
+   switch (I->op) {
+   case AGX_OPCODE_POPCOUNT:
+      /* A uniform source changes the destination format */
+      pack = is_uniform(x) ? agx3_pack_popcount_uniform : agx3_pack_popcount;
+      break;
+   case AGX_OPCODE_FFS:
+      pack = agx3_pack_ffs;
+      break;
+   case AGX_OPCODE_BITREV:
+      pack = agx3_pack_bitrev;
+      break;
+   default:
+      UNREACHABLE("not a bit operation");
    }
 
-   a9_init(p, AGX_APPLE9_ENC_BIT_UNARY, bytes, 8);
+   emit(I, p, AGX_APPLE9_ENC_BIT_UNARY, pack,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_usrc(src(I, x))},
+        });
 }
 
-/* FP32 and FP16 special functions. Byte 4 is 3 if an ALU reads the result */
+/* FP32 and FP16 special functions. The FP32 reciprocal has its own form for
+ * a uniform source. Some functions have no FP16 form.
+ */
 static void
 pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 {
-   unsigned family = 0, function = 0, precision = 0x40, rounding = 0;
-   bool reciprocal = false;
+   agx_index x = I->src[0];
+   bool half = I->format == AGX_FORMAT_F16;
+   agx3_pack_fn f32, f16;
 
    switch (I->op) {
    case AGX_OPCODE_RCP:
-      family = 1;
-      precision = 0x48;
-      rounding = 0x20;
-      reciprocal = true;
+      f32 = is_uniform(x) ? agx3_pack_rcp_uniform : agx3_pack_rcp;
+      f16 = agx3_pack_rcp_f16;
       break;
    case AGX_OPCODE_RSQRT:
-      family = 1;
-      function = 1;
+      f32 = agx3_pack_rsqrt;
+      f16 = agx3_pack_rsqrt_f16;
       break;
    case AGX_OPCODE_SRSQRT:
-      function = 1;
+      f32 = agx3_pack_srsqrt;
+      f16 = NULL;
       break;
    case AGX_OPCODE_SIN_FACTOR:
-      function = 3;
+      f32 = agx3_pack_sin_factor;
+      f16 = NULL;
       break;
    case AGX_OPCODE_EXP2:
-      family = 1;
-      function = 2;
+      f32 = agx3_pack_exp2;
+      f16 = agx3_pack_exp2_f16;
       break;
    case AGX_OPCODE_LOG2:
-      function = 2;
+      f32 = agx3_pack_log2;
+      f16 = agx3_pack_log2_f16;
       break;
    case AGX_OPCODE_FLOOR:
-      rounding = 2;
+      f32 = agx3_pack_floor;
+      f16 = agx3_pack_floor_f16;
       break;
    case AGX_OPCODE_CEIL:
-      rounding = 4;
+      f32 = agx3_pack_ceil;
+      f16 = agx3_pack_ceil_f16;
       break;
    case AGX_OPCODE_TRUNC:
-      rounding = 6;
+      f32 = agx3_pack_trunc;
+      f16 = agx3_pack_trunc_f16;
       break;
    case AGX_OPCODE_ROUNDEVEN:
+      f32 = agx3_pack_rint;
+      f16 = agx3_pack_rint_f16;
       break;
    default:
       UNREACHABLE("not a special function");
    }
 
-   agx_index src = I->src[0];
-   unsigned dst = gpr(I, I->dest[0]);
-   unsigned value = is_uniform(src) ? uniform_word(I, src) : gpr(I, src);
+   /* FP16 reads and writes low halves */
+   pack_assert(I, !half || (is_gpr(x) && f16));
 
-   /* FP16 reads and writes low halves: byte 7, and bits 3-4 of byte 6 */
-   bool half = I->format == AGX_FORMAT_F16;
-   pack_assert(I, !half || is_gpr(src));
-   if (half) {
-      precision = reciprocal ? 0x46 : 0x60;
-      rounding |= reciprocal ? 0x10 : 0;
-   }
+   struct agx3_operand op = released(I, x);
+   op.neg = x.neg;
+   op.abs = x.abs;
 
-   uint8_t bytes[10] = {
-      0x2f | (family << 7),
-      function,
-      0x54,
-      dst << 1,
-      st->alu_reads_result ? 0x03 : 0x02,
-      (value & 63) << 2,
-      ((value >> 6) & 1) | (reciprocal ? (retain(src) ? 0x00 : 0x10)
-                            : half     ? (retain(src) ? 0x8c : 0xac)
-                                       : (retain(src) ? 0x90 : 0xb0)),
-      precision,
-      rounding,
-      0,
-   };
-
-   if (is_uniform(src))
-      pack_int_source(bytes, value, true, false, 42, 53, 62);
-
-   if (I->saturate)
-      set_bits(bytes, reciprocal ? 65 : 58, 1, 1);
-
-   set_bits(bytes, reciprocal ? 70 : 63, 1, src.abs);
-   set_bits(bytes, reciprocal ? 71 : 64, 1, src.neg);
-
-   a9_init(p,
-           half              ? AGX_APPLE9_ENC_HALF_SPECIAL
-           : is_uniform(src) ? AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM
-                             : AGX_APPLE9_ENC_FLOAT_SPECIAL,
-           bytes, 10);
+   emit(I, p,
+        half            ? AGX_APPLE9_ENC_HALF_SPECIAL
+        : is_uniform(x) ? AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM
+                        : AGX_APPLE9_ENC_FLOAT_SPECIAL,
+        half ? f16 : f32,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_usrc(op)},
+           .alu = st->alu_reads_result,
+           .saturate = I->saturate,
+        });
 }
 
 static void
 pack_derivative(const agx_instr *I, struct a9_packed *p)
 {
-   agx_index src = I->src[0];
-   unsigned dst = gpr(I, I->dest[0]), s = gpr(I, src);
-   pack_assert(I, !src.abs && !src.neg);
+   agx_index x = I->src[0];
+   pack_assert(I, !x.abs && !x.neg);
 
-   uint8_t bytes[10] = {
-      0x37,
-      0x05 | ((I->op == AGX_OPCODE_DFDY) << 1),
-      0x54,
-      dst << 1,
-      0x03,
-      (s & 63) << 2,
-      0x90 | (retain(src) ? 2 : 0) | (s >> 6),
-      0x40 | (I->saturate ? 4 : 0),
-      0,
-      0,
-   };
-   a9_init(p, AGX_APPLE9_ENC_DERIVATIVE, bytes, 10);
+   /* The source is cached, never released */
+   struct agx3_operand op = plain(I, x);
+   op.cache = !x.discard;
+
+   emit(I, p, AGX_APPLE9_ENC_DERIVATIVE,
+        I->op == AGX_OPCODE_DFDY ? agx3_pack_dfdy : agx3_pack_dfdx,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_reg(op)},
+           .saturate = I->saturate,
+        });
 }
 
-/* Constant compare operand B, in the byte that otherwise names a uniform */
-static void
-pack_compare_literal(const agx_instr *I, uint8_t *bytes, agx_index src,
-                     bool is_float, unsigned cond_bit, unsigned file_bit)
-{
-   if (is_float) {
-      uint32_t bits = imm_float_bits(src);
-      uint8_t encoded;
-      bool low;
-      pack_assert(I, encode_minifloat_wide(bits, &encoded, &low));
-
-      bytes[3] = encoded;
-      set_bits(bytes, 20, 1, bits >> 31);
-      set_bits(bytes, cond_bit, 1, low);
-   } else {
-      pack_assert(I, src.value <= UINT8_MAX);
-      bytes[3] = 0x80 | (((src.value >> 1) & 0x3f) << 1);
-      set_bits(bytes, 20, 1, src.value >> 7);
-      set_bits(bytes, cond_bit, 1, src.value & 1);
-   }
-
-   set_bits(bytes, file_bit, 1, 1);
-   set_bits(bytes, file_bit + 1, 1, 0);
-}
-
-/* Select conditions, with bit 8 choosing the equality form */
-#define A9_SELECT_FEQ      0x00
-#define A9_SELECT_FGT      0x02
-#define A9_SELECT_FLT      0x03
-#define A9_SELECT_UGT      0x04
-#define A9_SELECT_ULT      0x05
-#define A9_SELECT_IGT      0x06
-#define A9_SELECT_ILT      0x07
-#define A9_SELECT_EQUALITY 0x100
-
-/* Select condition of icmpsel/fcmpsel and operand swap, if encodable */
+/* Condition of a compare-select, and whether its compared operands swap */
 static bool
 select_condition(const agx_instr *I, unsigned *cond, bool *swap)
 {
@@ -1224,19 +932,19 @@ select_condition(const agx_instr *I, unsigned *cond, bool *swap)
       switch (I->icond) {
       case AGX_ICOND_UEQ:
       case AGX_ICOND_SEQ:
-         *cond = A9_SELECT_ILT | A9_SELECT_EQUALITY;
+         *cond = AGX3_ICOND_IEQ;
          return true;
       case AGX_ICOND_ULT:
-         *cond = A9_SELECT_ULT;
+         *cond = AGX3_ICOND_ULT;
          return true;
       case AGX_ICOND_UGT:
-         *cond = A9_SELECT_UGT;
+         *cond = AGX3_ICOND_UGT;
          return true;
       case AGX_ICOND_SLT:
-         *cond = A9_SELECT_ILT;
+         *cond = AGX3_ICOND_ILT;
          return true;
       case AGX_ICOND_SGT:
-         *cond = A9_SELECT_IGT;
+         *cond = AGX3_ICOND_IGT;
          return true;
       default:
          return false;
@@ -1244,19 +952,19 @@ select_condition(const agx_instr *I, unsigned *cond, bool *swap)
    } else {
       switch (I->fcond) {
       case AGX_FCOND_EQ:
-         *cond = A9_SELECT_FEQ | A9_SELECT_EQUALITY;
+         *cond = AGX3_FCOND_FEQ;
          return true;
       case AGX_FCOND_LT:
-         *cond = A9_SELECT_FLT;
+         *cond = AGX3_FCOND_FLT;
          return true;
       case AGX_FCOND_GT:
-         *cond = A9_SELECT_FGT;
+         *cond = AGX3_FCOND_FGT;
          return true;
       case AGX_FCOND_GE:
-         *cond = A9_SELECT_FGT | A9_SELECT_EQUALITY;
+         *cond = AGX3_FCOND_FGE;
          return true;
       case AGX_FCOND_LE:
-         *cond = A9_SELECT_FGT | A9_SELECT_EQUALITY;
+         *cond = AGX3_FCOND_FGE;
          *swap = true;
          return true;
       default:
@@ -1266,11 +974,11 @@ select_condition(const agx_instr *I, unsigned *cond, bool *swap)
 }
 
 /* min and max: a select between the compared operands themselves */
-static int
+static agx3_pack_fn
 minmax_select(const agx_instr *I)
 {
    if (I->dest[0].size != AGX_SIZE_32 || I->op == AGX_OPCODE_HCMPSEL)
-      return -1;
+      return NULL;
 
    bool same =
       agx_is_equiv(I->src[0], I->src[2]) && agx_is_equiv(I->src[1], I->src[3]);
@@ -1278,53 +986,53 @@ minmax_select(const agx_instr *I)
       agx_is_equiv(I->src[0], I->src[3]) && agx_is_equiv(I->src[1], I->src[2]);
 
    if (!same && !swapped)
-      return -1;
+      return NULL;
 
    if (I->op == AGX_OPCODE_ICMPSEL) {
       for (unsigned s = 0; s < 4; ++s) {
          /* Only the float form takes a constant */
          if (I->src[s].neg || I->src[s].abs || is_imm(I->src[s]) ||
              I->src[s].size != AGX_SIZE_32)
-            return -1;
+            return NULL;
       }
 
       switch (I->icond) {
       case AGX_ICOND_UGT:
-         return same ? 4 : 5;
+         return same ? agx3_pack_umax : agx3_pack_umin;
       case AGX_ICOND_ULT:
-         return same ? 5 : 4;
+         return same ? agx3_pack_umin : agx3_pack_umax;
       case AGX_ICOND_SGT:
-         return same ? 6 : 7;
+         return same ? agx3_pack_imax : agx3_pack_imin;
       case AGX_ICOND_SLT:
-         return same ? 7 : 6;
+         return same ? agx3_pack_imin : agx3_pack_imax;
       default:
-         return -1;
+         return NULL;
       }
    } else {
       /* Modifiers must match between the compared and selected operands */
       if (!agx_is_equiv_with_modifiers(I->src[0], I->src[same ? 2 : 3]) ||
           !agx_is_equiv_with_modifiers(I->src[1], I->src[same ? 3 : 2]) ||
           I->src[0].neg || I->src[0].abs || I->src[1].abs)
-         return -1;
+         return NULL;
 
       for (unsigned s = 0; s < 2; ++s) {
          if (!is_imm(I->src[s]) && I->src[s].size != AGX_SIZE_32)
-            return -1;
+            return NULL;
       }
 
       switch (I->fcond) {
       case AGX_FCOND_GTN:
-         return same ? 0 : 1;
+         return same ? agx3_pack_fmax : agx3_pack_fmin;
       case AGX_FCOND_LTN:
-         return same ? 1 : 0;
+         return same ? agx3_pack_fmin : agx3_pack_fmax;
       default:
-         return -1;
+         return NULL;
       }
    }
 }
 
 static void
-pack_minmax(const agx_instr *I, unsigned select, struct a9_packed *p)
+pack_minmax(const agx_instr *I, agx3_pack_fn pack, struct a9_packed *p)
 {
    agx_index a = I->src[0], b = I->src[1];
    bool half = I->op == AGX_OPCODE_HMIN || I->op == AGX_OPCODE_HMAX;
@@ -1339,56 +1047,39 @@ pack_minmax(const agx_instr *I, unsigned select, struct a9_packed *p)
 
    pack_assert(I, !is_imm(a) && !(is_uniform(a) && !is_gpr(b) && !is_imm(b)));
    pack_assert(I, floating || !is_imm(b));
+   pack_assert(I, !is_imm(b) || !b.neg);
 
-   uint8_t bytes[6] = {0x02, 0x01, 0x1e, 0x05, select, 0x00};
-   set_bits(bytes, 21, 1, 1);
-   pack_compact_retain(bytes, is_gpr(a) && retain(a), is_gpr(b) && retain(b));
-   pack_compact_registers(bytes, gpr(I, I->dest[0]), is_gpr(a) ? gpr(I, a) : 0,
-                          is_gpr(b) ? gpr(I, b) : 0);
-
-   if (b.neg) {
-      set_bits(bytes, 18, 1, 0);
-      set_bits(bytes, 43, 1, 1);
-   }
-
-   if (is_uniform(a))
-      pack_compact_uniform(bytes, 0, uniform_word(I, a));
-   if (is_uniform(b))
-      pack_compact_uniform(bytes, 1, uniform_word(I, b));
-
-   if (is_imm(b)) {
-      uint32_t bits = imm_float_bits(b);
-      uint8_t encoded;
-      bool low;
-      pack_assert(I, encode_minifloat_wide(bits, &encoded, &low));
-
-      bytes[3] = encoded;
-      set_bits(bytes, 18, 1, 0);
-      set_bits(bytes, 20, 1, bits >> 31);
-      set_bits(bytes, 36, 1, low);
-      set_bits(bytes, 41, 1, 1);
-      set_bits(bytes, 42, 1, 0);
-   }
+   struct agx3_operand x = src(I, a);
+   struct agx3_operand y =
+      is_imm(b) ? float_constant(I, imm_float_bits(b), true) : src(I, b);
+   if (!is_imm(b))
+      y.neg = b.neg;
 
    /* FP16 operands are the low halves, without uniforms or negation */
    if (half) {
       pack_assert(I, is_gpr(a) && is_gpr(b) && !b.neg);
-      set_bits(bytes, 8, 1, 0);
-      set_bits(bytes, 17, 1, 0);
-      set_bits(bytes, 24, 1, 0);
-      a9_init(p, AGX_APPLE9_ENC_HALF_MINMAX, bytes, 6);
-      return;
+      x = low_half(x);
+      y = low_half(y);
    }
 
-   a9_init(p, AGX_APPLE9_ENC_MINMAX_COMPACT, bytes, 6);
+   uint64_t (*encode)(struct agx3_operand) =
+      floating ? agx3_encode_fsrc : agx3_encode_isrc;
+
+   emit(I, p, half ? AGX_APPLE9_ENC_HALF_MINMAX : AGX_APPLE9_ENC_MINMAX_COMPACT,
+        pack,
+        (struct agx3_fields){
+           .dest = agx3_encode_dst(plain(I, I->dest[0])),
+           .src = {encode(x), encode(y)},
+           .bit18 = !b.neg && !is_imm(b),
+        });
 }
 
 /* Compare and select: dest = (A cond B) ? C : D */
 static void
 pack_select(const agx_instr *I, struct a9_packed *p)
 {
-   int minmax = minmax_select(I);
-   if (minmax >= 0) {
+   agx3_pack_fn minmax = minmax_select(I);
+   if (minmax) {
       pack_minmax(I, minmax, p);
       return;
    }
@@ -1397,185 +1088,116 @@ pack_select(const agx_instr *I, struct a9_packed *p)
    bool swap;
    pack_assert(I, select_condition(I, &cond, &swap));
 
-   agx_index srcs[4] = {I->src[0], I->src[1], I->src[2], I->src[3]};
+   agx_index s[4] = {I->src[0], I->src[1], I->src[2], I->src[3]};
    if (swap) {
-      agx_index t = srcs[0];
-      srcs[0] = srcs[1];
-      srcs[1] = t;
+      agx_index t = s[0];
+      s[0] = s[1];
+      s[1] = t;
    }
 
    bool half = I->op == AGX_OPCODE_HCMPSEL;
    bool floating = I->op == AGX_OPCODE_FCMPSEL || half;
-   bool abs_ab = srcs[0].abs || srcs[1].abs;
    pack_assert(I, I->dest[0].size == AGX_SIZE_32);
-   pack_assert(I, !is_imm(srcs[0]) && !srcs[0].neg);
-   pack_assert(I, floating || !(srcs[0].abs || srcs[1].abs || srcs[1].neg));
+   pack_assert(I, !is_imm(s[0]) && !s[0].neg);
+   pack_assert(I, floating || !(s[0].abs || s[1].abs || s[1].neg));
+   pack_assert(I, !(floating && is_imm(s[1]) && s[1].neg));
 
    bool modifiers = false;
-   for (unsigned s = 0; s < 4; ++s) {
-      pack_assert(I, is_imm(srcs[s]) || srcs[s].size == AGX_SIZE_32);
-      modifiers |= srcs[s].abs || srcs[s].neg;
+   struct agx3_operand op[4];
+
+   for (unsigned i = 0; i < 4; ++i) {
+      pack_assert(I, is_imm(s[i]) || s[i].size == AGX_SIZE_32);
+      modifiers |= s[i].abs || s[i].neg;
+
+      if (!is_imm(s[i]))
+         op[i] = src(I, s[i]);
+      else if (i == 1 && floating)
+         op[i] = float_constant(I, imm_float_bits(s[i]), true);
+      else
+         op[i] = constant(s[i].value, i != 1);
+
+      /* The sign of a float constant is its own */
+      if (!(i == 1 && floating && is_imm(s[i])))
+         op[i].neg = s[i].neg;
+
+      op[i].abs = s[i].abs;
    }
-
-   bool extended = abs_ab;
-
-   uint8_t bytes[14] = {0x02, 0x01, 0x1f, 0x01, 0x82,
-                        0x00, 0x05, 0x00, 0x80, 0x00};
-   bytes[6] = cond & 0xff;
-   if (cond & A9_SELECT_EQUALITY)
-      bytes[4] |= 0x04;
-
-   static const unsigned cache[] = {15, 31, 47, 79};
-   static const unsigned discard[] = {19, 20, 39, 71};
-   static const unsigned high[] = {56, 58, 38, 70};
-   static const unsigned file[] = {55, 57, 37, 69};
-   static const unsigned field[] = {9, 25, 41, 73};
-
-   for (unsigned s = 0; s < 4; ++s) {
-      agx_index src = srcs[s];
-
-      if (is_gpr(src)) {
-         unsigned reg = gpr(I, src);
-         set_bits(bytes, field[s], 6, reg & 0x3f);
-         set_bits(bytes, high[s], 1, reg >> 6);
-
-         if (retain(src)) {
-            set_bits(bytes, cache[s], 1, 1);
-            set_bits(bytes, discard[s], 1, 0);
-         }
-      }
-   }
-
-   unsigned dst = gpr(I, I->dest[0]);
-   set_bits(bytes, 4, 4, dst & 15);
-   set_bits(bytes, 22, 2, (dst >> 4) & 3);
-   set_bits(bytes, 60, 1, dst >> 6);
-
-   for (unsigned s = 0; s < 4; ++s) {
-      agx_index src = srcs[s];
-
-      if (is_uniform(src)) {
-         unsigned u = uniform_word(I, src);
-         set_bits(bytes, field[s], 6, u & 0x3f);
-         set_bits(bytes, cache[s], 1, 0);
-         set_bits(bytes, discard[s], 1, (u >> 6) & 1);
-         set_bits(bytes, high[s], 1, u >> 7);
-         set_bits(bytes, file[s], 1, 1);
-      } else if (is_imm(src) && s == 1) {
-         set_bits(bytes, cache[s], 1, 1);
-         pack_compare_literal(I, bytes, src, floating, 52, 57);
-      } else if (is_imm(src)) {
-         /* Constant bit 0 below the register field, bit 7 in the release bit */
-         pack_assert(I, src.value <= UINT8_MAX);
-         set_bits(bytes, field[s] - 1, 1, src.value & 1);
-         set_bits(bytes, field[s], 6, (src.value >> 1) & 0x3f);
-         set_bits(bytes, cache[s], 1, 1);
-         set_bits(bytes, discard[s], 1, src.value >> 7);
-         set_bits(bytes, high[s], 1, 0);
-         set_bits(bytes, file[s], 1, 1);
-      }
-   }
-
-   if (extended) {
-      set_bits(bytes, 32, 2, 3);
-      set_bits(bytes, 96, 2, srcs[0].abs | (srcs[1].abs << 1));
-   }
-
-   if (srcs[2].abs || srcs[2].neg || srcs[3].abs || srcs[3].neg)
-      set_bits(bytes, 18, 1, 0);
-
-   set_bits(bytes, 35, 1, srcs[2].abs);
-   set_bits(bytes, 36, 1, srcs[2].neg);
-   set_bits(bytes, 67, 1, srcs[3].abs);
-   set_bits(bytes, 68, 1, srcs[3].neg);
-   set_bits(bytes, 59, 1, srcs[1].neg);
 
    pack_assert(I, !modifiers || floating);
 
+   uint64_t (*encode)(struct agx3_operand) =
+      floating ? agx3_encode_fsrc : agx3_encode_isrc;
+
    /* The FP16 select compares the low halves of operands A and B */
    if (half) {
-      pack_assert(I, !modifiers && is_gpr(srcs[0]) && is_gpr(srcs[1]) &&
-                        is_gpr(srcs[2]) && is_gpr(srcs[3]));
-      set_bits(bytes, 8, 1, 0);
-      set_bits(bytes, 24, 1, 0);
-      a9_init(p, AGX_APPLE9_ENC_HALF_COMPARE_SELECT, bytes, 10);
-      return;
+      pack_assert(I, !modifiers && is_gpr(s[0]) && is_gpr(s[1]) &&
+                        is_gpr(s[2]) && is_gpr(s[3]));
+      op[0] = low_half(op[0]);
+      op[1] = low_half(op[1]);
    }
 
-   a9_init(p,
-           extended ? AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED
-                    : AGX_APPLE9_ENC_SELECT_GPR_WIDE,
-           bytes, extended ? 14 : 10);
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(plain(I, I->dest[0])),
+      .src = {encode(op[0]), encode(op[1]), agx3_encode_isrc(op[2]),
+              agx3_encode_isrc(op[3])},
+      .cond = cond,
+      .bit18 = !(s[2].abs || s[2].neg || s[3].abs || s[3].neg),
+   };
+
+   if (half)
+      emit(I, p, AGX_APPLE9_ENC_HALF_COMPARE_SELECT, agx3_pack_fcmpsel, f);
+   else if (s[0].abs || s[1].abs)
+      emit(I, p, AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED, agx3_pack_fcmpsel_mod,
+           f);
+   else
+      emit(I, p, AGX_APPLE9_ENC_SELECT_GPR_WIDE,
+           floating ? agx3_pack_fcmpsel : agx3_pack_icmpsel, f);
 }
 
-/* Logic truth tables encodable as and, or, xor or a move (or with zero) */
-enum a9_logic {
-   A9_LOGIC_AND,
-   A9_LOGIC_OR,
-   A9_LOGIC_XOR,
-   A9_LOGIC_MOV_A,
-   A9_LOGIC_MOV_B,
-   A9_LOGIC_NONE,
-};
-
-static enum a9_logic
+/* Logic operations of truth tables, a move being an or with zero */
+static unsigned
 logic_op(uint32_t truth_table)
 {
    switch (truth_table) {
    case 0x8:
-      return A9_LOGIC_AND;
+      return AGX3_BITOP_AND;
    case 0xe:
-      return A9_LOGIC_OR;
-   case 0x6:
-      return A9_LOGIC_XOR;
    case 0xa:
-      return A9_LOGIC_MOV_A;
    case 0xc:
-      return A9_LOGIC_MOV_B;
+      return AGX3_BITOP_OR;
+   case 0x6:
+      return AGX3_BITOP_XOR;
    default:
-      return A9_LOGIC_NONE;
+      return 0;
    }
-}
-
-/* Move of a uniform word into r0-r63 */
-static void
-pack_uniform_move(const agx_instr *I, agx_index src, struct a9_packed *p)
-{
-   unsigned dst = gpr(I, I->dest[0]), u = uniform_word(I, src);
-
-   uint8_t bytes[4] = {0x0b, 0x00, 0x01, 0x08};
-   set_bits(bytes, 4, 4, dst & 15);
-   set_bits(bytes, 9, 6, u & 63);
-   set_bits(bytes, 19, 1, (u >> 6) & 1);
-   set_bits(bytes, 22, 2, (dst >> 4) & 3);
-   set_bits(bytes, 28, 1, u >> 7);
-   a9_init(p, AGX_APPLE9_ENC_UNIFORM_MOVE, bytes, 4);
 }
 
 /* Bitwise operations, into a GPR or an export register */
 static void
 pack_logic(const agx_instr *I, struct a9_packed *p)
 {
-   enum a9_logic op = logic_op(I->truth_table);
+   unsigned op = logic_op(I->truth_table);
    agx_index a = I->src[0], b = I->src[1];
    bool to_export = is_export(I->dest[0]);
 
-   pack_assert(I, op != A9_LOGIC_NONE);
+   pack_assert(I, op != 0);
 
-   if (op == A9_LOGIC_MOV_B) {
-      a = b;
-      op = A9_LOGIC_MOV_A;
-   }
+   /* Moves of operand A or B */
+   if (I->truth_table == 0xa || I->truth_table == 0xc) {
+      if (I->truth_table == 0xc)
+         a = b;
 
-   if (op == A9_LOGIC_MOV_A) {
-      if (is_uniform(a) && !to_export && !I->wait && gpr(I, I->dest[0]) < 64) {
-         pack_uniform_move(I, a, p);
+      if (is_uniform(a) && !to_export && !I->wait && I->dest[0].value < 128) {
+         emit(I, p, AGX_APPLE9_ENC_UNIFORM_MOVE, agx3_pack_mov_uniform,
+              (struct agx3_fields){
+                 .dest = agx3_encode_dst(plain(I, I->dest[0])),
+                 .src = {agx3_encode_uniform(plain(I, a))},
+              });
          return;
       }
 
       /* An export of a register is an or with itself */
       b = to_export ? a : agx_zero();
-      op = A9_LOGIC_OR;
    }
 
    if (is_imm(a) || (is_uniform(a) && is_gpr(b))) {
@@ -1588,127 +1210,74 @@ pack_logic(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->dest[0].size == AGX_SIZE_32);
    pack_assert(I, !to_export || (is_gpr(a) && is_gpr(b)));
 
-   uint8_t bytes[10] = {0x0b, 0x05, 0x1f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
-   if (op == A9_LOGIC_OR) {
-      bytes[4] = 0x02;
-      bytes[5] = 0x08;
-   } else if (op == A9_LOGIC_XOR) {
-      bytes[2] = 0x1e;
-      bytes[4] = 0x02;
-      bytes[5] = 0x08;
-   }
-
-   bool retain_a = is_gpr(a) && retain(a), retain_b = is_gpr(b) && retain(b);
-   pack_compact_retain(bytes, retain_a, retain_b);
-   if (retain_b)
-      set_bits(bytes, 21, 1, 1);
-
-   pack_compact_registers(
-      bytes, to_export ? export_word(I, I->dest[0]) : gpr(I, I->dest[0]),
-      is_gpr(a) ? gpr(I, a) : 0, is_gpr(b) ? gpr(I, b) : 0);
+   struct agx3_fields f = {
+      .src = {agx3_encode_isrc(src(I, a)),
+              agx3_encode_isrc(is_imm(b) ? constant(b.value, true)
+                                         : src(I, b))},
+      .op = op,
+      .dstate = to_export || (is_gpr(b) && !b.discard),
+   };
 
    if (to_export) {
-      bytes[4] |= 0x40;
-      set_bits(bytes, 21, 1, 1);
-      set_bits(bytes, 58, 3, completion_slot(I));
+      f.dest = agx3_encode_export(plain(I, I->dest[0]));
+      f.slot = completion_slot(I);
+      emit(I, p, AGX_APPLE9_ENC_LOGIC_EXPORT, agx3_pack_bitop_export, f);
+   } else {
+      f.dest = agx3_encode_dst(plain(I, I->dest[0]));
+      emit(I, p, AGX_APPLE9_ENC_LOGIC_EXTENDED, agx3_pack_bitop, f);
    }
-
-   if (is_uniform(a))
-      pack_compact_uniform(bytes, 0, uniform_word(I, a));
-   if (is_uniform(b))
-      pack_compact_uniform(bytes, 1, uniform_word(I, b));
-
-   if (is_imm(b)) {
-      /* Bit 0 at 36, bits 1-6 in the B register field, bit 7 at 20 */
-      pack_assert(I, b.value <= UINT8_MAX);
-      set_bits(bytes, 24, 1, 1);
-      set_bits(bytes, 25, 6, (b.value >> 1) & 0x3f);
-      set_bits(bytes, 31, 1, 1);
-      set_bits(bytes, 20, 1, b.value >> 7);
-      set_bits(bytes, 21, 1, 0);
-      set_bits(bytes, 36, 1, b.value & 1);
-      set_bits(bytes, 41, 1, 1);
-      set_bits(bytes, 42, 1, 0);
-   }
-
-   a9_init(
-      p,
-      to_export ? AGX_APPLE9_ENC_LOGIC_EXPORT : AGX_APPLE9_ENC_LOGIC_EXTENDED,
-      bytes, 10);
 }
 
-/* Export moves of the DEPTH_STORE pair; bit 68 gives each lane one word */
+/* Export moves of the DEPTH_STORE pair, giving each lane one word */
 static void
 pack_publication_pair(const agx_instr *I, struct a9_packed *p)
 {
    bool split = I->imm;
-   unsigned word = export_word(I, I->dest[0]);
-   pack_assert(I, word <= 62 && !(word & 1));
+   struct agx3_operand dest = plain(I, I->dest[0]);
+   pack_assert(I, is_export(I->dest[0]) && I->dest[0].value <= 124 &&
+                     !(I->dest[0].value & 2));
 
-   uint8_t bytes[20];
-   unsigned moves = split ? 1 : 2;
-
-   for (unsigned c = 0; c < moves; ++c) {
-      agx_index src = I->src[c];
-      pack_assert(I, is_gpr(src) && src.size == AGX_SIZE_32);
+   for (unsigned c = 0; c < (split ? 1 : 2); ++c) {
+      agx_index s = I->src[c];
+      pack_assert(I, is_gpr(s) && s.size == AGX_SIZE_32);
 
       /* The move keeps its source if a later move or instruction reads it */
-      bool keep =
-         retain(src) || (c == 0 && !split && agx_is_equiv(I->src[1], src));
+      struct agx3_operand x = src(I, s);
+      x.cache |= c == 0 && !split && agx_is_equiv(I->src[1], s);
+      x.lu = !x.cache;
 
-      uint8_t *m = bytes + 10 * c;
-      const uint8_t logic_or[10] = {0x0b, 0x05, 0x1f, 0x01, 0x02, 0x08};
-      memcpy(m, logic_or, sizeof(logic_or));
-      memset(m + 6, 0, 4);
-
-      pack_compact_retain(m, keep, keep);
-      if (keep)
-         set_bits(m, 21, 1, 1);
-
-      pack_compact_registers(m, word + c, gpr(I, src), gpr(I, src));
-      m[4] |= 0x40;
-      set_bits(m, 21, 1, 1);
-      set_bits(m, 58, 3, completion_slot(I));
-
-      set_bits(m, 25, 6, 0);
-      set_bits(m, 42, 1, 0);
-      set_bits(m, 31, 1, 0);
-      set_bits(m, 20, 1, 0);
-      set_bits(m, 24, 1, 0);
-      set_bits(m, 43, 1, 0);
-
-      if (!split)
-         m[8] |= 0x10;
-   }
-
-   a9_init(p,
+      dest.value = I->dest[0].value + 2 * c;
+      emit(I, p,
            split ? AGX_APPLE9_ENC_PUBLICATION_SPLIT
                  : AGX_APPLE9_ENC_PUBLICATION_PAIR,
-           bytes, 10 * moves);
+           agx3_pack_bitop_export,
+           (struct agx3_fields){
+              .dest = agx3_encode_export(dest),
+              .src = {agx3_encode_isrc(x), 0},
+              .op = AGX3_BITOP_MOV,
+              .slot = completion_slot(I),
+              .per_lane = !split,
+              .dstate = 1,
+           });
+   }
 }
 
-/* r0-r15 = 0-0x7f in two bytes; value bit 7 means no write */
+/* r0-r15 = 0-0x7f in two bytes, otherwise 32 bits into r0-r63 */
 static void
 pack_mov_imm(const agx_instr *I, struct a9_packed *p)
 {
-   unsigned dst = gpr(I, I->dest[0]);
-   pack_assert(I, I->dest[0].size == AGX_SIZE_32 && I->imm <= UINT32_MAX);
+   agx_index dst = I->dest[0];
+   pack_assert(I, dst.size == AGX_SIZE_32 && I->imm <= UINT32_MAX);
 
-   uint8_t compact[2];
-   if (agx_apple9_encode_mov_imm7(compact, dst, I->imm)) {
-      a9_init(p, AGX_APPLE9_ENC_MOV_IMM_COMPACT, compact, 2);
-      return;
-   }
-
-   /* Six destination bits. A seventh at bit 60 hung the GPU. */
-   uint32_t v = I->imm;
-   pack_assert(I, dst < 64);
-   const uint8_t bytes[8] = {
-      ((dst & 0xf) << 4) | 0x0c, 0x80 | (v & 0x7f), ((dst >> 4) << 6) | 0x02,
-      (v >> 24) & 0xfe,          (v >> 6) & 0x1e,   (v >> 9) & 0x0c,
-      (v >> 13) & 0xff,          (v >> 21) & 0x0f,
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(plain(I, dst)),
+      .value = I->imm,
    };
-   a9_init(p, AGX_APPLE9_ENC_MOV_IMM32, bytes, 8);
+
+   if (dst.value < 32 && I->imm <= 0x7f)
+      emit(I, p, AGX_APPLE9_ENC_MOV_IMM_COMPACT, agx3_pack_mov_imm, f);
+   else
+      emit(I, p, AGX_APPLE9_ENC_MOV_IMM32, agx3_pack_mov_imm32, f);
 }
 
 /* System registers. 16-bit reads are followed by an in-place zero extend */
@@ -1724,45 +1293,52 @@ sr_selector(enum agx_sr sr, struct a9_sr *out)
    case AGX_SR_THREAD_POSITION_IN_GRID_X:
    case AGX_SR_THREAD_POSITION_IN_GRID_Y:
    case AGX_SR_THREAD_POSITION_IN_GRID_Z:
-      *out = (struct a9_sr){0xa0 + (sr - AGX_SR_THREAD_POSITION_IN_GRID_X)};
+      *out = (struct a9_sr){AGX3_SR_THREAD_POSITION_IN_GRID_X +
+                            (sr - AGX_SR_THREAD_POSITION_IN_GRID_X)};
       return true;
    case AGX_SR_THREADGROUP_POSITION_IN_GRID_X:
    case AGX_SR_THREADGROUP_POSITION_IN_GRID_Y:
    case AGX_SR_THREADGROUP_POSITION_IN_GRID_Z:
-      *out =
-         (struct a9_sr){0x9c + (sr - AGX_SR_THREADGROUP_POSITION_IN_GRID_X)};
+      *out = (struct a9_sr){AGX3_SR_THREADGROUP_POSITION_IN_GRID_X +
+                            (sr - AGX_SR_THREADGROUP_POSITION_IN_GRID_X)};
       return true;
    case AGX_SR_THREAD_POSITION_IN_THREADGROUP_X:
    case AGX_SR_THREAD_POSITION_IN_THREADGROUP_Y:
    case AGX_SR_THREAD_POSITION_IN_THREADGROUP_Z:
-      *out = (struct a9_sr){
-         0xa4 + (sr - AGX_SR_THREAD_POSITION_IN_THREADGROUP_X), true};
+      *out = (struct a9_sr){AGX3_SR_THREAD_POSITION_IN_THREADGROUP_X +
+                               (sr - AGX_SR_THREAD_POSITION_IN_THREADGROUP_X),
+                            true};
       return true;
    case AGX_SR_THREADS_PER_THREADGROUP_X:
    case AGX_SR_THREADS_PER_THREADGROUP_Y:
    case AGX_SR_THREADS_PER_THREADGROUP_Z:
-      *out =
-         (struct a9_sr){0x98 + (sr - AGX_SR_THREADS_PER_THREADGROUP_X), true};
+      *out = (struct a9_sr){AGX3_SR_THREADS_PER_THREADGROUP_X +
+                               (sr - AGX_SR_THREADS_PER_THREADGROUP_X),
+                            true};
       return true;
    case AGX_SR_THREAD_INDEX_IN_THREADGROUP:
-      *out = (struct a9_sr){0xa7, true};
+      *out = (struct a9_sr){AGX3_SR_THREAD_INDEX_IN_THREADGROUP, true};
       return true;
    case AGX_SR_THREAD_INDEX_IN_SUBGROUP:
-      *out = (struct a9_sr){0x82, true};
+      *out = (struct a9_sr){AGX3_SR_THREAD_INDEX_IN_SUBGROUP, true};
       return true;
    case AGX_SR_SUBGROUP_INDEX_IN_THREADGROUP:
-      *out = (struct a9_sr){0x85, true};
+      *out = (struct a9_sr){AGX3_SR_SUBGROUP_INDEX_IN_THREADGROUP, true};
       return true;
    case AGX_SR_COVERAGE_MASK:
-      *out = (struct a9_sr){0xc2};
+      *out = (struct a9_sr){AGX3_SR_COVERAGE_MASK};
       return true;
    case AGX_SR_BACKFACING:
-      *out = (struct a9_sr){0xc5};
+      *out = (struct a9_sr){AGX3_SR_BACKFACING};
       return true;
    case AGX_SR_LAYER_ID:
+      *out = (struct a9_sr){AGX3_SR_LAYER_ID};
+      return true;
    case AGX_SR_INSTANCE_ID:
+      *out = (struct a9_sr){AGX3_SR_INSTANCE_ID};
+      return true;
    case AGX_SR_VERTEX_ID:
-      *out = (struct a9_sr){sr};
+      *out = (struct a9_sr){AGX3_SR_VERTEX_ID};
       return true;
    default:
       return false;
@@ -1781,38 +1357,28 @@ pack_get_sr(const agx_instr *I, struct a9_packed *p)
 {
    struct a9_sr sr;
    pack_assert(I, sr_selector(I->sr, &sr));
+   pack_assert(I, I->dest[0].size == AGX_SIZE_32);
 
-   unsigned dst = gpr(I, I->dest[0]);
-   pack_assert(I, I->dest[0].size == AGX_SIZE_32 && dst < 64);
+   struct agx3_fields f = {
+      .dest = agx3_encode_dst(plain(I, I->dest[0])),
+      .sr = sr.selector,
+   };
 
    if (sr.zext16) {
-      const uint8_t bytes[8] = {
-         ((dst & 15) << 4) | 0x04, sr.selector, 0x10 | ((dst >> 4) << 6), 0x06,
-         ((dst & 15) << 4) | 0x03, 0x00,        (dst >> 4) << 6,          0x01,
-      };
-      a9_init(p, AGX_APPLE9_ENC_GET_SR_ZEXT16, bytes, 8);
+      emit(I, p, AGX_APPLE9_ENC_GET_SR_ZEXT16, agx3_pack_get_sr16, f);
+      emit(I, p, AGX_APPLE9_ENC_GET_SR_ZEXT16, agx3_pack_zext16,
+           (struct agx3_fields){.dest = f.dest});
       return;
    }
 
-   const uint8_t bytes[4] = {
-      ((dst & 0xf) << 4) | 0x0c,
-      sr.selector,
-      0x10 | ((dst >> 4) << 6),
-      0x06,
-   };
    /* Coverage, vertex and instance IDs are asynchronous, in one layout */
-   a9_init(p,
-           I->sr == AGX_SR_COVERAGE_MASK ? AGX_APPLE9_ENC_GET_COVERAGE
-           : I->sr == AGX_SR_VERTEX_ID || I->sr == AGX_SR_INSTANCE_ID
-              ? AGX_APPLE9_ENC_GET_DRAW_ID
-              : AGX_APPLE9_ENC_GET_SR,
-           bytes, 4);
+   emit(I, p,
+        I->sr == AGX_SR_COVERAGE_MASK ? AGX_APPLE9_ENC_GET_COVERAGE
+        : I->sr == AGX_SR_VERTEX_ID || I->sr == AGX_SR_INSTANCE_ID
+           ? AGX_APPLE9_ENC_GET_DRAW_ID
+           : AGX_APPLE9_ENC_GET_SR,
+        agx3_pack_get_sr, f);
 }
-
-/* Bytes 8-9 of a device load name the slot its result completes on */
-static const uint16_t load_slot_token[6] = {
-   0x1100, 0x5100, 0x9100, 0xd100, 0x1101, 0x5101,
-};
 
 /* Elements per access and the element shift of a device memory access */
 static unsigned
@@ -1833,15 +1399,44 @@ memory_shift(const agx_instr *I)
    return element + I->shift;
 }
 
-/* Byte offset and index shift, shared by loads and stores two bits apart */
-static void
-pack_memory_address(const agx_instr *I, uint8_t *bytes, bool load,
-                    unsigned shift, int offset)
+/* Format of a device memory access: elements of 8, 16 or 32 bits, or
+ * vectors of 32-bit elements
+ */
+static unsigned
+memory_format(const agx_instr *I, unsigned components)
 {
-   unsigned base = load ? 75 : 73;
-   pack_assert(I, shift <= 4 && offset >= INT16_MIN && offset <= INT16_MAX);
-   set_bits(bytes, base + 2, 16, (uint16_t)offset);
-   set_bits(bytes, base + 22, 3, shift == 4 ? 0 : shift + 1);
+   static const uint8_t vectors[] = {
+      AGX3_MEMFORMAT_I32,
+      AGX3_MEMFORMAT_I32X2,
+      AGX3_MEMFORMAT_I32X3,
+      AGX3_MEMFORMAT_I32X4,
+   };
+
+   pack_assert(I, components == 1 || I->format == AGX_FORMAT_I32);
+
+   if (I->format == AGX_FORMAT_I8)
+      return AGX3_MEMFORMAT_I8;
+   else if (I->format == AGX_FORMAT_I16)
+      return AGX3_MEMFORMAT_I16;
+   else
+      return vectors[components - 1];
+}
+
+/* Shift field: the element shift plus one, or 0 for 4 */
+static unsigned
+memory_shift_field(const agx_instr *I, unsigned shift)
+{
+   pack_assert(I, shift <= 4);
+   return shift == 4 ? 0 : shift + 1;
+}
+
+/* Base of a device memory access: a register pair or a 64-bit uniform */
+static struct agx3_operand
+memory_base(const agx_instr *I, agx_index base, bool release)
+{
+   pack_assert(I,
+               base.size == AGX_SIZE_64 && (is_gpr(base) || is_uniform(base)));
+   return release ? released(I, base) : plain(I, base);
 }
 
 /* Device loads of base + (index << shift) + offset, zero-extended */
@@ -1854,131 +1449,56 @@ pack_device_load(const agx_instr *I, const struct a9_state *st,
    unsigned shift = memory_shift(I);
    bool pointer = is_imm(index);
    bool indirect = is_gpr(base);
-   unsigned dst = gpr(I, I->dest[0]);
 
    pack_assert(I, I->dest[0].size == AGX_SIZE_32);
-   pack_assert(I, components == 1 || I->format == AGX_FORMAT_I32);
-   pack_assert(I, base.size == AGX_SIZE_64 && (indirect || is_uniform(base)));
    pack_assert(I, !pointer || indirect);
+   pack_assert(I, pointer || index.size == AGX_SIZE_32);
 
-   uint8_t bytes[14] = {
-      0x67, 0x00, 0x44, 0x00, 0x00, 0x00, 0x20,
-      0x00, 0x11, 0x00, 0x00, 0x40, 0x46, 0x00,
-   };
-
-   if (st->load_follows)
-      bytes[2] = 0x54;
-
-   bytes[3] = dst << 1;
-
-   if (indirect) {
-      bytes[4] = gpr(I, base);
-   } else {
-      pack_assert(
-         I, (base.value & 3) == 0 && base.value < AGX_APPLE9_UNIFORM_COUNT * 2);
-      bytes[4] = base.value >> 2;
-   }
-
-   if (pointer) {
-      bytes[5] = 0;
-      bytes[6] &= ~0x20;
-   } else {
-      pack_assert(I, index.size == AGX_SIZE_32);
-      bytes[5] = gpr(I, index) | (retain(index) ? 0 : 0x80);
-   }
-
-   static const uint8_t width_bits[] = {0x00, 0x08, 0x0c, 0x06};
-   static const uint8_t width_tail[] = {0x46, 0x48, 0x40, 0x40};
-   uint16_t token = load_slot_token[completion_slot(I)];
-   bytes[8] = (token >> 8) | width_bits[components - 1];
-   bytes[9] = token & 0xff;
-   bytes[12] = width_tail[components - 1];
-
-   if (components == 1) {
-      static const uint8_t format[] = {0x21, 0x01, 0x11};
-      static const uint8_t tail[] = {0x42, 0x44, 0x46};
-      unsigned size = shift - I->shift;
-      bytes[8] = (bytes[8] & 0xc0) | format[size];
-      bytes[12] = tail[size];
-   }
-
-   if (pointer) {
-      /* No index: bits 53 and 102 clear. Bit 74 releases the pair. */
-      bytes[12] = (bytes[12] & ~0x40) | 0x20;
-      if (!retain(base))
-         bytes[9] |= 4;
-   } else if (indirect) {
-      bytes[12] |= 0x20;
-      if (!retain(base))
-         bytes[9] |= 4;
-   }
-
+   /* Without an index, a register base is a pointer */
+   struct agx3_operand none = {.kind = AGX3_KIND_NONE};
    int offset = (pointer ? (int)(index.value << shift) : 0) + I->byte_offset;
-   pack_memory_address(I, bytes, true, pointer ? 0 : shift, offset);
+   pack_assert(I, offset >= INT16_MIN && offset <= INT16_MAX);
 
-   a9_init(p,
-           pointer    ? AGX_APPLE9_ENC_DEVICE_LOAD_POINTER
-           : indirect ? AGX_APPLE9_ENC_DEVICE_LOAD_INDIRECT
-                      : AGX_APPLE9_ENC_DEVICE_LOAD,
-           bytes, 14);
+   emit(I, p,
+        pointer    ? AGX_APPLE9_ENC_DEVICE_LOAD_POINTER
+        : indirect ? AGX_APPLE9_ENC_DEVICE_LOAD_INDIRECT
+                   : AGX_APPLE9_ENC_DEVICE_LOAD,
+        agx3_pack_device_load,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_membase(memory_base(I, base, true)),
+                   agx3_encode_memindex(pointer ? none : released(I, index))},
+           .offset = offset,
+           .shift = memory_shift_field(I, pointer ? 0 : shift),
+           .format = memory_format(I, components),
+           .slot = completion_slot(I),
+           .next = st->load_follows,
+        });
 }
 
-/* Device stores. Byte 6 bit 0 releases the index register. */
+/* Device stores. The index register is released, the base is not. */
 static void
 pack_device_store(const agx_instr *I, struct a9_packed *p)
 {
    agx_index value = I->src[0], base = I->src[1], index = I->src[2];
    unsigned components = memory_components(I);
    unsigned shift = memory_shift(I);
-   bool indirect = is_gpr(base);
-   unsigned data = gpr(I, value);
 
    pack_assert(I, value.size == AGX_SIZE_32 && index.size == AGX_SIZE_32);
-   pack_assert(I, components == 1 || I->format == AGX_FORMAT_I32);
-   pack_assert(I, base.size == AGX_SIZE_64 && (indirect || is_uniform(base)));
+   pack_assert(I, I->byte_offset >= INT16_MIN && I->byte_offset <= INT16_MAX);
 
-   uint8_t bytes[14] = {
-      0xe7, 0x00, 0x54, data << 1, 0x00, 0x00, 0x20,
-      0x00, 0x11, 0x00, 0x00,      0x90, 0x11, 0x00,
-   };
-
-   if (indirect) {
-      bytes[4] = gpr(I, base);
-   } else {
-      pack_assert(
-         I, (base.value & 3) == 0 && base.value < AGX_APPLE9_UNIFORM_COUNT * 2);
-      bytes[4] = base.value >> 2;
-   }
-
-   bytes[5] = gpr(I, index);
-   bytes[6] |= !retain(index);
-
-   if (components == 1) {
-      if (I->format == AGX_FORMAT_I8) {
-         bytes[8] = 0x21;
-         bytes[11] = 0x90;
-         bytes[12] = 0x10;
-      } else if (I->format == AGX_FORMAT_I16) {
-         bytes[8] = 0x01;
-         bytes[11] = 0x10;
-         bytes[12] = 0x11;
-      }
-   } else {
-      static const uint8_t width_bits[] = {0x00, 0x08, 0x0c, 0x06};
-      static const uint8_t width_tail[] = {0x11, 0x12, 0x10, 0x10};
-      bytes[8] = 0x11 | width_bits[components - 1];
-      bytes[11] = 0x10;
-      bytes[12] = width_tail[components - 1];
-   }
-
-   if (indirect)
-      bytes[12] |= 0x08;
-
-   pack_memory_address(I, bytes, false, shift, I->byte_offset);
-   a9_init(p,
-           indirect ? AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT
-                    : AGX_APPLE9_ENC_DEVICE_STORE,
-           bytes, 14);
+   emit(I, p,
+        is_gpr(base) ? AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT
+                     : AGX_APPLE9_ENC_DEVICE_STORE,
+        agx3_pack_device_store,
+        (struct agx3_fields){
+           .src = {agx3_encode_reg(plain(I, value)),
+                   agx3_encode_membase(memory_base(I, base, false)),
+                   agx3_encode_reg(released(I, index))},
+           .offset = I->byte_offset,
+           .shift = memory_shift_field(I, shift),
+           .format = memory_format(I, components),
+        });
 }
 
 static unsigned
@@ -1986,110 +1506,89 @@ atomic_op(const agx_instr *I)
 {
    switch (I->atomic_opc) {
    case AGX_ATOMIC_OPC_ADD:
-      return 0x10;
+      return AGX3_ATOMIC_ADD;
    case AGX_ATOMIC_OPC_AND:
-      return 0x11;
+      return AGX3_ATOMIC_AND;
    case AGX_ATOMIC_OPC_CMPXCHG:
-      return 0x12;
+      return AGX3_ATOMIC_CMPXCHG;
    case AGX_ATOMIC_OPC_FADD:
-      return 0x13;
+      return AGX3_ATOMIC_FADD;
    case AGX_ATOMIC_OPC_IMAX:
-      return 0x14;
+      return AGX3_ATOMIC_IMAX;
    case AGX_ATOMIC_OPC_IMIN:
-      return 0x15;
+      return AGX3_ATOMIC_IMIN;
    case AGX_ATOMIC_OPC_OR:
-      return 0x16;
+      return AGX3_ATOMIC_OR;
    case AGX_ATOMIC_OPC_SUB:
-      return 0x1b;
+      return AGX3_ATOMIC_SUB;
    case AGX_ATOMIC_OPC_UMAX:
-      return 0x1c;
+      return AGX3_ATOMIC_UMAX;
    case AGX_ATOMIC_OPC_UMIN:
-      return 0x1d;
+      return AGX3_ATOMIC_UMIN;
    case AGX_ATOMIC_OPC_XCHG:
-      return 0x1e;
+      return AGX3_ATOMIC_XCHG;
    case AGX_ATOMIC_OPC_XOR:
-      return 0x1f;
+      return AGX3_ATOMIC_XOR;
    }
 
    UNREACHABLE("invalid atomic");
 }
 
-/* Device atomics. A returning one leaves the old value in private word 0 */
+/* Device atomics. A returning one leaves the old value in private word 0,
+ * which the next instruction loads.
+ */
 static void
 pack_device_atomic(const agx_instr *I, struct a9_packed *p)
 {
    agx_index value = I->src[0], base = I->src[1], index = I->src[2];
    bool indirect = is_gpr(base);
    bool returning = !agx_is_null(I->dest[0]);
-   unsigned data = gpr(I, value), idx = gpr(I, index);
-   unsigned binding;
 
    pack_assert(I, index.size == AGX_SIZE_32 &&
                      agx_channels(value) ==
                         (I->atomic_opc == AGX_ATOMIC_OPC_CMPXCHG ? 2 : 1));
 
-   if (indirect) {
-      binding = gpr(I, base);
-   } else {
-      pack_assert(I, is_uniform(base) && (base.value & 3) == 0);
-      binding = base.value >> 2;
-   }
+   struct agx3_operand b = memory_base(I, base, false);
 
-   pack_assert(I, binding < 128);
-
-   uint8_t bytes[A9_MAX_BYTES] = {
-      0x67,
-      0x01,
-      0x54,
-      0x00,
-      0x00,
-      binding | ((data & 1) << 7),
-      ((data >> 1) & 0x3f) | ((idx & 1) << 7),
-      0x80 | ((idx >> 1) & 0x3f),
-      0x00,
-      returning ? 0x02 : 0x40,
-      0x00,
-      0x00,
-      (atomic_op(I) << 1) | 0x40,
-      0x02,
-   };
-
-   if (indirect) {
-      bytes[9] |= 0x20;
-      bytes[13] |= 0x01;
-   }
-
-   enum agx_apple9_encoding form =
-      returning ? (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN
-                            : AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN)
-                : (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT
-                            : AGX_APPLE9_ENC_DEVICE_ATOMIC);
-   a9_init(p, form, bytes, 14);
+   emit(I, p,
+        returning ? (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN
+                              : AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN)
+                  : (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT
+                              : AGX_APPLE9_ENC_DEVICE_ATOMIC),
+        indirect ? agx3_pack_atomic_indirect : agx3_pack_atomic,
+        (struct agx3_fields){
+           .src = {agx3_encode_reg(plain(I, value)),
+                   indirect ? agx3_encode_reg64(b) : agx3_encode_uniform64(b),
+                   agx3_encode_reg(plain(I, index))},
+           .op = atomic_op(I),
+           .ret = returning ? AGX3_ATOMIC_RETURN_RET : AGX3_ATOMIC_RETURN_NORET,
+        });
 
    if (returning) {
-      unsigned dst = gpr(I, I->dest[0]);
-      unsigned slot = hw_slot(completion_slot(I));
-      const uint8_t result[8] = {
-         ((dst & 0x0f) << 4) | 0x0c,
-         0x80,
-         0x09 | (((dst >> 4) & 3) << 6),
-         ((slot - 1) << 5) | 0x07,
-         0x00,
-         0x20,
-         0x00,
-         (dst >> 6) << 4,
-      };
-
-      memcpy(p->bytes + 14, result, sizeof(result));
-      p->length += sizeof(result);
+      emit(I, p, p->form, agx3_pack_atomic_result,
+           (struct agx3_fields){
+              .dest = agx3_encode_dst(plain(I, I->dest[0])),
+              .slot = completion_slot(I),
+           });
    }
 }
 
 /* Register whose low half holds a threadgroup memory word index */
-static unsigned
+static struct agx3_operand
 local_index(const agx_instr *I, agx_index index)
 {
-   return index.size == AGX_SIZE_16 ? gpr_of_half(I, index) : gpr(I, index);
+   pack_assert(I, !(index.value & 1));
+   struct agx3_operand op = plain(I, index);
+   op.size32 = true;
+   return op;
+}
+
+/* Threadgroup memory: an immediate root in words and a word index */
+static unsigned
+local_root(const agx_instr *I, agx_index base)
+{
+   pack_assert(I, is_imm(base) && base.value < 64);
+   return base.value * 4;
 }
 
 /* Threadgroup memory. Stores and atomics destroy their data and index */
@@ -2102,74 +1601,68 @@ pack_local_load_store(const agx_instr *I, struct a9_packed *p)
    agx_index index = load ? I->src[1] : I->src[2];
 
    pack_assert(I, I->format == AGX_FORMAT_I32 && I->mask == 1);
-   pack_assert(I, is_imm(base) && base.value < 64);
-   pack_assert(I, !(index.value & 1));
+   pack_assert(I, data.value < 128);
 
-   unsigned d = gpr(I, data), idx = local_index(I, index);
-   pack_assert(I, d < 64 && idx < 64);
+   /* The index register is named by its low half */
+   struct agx3_operand idx = low_half(local_index(I, index));
+   idx.lu = index.discard;
 
-   const uint8_t bytes[14] = {
-      load ? 0x67 : 0xe7,
-      0x02,
-      0x54,
-      d << 1,
-      base.value << 2,
-      idx << 2,
-      retain(index) ? 0 : 0x80,
-      0,
-      0x44,
-      load ? 0x0d : 0x02,
-      0,
-      load ? 0xc0 : 0x30,
-      load ? 0x08 : 0x02,
-      0,
+   struct agx3_fields f = {
+      .src = {agx3_encode_half(idx)},
+      .root = local_root(I, base),
    };
-   a9_init(p, load ? AGX_APPLE9_ENC_SHARED_LOAD : AGX_APPLE9_ENC_SHARED_STORE,
-           bytes, 14);
+
+   if (load) {
+      f.dest = agx3_encode_reg(plain(I, data));
+      emit(I, p, AGX_APPLE9_ENC_SHARED_LOAD, agx3_pack_local_load, f);
+   } else {
+      f.src[1] = f.src[0];
+      f.src[0] = agx3_encode_reg(plain(I, data));
+      emit(I, p, AGX_APPLE9_ENC_SHARED_STORE, agx3_pack_local_store, f);
+   }
 }
 
 static void
 pack_local_atomic(const agx_instr *I, struct a9_packed *p)
 {
-   agx_index base = I->src[1], index = I->src[2];
    bool cmpxchg = I->atomic_opc == AGX_ATOMIC_OPC_CMPXCHG;
 
    pack_assert(I, !agx_is_null(I->dest[0]));
    pack_assert(I, agx_channels(I->src[0]) == (cmpxchg ? 2 : 1));
-   pack_assert(I, is_imm(base) && base.value < 64 && !(index.value & 1));
 
-   unsigned dst = gpr(I, I->dest[0]), data = gpr(I, I->src[0]);
-   unsigned idx = local_index(I, index);
-   unsigned root = base.value * 4;
-   unsigned operation = 0x4800 | (atomic_op(I) << 6);
+   struct agx3_operand data = plain(I, I->src[0]);
+   pack_assert(I, I->dest[0].value < 128 && I->src[2].value < 128 &&
+                     data.value + (cmpxchg ? 2 : 0) < 128);
 
-   pack_assert(I, dst < 64 && data + (cmpxchg ? 1 : 0) < 64 && idx < 64);
-
-   const uint8_t bytes[12] = {
-      0x67, 3,    0x54, dst | ((root & 1) << 7), root >> 1,      data, idx,
-      0,    0x12, 0,    operation & 0xff,        operation >> 8,
-   };
-   a9_init(p, AGX_APPLE9_ENC_SHARED_ATOMIC, bytes, 12);
+   emit(I, p, AGX_APPLE9_ENC_SHARED_ATOMIC, agx3_pack_local_atomic,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_reg(data),
+                   agx3_encode_reg(local_index(I, I->src[2]))},
+           .root = local_root(I, I->src[1]),
+           .op = atomic_op(I),
+        });
 }
 
 /* Private memory at a word index register. Stores destroy their data */
 static void
 pack_private(const agx_instr *I, struct a9_packed *p)
 {
-   bool load = I->op == AGX_OPCODE_STACK_LOAD;
-   unsigned data = gpr(I, load ? I->dest[0] : I->src[0]);
-   unsigned index = gpr(I, I->src[load ? 0 : 1]);
+   pack_assert(I, I->dest[0].value < 128 && I->src[0].value < 128 &&
+                     (I->nr_srcs < 2 || I->src[1].value < 128));
 
-   pack_assert(I, data < 64 && index < 64);
-
-   if (load) {
-      const uint8_t bytes[12] = {0x6f, 0, 0x54, data << 1, index << 1, 2,
-                                 0x49, 1, 0,    0,         3,          0};
-      a9_init(p, AGX_APPLE9_ENC_PRIVATE_LOAD, bytes, 12);
+   if (I->op == AGX_OPCODE_STACK_LOAD) {
+      emit(I, p, AGX_APPLE9_ENC_PRIVATE_LOAD, agx3_pack_stack_load_indexed,
+           (struct agx3_fields){
+              .dest = agx3_encode_reg(plain(I, I->dest[0])),
+              .src = {agx3_encode_reg(plain(I, I->src[0]))},
+           });
    } else {
-      const uint8_t bytes[10] = {0xef, 0, 0x54, data << 1, index << 1,
-                                 2,    9, 3,    0,         0x60};
-      a9_init(p, AGX_APPLE9_ENC_PRIVATE_STORE, bytes, 10);
+      emit(I, p, AGX_APPLE9_ENC_PRIVATE_STORE, agx3_pack_stack_store_indexed,
+           (struct agx3_fields){
+              .src = {agx3_encode_reg(plain(I, I->src[0])),
+                      agx3_encode_reg(plain(I, I->src[1]))},
+           });
    }
 }
 
@@ -2179,7 +1672,6 @@ pack_stack(const agx_instr *I, struct a9_packed *p)
 {
    bool load = I->op == AGX_OPCODE_STACK_LOAD;
    agx_index offset = I->src[load ? 0 : 1];
-   unsigned slot = completion_slot(I);
 
    pack_assert(I, I->format == AGX_FORMAT_I32 && I->mask == 1);
 
@@ -2189,37 +1681,24 @@ pack_stack(const agx_instr *I, struct a9_packed *p)
    }
 
    pack_assert(I, (offset.value & 3) == 0);
-
    unsigned word = offset.value / 4;
 
    if (load) {
-      unsigned dst = gpr(I, I->dest[0]);
       pack_assert(I, word < AGX_APPLE9_FILL_WORD_COUNT);
-
-      const uint8_t bytes[8] = {0x0c | ((dst & 15) << 4),
-                                0x80 | ((word & 63) << 1),
-                                0x01 | (((dst >> 4) & 3) << 6),
-                                1 | (slot << 5),
-                                (word >> 6) << 1,
-                                0,
-                                0,
-                                (dst >> 6) << 4};
-      a9_init(p, AGX_APPLE9_ENC_SPILL_LOAD, bytes, 8);
+      emit(I, p, AGX_APPLE9_ENC_SPILL_LOAD, agx3_pack_stack_load,
+           (struct agx3_fields){
+              .dest = agx3_encode_dst(plain(I, I->dest[0])),
+              .word = word,
+              .slot = completion_slot(I),
+           });
    } else {
-      unsigned src = gpr(I, I->src[0]);
       pack_assert(I, word < AGX_APPLE9_SAVE_WORD_COUNT);
-
-      const uint8_t bytes[10] = {0x0b | ((word & 15) << 4),
-                                 1 | ((src & 63) << 1),
-                                 0x0f | (((word >> 4) & 3) << 6),
-                                 0,
-                                 0x22,
-                                 (src >> 6) | (((word >> 6) & 1) << 4),
-                                 (word >> 7) << 2,
-                                 slot << 2,
-                                 0,
-                                 0};
-      a9_init(p, AGX_APPLE9_ENC_SPILL_STORE, bytes, 10);
+      emit(I, p, AGX_APPLE9_ENC_SPILL_STORE, agx3_pack_stack_store,
+           (struct agx3_fields){
+              .src = {agx3_encode_reg(plain(I, I->src[0]))},
+              .word = word,
+              .slot = completion_slot(I),
+           });
    }
 }
 
@@ -2229,108 +1708,98 @@ pack_uniform_store(const agx_instr *I, struct a9_packed *p)
 {
    agx_index value = I->src[0], index = I->src[1];
    pack_assert(I, value.size == AGX_SIZE_32 && agx_channels(value) == 1);
-   pack_assert(I, is_imm(index) && !(index.value & 1) &&
-                     index.value < AGX_APPLE9_UNIFORM_COUNT * 2);
+   pack_assert(I, is_imm(index) && index.value < AGX_APPLE9_UNIFORM_COUNT * 2);
 
-   uint8_t bytes[10] = {0x9f, 0x01, 0x54, 0, 0, 0, 0, 0xa8, 0x17, 0x01};
-   set_bits(bytes, 66, 1, 0);
-   set_bits(bytes, 25, 8, index.value >> 1);
-   set_bits(bytes, 42, 7, gpr(I, value));
-   if (retain(value)) {
-      set_bits(bytes, 49, 1, 1);
-      set_bits(bytes, 65, 1, 0);
-   }
+   struct agx3_operand dest = {
+      .kind = AGX3_KIND_UNIFORM,
+      .value = index.value,
+      .size32 = true,
+   };
 
-   a9_init(p, AGX_APPLE9_ENC_STORE_UNIFORM, bytes, 10);
+   emit(I, p, AGX_APPLE9_ENC_STORE_UNIFORM, agx3_pack_iadd,
+        (struct agx3_fields){
+           .dest = agx3_encode_idst(dest),
+           .src = {agx3_encode_isrc_desc(src(I, value)),
+                   agx3_encode_isrc_desc(constant(0, true))},
+        });
+}
+
+/* Destination of the subgroup operations, which reach r63 */
+static uint64_t
+subgroup_dest(const agx_instr *I)
+{
+   pack_assert(I, I->dest[0].value < 128);
+   return agx3_encode_reg(plain(I, I->dest[0]));
 }
 
 static void
 pack_subgroup(const agx_instr *I, struct a9_packed *p)
 {
-   agx_index src = I->src[0];
-   unsigned dst_reg = I->dest[0].value, src_reg = src.value;
+   agx_index x = I->src[0];
 
    switch (I->op) {
-   case AGX_OPCODE_SIMD_PREFIX: {
+   case AGX_OPCODE_SIMD_PREFIX:
       /* Exclusive scan. The source stays live. */
       pack_assert(I, I->simd_op == AGX_SIMD_OP_IADD);
-      unsigned d = gpr(I, I->dest[0]), s = gpr(I, src);
-      pack_assert(I, d < 64 && s < 64);
-
-      const uint8_t bytes[8] = {0xbf, 0x01,   0x54, d << 1,
-                                0x03, s << 2, 0x16, 0x09};
-      a9_init(p, AGX_APPLE9_ENC_SUBGROUP_SCAN_IADD, bytes, 8);
+      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_SCAN_IADD, agx3_pack_simd_prefix_iadd,
+           (struct agx3_fields){
+              .dest = subgroup_dest(I),
+              .src = {agx3_encode_reg(plain(I, x))},
+           });
       return;
-   }
 
    case AGX_OPCODE_SIMD_REDUCE: {
       /* Operands name 16-bit halves, so 32-bit ones are even */
-      bool wide = src.size == AGX_SIZE_32;
+      bool wide = x.size == AGX_SIZE_32;
       pack_assert(I, I->simd_op == AGX_SIMD_OP_UMAX);
-      pack_assert(I, is_gpr(src) && is_gpr(I->dest[0]));
-      pack_assert(I, src.size == I->dest[0].size && src.size <= AGX_SIZE_32);
-      pack_assert(I, dst_reg < 128 && src_reg < 128);
-      pack_assert(I, !wide || !((dst_reg | src_reg) & 1));
+      pack_assert(I, is_gpr(x) && is_gpr(I->dest[0]));
+      pack_assert(I, x.size == I->dest[0].size && x.size <= AGX_SIZE_32);
+      pack_assert(I, I->dest[0].value < 128 && x.value < 128);
 
-      const uint8_t bytes[8] = {
-         0xbf,
-         0x03,
-         0x54,
-         dst_reg,
-         0x02 | I->dest[0].cache,
-         src_reg << 1,
-         0x10 | (src_reg >> 7) | (src.cache << 1) | (wide << 2),
-         0x01 | (src.discard << 1),
-      };
-      a9_init(p, AGX_APPLE9_ENC_SUBGROUP_REDUCE_UMAX, bytes, 8);
+      struct agx3_operand d = plain(I, I->dest[0]), s = plain(I, x);
+      d.cache = I->dest[0].cache;
+      s.cache = x.cache;
+      s.lu = x.discard;
+
+      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_REDUCE_UMAX,
+           wide ? agx3_pack_simd_reduce_umax32 : agx3_pack_simd_reduce_umax,
+           (struct agx3_fields){
+              .dest = wide ? agx3_encode_reg_half(d) : agx3_encode_half(d),
+              .src = {wide ? agx3_encode_reg_half(s) : agx3_encode_half(s)},
+           });
       return;
    }
 
    case AGX_OPCODE_SHUFFLE: {
       /* Read the lane in the index's low half. Both sources stay live */
       agx_index lane = I->src[1];
-      unsigned d = gpr(I, I->dest[0]), s = gpr(I, src);
-      unsigned l =
-         lane.size == AGX_SIZE_16 ? gpr_of_half(I, lane) : gpr(I, lane);
-      pack_assert(I, lane.size == AGX_SIZE_32 || !(lane.value & 1));
-      pack_assert(I, d < 64 && s < 64 && l < 64);
+      struct agx3_operand l = plain(I, lane);
+      pack_assert(I, !(lane.value & 1));
+      l.size32 = true;
 
-      const uint8_t bytes[10] = {0x47,   0x04,   0x54, d << 1, 0x03,
-                                 s << 2, l << 2, 0x2c, 0x10,   0};
-      a9_init(p, AGX_APPLE9_ENC_SUBGROUP_BROADCAST, bytes, 10);
+      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_BROADCAST, agx3_pack_shuffle,
+           (struct agx3_fields){
+              .dest = subgroup_dest(I),
+              .src = {agx3_encode_reg(plain(I, x)), agx3_encode_reg(l)},
+           });
       return;
    }
 
-   case AGX_OPCODE_BALLOT: {
+   case AGX_OPCODE_BALLOT:
       /* Mask of active lanes with a nonzero source. Destroys the source. */
-      unsigned d = gpr(I, I->dest[0]), s = gpr(I, src);
-      pack_assert(I, d < 64 && s < 64);
-
-      const uint8_t bytes[10] = {0x17,   0x07, 0x54, d << 1, 0x03,
-                                 s << 2, 0x00, 0x58, 0x22,   0x12};
-      a9_init(p, AGX_APPLE9_ENC_SUBGROUP_BALLOT, bytes, 10);
+      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_BALLOT, agx3_pack_ballot,
+           (struct agx3_fields){
+              .dest = subgroup_dest(I),
+              .src = {agx3_encode_reg(plain(I, x))},
+           });
       return;
-   }
 
    default:
       UNREACHABLE("not a subgroup operation");
    }
 }
 
-/* Predicate compares */
-#define A9_PRED_FGT 0x02
-#define A9_PRED_FLT 0x03
-#define A9_PRED_UGT 0x04
-#define A9_PRED_ULT 0x05
-#define A9_PRED_IGT 0x06
-#define A9_PRED_ILT 0x07
-
-/* Extended form conditions */
-#define A9_PRED_FEQ 0x00
-#define A9_PRED_FGE 0x02
-#define A9_PRED_FLE 0x03
-#define A9_PRED_IEQ 0x07
-
+/* Condition of a predicate compare, and whether it needs the extended form */
 static bool
 pred_condition(const agx_instr *I, unsigned *cond, bool *extended)
 {
@@ -2340,20 +1809,20 @@ pred_condition(const agx_instr *I, unsigned *cond, bool *extended)
       switch (I->icond) {
       case AGX_ICOND_UEQ:
       case AGX_ICOND_SEQ:
-         *cond = A9_PRED_IEQ;
+         *cond = AGX3_IPRED_EXT_IEQ;
          *extended = true;
          return true;
       case AGX_ICOND_ULT:
-         *cond = A9_PRED_ULT;
+         *cond = AGX3_IPRED_ULT;
          return true;
       case AGX_ICOND_UGT:
-         *cond = A9_PRED_UGT;
+         *cond = AGX3_IPRED_UGT;
          return true;
       case AGX_ICOND_SLT:
-         *cond = A9_PRED_ILT;
+         *cond = AGX3_IPRED_ILT;
          return true;
       case AGX_ICOND_SGT:
-         *cond = A9_PRED_IGT;
+         *cond = AGX3_IPRED_IGT;
          return true;
       default:
          return false;
@@ -2361,21 +1830,21 @@ pred_condition(const agx_instr *I, unsigned *cond, bool *extended)
    } else {
       switch (I->fcond) {
       case AGX_FCOND_LT:
-         *cond = A9_PRED_FLT;
+         *cond = AGX3_FPRED_FLT;
          return true;
       case AGX_FCOND_GT:
-         *cond = A9_PRED_FGT;
+         *cond = AGX3_FPRED_FGT;
          return true;
       case AGX_FCOND_EQ:
-         *cond = A9_PRED_FEQ;
+         *cond = AGX3_FPRED_EXT_FEQ;
          *extended = true;
          return true;
       case AGX_FCOND_GE:
-         *cond = A9_PRED_FGE;
+         *cond = AGX3_FPRED_EXT_FGE;
          *extended = true;
          return true;
       case AGX_FCOND_LE:
-         *cond = A9_PRED_FLE;
+         *cond = AGX3_FPRED_EXT_FLE;
          *extended = true;
          return true;
       default:
@@ -2384,7 +1853,7 @@ pred_condition(const agx_instr *I, unsigned *cond, bool *extended)
    }
 }
 
-/* Compare into predicate pred, named by byte 0 bits 5-7; bit 4 inverts */
+/* Compare into a predicate, released registers keeping no cache bit */
 static void
 pack_compare_pred(const agx_instr *I, struct a9_packed *p)
 {
@@ -2401,131 +1870,112 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, is_imm(b) || b.size == AGX_SIZE_32);
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg);
 
-   unsigned ra = is_gpr(a) ? gpr(I, a) : uniform_word(I, a);
-   unsigned rb = is_gpr(b) ? gpr(I, b) : is_uniform(b) ? uniform_word(I, b) : 0;
+   struct agx3_operand x = released(I, a), y;
 
-   uint8_t opcode = 0x0a | (I->pred << 5) | (I->invert_cond ? 0x10 : 0);
-   uint8_t control = 0x22 | (extended ? 0x01 : 0);
-   if (is_gpr(a) && !retain(a))
-      control |= 0x08;
-   if (is_gpr(b) && !retain(b))
-      control |= 0x10;
+   if (!is_imm(b))
+      y = released(I, b);
+   else if (floating)
+      y = float_constant(I, imm_float_bits(b), true);
+   else
+      y = constant(b.value, false);
 
-   /* Bit 0 of bytes 1 and 3 marks FP32 operands, clear for FP16 */
-   uint8_t bytes[10] = {opcode, ((ra & 63) << 1) | !half, control,
-                        ((rb & 63) << 1) | !half};
+   /* FP16 operands are the low halves */
+   if (half) {
+      x = low_half(x);
+      y = low_half(y);
+   }
 
-   if (!extended) {
-      bytes[4] = cond;
-      set_bits(bytes, 40, 1, (ra >> 6) & 1);
-      set_bits(bytes, 42, 1, (rb >> 6) & 1);
+   uint64_t (*encode)(struct agx3_operand) =
+      floating ? agx3_encode_fsrc : agx3_encode_isrc;
 
-      if (is_uniform(a))
-         pack_compact_uniform(bytes, 0, ra);
-      if (is_uniform(b))
-         pack_compact_uniform(bytes, 1, rb);
-      if (is_imm(b))
-         pack_compare_literal(I, bytes, b, floating, 36, 41);
+   struct agx3_fields f = {
+      .src = {encode(x), encode(y)},
+      .pred = I->pred,
+      .cond = cond,
+      .invert = I->invert_cond,
+   };
 
-      a9_init(p,
-              half ? AGX_APPLE9_ENC_HALF_PREDICATE_SHORT
-                   : AGX_APPLE9_ENC_PREDICATE_COMPARE_SHORT,
-              bytes, 6);
+   if (extended) {
+      emit(I, p,
+           half ? AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED
+                : AGX_APPLE9_ENC_PREDICATE_COMPARE_EXTENDED,
+           floating ? agx3_pack_fcmp_pred_ext : agx3_pack_icmp_pred_ext, f);
    } else {
-      bytes[4] = 0x06;
-      bytes[6] = cond;
-      set_bits(bytes, 56, 1, (ra >> 6) & 1);
-      set_bits(bytes, 58, 1, (rb >> 6) & 1);
-
-      agx_index srcs[2] = {a, b};
-      for (unsigned s = 0; s < 2; ++s) {
-         if (!is_uniform(srcs[s]))
-            continue;
-
-         unsigned u = s ? rb : ra;
-         set_bits(bytes, s ? 31 : 15, 1, 0);
-         set_bits(bytes, s ? 20 : 19, 1, (u >> 6) & 1);
-         set_bits(bytes, s ? 58 : 56, 1, u >> 7);
-         set_bits(bytes, s ? 57 : 55, 1, 1);
-      }
-
-      if (is_imm(b))
-         pack_compare_literal(I, bytes, b, floating, 52, 57);
-
-      a9_init(p,
-              half ? AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED
-                   : AGX_APPLE9_ENC_PREDICATE_COMPARE_EXTENDED,
-              bytes, 10);
+      emit(I, p,
+           half ? AGX_APPLE9_ENC_HALF_PREDICATE_SHORT
+                : AGX_APPLE9_ENC_PREDICATE_COMPARE_SHORT,
+           floating ? agx3_pack_fcmp_pred : agx3_pack_icmp_pred, f);
    }
 }
 
-/* Signed, instruction-relative branch, patched in at bytes 3-8 */
+/* Signed, instruction-relative branch, packed again once its target is
+ * known
+ */
 static void
 pack_jump(const agx_instr *I, struct a9_packed *p)
 {
-   const uint8_t bytes[10] = {0x0f, I->op == AGX_OPCODE_JMP_EXEC_ANY ? 0 : 1,
-                              0x54};
-   a9_init(p,
-           I->op == AGX_OPCODE_JMP_EXEC_ANY ? AGX_APPLE9_ENC_JMP_EXEC_ANY
-                                            : AGX_APPLE9_ENC_JMP_EXEC_NONE,
-           bytes, 10);
+   if (I->op == AGX_OPCODE_JMP_EXEC_ANY)
+      emit(I, p, AGX_APPLE9_ENC_JMP_EXEC_ANY, agx3_pack_jmp_exec_any,
+           (struct agx3_fields){0});
+   else
+      emit(I, p, AGX_APPLE9_ENC_JMP_EXEC_NONE, agx3_pack_jmp_exec_none,
+           (struct agx3_fields){0});
 }
 
 static void
 pack_control(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
-   case AGX_OPCODE_IF_PRED: {
+   case AGX_OPCODE_IF_PRED:
       /* Predicates 6 and 7 are the constants true and false */
-      pack_assert(I, I->pred < 8);
-      const uint8_t bytes[4] = {
-         0x0f, 0x05, 0x54, (0x01 + 4 * I->pred) | (I->invert_cond ? 0x20 : 0)};
-      a9_init(p, AGX_APPLE9_ENC_EXEC_MASK_PUSH, bytes, 4);
+      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_PUSH, agx3_pack_if_pred,
+           (struct agx3_fields){
+              .pred = I->pred,
+              .invert = I->invert_cond,
+           });
       return;
-   }
 
-   case AGX_OPCODE_ELSE_EXEC: {
-      const uint8_t bytes[4] = {0x0f, 0x04, 0x04, 0x19};
-      a9_init(p, AGX_APPLE9_ENC_EXEC_MASK_ELSE, bytes, 4);
+   case AGX_OPCODE_ELSE_EXEC:
+      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_ELSE, agx3_pack_else,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_POP_EXEC: {
+   case AGX_OPCODE_POP_EXEC:
       pack_assert(I, I->nest == 1);
-      const uint8_t bytes[6] = {0x0f, 0x06, 0x04, 0x01, 0x00, 0x00};
-      a9_init(p, AGX_APPLE9_ENC_EXEC_MASK_POP, bytes, 6);
+      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_POP, agx3_pack_pop_exec,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_BEGIN_LOOP: {
-      const uint8_t bytes[4] = {0x0f, 0x05, 0x54, 0x1a};
-      a9_init(p, AGX_APPLE9_ENC_LOOP_MASK_PUSH, bytes, 4);
+   case AGX_OPCODE_BEGIN_LOOP:
+      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_PUSH, agx3_pack_begin_loop,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_WHILE_PRED: {
-      /* Metal's loops set bit 5 */
+   case AGX_OPCODE_WHILE_PRED:
+      /* Metal's loops set bit 29 */
       pack_assert(I, I->pred < 6);
-      const uint8_t bytes[4] = {
-         0x8f, 0x04, 0x54, (0x02 + 4 * I->pred) | (I->invert_cond ? 0 : 0x20)};
-      a9_init(p, AGX_APPLE9_ENC_LOOP_MASK_UPDATE, bytes, 4);
+      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_UPDATE, agx3_pack_while_pred,
+           (struct agx3_fields){
+              .pred = I->pred,
+              .bit29 = !I->invert_cond,
+           });
       return;
-   }
 
-   case AGX_OPCODE_END_LOOP: {
-      const uint8_t bytes[6] = {0x0f, 0x06, 0x04, 0x02, 0x00, 0x00};
-      a9_init(p, AGX_APPLE9_ENC_LOOP_MASK_POP, bytes, 6);
+   case AGX_OPCODE_END_LOOP:
+      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_POP, agx3_pack_end_loop,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_BREAK_PRED: {
+   case AGX_OPCODE_BREAK_PRED:
       /* A loop break unwinds two scopes plus one per enclosing if */
-      pack_assert(I, I->nest >= 2 && I->nest <= UINT8_MAX);
+      pack_assert(I, I->nest >= 2);
       pack_assert(I, I->pred >= 1 && I->pred < 6);
-      const uint8_t bytes[6] = {0x8f, 0x05, 0x54, I->nest, 0x00, I->pred};
-      a9_init(p, AGX_APPLE9_ENC_BREAK_MASK_UNWIND, bytes, 6);
+      emit(I, p, AGX_APPLE9_ENC_BREAK_MASK_UNWIND, agx3_pack_break_pred,
+           (struct agx3_fields){
+              .nest = I->nest,
+              .pred = I->pred,
+           });
       return;
-   }
 
    default:
       UNREACHABLE("not a control flow operation");
@@ -2536,40 +1986,34 @@ static void
 pack_sync(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
-   case AGX_OPCODE_THREADGROUP_BARRIER: {
-      const uint8_t bytes[6] = {0x07, 0x04, 0x54, 0x61, 0x09, 0};
-      a9_init(p, AGX_APPLE9_ENC_WORKGROUP_BARRIER, bytes, 6);
+   case AGX_OPCODE_THREADGROUP_BARRIER:
+      emit(I, p, AGX_APPLE9_ENC_WORKGROUP_BARRIER,
+           agx3_pack_threadgroup_barrier, (struct agx3_fields){0});
       return;
-   }
 
    case AGX_OPCODE_MEMORY_BARRIER:
-   case AGX_OPCODE_MEMORY_BARRIER_ACQUIRE: {
+   case AGX_OPCODE_MEMORY_BARRIER_ACQUIRE:
       /* Acquire only differs in what it waits for beforehand */
-      const uint8_t bytes[6] = {0x07, 0x04, 0x54, 0x84, 0x0a, 0};
-      a9_init(p, AGX_APPLE9_ENC_DEVICE_FENCE, bytes, 6);
+      emit(I, p, AGX_APPLE9_ENC_DEVICE_FENCE, agx3_pack_memory_barrier,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_RASTER_ORDER_FENCE: {
-      const uint8_t bytes[6] = {0x07, 0x04, 0x54, 0xc4, 0x08, 0};
-      a9_init(p, AGX_APPLE9_ENC_DEVICE_FENCE, bytes, 6);
+   case AGX_OPCODE_RASTER_ORDER_FENCE:
+      emit(I, p, AGX_APPLE9_ENC_DEVICE_FENCE, agx3_pack_raster_order_fence,
+           (struct agx3_fields){0});
       return;
-   }
 
-   case AGX_OPCODE_STOP: {
-      const uint8_t bytes[4] = {0x0e, 0, 0, 0};
-      a9_init(p, AGX_APPLE9_ENC_HALT, bytes, 4);
+   case AGX_OPCODE_STOP:
+      emit(I, p, AGX_APPLE9_ENC_HALT, agx3_pack_stop, (struct agx3_fields){0});
       return;
-   }
 
    case AGX_OPCODE_WAIT:
    case AGX_OPCODE_WAIT_SLOTS: {
-      /* Bits 10-15 are a mask of slots */
       unsigned mask =
          I->op == AGX_OPCODE_WAIT ? BITFIELD_BIT(I->scoreboard) : I->imm;
-      pack_assert(I, mask && mask < 64);
-      const uint8_t bytes[2] = {0x06, mask << 2};
-      a9_init(p, AGX_APPLE9_ENC_WAIT, bytes, 2);
+      pack_assert(I, mask != 0);
+      emit(I, p, AGX_APPLE9_ENC_WAIT, agx3_pack_wait,
+           (struct agx3_fields){.slots = mask});
       return;
    }
 
@@ -2586,32 +2030,16 @@ pack_pack_format(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, rgba || I->format == AGX_FORMAT_RG11B10F);
    pack_assert(I, rgba != agx_is_null(I->src[3]));
 
-   uint8_t bytes[14] = {0xa7,
-                        0x06,
-                        0x54,
-                        0,
-                        0x02,
-                        0,
-                        0,
-                        0,
-                        rgba ? 0x00 : 0x10,
-                        0xa0,
-                        rgba ? 0x2a : 0x0a,
-                        0x88,
-                        0x24,
-                        rgba ? 0x11 : 0x08};
+   struct agx3_fields f = {
+      .dest = agx3_encode_reg(plain(I, I->dest[0])),
+   };
 
-   /* A bit after each channel keeps it cached; bits 86-89 release */
-   set_bits(bytes, 25, 7, gpr(I, I->dest[0]));
-   for (unsigned s = 0; s < (rgba ? 4 : 3); ++s) {
-      set_bits(bytes, 42 + 9 * s, 7, gpr(I, I->src[s]));
-      set_bits(bytes, 49 + 9 * s, 1, retain(I->src[s]));
-      set_bits(bytes, 86 + s, 1, !retain(I->src[s]));
-   }
+   for (unsigned s = 0; s < (rgba ? 4 : 3); ++s)
+      f.src[s] = agx3_encode_reg(src(I, I->src[s]));
 
-   a9_init(p,
-           rgba ? AGX_APPLE9_ENC_PACK_FORMAT : AGX_APPLE9_ENC_PACK_FORMAT_RGB,
-           bytes, 14);
+   emit(I, p,
+        rgba ? AGX_APPLE9_ENC_PACK_FORMAT : AGX_APPLE9_ENC_PACK_FORMAT_RGB,
+        rgba ? agx3_pack_pack_rgb10a2 : agx3_pack_pack_rg11b10f, f);
 }
 
 /* Textures read parameter bundles from exports, waiting on export group 0 */
@@ -2725,7 +2153,7 @@ a9_texture(const agx_instr *I)
    return t;
 }
 
-/* Sample mode in bytes 6 and 7 without an offset, if measured */
+/* Sample mode without an offset, if measured */
 static bool
 texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
 {
@@ -2814,6 +2242,16 @@ agx_apple9_texture_encodable(const agx_instr *I)
    return texture_mode(I, &t, &mode);
 }
 
+/* Texture or sampler index: a constant or a register */
+static struct agx3_operand
+texture_index(const agx_instr *I, agx_index x)
+{
+   if (is_imm(x))
+      return constant(x.value, false);
+
+   return released(I, x);
+}
+
 static void
 pack_texture(const agx_instr *I, struct a9_packed *p)
 {
@@ -2830,111 +2268,67 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, is_export(params) && agx_channels(params) == t.words);
    pack_assert(I, !I->sparse && mask != 0);
    pack_assert(I, agx_channels(I->dest[0]) == comps);
-   pack_assert(I, register_texture || (is_imm(texture) && texture.value < 256));
-   pack_assert(I, register_sampler || (is_imm(sampler) && sampler.value < 32));
+   pack_assert(I, register_texture || is_imm(texture));
+   pack_assert(I, register_sampler || is_imm(sampler));
    pack_assert(I, !register_sampler || register_texture);
    pack_assert(I, t.bias || !t.lod || I->lod_mode == AGX_LOD_MODE_LOD_MIN ||
                      I->lod_mode == AGX_LOD_MODE_AUTO_LOD);
 
-   unsigned dst = gpr(I, I->dest[0]);
-   unsigned coord = export_word(I, params);
-   pack_assert(I,
-               dst + comps <= (register_texture ? AGX_APPLE9_GPR_COUNT : 64));
+   pack_assert(I, I->dest[0].value + 2 * comps <=
+                     (register_texture ? AGX_APPLE9_GPR_COUNT * 2 : 128));
+
+   unsigned coord = params.value / 2;
    pack_assert(I, coord <= (t.gradient ? 32 - t.words : t.lod ? 28 : 30));
    pack_assert(I, (coord & (t.words == 2 ? 1 : 3)) == 0);
 
-   unsigned tex = register_texture ? 0 : texture.value;
-   unsigned smp = register_sampler ? 0 : sampler.value;
+   /* Gather names its component as a one-component mask would */
+   if (t.gather)
+      mask = 1u << (I->gather >> 1);
 
-   /* Texture index: bit 0 at 71, bits 1-4 at 11-14, bits 5-7 at 68-70 */
-   const uint8_t texture_hi = ((tex & 1) << 7) | ((tex >> 5) << 4);
-   uint8_t bytes[20] = {
-      5 | ((dst & 31) << 3),
-      0x80 | (coord & 7) | (((tex >> 1) & 0xf) << 3),
-      0x0c | (((dst >> 5) & 1) << 6),
-      0xb8 | (coord >> 3),
-      0xb0 | (smp >> 1),
-      (completion_slot(I) << 2) | (completion_slot(I) << 5),
-      mode & 0xff,
-      mode >> 8,
-      texture_hi,
-      smp & 1,
-      /* Filtered samples */
-      t.fetch || t.ms || I->shadow || t.gather ? 0 : 0x10,
-      0,
-      1,
-      0,
+   /* Permuted result selector; results pack in component order */
+   static const uint8_t selectors[16] = {
+      0, 0, 1, 5, 2, 8, 9, 6, 3, 4, 10, 13, 11, 12, 14, 7,
    };
 
-   if (I->query_lod)
-      bytes[10] = 0x20;
-
-   /* Gather names its component as a one-component mask would */
-   if (t.gather) {
-      mask = 1u << (I->gather >> 1);
-      bytes[3] |= 4;
-   }
+   struct agx3_fields f = {
+      .dest = agx3_encode_reg(plain(I, I->dest[0])),
+      .src = {agx3_encode_export(plain(I, params)),
+              agx3_encode_table(texture_index(I, texture)),
+              agx3_encode_table(texture_index(I, sampler))},
+      .mode = mode,
+      .select = selectors[mask],
+      .slot = completion_slot(I),
+      .slot2 = completion_slot(I),
+      .gather = t.gather,
+      .filter = !(t.fetch || t.ms || I->shadow || t.gather || I->query_lod),
+      .query_lod = I->query_lod,
+   };
 
    /* Texel offsets are signed 4-bit constants */
    if (I->offset) {
       agx_index offset = I->src[5];
       pack_assert(I, is_imm(offset) && offset.value < (1 << 12));
 
-      unsigned x = offset.value & 15;
-      unsigned y = (offset.value >> 4) & 15;
-      unsigned z = (offset.value >> 8) & 15;
-      set_bits(bytes, 75, 4, x);
-      set_bits(bytes, 79, 1, y & 1);
-      set_bits(bytes, 105, 3, y >> 1);
-      set_bits(bytes, 108, 3, z & 7);
-      set_bits(bytes, 21, 1, z >> 3);
+      f.x = util_sign_extend(offset.value & 15, 4);
+      f.y = util_sign_extend((offset.value >> 4) & 15, 4);
+      f.z = util_sign_extend((offset.value >> 8) & 15, 4);
    }
 
-   /* Permuted result selector; results pack in component order */
-   static const uint8_t selectors[16] = {
-      0, 0, 1, 5, 2, 8, 9, 6, 3, 4, 10, 13, 11, 12, 14, 7,
-   };
-   unsigned selector = selectors[mask];
-   set_bits(bytes, 27, 2, selector & 3);
-   set_bits(bytes, 37, 1, (selector >> 2) & 1);
-   set_bits(bytes, 86, 1, selector >> 3);
-
-   enum agx_apple9_encoding form = t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD
-                                   : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD
-                                              : AGX_APPLE9_ENC_TEXTURE_SAMPLE;
-
    if (!register_texture) {
-      a9_init(p, form, bytes, 14);
+      emit(I, p,
+           t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD
+           : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD
+                      : AGX_APPLE9_ENC_TEXTURE_SAMPLE,
+           agx3_pack_texture, f);
       return;
    }
 
-   form = t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
-          : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED
-                     : AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED;
-
-   /* Bit 73 selects the 20-byte form, reading indices from registers */
-   bytes[9] |= 0x02;
-   bytes[15] = 0x20 | (retain(texture) ? 0 : 0x08);
-   bytes[18] = 0x40;
-   set_bits(bytes, 153, 1, dst >> 6);
-
-   unsigned tr = gpr(I, texture) * 2;
-   set_bits(bytes, 11, 4, tr & 0xf);
-   set_bits(bytes, 68, 3, (tr >> 4) & 7);
-   set_bits(bytes, 122, 1, tr >> 7);
-   bytes[10] |= 0x80;
-
-   if (register_sampler) {
-      unsigned sr = gpr(I, sampler) * 2;
-      set_bits(bytes, 32, 4, sr & 0xf);
-      set_bits(bytes, 65, 3, (sr >> 4) & 7);
-      bytes[9] &= ~0x01;
-      bytes[11] |= 0x01;
-      bytes[14] = 0x80 | (retain(sampler) ? 0 : 0x20);
-      set_bits(bytes, 116, 1, sr >> 7);
-   }
-
-   a9_init(p, form, bytes, 20);
+   /* The 20-byte forms read the texture, and the sampler, from registers */
+   emit(I, p,
+        t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
+        : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED
+                   : AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED,
+        register_sampler ? agx3_pack_texture_reg2 : agx3_pack_texture_reg, f);
 }
 
 /* Normalized unpacking of two unorm/snorm 8/16-bit values into a pair */
@@ -2942,29 +2336,31 @@ static void
 pack_unpack_norm(const agx_instr *I, struct a9_packed *p)
 {
    static const uint8_t modes[] = {
-      [AGX_FORMAT_S16NORM] = 2,
-      [AGX_FORMAT_S8NORM] = 3,
-      [AGX_FORMAT_U16NORM] = 4,
-      [AGX_FORMAT_U8NORM] = 6,
+      [AGX_FORMAT_S16NORM] = AGX3_UNPACK_S16NORM,
+      [AGX_FORMAT_S8NORM] = AGX3_UNPACK_S8NORM,
+      [AGX_FORMAT_U16NORM] = AGX3_UNPACK_U16NORM,
+      [AGX_FORMAT_U8NORM] = AGX3_UNPACK_U8NORM,
    };
    bool narrow =
       I->format == AGX_FORMAT_U8NORM || I->format == AGX_FORMAT_S8NORM;
-   unsigned dst = gpr(I, I->dest[0]);
-   agx_index src = I->src[0];
 
    pack_assert(I, I->format < ARRAY_SIZE(modes) && modes[I->format]);
-   pack_assert(I, agx_channels(I->dest[0]) == 2 && !(dst & 1));
+   pack_assert(I, agx_channels(I->dest[0]) == 2 && !(I->dest[0].value & 2));
    pack_assert(I, narrow || !I->imm);
 
-   uint8_t bytes[8] = {0x17, 0x04, 0x54, 0, 0, 0, 0x04, 0x8a};
-   set_bits(bytes, 25, 7, dst);
-   set_bits(bytes, 41, 1, I->imm);
-   set_bits(bytes, 42, 7, gpr(I, src));
-   set_bits(bytes, 49, 1, retain(src));
-   set_bits(bytes, 51, 1, !narrow);
-   set_bits(bytes, 52, 1, !retain(src));
-   set_bits(bytes, 60, 3, modes[I->format]);
-   a9_init(p, AGX_APPLE9_ENC_UNPACK_NORM, bytes, 8);
+   /* The destination is a register pair */
+   struct agx3_operand d = plain(I, I->dest[0]);
+   d.size32 = false;
+   d.size64 = true;
+
+   emit(I, p, AGX_APPLE9_ENC_UNPACK_NORM, agx3_pack_unpack_norm,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg64(d),
+           .src = {agx3_encode_reg(src(I, I->src[0]))},
+           .mode = modes[I->format],
+           .hi = I->imm,
+           .wide = !narrow,
+        });
 }
 
 /* unorm packing of FP32 pairs; 8-bit writes one half per pair */
@@ -2972,33 +2368,26 @@ static void
 pack_pack_unorm(const agx_instr *I, struct a9_packed *p)
 {
    bool bytes = I->op == AGX_OPCODE_PACK_UNORM_4X8;
-   unsigned dst = gpr(I, I->dest[0]);
-   uint8_t code[20] = {0};
+   uint64_t dest = agx3_encode_reg(plain(I, I->dest[0]));
 
    for (unsigned pair = 0; pair < (bytes ? 2 : 1); ++pair) {
-      unsigned a = gpr(I, I->src[2 * pair]);
-      unsigned b = gpr(I, I->src[2 * pair + 1]);
-      pack_assert(I, !bytes || (a != dst && b != dst));
+      agx_index a = I->src[2 * pair], b = I->src[2 * pair + 1];
+      pack_assert(I, !bytes || (a.value != I->dest[0].value &&
+                                b.value != I->dest[0].value));
 
-      uint8_t *part = code + 10 * pair;
-      memcpy(
-         part,
-         (const uint8_t[]){0x97, 0x04, 0x56, 0, 0x02, 0, 0, 0x50, 0x44, 0x82},
-         10);
-      set_bits(part, 25, 7, dst);
-      set_bits(part, 42, 7, a);
-      set_bits(part, 51, 7, b);
+      struct agx3_fields f = {
+         .dest = dest,
+         .src = {agx3_encode_reg(plain(I, a)), agx3_encode_reg(plain(I, b))},
+      };
 
       if (bytes) {
-         part[2] = 0x54;
-         set_bits(part, 24, 1, pair);
-         part[9] = 0xc2;
+         f.hi = pair;
+         emit(I, p, AGX_APPLE9_ENC_PACK_UNORM_4X8, agx3_pack_pack_unorm_4x8, f);
+      } else {
+         emit(I, p, AGX_APPLE9_ENC_PACK_UNORM_2X16, agx3_pack_pack_unorm_2x16,
+              f);
       }
    }
-
-   a9_init(
-      p, bytes ? AGX_APPLE9_ENC_PACK_UNORM_4X8 : AGX_APPLE9_ENC_PACK_UNORM_2X16,
-      code, bytes ? 20 : 10);
 }
 
 /* Cube face selection: major axis, then the face in the next low half */
@@ -3008,20 +2397,14 @@ pack_cube(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->imm <= 2);
    pack_assert(I, agx_channels(I->dest[0]) == (I->imm == 0 ? 2 : 1));
 
-   uint8_t bytes[12] = {0x17, 1, 0x54, 0, 3, 0, 0, 0, 0x50, 0x2f, 0x92, 0};
-   set_bits(bytes, 24, 7, gpr(I, I->dest[0]));
-   set_bits(bytes, 90, 2, I->imm);
-
-   for (unsigned i = 0; i < 3; ++i) {
-      set_bits(bytes, 41 + 9 * i, 7, gpr(I, I->src[i]));
-
-      if (retain(I->src[i])) {
-         set_bits(bytes, 48 + 9 * i, 1, 1);
-         set_bits(bytes, 73 + i, 1, 0);
-      }
-   }
-
-   a9_init(p, AGX_APPLE9_ENC_CUBE, bytes, 12);
+   emit(I, p, AGX_APPLE9_ENC_CUBE, agx3_pack_cube,
+        (struct agx3_fields){
+           .dest = agx3_encode_reg(plain(I, I->dest[0])),
+           .src = {agx3_encode_reg(src(I, I->src[0])),
+                   agx3_encode_reg(src(I, I->src[1])),
+                   agx3_encode_reg(src(I, I->src[2]))},
+           .mode = I->imm,
+        });
 }
 
 /* PBE write of 32-bit data, then the join of its parameter export */
@@ -3029,68 +2412,50 @@ static void
 pack_image_write(const agx_instr *I, struct a9_packed *p)
 {
    agx_index params = I->src[0], image = I->src[4];
-   unsigned base = export_word(I, params);
-   unsigned index = gpr(I, image);
-
-   pack_assert(I, agx_channels(params) == 8 && base <= 24 && !(base & 7));
-   pack_assert(I, agx_channels(image) == 2 && !(index & 1));
+   pack_assert(I, is_export(params) && agx_channels(params) == 8 &&
+                     params.value <= 48 && !(params.value & 15));
+   pack_assert(I, agx_channels(image) == 2 && !(image.value & 2));
    pack_assert(I, I->dim == AGX_DIM_2D);
 
-   const uint8_t bytes[22] = {
-      0xd7,
-      0x10,
-      0x54,
-      base << 1,
-      0,
-      0x40,
-      0,
-      index << 1,
-      0x20 | (retain(image) ? 0 : 1),
-      0x04,
-      0,
-      0,
-      0x88,
-      I->integer ? 0x1a : 0x3a,
-      0x89,
-      0,
-      0x07,
-      0x12,
-      0x54,
-      0,
-      3,
-      0,
-   };
-   a9_init(p, AGX_APPLE9_ENC_IMAGE_WRITE, bytes, 22);
+   /* The image descriptor is a register pair */
+   struct agx3_operand descriptor = released(I, image);
+   descriptor.size32 = false;
+   descriptor.size64 = true;
+
+   emit(I, p, AGX_APPLE9_ENC_IMAGE_WRITE, agx3_pack_image_write,
+        (struct agx3_fields){
+           .src = {agx3_encode_export(plain(I, params)),
+                   agx3_encode_reg64(descriptor)},
+           .floating = !I->integer,
+        });
+   emit(I, p, AGX_APPLE9_ENC_IMAGE_WRITE, agx3_pack_join_export,
+        (struct agx3_fields){0});
 }
 
 /* Block image store of the tile, then the join of its parameter export */
 static void
 pack_block_image_store(const agx_instr *I, struct a9_packed *p)
 {
-   unsigned base = export_word(I, I->src[0]);
+   agx_index params = I->src[0];
    bool ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY;
    bool array = I->dim == AGX_DIM_2D_ARRAY || I->dim == AGX_DIM_2D_MS_ARRAY;
+   enum agx_apple9_encoding form =
+      (array || ms) ? AGX_APPLE9_ENC_BLOCK_IMAGE_STORE_EXTENDED
+                    : AGX_APPLE9_ENC_BLOCK_IMAGE_STORE;
 
-   pack_assert(I, agx_channels(I->src[0]) == 4 && base <= 12 && !(base & 3));
-   pack_assert(I, I->src[1].value < 16 && I->format <= 15);
+   pack_assert(I, is_export(params) && agx_channels(params) == 4 &&
+                     params.value <= 24 && !(params.value & 7));
 
-   unsigned mode = array ? (ms ? 0x028 : 0x528) : ms ? 0x228 : 0x5a8;
-
-   const uint8_t bytes[18] = {
-      0x57,        0x10,
-      0x54,        base << 1,
-      0,           I->src[1].value << 4,
-      0,           0x80,
-      mode & 0xff, (I->format << 4) | (mode >> 8),
-      1,           0,
-      0x07,        0x12,
-      0x54,        0,
-      3,           0,
-   };
-   a9_init(p,
-           (array || ms) ? AGX_APPLE9_ENC_BLOCK_IMAGE_STORE_EXTENDED
-                         : AGX_APPLE9_ENC_BLOCK_IMAGE_STORE,
-           bytes, 18);
+   emit(I, p, form, agx3_pack_block_image_store,
+        (struct agx3_fields){
+           .src = {agx3_encode_export(plain(I, params))},
+           .image = I->src[1].value,
+           .mode = array ? (ms ? 0x028 : 0x528)
+                   : ms  ? 0x228
+                         : 0x5a8,
+           .format = I->format,
+        });
+   emit(I, p, form, agx3_pack_join_export, (struct agx3_fields){0});
 }
 
 /* Fragment outputs and tile access */
@@ -3098,27 +2463,30 @@ static void
 pack_fragment(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
-   case AGX_OPCODE_WRITE_COVERAGE: {
-      unsigned mask = export_word(I, I->src[0]);
-      pack_assert(I, mask < 64);
-
-      const uint8_t bytes[6] = {0x57, 0x04, 0x54, mask << 1, 0, 1};
-      a9_init(p, AGX_APPLE9_ENC_COVERAGE, bytes, 6);
+   case AGX_OPCODE_WRITE_COVERAGE:
+      pack_assert(I, I->src[0].value < 128);
+      emit(I, p, AGX_APPLE9_ENC_COVERAGE, agx3_pack_write_coverage,
+           (struct agx3_fields){
+              .src = {agx3_encode_export(plain(I, I->src[0]))},
+           });
       return;
-   }
 
    case AGX_OPCODE_ZS_STORE: {
-      /* Mode 3 writes depth, 1 tests stencil in word 1's high half, 7 both */
-      static const uint8_t modes[4] = {0, 3, 1, 7};
+      static const uint8_t modes[4] = {
+         [1] = AGX3_DEPTH_DEPTH,
+         [2] = AGX3_DEPTH_STENCIL,
+         [3] = AGX3_DEPTH_DEPTH_STENCIL,
+      };
       agx_index zs = I->src[0];
       pack_assert(I, is_export(zs) && agx_channels(zs) == 2);
-      pack_assert(I, I->zs >= 1 && I->zs <= 3 && !(zs.value & 3));
+      pack_assert(
+         I, I->zs >= 1 && I->zs <= 3 && !(zs.value & 3) && zs.value < 126);
 
-      unsigned word = export_word(I, zs);
-      pack_assert(I, word < 63);
-
-      const uint8_t bytes[6] = {0xd7, 0x14, 0x54, word << 1, 0, modes[I->zs]};
-      a9_init(p, AGX_APPLE9_ENC_DEPTH_STORE, bytes, 6);
+      emit(I, p, AGX_APPLE9_ENC_DEPTH_STORE, agx3_pack_zs_store,
+           (struct agx3_fields){
+              .src = {agx3_encode_export(plain(I, zs))},
+              .mode = modes[I->zs],
+           });
       return;
    }
 
@@ -3132,10 +2500,9 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
                            : (c == 0x300 || (c & ~0xfcull) == 0 ||
                               (c & ~0xfcull) == 0x200 || c == 1));
 
-      uint8_t bytes[6];
-      agx_apple9_encode_tile(bytes, begin, c);
-      a9_init(p, begin ? AGX_APPLE9_ENC_TILE_ACCESS : AGX_APPLE9_ENC_TILE_FENCE,
-              bytes, 6);
+      emit(I, p, begin ? AGX_APPLE9_ENC_TILE_ACCESS : AGX_APPLE9_ENC_TILE_FENCE,
+           begin ? agx3_pack_begin_tile : agx3_pack_end_tile,
+           (struct agx3_fields){.control = c});
       return;
    }
 
@@ -3149,53 +2516,40 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       bool dynamic = !is_imm(mask);
 
       pack_assert(I, I->format == AGX_FORMAT_I32 && I->mask == 1);
-      pack_assert(I, I->pixel_offset < 32);
       pack_assert(I, !coords || load);
       pack_assert(I, coords ? (!dynamic && mask.value >= 1 && mask.value <= 15)
                             : (dynamic || mask.value == 1));
-      pack_assert(I, !dynamic || (mask.size <= AGX_SIZE_32 && is_gpr(mask) &&
-                                  mask.value < 256));
+      pack_assert(I, !dynamic || (mask.size <= AGX_SIZE_32 && is_gpr(mask)));
 
-      unsigned d = gpr(I, data);
       /* A register mask is named by its 16-bit half */
-      uint8_t mask_byte = mask.value;
+      uint64_t value = agx3_encode_reg(plain(I, data));
+      uint64_t dynamic_mask =
+         dynamic ? agx3_encode_half(low_half(released(I, mask))) : 0;
+      struct agx3_fields f = {.offset = I->pixel_offset};
 
-      if (load) {
-         unsigned tag = 0x4e | (completion_slot(I) << 7);
-         const uint8_t bytes[12] = {
-            0x67,
-            coords    ? 0x16
-            : dynamic ? 0x06
-                      : 0x0e,
-            0x54,
-            d << 1,
-            coords ? gpr(I, I->src[1]) : 0,
-            I->pixel_offset << 1,
-            mask_byte,
-            tag & 0xff,
-            (tag >> 8) | (dynamic && !retain(mask) ? 0x20 : 0),
-            0,
-            0,
-            coords    ? 0x10
-            : dynamic ? 0x20
-                      : 0,
-         };
-         a9_init(p,
-                 coords    ? AGX_APPLE9_ENC_TILE_LOAD_COORDS
-                 : dynamic ? AGX_APPLE9_ENC_TILE_LOAD_MASK
-                           : AGX_APPLE9_ENC_TILE_LOAD,
-                 bytes, 12);
+      if (!load) {
+         f.src[0] = value;
+         f.src[1] = dynamic_mask;
+         emit(I, p,
+              dynamic ? AGX_APPLE9_ENC_TILE_STORE_MASK
+                      : AGX_APPLE9_ENC_TILE_STORE,
+              dynamic ? agx3_pack_st_tile_mask : agx3_pack_st_tile, f);
+         return;
+      }
+
+      f.dest = value;
+      f.slot = completion_slot(I);
+
+      if (coords) {
+         f.src[0] = agx3_encode_reg(plain(I, I->src[1]));
+         f.mask = mask.value;
+         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD_COORDS, agx3_pack_ld_tile_coords,
+              f);
+      } else if (dynamic) {
+         f.src[0] = dynamic_mask;
+         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD_MASK, agx3_pack_ld_tile_mask, f);
       } else {
-         const uint8_t bytes[12] = {
-            0xe7,      0x06, 0x54,
-            d << 1,    0,    I->pixel_offset << 1,
-            mask_byte, 0x4e, dynamic && !retain(mask) ? 8 : 0,
-            0,         0,    dynamic ? 8 : 0,
-         };
-         a9_init(p,
-                 dynamic ? AGX_APPLE9_ENC_TILE_STORE_MASK
-                         : AGX_APPLE9_ENC_TILE_STORE,
-                 bytes, 12);
+         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD, agx3_pack_ld_tile, f);
       }
       return;
    }
@@ -3210,76 +2564,65 @@ static void
 pack_varying(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
-   case AGX_OPCODE_ST_VARY: {
+   case AGX_OPCODE_ST_VARY:
       /* Commits an export register to a varying slot */
-      agx_index slot = I->src[0];
-      uint8_t bytes[8];
-      pack_assert(
-         I, is_imm(slot) && agx_apple9_encode_vary_store(
-                               bytes, export_word(I, I->src[1]), slot.value));
-      a9_init(p, AGX_APPLE9_ENC_VARY_STORE, bytes, 8);
+      pack_assert(I, is_imm(I->src[0]) && I->src[0].value < 138);
+      emit(I, p, AGX_APPLE9_ENC_VARY_STORE, agx3_pack_st_vary,
+           (struct agx3_fields){
+              .src = {agx3_encode_export(plain(I, I->src[1]))},
+              .slot = I->src[0].value,
+           });
       return;
-   }
 
    case AGX_OPCODE_ITER: {
       /* One coefficient, at the centre or a position. Coefficient 0 is 1/W */
       agx_index cf = I->src[0];
       bool coord = I->interpolation != AGX_INTERPOLATION_CENTER;
-      pack_assert(I, is_imm(cf) && cf.value < AGX_APPLE9_NUM_COEFFICIENTS &&
-                        I->channels == 1);
+      pack_assert(I, is_imm(cf) && I->channels == 1);
       pack_assert(I, !coord || I->interpolation == AGX_INTERPOLATION_SAMPLE ||
                         I->interpolation == AGX_INTERPOLATION_CENTROID ||
                         I->interpolation == AGX_INTERPOLATION_SAMPLE_REGISTER);
 
-      unsigned position = coord ? gpr(I, I->src[1]) : 0;
-      const uint8_t bytes[10] = {
-         0x2f,
-         0x05,
-         0x54,
-         gpr(I, I->dest[0]) << 1,
-         0x03,
-         cf.value << 1,
-         position,
-         2,
-         coord ? (retain(I->src[1]) ? 0x08 : 0x20) : 0x10,
-         0,
+      struct agx3_fields f = {
+         .dest = agx3_encode_reg(plain(I, I->dest[0])),
+         .cf = cf.value,
       };
-      a9_init(p, coord ? AGX_APPLE9_ENC_ITER_COORD : AGX_APPLE9_ENC_ITER, bytes,
-              10);
+
+      if (coord) {
+         f.src[0] = agx3_encode_reg(src(I, I->src[1]));
+         emit(I, p, AGX_APPLE9_ENC_ITER_COORD, agx3_pack_iter_coord, f);
+      } else {
+         emit(I, p, AGX_APPLE9_ENC_ITER, agx3_pack_iter, f);
+      }
       return;
    }
 
-   case AGX_OPCODE_LDCF: {
+   case AGX_OPCODE_LDCF:
       /* Reads the three-word coefficient tuple, completing on its slot */
-      agx_index cf = I->src[0];
-      unsigned dst = gpr(I, I->dest[0]);
-      pack_assert(I, is_imm(cf) && cf.value < 512 && I->channels == 3);
+      pack_assert(I, is_imm(I->src[0]) && I->channels == 3);
       pack_assert(I, agx_channels(I->dest[0]) == 3);
 
-      const uint8_t bytes[6] = {0x1f,          0x03,
-                                0x54,          dst | ((cf.value & 1) << 7),
-                                cf.value >> 1, completion_slot(I)};
-      a9_init(p, AGX_APPLE9_ENC_ITER_FLAT, bytes, 6);
+      emit(I, p, AGX_APPLE9_ENC_ITER_FLAT, agx3_pack_ldcf,
+           (struct agx3_fields){
+              .dest = agx3_encode_reg(plain(I, I->dest[0])),
+              .cf = I->src[0].value,
+              .slot = completion_slot(I),
+           });
       return;
-   }
 
    case AGX_OPCODE_INTERPOLATION_POSITION: {
       /* Sample position or centroid; destroys the source register */
-      agx_index src = I->src[0];
       bool sample = I->interpolation == AGX_INTERPOLATION_SAMPLE ||
                     I->interpolation == AGX_INTERPOLATION_SAMPLE_REGISTER;
       pack_assert(I, sample || I->interpolation == AGX_INTERPOLATION_CENTROID);
 
-      unsigned s = gpr(I, src);
-      const uint8_t bytes[8] = {0xaf,
-                                0x04,
-                                0x54,
-                                gpr(I, I->dest[0]) << 1,
-                                0x03,
-                                (s & 63) << 2,
-                                0x0a | (s >> 6),
-                                sample ? 0x03 : 0x01};
-      a9_init(p, AGX_APPLE9_ENC_INTERPOLATION_POSITION, bytes, 8);
+      emit(I, p, AGX_APPLE9_ENC_INTERPOLATION_POSITION,
+           agx3_pack_interpolation_position,
+           (struct agx3_fields){
+              .dest = agx3_encode_reg(plain(I, I->dest[0])),
+              .src = {agx3_encode_reg(plain(I, I->src[0]))},
+              .sample = sample,
+           });
       return;
    }
 
@@ -3408,7 +2751,8 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    case AGX_OPCODE_HMIN:
    case AGX_OPCODE_HMAX:
-      pack_minmax(I, I->op == AGX_OPCODE_HMIN ? 1 : 0, p);
+      pack_minmax(I, I->op == AGX_OPCODE_HMIN ? agx3_pack_hmin : agx3_pack_hmax,
+                  p);
       return;
 
    case AGX_OPCODE_ICMPSEL:
@@ -3526,65 +2870,8 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
 
    default:
       /* Pseudo-instructions and unencoded operations */
-      p->form = AGX_APPLE9_ENC_PSEUDO;
-      p->length = p->dependency_length = 0;
       return;
    }
-}
-
-/* Folds the wait into one six-bit slot mask or two three-bit ones */
-static void
-pack_dependency(const agx_instr *I, struct a9_packed *p)
-{
-   enum agx_apple9_dependency_layout layout =
-      agx_apple9_encoding_info(p->form)->dependency_layout;
-
-   if (!I->wait)
-      return;
-
-   unsigned slot = hw_slot(I->wait_slot);
-   pack_assert(I, layout != AGX_APPLE9_DEPENDENCY_NONE);
-
-   switch (layout) {
-   case AGX_APPLE9_DEPENDENCY_INDEX_45_47:
-      pack_assert(I, p->dependency_length * 8 >= 48);
-      set_bits(p->bytes, 45, 3, slot);
-      return;
-
-   case AGX_APPLE9_DEPENDENCY_INDEX_61_63:
-      pack_assert(I, p->dependency_length * 8 >= 64);
-      set_bits(p->bytes, 61, 3, slot);
-      return;
-
-   case AGX_APPLE9_DEPENDENCY_MASK_12_17:
-      set_bits(p->bytes, 12, 6, 1u << (slot - 1));
-      return;
-
-   case AGX_APPLE9_DEPENDENCY_MASK_45_47_61_63:
-   case AGX_APPLE9_DEPENDENCY_MASK_61_63_77_79:
-   case AGX_APPLE9_DEPENDENCY_MASK_61_63_93_95: {
-      unsigned first =
-         layout == AGX_APPLE9_DEPENDENCY_MASK_45_47_61_63 ? 45 : 61;
-      unsigned second =
-         first + (layout == AGX_APPLE9_DEPENDENCY_MASK_61_63_93_95 ? 32 : 16);
-      pack_assert(I, p->dependency_length * 8 >= second + 3);
-      set_bits(p->bytes, first, 3, slot <= 3 ? 1u << (slot - 1) : 0);
-      set_bits(p->bytes, second, 3, slot >= 4 ? 1u << (slot - 4) : 0);
-      return;
-   }
-
-   case AGX_APPLE9_DEPENDENCY_NONE:
-      UNREACHABLE("checked above");
-   }
-}
-
-enum agx_apple9_encoding
-agx_apple9_encoding_for(const agx_instr *I)
-{
-   struct a9_state st = {0};
-   struct a9_packed p;
-   pack_body(I, &st, &p);
-   return p.form;
 }
 
 /* Zero-byte instructions */
@@ -3592,6 +2879,15 @@ static bool
 is_empty(const agx_instr *I)
 {
    return I->op == AGX_OPCODE_EXPORT;
+}
+
+enum agx_apple9_encoding
+agx_apple9_encoding_for(const agx_instr *I)
+{
+   struct a9_state st = {0};
+   struct a9_packed p = {.form = AGX_APPLE9_ENC_PSEUDO, .form_only = true};
+   pack_body(I, &st, &p);
+   return p.form;
 }
 
 unsigned
@@ -3605,11 +2901,10 @@ agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
       .load_follows = load_follows,
       .alu_reads_result = alu_reads_result,
    };
-   struct a9_packed p;
+   struct a9_packed p = {.form = AGX_APPLE9_ENC_PSEUDO};
 
    pack_body(I, &st, &p);
    pack_assert(I, p.form != AGX_APPLE9_ENC_PSEUDO && "no Apple9 encoding");
-   pack_dependency(I, &p);
    memcpy(bytes, p.bytes, p.length);
    return p.length;
 }
@@ -3671,6 +2966,7 @@ struct a9_fixup {
    off_t offset;
    agx_block *block;
    bool skip_to_end;
+   agx3_pack_fn pack;
 };
 
 void
@@ -3703,6 +2999,9 @@ agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission)
                .offset = emission->size,
                .block = I->target,
                .skip_to_end = I->op == AGX_OPCODE_JMP_EXEC_NONE_AFTER,
+               .pack = I->op == AGX_OPCODE_JMP_EXEC_ANY
+                          ? agx3_pack_jmp_exec_any
+                          : agx3_pack_jmp_exec_none,
             };
             util_dynarray_append(&fixups, fixup);
          }
@@ -3720,15 +3019,17 @@ agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission)
       }
    }
 
-   /* Branch displacements are relative to the branch, in bytes 3-8 */
+   /* Branch displacements are relative to the branch */
    util_dynarray_foreach(&fixups, struct a9_fixup, fixup) {
       off_t target =
          fixup->skip_to_end ? fixup->block->last_offset : fixup->block->offset;
-      int64_t displacement = (int64_t)target - (int64_t)fixup->offset;
-      uint8_t *location = (uint8_t *)emission->data + fixup->offset;
+      struct agx3_fields f = {
+         .offset = (int64_t)target - (int64_t)fixup->offset,
+      };
 
-      for (unsigned i = 0; i < 6; ++i)
-         location[3 + i] = (uint64_t)displacement >> (8 * i);
+      ASSERTED unsigned length =
+         fixup->pack((uint8_t *)emission->data + fixup->offset, &f);
+      assert(length != 0);
    }
 
    util_dynarray_fini(&fixups);
