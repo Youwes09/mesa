@@ -43,6 +43,13 @@ if with_tests
 endif
 
 # Apple9 (G16, G17P)
+agx3_forms_c = custom_target(
+  input : ['gen-forms.py', 'AGX3.xml'],
+  output : 'agx3_forms.c',
+  command : [prog_python, '@INPUT@'],
+  capture : true,
+)
+
 agx3_disasm_c = custom_target(
   input : ['gen-disasm.py', 'AGX3.xml'],
   output : 'agx3_disasm.c',
@@ -85,17 +92,16 @@ if with_tests
   )
 
   test(
-    'apple9_machine',
+    'agx3_forms',
     prog_python,
-    args : [files('test-apple9-machine.py', 'AGX3.xml'),
+    args : [files('test-forms.py', 'AGX3.xml'),
             executable(
-              'apple9_machine_dump',
-              files('test/apple9-machine-dump.c',
-                    '../compiler/agx_apple9_machine.c'),
-              include_directories : [inc_include, inc_src],
+              'agx3_forms_dump',
+              [files('test/forms-dump.c'), agx3_forms_c],
+              include_directories : [inc_include, inc_src, inc_asahi],
               gnu_symbol_visibility : 'hidden',
             ),
-            files('test/apple9-forms.txt')],
+            files('test/forms.txt')],
     suite : ['asahi']
   )
 endif

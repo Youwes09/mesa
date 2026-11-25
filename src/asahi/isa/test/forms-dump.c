@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* Prints the Apple9 machine table for test-apple9-machine.py to compare */
+/* Prints the compiler's table of forms for test-forms.py to check */
 
 #include <stdio.h>
 #include "asahi/compiler/agx_apple9_machine.h"

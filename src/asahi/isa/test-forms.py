@@ -1,10 +1,11 @@
 # Copyright 2026 The Asahi Linux Contributors
 # SPDX-License-Identifier: MIT
 
-# Checks the AGX3.xml forms against the compiler's machine table and, with
-# FORMS, that the packer's instructions decode to instructions of their forms.
+# Checks the AGX3.xml forms: that each is consistent with its instructions,
+# that the compiler's table generated from them matches, and, with FORMS, that
+# the packer's instructions decode to instructions of their forms.
 #
-# usage: test-apple9-machine.py AGX3.xml apple9-machine-dump [FORMS]
+# usage: test-forms.py AGX3.xml forms-dump [FORMS]
 
 import os
 import subprocess

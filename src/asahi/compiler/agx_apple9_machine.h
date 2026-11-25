@@ -108,6 +108,9 @@ struct agx_apple9_operand_constraint {
  * may have both a compact low-register form and a longer form with a different
  * source layout.  The allocator must choose a form before the packer commits
  * physical registers.
+ *
+ * The forms are those of AGX3.xml, in its order; gen-forms.py generates their
+ * table.
  */
 enum agx_apple9_encoding {
    AGX_APPLE9_ENC_MOV_IMM_COMPACT,

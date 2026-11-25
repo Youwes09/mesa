@@ -24,9 +24,8 @@
   i naming slot i + 1). Results of asynchronous instructions complete on the
   slot in their slot field.
 
-  The forms at the end are the encoding forms of agx_apple9_machine.c: the
-  instructions each is packed as, and its operand constraints and scheduling
-  rules. test-apple9-machine.py checks that they match the C table.
+  The forms at the end are the compiler's encoding forms: the instructions
+  each is packed as, and its operand constraints and scheduling rules.
 -->
 
 <isa name="agx3">
@@ -1672,12 +1671,17 @@
   </ins>
 
   <!--
-    Register files and encoding forms of the compiler's machine table
-    (agx_apple9_machine.c). A form's encoding lists the instructions it is
-    packed as: alternatives separated by ";", instructions in sequence, "|"
-    between instructions that can fill a position, "*n" repeating one.
-    Forms with packed="false" are not in the table: the packer does not use
-    them.
+    Register files and encoding forms. gen-forms.py generates the compiler's
+    table of forms from them, in this order. A form's encoding lists the
+    instructions it is packed as: alternatives separated by ";", instructions
+    in sequence, "|" between instructions that can fill a position, "*n"
+    repeating one. Forms with packed="false" are not in the table: the packer
+    does not use them.
+
+    The table is conservative: a form is allocator_safe when every register
+    field it needs is understood well enough to pack, not merely when the
+    compiler has emitted it. A register field whose high bits also carry
+    cache, release or file state is not.
   -->
   <machine gpr_count="96" half_register_count="192" hardware_register_interlocks="true" software_waits="false" spilling_supported="true" publication_count="128" uniform_count="256" fill_word_count="1024" save_word_count="2048"/>
 
@@ -1929,6 +1933,8 @@
     <operand role="src1" max="95"/>
   </form>
 
+  <!-- Min/max may wait for a pending load while keeping the source live for
+       a later read -->
   <form name="minmax_compact" length="6" encoding="fmax|fmin|umax|umin|imax|imin" dependency="index_45_47" retains="true">
     <operand role="dest" widths="16,32" max="95" align="1" flags="allocatable,compact_preferred,scattered"/>
     <operand role="src0" files="gpr,uniform" widths="16,32" max="95" uniform_max="255" align="1" flags="allocatable,compact_preferred,scattered"/>
@@ -2144,14 +2150,6 @@
     <operand role="src3" max="31"/>
   </form>
 
-  <form name="texture_lod_indexed" length="20" encoding="texture_reg|texture_reg2">
-    <operand role="dest" max="95"/>
-    <operand role="src0" max="31" align="8"/>
-    <operand role="src1" max="31"/>
-    <operand role="src2" max="31"/>
-    <operand role="src3" max="31"/>
-  </form>
-
   <form name="texture_grad_params" length="60" encoding="bitop_export*6" packed="false">
     <operand role="dest" max="31" align="8"/>
     <operand role="src0" max="95"/>
@@ -2192,11 +2190,6 @@
     <operand role="src0" max="31" align="8"/>
   </form>
 
-  <form name="texture_grad_indexed" length="20" encoding="texture_reg|texture_reg2">
-    <operand role="dest" max="95"/>
-    <operand role="src0" max="31" align="8"/>
-  </form>
-
   <form name="texture_sample" length="14" encoding="texture">
     <operand role="dest" max="63"/>
     <operand role="src0" max="31" align="4"/>
@@ -2207,6 +2200,19 @@
     <operand role="dest" max="95"/>
     <operand role="src0" max="31" align="4"/>
     <operand role="src1" max="31"/>
+  </form>
+
+  <form name="texture_lod_indexed" length="20" encoding="texture_reg|texture_reg2">
+    <operand role="dest" max="95"/>
+    <operand role="src0" max="31" align="8"/>
+    <operand role="src1" max="31"/>
+    <operand role="src2" max="31"/>
+    <operand role="src3" max="31"/>
+  </form>
+
+  <form name="texture_grad_indexed" length="20" encoding="texture_reg|texture_reg2">
+    <operand role="dest" max="95"/>
+    <operand role="src0" max="31" align="8"/>
   </form>
 
   <form name="interpolation_position" length="8" encoding="interpolation_position" evidence="byte_diff" dependency="mask_12_17">
@@ -2231,6 +2237,8 @@
     <operand role="src0" max="127" flags="allocatable,publication"/>
   </form>
 
+  <!-- Fragments with discard or depth output wait for the coverage
+       publication here, rather than before the tile access -->
   <form name="coverage" length="6" encoding="write_coverage" dependency="mask_12_17" prior="true">
     <operand role="src0" max="63"/>
   </form>
@@ -2251,6 +2259,8 @@
     <operand role="src0" max="95"/>
   </form>
 
+  <!-- The tile access opens with the coverage publication still pending:
+       the coverage instruction waits for it -->
   <form name="tile_access" length="6" encoding="begin_tile" prior="true" exempt="publication"/>
 
   <form name="tile_load" length="12" encoding="ld_tile">
@@ -2266,6 +2276,7 @@
     <operand role="src0" max="95" evidence="byte_diff"/>
   </form>
 
+  <!-- Waits for the coverage read supplying a dynamic mask -->
   <form name="tile_store_mask" length="12" encoding="st_tile_mask" evidence="byte_diff" dependency="mask_12_17">
     <operand role="src0" max="95" evidence="byte_diff"/>
     <operand role="src1" max="95" evidence="byte_diff"/>
@@ -2349,6 +2360,10 @@
 
   <form name="workgroup_barrier" length="6" encoding="threadgroup_barrier" prior="true" exempt="memory"/>
 
+  <!-- Fences and barriers are issued with loads and returning atomics
+       outstanding, which their results' consumers wait for. The scheduler
+       still drains before the raster order fence, which has no such
+       evidence. -->
   <form name="device_fence" length="6" encoding="memory_barrier|raster_order_fence" evidence="byte_diff" prior="true" exempt="memory"/>
 
   <form name="halt" length="4" encoding="stop" prior="true"/>
@@ -2403,6 +2418,7 @@
     <operand role="src0" max="95"/>
   </form>
 
+  <!-- Waits for the slots in its mask; the empty mask is a nop -->
   <form name="wait" length="2" encoding="wait"/>
 
   <form name="float_special_uniform" length="10" encoding="rsqrt|srsqrt|sin_factor|exp2|log2|rint|floor|ceil|trunc|rcp_uniform" dependency="mask_12_17" retains="true">
