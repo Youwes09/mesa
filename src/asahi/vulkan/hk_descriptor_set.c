@@ -118,7 +118,7 @@ hk_pack_sampled_image(struct hk_device *dev, void *out,
                       const VkDescriptorImageInfo *const info,
                       struct hk_sampler *sampler)
 {
-   if (agx_is_apple9(&dev->dev))
+   if (agx_has_usc_descriptors(&dev->dev))
       return hk_apple9_pack_sampled_image(dev, out, descriptor_type, info,
                                           sampler);
 
@@ -226,7 +226,7 @@ hk_pack_storage_image(struct hk_device *dev, void *out,
    if (view)
       assert(view->plane_count == 1);
 
-   if (agx_is_apple9(&dev->dev)) {
+   if (agx_has_usc_descriptors(&dev->dev)) {
       struct agx_apple9_storage_descriptor *ext = out;
       if (view) {
          *ext = view->apple9_storage;
@@ -317,7 +317,7 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
                           const uint8_t *apple9_texture)
 {
    /* G16 uniform texel buffers carry load metadata, also in mutable bindings. */
-   if (agx_is_apple9(&dev->dev) &&
+   if (agx_has_usc_descriptors(&dev->dev) &&
        type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
       struct agx_apple9_texel_descriptor desc = {};
       if (tex) {
@@ -330,7 +330,7 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
       }
       memcpy(out, &desc, sizeof(desc));
       return sizeof(desc);
-   } else if (agx_is_apple9(&dev->dev)) {
+   } else if (agx_has_usc_descriptors(&dev->dev)) {
       struct agx_apple9_storage_descriptor desc = {};
       if (tex) {
          desc.common.tex = *tex;
@@ -621,7 +621,7 @@ hk_descriptor_bo_create(void *data, uint64_t size, uint64_t reserve,
                         struct hk_descriptor_backing *out)
 {
    struct hk_device *dev = data;
-   const bool low_va = agx_is_apple9(&dev->dev);
+   const bool low_va = agx_has_usc_descriptors(&dev->dev);
    struct agx_bo *bo = agx_bo_create(
       &dev->dev, size, 0, low_va ? AGX_BO_LOW_VA | AGX_BO_WRITEBACK : 0,
       "Descriptor pool");

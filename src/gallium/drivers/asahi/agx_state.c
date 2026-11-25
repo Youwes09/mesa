@@ -4485,7 +4485,7 @@ agx_batch_init_state(struct agx_batch *batch)
        * the source-built Work envelope until the Apple9 barrier encoding is
        * understood and exposed independently.
        */
-      if (!agx_apple9_compute_enabled(dev)) {
+      if (!agx_has_launch_programs(dev)) {
          agx_push(out, CDM_BARRIER, cfg) {
             cfg.usc_cache_inval = true;
             cfg.unk_5 = true;

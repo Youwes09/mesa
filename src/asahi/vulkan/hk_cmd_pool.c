@@ -23,7 +23,7 @@ hk_cmd_pool_bo_flags(const struct hk_device *dev, enum hk_cmd_pool_kind kind)
    case HK_CMD_POOL_USC:
       return AGX_BO_LOW_VA | (agx_is_apple9(&dev->dev) ? AGX_BO_WRITEBACK : 0);
    case HK_CMD_POOL_CONTEXT:
-      assert(agx_is_apple9(&dev->dev));
+      assert(agx_has_render_context(&dev->dev));
       return AGX_BO_CONTEXT | AGX_BO_WRITEBACK;
    default:
       UNREACHABLE("Invalid command pool kind");

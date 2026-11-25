@@ -230,6 +230,43 @@ agx_is_apple9(const struct agx_device *dev)
           dev->chip == AGX_CHIP_G17P;
 }
 
+/* Shader stages start through launch programs in the shader entry arena,
+ * which load the stage's roots and size its private and threadgroup memory,
+ * instead of through USC control words.
+ */
+static inline bool
+agx_has_launch_programs(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* Texture, sampler and PBE descriptors are 32-byte records that shaders
+ * address within the USC aperture.
+ */
+static inline bool
+agx_has_usc_descriptors(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* VDM index fetch addresses are offsets into the USC aperture, and fetch
+ * exactly the given extent.
+ */
+static inline bool
+agx_has_usc_indices(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* VDM stream links and PPP state addresses are offsets into the render
+ * context aperture.
+ */
+static inline bool
+agx_has_render_context(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
 static inline bool
 agx_apple9_direct_render_enabled(const struct agx_device *dev)
 {

@@ -544,7 +544,7 @@ hk_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
       }
    }
 
-   if (agx_is_apple9(&dev->dev))
+   if (agx_has_launch_programs(&dev->dev))
       return hk_apple9_launch_bg_eot(cmd, info, &key);
 
    /* Begin building the pipeline */
@@ -1955,7 +1955,7 @@ hk_init_heap(const void *data)
     * and its backing grows instead, see hk_heap_prepare_submit. The USC
     * aperture is shared, so settle for a smaller range when it is crowded.
     */
-   enum agx_va_flags flags = agx_is_apple9(&dev->dev) ? AGX_VA_USC : 0;
+   enum agx_va_flags flags = agx_has_usc_indices(&dev->dev) ? AGX_VA_USC : 0;
    for (uint64_t va_B = HK_HEAP_VA_MAX_B;
         !dev->heap_va && va_B >= HK_HEAP_GEOMETRY_MIN_B; va_B /= 2) {
       dev->heap_va = agx_va_alloc(&dev->dev, va_B, 65536, flags, 0);
@@ -2238,7 +2238,7 @@ hk_rast_prim(struct hk_cmd_buffer *cmd)
 static struct agx_ptr
 hk_geom_index_alloc(struct hk_cmd_buffer *cmd, uint32_t size)
 {
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev))
+   if (agx_has_usc_indices(&hk_cmd_buffer_device(cmd)->dev))
       return hk_pool_usc_alloc(cmd, size, 4);
    else
       return hk_pool_alloc(cmd, size, 4);
@@ -6100,7 +6100,7 @@ hk_CmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer, VkBuffer _buffer,
    /* TODO: check if necessary, blob does this. G16G bounds the fetch by the
     * exact extent; rounding would expose an out-of-range narrow index.
     */
-   if (!agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   if (!agx_has_usc_indices(&hk_cmd_buffer_device(cmd)->dev)) {
       cmd->state.gfx.index.buffer.range =
          align(cmd->state.gfx.index.buffer.range, 4);
    }
@@ -6273,7 +6273,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
        (draw_.b.count[0] == 0 || draw_.b.count[1] == 0))
       return;
 
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
       draw_ = hk_draw_complete_from_state(cmd, draw_);
       if (!hk_feedback_prepare_draw(cmd))
          return;

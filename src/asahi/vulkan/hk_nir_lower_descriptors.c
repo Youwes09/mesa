@@ -680,8 +680,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
     * image sampler, including one stored in a mutable binding) read the
     * plane's sampler part. Separate texture and sampler variables read
     * separate records, even when they alias one mutable binding. */
-   const bool g16 = agx_is_apple9(&dev->dev);
-   if (g16 && tex->sampler_dim != GLSL_SAMPLER_DIM_BUF &&
+   const bool usc_descriptors = agx_has_usc_descriptors(&dev->dev);
+   if (usc_descriptors && tex->sampler_dim != GLSL_SAMPLER_DIM_BUF &&
        (tex->op == nir_texop_txs || tex->op == nir_texop_query_levels ||
         tex->op == nir_texop_texture_samples))
       tex->backend_flags |= AGX_TEXTURE_FLAG_METADATA_QUERY;
@@ -700,14 +700,14 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       assert(s_var && t_var);
       combined = s_var == t_var;
    }
-   if (g16) {
+   if (usc_descriptors) {
       plane_size_B = apple9_record_size(
          combined ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
                   : get_binding_layout(tex_set, tex_binding, ctx)->type);
    }
    const uint64_t plane_offset_B = plane * plane_size_B;
    uint64_t sampler_part_B = plane_offset_B;
-   if (g16 && sampler) {
+   if (usc_descriptors && sampler) {
       /* A sampler variable on a combined image sampler binding still reads
        * the binding's sampler part, after the image part. */
       const VkDescriptorType s_type =
@@ -727,7 +727,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
    if (tex->op == nir_texop_lod_bias) {
       const bool nudge = tex->backend_flags & HK_TEX_TXL_NUDGE;
       unsigned offs =
-         g16 ? sampler_part_B +
+         usc_descriptors ? sampler_part_B +
                   (nudge
                       ? offsetof(struct hk_apple9_sampler_part, txl_nudge_fp16)
                       : offsetof(struct hk_apple9_sampler_part, lod_bias_fp16))
@@ -751,7 +751,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
 
       const bool fp16 = tex->dest_type == nir_type_float16;
       unsigned offs =
-         g16
+         usc_descriptors
             ? (fp16 ? offsetof(struct hk_apple9_image_part, min_lod_fp16)
                     : offsetof(struct hk_apple9_image_part, min_lod_uint16))
             : (fp16 ? offsetof(struct hk_sampled_image_descriptor, min_lod_fp16)
@@ -768,7 +768,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
 
    /* G16 exposes no custom border colors, so these are G13 only. */
    if (tex->op == nir_texop_has_custom_border_color_agx) {
-      assert(!g16);
+      assert(!usc_descriptors);
       unsigned offs = offsetof(struct hk_sampled_image_descriptor,
                                clamp_0_sampler_index_or_negative);
 
@@ -781,7 +781,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
    }
 
    if (tex->op == nir_texop_custom_border_color_agx) {
-      assert(!g16);
+      assert(!usc_descriptors);
       unsigned offs = offsetof(struct hk_sampled_image_descriptor, border);
 
       nir_def *border = load_resource_deref_desc(
@@ -798,7 +798,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
    {
       /* On G16 the handle is the image part's address. */
       unsigned offset_B =
-         g16 ? plane_offset_B
+         usc_descriptors ? plane_offset_B
              : plane_offset_B +
                   offsetof(struct hk_sampled_image_descriptor, tex);
 
@@ -813,12 +813,12 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
          VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT |
          VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
          VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
-      if (agx_is_apple9(&dev->dev) &&
+      if (agx_has_usc_descriptors(&dev->dev) &&
           (get_binding_layout(set, binding, ctx)->flags & late))
          tex->backend_flags |= HK_APPLE9_TEX_DESCRIPTOR_HANDLE;
    }
 
-   if (sampler != NULL && g16) {
+   if (sampler != NULL && usc_descriptors) {
       /* The handle is the sampler part's address; G16 has no sampler heap
        * index. */
       uint32_t set, binding;

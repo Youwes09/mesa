@@ -24,7 +24,7 @@ hk_get_buffer_alignment(const struct hk_physical_device *pdev,
 
    /* Native VDM index pointers are relative to the USC aperture. Mapping a
     * buffer there requires page-aligned memory bindings, not a CPU copy. */
-   if (agx_is_apple9(&pdev->dev) &&
+   if (agx_has_usc_indices(&pdev->dev) &&
        (usage_flags & VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT))
       alignment = 16384;
 
@@ -176,7 +176,7 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
    const bool sparse =
       buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
    buffer->apple9_index_va =
-      agx_is_apple9(&dev->dev) && !sparse &&
+      agx_has_usc_indices(&dev->dev) && !sparse &&
       (buffer->vk.usage & VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
    if (buffer->vk.size > 0 &&
        (buffer->vk.create_flags & (VK_BUFFER_CREATE_SPARSE_BINDING_BIT |
@@ -200,7 +200,7 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
 
       enum agx_va_flags flags = buffer->apple9_index_va ? AGX_VA_USC : 0;
       /* Shaders address descriptor records in the USC aperture. */
-      if (agx_is_apple9(&dev->dev) &&
+      if (agx_has_usc_descriptors(&dev->dev) &&
           (buffer->vk.usage &
            (VK_BUFFER_USAGE_2_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT |
             VK_BUFFER_USAGE_2_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |

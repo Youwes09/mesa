@@ -48,7 +48,7 @@ hk_get_buffer_format_features(struct hk_physical_device *pdev,
          features |= VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_ATOMIC_BIT;
    }
 
-   if (agx_is_apple9(&pdev->dev)) {
+   if (agx_has_usc_descriptors(&pdev->dev)) {
       /* Storage descriptors carry the texel layout for access without a
        * shader format. */
       if (features & VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_BIT)
@@ -112,7 +112,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
    assert(tail_offset_el * util_format_get_blocksize(format) == tail_offset_B &&
           "must be texel aligned");
 
-   const bool apple9 = agx_is_apple9(&dev->dev);
+   const bool usc_descriptors = agx_has_usc_descriptors(&dev->dev);
    struct AGX_TEXTURE texture = {AGX_TEXTURE_header};
    texture.dimension = AGX_TEXTURE_DIMENSION_2D;
    texture.layout = AGX_LAYOUT_LINEAR;
@@ -137,12 +137,12 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
    texture.depth = 1;
    texture.stride = (texture.width * util_format_get_blocksize(format)) - 16;
 
-   if (apple9) {
+   if (usc_descriptors) {
       bool packed = agx_apple9_pack_texture(apple9_texture, &texture);
       assert(packed);
       (void)packed;
       /* The common prefix is software query state on G16. Storage accesses
-       * use the full address in apple9 metadata, not a legacy PBE pointer.
+       * use the full address in the texel metadata, not a PBE pointer.
        */
       texture.address = 0;
    }
@@ -170,7 +170,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
             cfg.swizzle_a = i;
       }
 
-      cfg.buffer = apple9 ? 0 : rw_base;
+      cfg.buffer = usc_descriptors ? 0 : rw_base;
       cfg.buffer_offset_sw = tail_offset_el;
 
       cfg.width = AGX_TEXTURE_BUFFER_WIDTH;
@@ -181,7 +181,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
       cfg.levels = 1;
    };
 
-   if (apple9) {
+   if (usc_descriptors) {
       m->base = rw_addr;
       m->elements = elements;
       agx_apple9_texel_layout(format, m);

@@ -2929,8 +2929,7 @@ agx_screen_create(int fd, struct renderonly *ro,
       agx_screen->rodata = bo;
    }
 
-   if (agx_apple9_compute_enabled(&agx_screen->dev) ||
-       agx_apple9_direct_render_enabled(&agx_screen->dev))
+   if (agx_has_launch_programs(&agx_screen->dev))
       agx_apple9_initialize_entries(&agx_screen->dev);
 
    return screen;

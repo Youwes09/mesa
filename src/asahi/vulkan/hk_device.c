@@ -436,7 +436,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
 
    hk_device_init_usc_heap(dev);
 
-   if (agx_is_apple9(&dev->dev))
+   if (agx_has_launch_programs(&dev->dev))
       agx_apple9_initialize_entries(&dev->dev);
 
    vk_device_set_drm_fd(&dev->vk, dev->dev.fd);

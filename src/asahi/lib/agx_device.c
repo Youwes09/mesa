@@ -767,7 +767,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
    /* Apple9 GPUs require their generation-specific graphics path. */
    dev->apple9_direct_render = agx_is_apple9(dev);
 
-   if (agx_is_apple9(dev)) {
+   if (agx_has_launch_programs(dev)) {
       simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);
       list_inithead(&dev->apple9_entry_lru);
       util_vma_heap_init(
@@ -780,7 +780,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * remains installed for every graphics and compute job. Reserve the arena
     * and back its first chunk, which holds the header; later chunks are backed
     * as entries reach them. */
-   if (agx_is_apple9(dev) && !dev->probe_only) {
+   if (agx_has_launch_programs(dev) && !dev->probe_only) {
       dev->apple9_entry_va = agx_va_alloc(
          dev, AGX_APPLE9_ENTRY_ARENA_SIZE, AGX_APPLE9_ENTRY_ARENA_SIZE,
          AGX_VA_USC | AGX_VA_FIXED, dev->shader_base);
@@ -900,7 +900,7 @@ agx_finish_device(struct agx_device *dev)
    agx_bo_unreference(dev, dev->scratch_bo);
    u_printf_destroy(&dev->printf);
    agx_bo_cache_finish(dev);
-   if (agx_is_apple9(dev)) {
+   if (agx_has_launch_programs(dev)) {
       util_vma_heap_finish(&dev->apple9_entry_heap);
       simple_mtx_destroy(&dev->apple9_entry_lock);
    }

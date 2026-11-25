@@ -361,7 +361,7 @@ agx_get_precompiled_locked(struct agx_bg_eot_cache *cache, unsigned program)
    struct agx_precompiled_shader *p =
       rzalloc(cache->ht, struct agx_precompiled_shader);
 
-   if (agx_is_apple9(cache->dev)) {
+   if (agx_has_launch_programs(cache->dev)) {
       if (!agx_upload_apple9_precompiled(cache, p, program)) {
          ralloc_free(p);
          return NULL;

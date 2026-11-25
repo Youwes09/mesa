@@ -1347,7 +1347,7 @@ hk_cmd_buffer_flush_push_descriptors(struct hk_cmd_buffer *cmd,
       assert(size <= sizeof(push_set->data));
       /* G16 shaders address image descriptors within the USC aperture. */
       uint64_t push_set_addr = 0;
-      if (size && agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+      if (size && agx_has_usc_descriptors(&hk_cmd_buffer_device(cmd)->dev)) {
          struct agx_ptr t = hk_pool_usc_alloc(cmd, size, HK_MIN_UBO_ALIGNMENT);
          if (t.cpu)
             memcpy(t.cpu, push_set->data, size);
@@ -1463,7 +1463,7 @@ hk_cmd_buffer_upload_root(struct hk_cmd_buffer *cmd,
    struct agx_ptr root_ptr;
    size_t size = sizeof(*root);
    uint64_t push_mask = UINT64_MAX;
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
       root->root_desc_addr = 0;
       push_mask = hk_cmd_push_constant_mask(cmd, bind_point);
       size = hk_descriptor_root_size(desc);
@@ -1543,7 +1543,7 @@ hk_reserve_scratch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
    /* Apple9 private memory is described by the native launch frame extents.
     * It does not use the older helper shader and scratch-buffer protocol. */
-   if (max_scratch_size == 0 || agx_is_apple9(&dev->dev))
+   if (max_scratch_size == 0 || agx_has_launch_programs(&dev->dev))
       return;
 
    unsigned preamble_size = (s->b.info.preamble_scratch_size > 0) ? 1 : 0;
@@ -1807,7 +1807,7 @@ hk_ensure_cs_has_space(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
    /* Native VDM continuation pointers are relative to the render context. */
    uint64_t target = T.gpu;
-   if (vdm && agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   if (vdm && agx_has_render_context(&hk_cmd_buffer_device(cmd)->dev)) {
       assert(target >= AGX_APPLE9_RENDER_CONTEXT_BASE &&
              target - AGX_APPLE9_RENDER_CONTEXT_BASE <= UINT32_MAX);
       target -= AGX_APPLE9_RENDER_CONTEXT_BASE;
