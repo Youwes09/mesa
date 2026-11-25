@@ -402,7 +402,7 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    if (!shader)
       goto fail;
 
-   const struct agx_compute_profile *p = &shader->info.apple9_compute;
+   const struct agx_compute_profile *p = &shader->info.compute_profile;
    struct agx_draw_stage stage = {
       .bo = shader->bo,
       .binary = agx_bo_map(shader->bo),
@@ -4395,7 +4395,7 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
       .dev = dev_key,
       .secondary = true,
       .no_stop = !stop || launch_programs,
-      .apple9_graphics_abi = launch_programs,
+      .graphics_abi = launch_programs,
    };
 
    /* We always use dynamic sample shading in the GL driver. Indicate that. */

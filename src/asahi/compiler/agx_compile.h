@@ -138,31 +138,31 @@ struct agx_shader_info {
    mesa_shader_stage stage;
    uint32_t binary_size;
 
-   /* How an Apple9 compute shader is launched */
-   struct agx_compute_profile apple9_compute;
+   /* How a compute shader is launched, for launch programs */
+   struct agx_compute_profile compute_profile;
 
-   /* Apple9: one plus the binary offset of the VARY_STORE of each unlinked
+   /* One plus the binary offset of the VARY_STORE of each unlinked
     * UVS index, or zero if unwritten. The linker relocates the slots.
     */
-   uint32_t apple9_vary_stores[AGX_APPLE9_MAX_UVS_SLOTS];
+   uint32_t vary_stores[AGX_APPLE9_MAX_UVS_SLOTS];
 
-   /* Apple9 fragment parts: the TILE_ACCESS control the linked program holds
+   /* Fragment parts: the TILE_ACCESS control the linked program holds
     * throughout (0x600, 0x700 with images, 0xf00 with tile coordinates) or 0.
     */
-   uint16_t apple9_tile_domain;
-   bool apple9_tile_reads, apple9_tile_writes;
+   uint16_t tile_domain;
+   bool tile_reads, tile_writes;
 
-   /* Apple9: the linker releases the depth/stencil domain after the loop */
-   bool apple9_zs_release;
+   /* The linker releases the depth/stencil domain after the loop */
+   bool zs_release;
 
-   /* Apple9: the part reads the samples killed by parts before it */
-   bool apple9_reads_killed;
+   /* The part reads the samples killed by parts before it */
+   bool reads_killed;
 
-   /* Apple9: the main fragment shader may kill samples */
-   bool apple9_kills;
+   /* The main fragment shader may kill samples */
+   bool kills_samples;
 
-   /* Apple9: reads cube aliases, see AGX_APPLE9_CUBE_ALIAS_INDEX */
-   bool apple9_cube_aliases;
+   /* Reads cube aliases, see AGX_APPLE9_CUBE_ALIAS_INDEX */
+   bool cube_aliases;
 
    union agx_varyings varyings;
 
@@ -419,8 +419,8 @@ struct agx_shader_key {
     */
    bool secondary;
 
-   /* Apple9: give a compute shader the fixed graphics argument layout */
-   bool apple9_graphics_abi;
+   /* Give a compute shader the fixed graphics argument layout */
+   bool graphics_abi;
 
    union {
       struct agx_fs_shader_key fs;

@@ -1503,7 +1503,7 @@ agx_compile_nir(struct agx_device *dev, nir_shader *nir,
       .secondary = secondary,
 
       /* Gallium compute stages read push words like graphics stages */
-      .apple9_graphics_abi = true,
+      .graphics_abi = true,
    };
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -3790,7 +3790,7 @@ agx_upload_launch_tables(struct agx_batch *batch,
    unsigned nr_images = cs->so ? cs->so->info.nr_bindful_images : 0;
 
    /* Cube aliases follow the textures (agx_apple9_layout.h) */
-   bool aliases = nr_textures && cs->b.info.apple9_cube_aliases;
+   bool aliases = nr_textures && cs->b.info.cube_aliases;
    unsigned table_size =
       aliases ? AGX_APPLE9_CUBE_ALIAS_INDEX(nr_textures) : nr_textures;
 
@@ -4060,7 +4060,7 @@ agx_dispatch_launched(struct agx_batch *batch, struct agx_grid grid,
    struct agx_context *ctx = batch->ctx;
    struct agx_bo *bo = linked ? linked->bo : cs->bo;
    struct agx_compute_profile profile =
-      linked ? linked->program.profile : cs->b.info.apple9_compute;
+      linked ? linked->program.profile : cs->b.info.compute_profile;
 
    /* Graphics stages run as compute take the dispatch's workgroup size */
    if (!profile.variable_local_size && !profile.local_size[0])
@@ -4236,11 +4236,11 @@ agx_launch_bg_eot(struct agx_batch *batch, struct agx_bg_eot_key *key)
    const struct agx_draw_stage stage = {
       .bo = shader->bo,
       .binary_size = info->binary_size,
-      .preamble_offset = info->apple9_compute.preamble_offset,
-      .preamble_size = info->apple9_compute.preamble_size,
-      .scratch_size = info->apple9_compute.scratch_size,
-      .atomic_frame_size = info->apple9_compute.atomic_frame_size,
-      .publication_count = info->apple9_compute.publication_count,
+      .preamble_offset = info->compute_profile.preamble_offset,
+      .preamble_size = info->compute_profile.preamble_size,
+      .scratch_size = info->compute_profile.scratch_size,
+      .atomic_frame_size = info->compute_profile.atomic_frame_size,
+      .publication_count = info->compute_profile.publication_count,
       .publication_count_valid = true,
    };
 

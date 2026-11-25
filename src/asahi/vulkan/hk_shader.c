@@ -2339,7 +2339,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       .promote_textures = true,
 
       /* Compute stages run API shaders, which read push words */
-      .apple9_graphics_abi = true,
+      .graphics_abi = true,
    };
 
    /* For now, sample shading is always dynamic. Indicate that. */
@@ -3148,7 +3148,7 @@ hk_init_launch_linked(struct hk_device *dev, struct hk_linked_shader *s,
       struct agx_shader_part *parts[] = {prolog, &main->b, epilog};
       for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
          if (parts[i]) {
-            s->draw_stages.reads_tile |= parts[i]->info.apple9_tile_reads;
+            s->draw_stages.reads_tile |= parts[i]->info.tile_reads;
             s->draw_stages.uses_discard |= parts[i]->info.writes_sample_mask;
          }
       }

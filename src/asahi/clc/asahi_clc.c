@@ -215,7 +215,7 @@ print_apple9_shader(FILE *fp, const char *name, uint32_t variant,
    struct agx_precompiled_apple9_kernel_info info;
    memset(&info, 0, sizeof(info));
    info.binary_size = p->info.binary_size;
-   info.profile = p->info.apple9_compute;
+   info.profile = p->info.compute_profile;
 
    size_t sz_B = sizeof(info) + p->info.binary_size;
    uint32_t *mem = calloc(DIV_ROUND_UP(sz_B, 4), 4);

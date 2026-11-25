@@ -843,10 +843,9 @@ agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
 {
    /* Tile domains are held for the whole shader instead */
    if (b->shader->target.tile_domains) {
-      b->shader->out->apple9_tile_reads |= mask & 0x8;
-      b->shader->out->apple9_tile_writes |= mask & 0x4;
-      b->shader->out->apple9_tile_domain =
-         MAX2(b->shader->out->apple9_tile_domain, 0x600);
+      b->shader->out->tile_reads |= mask & 0x8;
+      b->shader->out->tile_writes |= mask & 0x4;
+      b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
       return;
    }
 
@@ -893,9 +892,8 @@ agx_emit_local_store_pixel_words(agx_builder *b, nir_intrinsic_instr *instr)
       agx_tile_sample_mask(b, agx_src_index(b->shader, &instr->src[1]));
    unsigned base = nir_intrinsic_base(instr) / 4;
 
-   b->shader->out->apple9_tile_writes = true;
-   b->shader->out->apple9_tile_domain =
-      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+   b->shader->out->tile_writes = true;
+   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
    b->shader->out->tag_write_disable = false;
 
    u_foreach_bit(i, nir_intrinsic_write_mask(instr)) {
@@ -919,9 +917,9 @@ agx_emit_local_load_pixel_words(agx_builder *b, agx_index dest,
    agx_index xy =
       coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null();
 
-   b->shader->out->apple9_tile_reads = true;
-   b->shader->out->apple9_tile_domain =
-      MAX2(b->shader->out->apple9_tile_domain, coords ? 0xf00 : 0x600);
+   b->shader->out->tile_reads = true;
+   b->shader->out->tile_domain =
+      MAX2(b->shader->out->tile_domain, coords ? 0xf00 : 0x600);
 
    agx_index words[4];
    for (unsigned i = 0; i < nr; ++i) {
@@ -992,24 +990,24 @@ static void
 agx_hold_tile_domains(agx_context *ctx)
 {
    const struct agx_shader_info *info = ctx->out;
-   bool access = info->apple9_tile_reads || info->apple9_tile_writes;
+   bool access = info->tile_reads || info->tile_writes;
 
    agx_builder b =
       agx_init_builder(ctx, agx_before_block(agx_start_block(ctx)));
 
-   if (info->apple9_tile_domain)
-      agx_begin_tile(&b, info->apple9_tile_domain);
+   if (info->tile_domain)
+      agx_begin_tile(&b, info->tile_domain);
 
    if (access)
-      agx_begin_tile(&b, 0x800 | (info->apple9_tile_writes ? 0xc : 0x8));
+      agx_begin_tile(&b, 0x800 | (info->tile_writes ? 0xc : 0x8));
 
    b = agx_init_builder(ctx, agx_after_block_logical(agx_exit_block(ctx)));
 
-   if (info->apple9_zs_release)
+   if (info->zs_release)
       agx_end_tile(&b, 1);
 
    if (access)
-      agx_end_tile(&b, info->apple9_tile_domain == 0xf00 ? 0x300 : 0x20c);
+      agx_end_tile(&b, info->tile_domain == 0xf00 ? 0x300 : 0x20c);
 }
 
 /* VARY_STORE frees its export register, so all outputs fit the export file */
@@ -1104,7 +1102,7 @@ agx_test_zs(agx_builder *b, bool begin)
    if (begin) {
       agx_begin_tile(b, 1);
    } else if (ctx->zs_release_at_end) {
-      ctx->out->apple9_zs_release = true;
+      ctx->out->zs_release = true;
    } else {
       agx_end_tile(b, 1);
    }
@@ -1120,8 +1118,7 @@ agx_emit_write_coverage(agx_builder *b, nir_intrinsic_instr *instr)
 
    bool tests = agx_tests_zs(instr);
 
-   b->shader->out->apple9_tile_domain =
-      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
 
    agx_index pub = agx_export_word(b, agx_coverage_control(b, affected, live));
 
@@ -1161,8 +1158,7 @@ agx_emit_zs_export(agx_builder *b, nir_intrinsic_instr *instr)
    agx_publication_pair_to(b, pair, control, depth, zs == 2);
 
    b->shader->out->writes_sample_mask = true;
-   b->shader->out->apple9_tile_domain =
-      MAX2(b->shader->out->apple9_tile_domain, 0x600);
+   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
 
    agx_test_zs(b, true);
    agx_zs_store(b, pair, zs);
@@ -1445,7 +1441,7 @@ static agx_instr *
 agx_emit_block_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->apple9_tile_domain = 0x700;
+      b->shader->out->tile_domain = 0x700;
 
    assert(instr->intrinsic == nir_intrinsic_image_store_block_agx &&
           "exported block stores address the PBE table");
@@ -1598,7 +1594,7 @@ agx_local_word(agx_builder *b, nir_src offset, unsigned base)
 static agx_index
 agx_local_root(agx_builder *b)
 {
-   return agx_immediate(agx_shared_root(&b->shader->out->apple9_compute));
+   return agx_immediate(agx_shared_root(&b->shader->out->compute_profile));
 }
 
 static void
@@ -1977,7 +1973,7 @@ static agx_instr *
 agx_emit_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->apple9_tile_domain = 0x700;
+      b->shader->out->tile_domain = 0x700;
 
    nir_alu_type type = nir_intrinsic_src_type(instr);
    assert(nir_alu_type_get_type_size(type) == 32 && "lowered to 32-bit data");
@@ -2549,7 +2545,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_exported_agx:
       if (b->shader->target.tile_domains && stage == MESA_SHADER_FRAGMENT &&
           nir_intrinsic_base(instr) == AGX_ABI_FOUT_KILLED_SAMPLES)
-         b->shader->out->apple9_reads_killed = true;
+         b->shader->out->reads_killed = true;
 
       return agx_load_exported_to(b, dst, nir_intrinsic_base(instr),
                                   instr->def.num_components);
@@ -3380,13 +3376,12 @@ agx_emit_tex_export(agx_builder *b, nir_tex_instr *instr)
 
    /* Fragment shaders sample within the tile domain */
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->apple9_tile_domain =
-         MAX2(b->shader->out->apple9_tile_domain, 0x600);
+      b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
 
    /* agx_nir_lower_texture points cubes sampled as arrays at their aliases */
    bool cube_as_array = instr->backend_flags & AGX_TEXTURE_FLAG_CUBE_AS_ARRAY;
    if (cube_as_array && texture.type == AGX_INDEX_IMMEDIATE)
-      b->shader->out->apple9_cube_aliases = true;
+      b->shader->out->cube_aliases = true;
 
    agx_index params = agx_vec_temp(b->shader, AGX_SIZE_32, nr);
    params.reg_class = RA_EXPORT;
@@ -5077,11 +5072,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       }
 
       if (ctx->atomic_frame_B)
-         out->apple9_compute.atomic_frame_size = 4;
+         out->compute_profile.atomic_frame_size = 4;
 
       /* The launch allocates the export registers the shader uses */
-      out->apple9_compute.publication_count =
-         MAX2(out->apple9_compute.publication_count,
+      out->compute_profile.publication_count =
+         MAX2(out->compute_profile.publication_count,
               DIV_ROUND_UP(ctx->export_reg_count, 2));
    } else if (ctx->scratch_size_B > 0) {
       /* Apple always allocate 40 more bytes in the entrypoint and align to 4. */
@@ -5549,14 +5544,14 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    /* Root uniforms come first, then push words, then preamble results */
    unsigned reserved_preamble = key->reserved_preamble;
-   bool graphics_abi = target->root_uniforms &&
-                       (!mesa_shader_stage_is_compute(nir->info.stage) ||
-                        key->apple9_graphics_abi);
+   bool graphics_abi =
+      target->root_uniforms &&
+      (!mesa_shader_stage_is_compute(nir->info.stage) || key->graphics_abi);
    if (target->root_uniforms) {
       NIR_PASS(_, nir, agx_nir_lower_handle_offsets);
 
       unsigned roots =
-         agx_nir_lower_root_uniforms(nir, graphics_abi, &info->apple9_compute);
+         agx_nir_lower_root_uniforms(nir, graphics_abi, &info->compute_profile);
 
       reserved_preamble =
          roots * 2 + (graphics_abi ? ALIGN_POT(key->reserved_preamble, 2) : 0);
@@ -5568,7 +5563,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    /* Prolog and epilog builders lower their own parts */
    if (target->tile_domains && nir->info.stage == MESA_SHADER_FRAGMENT &&
        !key->secondary) {
-      info->apple9_kills = agx_may_kill_samples(nir);
+      info->kills_samples = agx_may_kill_samples(nir);
       NIR_PASS(_, nir, agx_nir_lower_killed_samples, key->no_stop,
                key->no_stop);
    }
@@ -5682,30 +5677,29 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          unsigned offset = agx_compile_function_nir(nir, main->preamble->impl,
                                                     key, &binary, &out->info);
 
-         info->apple9_compute.preamble_offset = offset;
-         info->apple9_compute.preamble_size = binary.size - offset;
+         info->compute_profile.preamble_offset = offset;
+         info->compute_profile.preamble_size = binary.size - offset;
 
          /* Inline a preamble that is too big or spills */
          bool compute = mesa_shader_stage_is_compute(nir->info.stage);
-         bool inline_ = info->apple9_compute.preamble_size >
+         bool inline_ = info->compute_profile.preamble_size >
                            agx_launch_max_preamble_bytes(compute) ||
                         info->preamble_scratch_size;
          if (inline_) {
             agx_inline_preamble(main);
             util_dynarray_clear(&binary);
-            memset(info->apple9_vary_stores, 0,
-                   sizeof(info->apple9_vary_stores));
+            memset(info->vary_stores, 0, sizeof(info->vary_stores));
             info->preamble_scratch_size = 0;
             info->nr_preamble_gprs = 0;
             info->stats.preamble_inst = 0;
-            info->apple9_compute.preamble_offset = 0;
-            info->apple9_compute.preamble_size = 0;
+            info->compute_profile.preamble_offset = 0;
+            info->compute_profile.preamble_size = 0;
             agx_compile_function_nir(nir, main, key, &binary, &out->info);
             info->main_size = binary.size;
          }
       }
 
-      info->apple9_compute.scratch_size = info->scratch_size;
+      info->compute_profile.scratch_size = info->scratch_size;
    } else {
       nir_foreach_function_with_impl(func, impl, nir) {
          unsigned offset =

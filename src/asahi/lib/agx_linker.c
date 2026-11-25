@@ -182,7 +182,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
    util_dynarray_init(&d, NULL);
 
    memset(p, 0, sizeof(*p));
-   p->profile = main->info.apple9_compute;
+   p->profile = main->info.compute_profile;
    assert(p->profile.abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES &&
           "parts are compiled for the graphics ABI");
 
@@ -194,7 +194,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
          continue;
 
       const struct agx_shader_info *info = &parts[i]->info;
-      const struct agx_compute_profile *pp = &info->apple9_compute;
+      const struct agx_compute_profile *pp = &info->compute_profile;
 
       assert((parts[i] == main || !pp->resource_binding_count) &&
              "only the main shader uses the buffer table");
@@ -207,23 +207,22 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
          MAX2(p->profile.atomic_frame_size, pp->atomic_frame_size);
 
       /* Image writes and tile coordinates need a wider domain */
-      if (info->apple9_tile_domain) {
-         assert(!domain || domain == info->apple9_tile_domain ||
-                domain == 0x600 || info->apple9_tile_domain == 0x600);
+      if (info->tile_domain) {
+         assert(!domain || domain == info->tile_domain || domain == 0x600 ||
+                info->tile_domain == 0x600);
          if (domain != 0x700 && domain != 0xf00)
-            domain = info->apple9_tile_domain;
+            domain = info->tile_domain;
       }
 
-      reads |= info->apple9_tile_reads;
-      writes |= info->apple9_tile_writes;
-      zs_release |= info->apple9_zs_release;
+      reads |= info->tile_reads;
+      writes |= info->tile_writes;
+      zs_release |= info->zs_release;
    }
 
    /* Only an epilog reading the killed samples may store after a kill */
-   assert(!fragment || !epilog || epilog->info.apple9_reads_killed ||
-          !(epilog->info.apple9_tile_writes ||
-            epilog->info.writes_sample_mask) ||
-          (!main->info.apple9_kills &&
+   assert(!fragment || !epilog || epilog->info.reads_killed ||
+          !(epilog->info.tile_writes || epilog->info.writes_sample_mask) ||
+          (!main->info.kills_samples &&
            !(prolog && prolog->info.writes_sample_mask)));
 
    /* No sample is killed yet, unless the prolog says so */
@@ -270,7 +269,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
       /* Commit the vertex outputs to their linked varying slots */
       for (unsigned s = 0; uvs_slots && s < AGX_APPLE9_MAX_UVS_SLOTS; ++s) {
-         uint32_t store = parts[i]->info.apple9_vary_stores[s];
+         uint32_t store = parts[i]->info.vary_stores[s];
 
          if (store) {
             assert(store - 1 + 8 <= parts[i]->info.main_size);
@@ -311,7 +310,8 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
       if (!preambles[i])
          continue;
 
-      const struct agx_compute_profile *pp = &preambles[i]->info.apple9_compute;
+      const struct agx_compute_profile *pp =
+         &preambles[i]->info.compute_profile;
 
       if (pp->preamble_size) {
          append(&d, (uint8_t *)preambles[i]->binary + pp->preamble_offset,
@@ -320,7 +320,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
       }
    }
 
-   if (any && !main->info.apple9_compute.preamble_size)
+   if (any && !main->info.compute_profile.preamble_size)
       append_halt(&d);
 
    p->profile.preamble_size = any ? d.size - p->profile.preamble_offset : 0;
@@ -339,7 +339,7 @@ agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
               struct agx_shader_part *prolog, struct agx_shader_part *epilog,
               unsigned nr_samples_shaded, const uint8_t *uvs_slots)
 {
-   if (main->info.apple9_compute.abi) {
+   if (main->info.compute_profile.abi) {
       struct agx_linked_program *p = &linked->program;
       agx_link_program(p, fragment, main, prolog, epilog, nr_samples_shaded,
                        uvs_slots);
