@@ -208,16 +208,16 @@ hk_CreateSampler(VkDevice device,
          memcpy(&replay, cap_info->opaqueCaptureDescriptorData, sizeof(replay));
    }
 
-   /* G16 samples custom border colours natively, with the border format the
-    * application provides (customBorderColorWithoutFormat is not exposed).
-    * Its opaque black needs no RGBA4 workaround through that path. */
-   const bool g16 = agx_is_apple9(&pdev->dev);
-   bool workaround_rgba4 = !g16 && dev->vk.enabled_features.customBorderColors;
+   /* Native custom border colours use the border format the application
+    * provides (customBorderColorWithoutFormat is not exposed). Their opaque
+    * black needs no RGBA4 workaround. */
+   const bool native = agx_has_native_border_colors(&pdev->dev);
+   bool workaround_rgba4 = !native && dev->vk.enabled_features.customBorderColors;
    bool custom_border =
       uses_border(info) &&
       is_border_color_custom(info->borderColor, workaround_rgba4);
    bool native_custom =
-      g16 && custom_border && sampler->vk.format != VK_FORMAT_UNDEFINED;
+      native && custom_border && sampler->vk.format != VK_FORMAT_UNDEFINED;
 
    /* Sanity check the noborder setting. There's no way to recover from it being
     * wrong but at least we can make noise to lint for errors in the driconf.
@@ -312,7 +312,7 @@ hk_CreateSampler(VkDevice device,
 
          sampler->plane_count++;
       }
-   } else if (custom_border && !g16) {
+   } else if (custom_border && !native) {
       /* If the sampler uses custom border colours, we need both clamp-to-1
        * and clamp-to-0 variants. We treat these as planes.
        */
@@ -349,7 +349,7 @@ hk_CreateSampler(VkDevice device,
       sampler->has_border = true;
    }
 
-   if (g16) {
+   if (agx_has_usc_descriptors(&pdev->dev)) {
       for (unsigned p = 0; p < sampler->plane_count; ++p) {
          struct hk_usc_sampler_part *part = &sampler->planes[p].usc;
          hk_usc_sampler(part->sampler, &sampler->planes[p].hw->key,

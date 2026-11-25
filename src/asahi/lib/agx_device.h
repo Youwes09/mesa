@@ -268,6 +268,38 @@ agx_has_render_context(const struct agx_device *dev)
    return agx_is_apple9(dev);
 }
 
+/* Render targets are whole tile-format words, read and written raw */
+static inline bool
+agx_has_raw_tiles(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* Texture fetches report no residency, so shaders read it from a table of
+ * the resource's pages.
+ */
+static inline bool
+agx_has_residency_tables(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* A CDM barrier can order dispatches and make their writes visible to later
+ * dispatches without a full cache flush.
+ */
+static inline bool
+agx_has_compute_barrier(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
+/* Samplers carry custom border colours, with no shader emulation */
+static inline bool
+agx_has_native_border_colors(const struct agx_device *dev)
+{
+   return agx_is_apple9(dev);
+}
+
 static inline bool
 agx_apple9_direct_render_enabled(const struct agx_device *dev)
 {

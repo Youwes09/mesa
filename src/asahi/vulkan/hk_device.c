@@ -407,9 +407,9 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
 
    dev->perftest = debug_get_flags_option("HK_PERFTEST", hk_perf_options, 0);
 
-   /* Apple9 does not advertise custom border colours. */
+   /* Native border colours need no emulation */
    if (instance->drirc.misc.disable_border_emulation ||
-       agx_is_apple9(&dev->dev)) {
+       agx_has_native_border_colors(&dev->dev)) {
       dev->perftest |= HK_PERF_NOBORDER;
    }
 
@@ -458,7 +458,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    if (result != VK_SUCCESS)
       goto fail_dev;
 
-   if (agx_is_apple9(&dev->dev)) {
+   if (agx_has_launch_programs(&dev->dev)) {
       dev->fetch_sampler =
          agx_bo_create(&dev->dev, 64 + AGX_USC_SAMPLER_STRIDE, 0,
                        AGX_BO_LOW_VA, "Apple9 immutable samplers");

@@ -207,7 +207,7 @@ hk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
       device, hk_format_to_pipe_format(view->vk.format),
       hk_buffer_address_ro(buffer, view->vk.offset),
       hk_buffer_address_rw(buffer, view->vk.offset), view->vk.elements,
-      agx_is_apple9(&device->dev) ? hk_buffer_residency(buffer) : 0,
+      agx_has_residency_tables(&device->dev) ? hk_buffer_residency(buffer) : 0,
       &view->tex, &view->pbe, &view->texel_metadata, view->usc_texture);
 
    *pBufferView = hk_buffer_view_to_handle(view);

@@ -1127,7 +1127,7 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
       hk_bind_scratch(dev, plane->va, 0, size);
    }
 
-   if (sparse_resident && agx_is_apple9(&dev->dev)) {
+   if (sparse_resident && agx_has_residency_tables(&dev->dev)) {
       /* Unbound pages read the scratch page. Every page starts unbound. */
       const struct ail_layout *layout = &plane->layout;
       size_t size_B =

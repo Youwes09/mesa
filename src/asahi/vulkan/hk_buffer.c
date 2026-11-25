@@ -245,10 +245,10 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
          return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       }
 
-      /* Apple9 texel fetches report no residency, so shaders read it from
+      /* Texel fetches report no residency, so shaders read it from
        * a table of the buffer's pages, all unbound initially.
        */
-      if (agx_is_apple9(&dev->dev) &&
+      if (agx_has_residency_tables(&dev->dev) &&
           (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT)) {
          size_t pages = DIV_ROUND_UP(vma_size_B, AIL_PAGESIZE);
          buffer->residency_table =

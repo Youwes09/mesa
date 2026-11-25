@@ -1088,7 +1088,7 @@ hk_get_texel_buffer_descriptor(struct hk_device *dev, VkDescriptorType type,
       uint32_t elements = info->range / util_format_get_blocksize(format);
       hk_pack_texel_buffer(
          dev, format, info->address, info->address, elements,
-         agx_is_apple9(&dev->dev) ? dev->resident_table->va->addr : 0, &tex,
+         agx_has_residency_tables(&dev->dev) ? dev->resident_table->va->addr : 0, &tex,
          &pbe, &m, texture);
       size = hk_pack_texel_buffer_desc(dev, out, type, &tex, &pbe, &m, texture);
    } else {

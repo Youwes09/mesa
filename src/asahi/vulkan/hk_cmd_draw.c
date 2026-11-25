@@ -787,7 +787,7 @@ hk_attachment_may_be_sampled(const VkRenderingAttachmentInfo *att)
 static bool
 hk_render_merge_enabled(struct hk_cmd_buffer *cmd)
 {
-   return agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
+   return agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev) &&
           cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY && !cmd->in_meta;
 }
 
@@ -927,7 +927,7 @@ hk_render_suspend_keeps_open(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    const struct hk_rendering_state *render = &cmd->state.gfx.render;
    return cs && !render->feedback && !render->raw_color_mask &&
           !render->raw_zs && (render->flags & VK_RENDERING_SUSPENDING_BIT) &&
-          agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
+          agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev) &&
           cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY && !cmd->in_meta &&
           !cmd->sync_fallback && !cmd->current_cs.pre_gfx &&
           !cmd->current_cs.post_gfx && !cmd->tess_batch.draws;
@@ -1189,7 +1189,7 @@ hk_CmdSetAttachmentFeedbackLoopEnableEXT(VkCommandBuffer commandBuffer,
    }
    if (cmd->rendering && aspectMask)
       cmd->state.gfx.render.feedback = true;
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev))
+   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev))
       hk_feedback_prepare_draw(cmd);
 }
 
@@ -1342,7 +1342,7 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
    /* For now, we force layered=true since it makes compatibility problems way
     * easier.
     */
-   render->tilebuffer = (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)
+   render->tilebuffer = (agx_has_raw_tiles(&hk_cmd_buffer_device(cmd)->dev)
                             ? agx_build_raw_tilebuffer_layout
                             : agx_build_tilebuffer_layout)(
       formats, render->color_att_count, render->tilebuffer.nr_samples, true);
@@ -1508,7 +1508,7 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                        attach_z, attach_s, incomplete_render_area, true, false,
                        NULL);
 
-   const bool drop_stores = agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev) &&
+   const bool drop_stores = agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev) &&
                             !(render->flags & VK_RENDERING_SUSPENDING_BIT);
    /* The first render pass of a chain decides its loads. */
    if (!resume && !merge) {
@@ -4358,8 +4358,8 @@ hk_flush_shaders(struct hk_cmd_buffer *cmd)
                   hk_only_variant(fs)->info.fs.interp.flat,
                   hk_only_variant(fs)->info.fs.interp.linear);
 
-   /* Apple9 outputs stay in their unlinked slots, see agx_link_program */
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   /* Linked programs keep outputs in unlinked slots, see agx_link_program */
+   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
       const struct agx_unlinked_uvs_layout *uvs = &hw_vs->info.uvs;
       unsigned slot = uvs->group_offs[UVS_VARYINGS];
 
@@ -5364,9 +5364,9 @@ hk_flush_shader_parts(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
       enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
 
-      /* Apple9 unrolls adjacency without GS, see hk_draw_without_adj */
+      /* The launch path unrolls adjacency without GS, see hk_draw_without_adj */
       if (mesa_prim_has_adjacency(prim) &&
-          !(agx_is_apple9(&dev->dev) && key.prolog.hw)) {
+          !(agx_has_launch_programs(&dev->dev) && key.prolog.hw)) {
          if (draw.restart) {
             prim = u_decomposed_prim(prim);
          }

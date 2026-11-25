@@ -899,7 +899,7 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
        */
       struct hk_device *dev = hk_cmd_buffer_device(cmd);
       hk_ensure_cs_has_space(cmd, cs, AGX_CDM_BARRIER_LENGTH);
-      if (agx_is_apple9(&dev->dev) && !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
+      if (agx_has_compute_barrier(&dev->dev) && !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
          hk_cdm_compute_barrier(dev, cs);
       else
          hk_cdm_cache_flush(dev, cs);
@@ -1729,7 +1729,7 @@ hk_cs_init_graphics(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    cs->cr.eot.main = render->cr.eot.partial;
    cs->cr.zls_control = render->cr.zls_control_partial;
 
-   if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
+   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
       cs->scissor = UTIL_DYNARRAY_INIT;
       cs->depth_bias = UTIL_DYNARRAY_INIT;
       cs->ppp_multisamplectl = hk_default_sample_positions(cs->tib.nr_samples);
