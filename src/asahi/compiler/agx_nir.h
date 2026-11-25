@@ -40,14 +40,19 @@ bool agx_nir_lower_texture_queries(struct nir_shader *s);
 bool agx_nir_lower_multisampled_image_store(struct nir_shader *s);
 bool agx_nir_needs_texture_crawl(struct nir_instr *instr);
 
-/* Apple9 lowerings for FP32 subnormal flushing, conversions and sine */
-bool agx_nir_lower_apple9_math(struct nir_shader *shader);
-bool agx_nir_lower_apple9_compute_derivatives(struct nir_shader *shader);
-bool agx_nir_lower_apple9_denorms(struct nir_shader *shader);
+bool agx_nir_lower_compute_derivatives(struct nir_shader *shader);
+
+/* FP32 subnormal flushing and preservation, for flushes_denorms */
+bool agx_nir_flush_denorms(struct nir_shader *shader);
+bool agx_nir_flush_subgroup_denorms(struct nir_shader *shader);
 bool agx_nir_lower_apple9_denorm_preserve(struct nir_shader *shader);
-bool agx_nir_lower_apple9_subgroup_denorms(struct nir_shader *shader);
-bool agx_nir_legalize_apple9_memory(struct nir_shader *nir);
-bool agx_nir_legalize_apple9_alu(struct nir_shader *nir);
+
+/* Word registers and memory: conversions, sine, narrow arithmetic and access */
+bool agx_nir_lower_word_math(struct nir_shader *shader);
+bool agx_nir_lower_word_alu(struct nir_shader *nir);
+bool agx_nir_lower_word_memory(struct nir_shader *nir);
+struct nir_def *agx_nir_sincos_fp32(struct nir_builder *b, struct nir_def *x,
+                                    bool cosine);
 bool agx_nir_lower_apple9_handles(struct nir_shader *nir);
 struct nir_def *agx_nir_apple9_descriptor_address(struct nir_builder *b,
                                                   struct nir_def *handle,
@@ -65,8 +70,6 @@ bool agx_nir_lower_killed_samples(struct nir_shader *nir, bool load_killed,
                                   bool export_killed);
 unsigned
 agx_apple9_shared_root(const struct agx_apple9_compute_profile *profile);
-struct nir_def *agx_nir_sincos_apple9(struct nir_builder *b, struct nir_def *x,
-                                      bool cosine);
 
 #ifdef __cplusplus
 } /* extern C */

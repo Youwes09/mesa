@@ -244,7 +244,7 @@ hk_preprocess_nir_internal(struct vk_physical_device *vk_pdev, nir_shader *nir)
    struct hk_physical_device *pdev =
       container_of(vk_pdev, struct hk_physical_device, vk);
    if (agx_is_apple9(&pdev->dev))
-      NIR_PASS(_, nir, agx_nir_lower_apple9_math);
+      NIR_PASS(_, nir, agx_nir_lower_word_math);
    agx_preprocess_nir(nir);
 
    /* Constant-offset reads can fold away after extraction. Do not upload
@@ -1500,7 +1500,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    /* Keep radians until Apple9 range reduction. The common preprocessor
     * otherwise replaces sine/cosine with the older fsin_agx operation. */
    if (agx_is_apple9(&dev->dev))
-      NIR_PASS(_, nir, agx_nir_lower_apple9_math);
+      NIR_PASS(_, nir, agx_nir_lower_word_math);
    agx_preprocess_nir(nir);
    if (agx_is_apple9(&dev->dev))
       NIR_PASS(_, nir, agx_nir_lower_apple9_image_barriers);

@@ -3,15 +3,15 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <math.h>
+#include "asahi/lib/agx_apple9_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
 #include "util/set.h"
 #include "agx_apple9_machine.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
+/* Flush FP32 subnormals the hardware does not flush itself, where observable */
 static nir_def *
 flush_fp32(nir_builder *b, nir_def *x)
 {
@@ -316,7 +316,7 @@ lower_denorm_reduction(nir_builder *b, nir_intrinsic_instr *intr,
 }
 
 bool
-agx_nir_lower_apple9_subgroup_denorms(nir_shader *shader)
+agx_nir_flush_subgroup_denorms(nir_shader *shader)
 {
    return nir_is_denorm_flush_to_zero(
              shader->info.float_controls_execution_mode, 32) &&
@@ -325,7 +325,7 @@ agx_nir_lower_apple9_subgroup_denorms(nir_shader *shader)
 }
 
 bool
-agx_nir_lower_apple9_denorms(nir_shader *shader)
+agx_nir_flush_denorms(nir_shader *shader)
 {
    /* Decide on the original SSA graph, before explicit integer flushes hide
     * the provenance of floating results. Keep this independent of fast-math
@@ -401,288 +401,4 @@ agx_nir_lower_apple9_denorms(nir_shader *shader)
       progress |= nir_shader_intrinsics_pass(shader, lower_denorm_intrinsic,
                                              nir_metadata_control_flow, NULL);
    return progress;
-}
-
-/* Bounded-accuracy floating-point reduction, like the existing AGX backend.
- * Vulkan requires 2^-11 absolute error only inside [-pi, pi], in every stage,
- * so phase accuracy may degrade as |x| grows. The Apple9 factor consumes
- * quarter-turn units, so fold four quadrants into [-1, 1] before evaluating
- * sin(pi*p/2)/p. Work on the magnitude to avoid cancellation for small
- * negative sine inputs. */
-nir_def *
-agx_nir_sincos_apple9(nir_builder *b, nir_def *x, bool cosine)
-{
-   nir_def *turns = nir_fmul_imm(b, nir_fabs(b, x), 0x1.45f306p-3f);
-   nir_def *q = nir_fmul_imm(b, nir_fsub(b, turns, nir_ffloor(b, turns)), 4.0f);
-   if (cosine) {
-      q = nir_fadd_imm(b, q, 1.0f);
-      q = nir_bcsel(b, nir_fge_imm(b, q, 4.0f), nir_fadd_imm(b, q, -4.0f), q);
-   }
-   nir_def *p = nir_bcsel(b, nir_flt_imm(b, q, 1.0f), q,
-                          nir_bcsel(b, nir_flt_imm(b, q, 3.0f),
-                                    nir_fsub(b, nir_imm_float(b, 2.0f), q),
-                                    nir_fadd_imm(b, q, -4.0f)));
-   nir_def *result = nir_fmul(b, p, nir_fsin_factor_agx(b, p));
-   return cosine ? result : nir_ixor(b, result, nir_iand_imm(b, x, 0x80000000));
-}
-
-static bool
-math_filter(const nir_instr *instr, UNUSED const void *data)
-{
-   if (instr->type != nir_instr_type_alu)
-      return false;
-   const nir_alu_instr *alu = nir_instr_as_alu(instr);
-   if (alu->op == nir_op_f2u8 || alu->op == nir_op_f2u16 ||
-       alu->op == nir_op_f2i8 || alu->op == nir_op_f2i16)
-      return true;
-   if (alu->op == nir_op_b2f16 || alu->op == nir_op_f2f16_rtz ||
-       (alu->op == nir_op_ldexp && alu->def.bit_size == 16))
-      return true;
-   if ((alu->op == nir_op_fsin || alu->op == nir_op_fcos) &&
-       alu->def.bit_size == 16)
-      return true;
-   return alu->def.bit_size == 32 &&
-          (alu->op == nir_op_iabs || alu->op == nir_op_fsin ||
-           alu->op == nir_op_fcos);
-}
-
-/* Round to nearest, then step one ulp toward zero if that rounded away. */
-static nir_def *
-lower_f2f16_rtz(nir_builder *b, nir_def *x)
-{
-   /* Keep algebraic optimization from folding the round trip. */
-   uint32_t ctrl = b->fp_math_ctrl;
-   b->fp_math_ctrl = nir_fp_no_fast_math;
-   x = nir_f2f32(b, x);
-   nir_def *h = nir_f2f16(b, x);
-   nir_def *away = nir_flt(b, nir_fabs(b, x), nir_fabs(b, nir_f2f32(b, h)));
-   nir_def *bits = nir_u2u16(b, nir_iadd_imm(b, nir_u2u32(b, h), -1));
-   nir_def *result = nir_bcsel(b, away, bits, h);
-   b->fp_math_ctrl = ctrl;
-   return result;
-}
-
-static nir_def *
-lower_math(nir_builder *b, nir_instr *instr, UNUSED void *data)
-{
-   nir_alu_instr *alu = nir_instr_as_alu(instr);
-   nir_def *source = nir_mov_alu(b, alu->src[0], alu->def.num_components);
-   nir_def *components[NIR_MAX_VEC_COMPONENTS];
-   for (unsigned i = 0; i < alu->def.num_components; ++i) {
-      nir_def *x = nir_channel(b, source, i);
-      if (alu->op == nir_op_f2u8 || alu->op == nir_op_f2u16) {
-         /* Narrow integer results come from the FP32 conversion. */
-         components[i] =
-            nir_u2uN(b, nir_f2u32(b, nir_f2fN(b, x, 32)), alu->def.bit_size);
-      } else if (alu->op == nir_op_f2i8 || alu->op == nir_op_f2i16) {
-         components[i] =
-            nir_i2iN(b, nir_f2i32(b, nir_f2fN(b, x, 32)), alu->def.bit_size);
-      } else if (alu->op == nir_op_b2f16) {
-         components[i] =
-            nir_bcsel(b, x, nir_imm_float16(b, 1.0f), nir_imm_float16(b, 0.0f));
-      } else if (alu->op == nir_op_ldexp) {
-         /* The generic binary16 expansion builds narrow exponent fields. */
-         nir_def *exp = nir_channel(
-            b, nir_mov_alu(b, alu->src[1], alu->def.num_components), i);
-         components[i] = nir_f2f16(b, nir_ldexp(b, nir_f2f32(b, x), exp));
-      } else if (alu->op == nir_op_f2f16_rtz) {
-         components[i] = lower_f2f16_rtz(b, x);
-      } else if (alu->def.bit_size == 16) {
-         /* Binary16 sine and cosine use the FP32 reduction. */
-         nir_def *wide = nir_f2f32(b, x);
-         wide = agx_nir_sincos_apple9(b, wide, alu->op == nir_op_fcos);
-         components[i] = nir_f2f16(b, wide);
-      } else if (alu->op == nir_op_iabs) {
-         components[i] = nir_imax(b, x, nir_ineg(b, x));
-      } else {
-         components[i] = agx_nir_sincos_apple9(b, x, alu->op == nir_op_fcos);
-      }
-   }
-   return nir_vec(b, components, alu->def.num_components);
-}
-
-/* T8132 F2I32 and F2U32 saturate to the destination range, convert NaN to
- * zero, and F2U32 converts negative values to zero (exact-bit probes with
- * +-2^31, +-2^32, +-1e30, +-inf and NaNs). Range checks that rebuild these
- * results around a conversion, such as DXVK's saturating ftoi/ftou, are
- * therefore redundant. NIR leaves out-of-range conversions undefined, so
- * fold them only here, at the backend boundary, and only for non-constant
- * inputs that constant folding cannot evaluate differently. */
-static bool
-float_const(nir_scalar s, float *value)
-{
-   s = nir_scalar_chase_movs(s);
-   if (!nir_scalar_is_const(s) || s.def->bit_size != 32)
-      return false;
-   *value = uif(nir_scalar_as_uint(s));
-   return true;
-}
-
-/* cond selects k exactly when the saturating conversion of x yields k. */
-static bool
-conversion_select_redundant(nir_scalar cond, nir_scalar x, uint32_t k,
-                            bool sign)
-{
-   if (!nir_scalar_is_alu(cond))
-      return false;
-   nir_op op = nir_scalar_alu_op(cond);
-   /* Only these per-component comparisons qualify; other conditions (such
-    * as vector comparisons with sized sources) cannot be chased per scalar. */
-   if (op != nir_op_fneu && op != nir_op_flt && op != nir_op_fge)
-      return false;
-   nir_scalar a = nir_scalar_chase_movs(nir_scalar_chase_alu_src(cond, 0));
-   nir_scalar b = nir_scalar_chase_movs(nir_scalar_chase_alu_src(cond, 1));
-   float c;
-   if (op == nir_op_fneu && nir_scalar_equal(a, x) && nir_scalar_equal(b, x))
-      return k == 0;
-   /* x > c, with every float above c at or past the saturation bound. */
-   if ((op == nir_op_flt && nir_scalar_equal(b, x) && float_const(a, &c)) ||
-       (op == nir_op_fge && nir_scalar_equal(a, x) && float_const(b, &c) &&
-        (c = nextafterf(c, -INFINITY), true))) {
-      return sign ? (k == 0x7fffffff && c >= 2147483520.0f)
-                  : (k == 0xffffffff && c >= 4294967040.0f);
-   }
-   /* x < c, with every float below c at or past the lower bound. */
-   if ((op == nir_op_flt && nir_scalar_equal(a, x) && float_const(b, &c)) ||
-       (op == nir_op_fge && nir_scalar_equal(b, x) && float_const(a, &c) &&
-        (c = nextafterf(c, INFINITY), true))) {
-      return sign ? (k == 0x80000000 && c <= -2147483648.0f)
-                  : (k == 0 && c <= 0.0f);
-   }
-   return false;
-}
-
-/* The conversion at the core of a chain of redundant range selects. */
-static bool
-saturating_conversion(nir_scalar s, nir_scalar *x, bool *sign)
-{
-   s = nir_scalar_chase_movs(s);
-   if (!nir_scalar_is_alu(s))
-      return false;
-   nir_op op = nir_scalar_alu_op(s);
-   if (op == nir_op_f2i32 || op == nir_op_f2u32) {
-      if (nir_scalar_chase_alu_src(s, 0).def->bit_size != 32)
-         return false;
-      *x = nir_scalar_chase_movs(nir_scalar_chase_alu_src(s, 0));
-      *sign = op == nir_op_f2i32;
-      return !nir_scalar_is_const(*x);
-   }
-   if (op != nir_op_bcsel)
-      return false;
-   uint32_t k;
-   nir_scalar sel = nir_scalar_chase_movs(nir_scalar_chase_alu_src(s, 1));
-   if (!nir_scalar_is_const(sel))
-      return false;
-   k = nir_scalar_as_uint(sel);
-   return saturating_conversion(nir_scalar_chase_alu_src(s, 2), x, sign) &&
-          conversion_select_redundant(nir_scalar_chase_alu_src(s, 0), *x, k,
-                                      *sign);
-}
-
-static bool
-fold_saturating_conversion(nir_builder *b, nir_alu_instr *alu,
-                           UNUSED void *data)
-{
-   if (alu->def.bit_size != 32 || alu->def.num_components != 1)
-      return false;
-   if (alu->op == nir_op_f2u32) {
-      /* F2U32 already maps negative values and NaN to zero. */
-      nir_scalar src =
-         nir_scalar_chase_alu_src(nir_get_scalar(&alu->def, 0), 0);
-      if (!nir_scalar_is_alu(src) || nir_scalar_alu_op(src) != nir_op_fmax ||
-          src.def->bit_size != 32)
-         return false;
-      for (unsigned i = 0; i < 2; ++i) {
-         nir_scalar zero =
-            nir_scalar_chase_movs(nir_scalar_chase_alu_src(src, i));
-         nir_scalar other = nir_scalar_chase_alu_src(src, 1 - i);
-         if (nir_scalar_is_const(zero) &&
-             (nir_scalar_as_uint(zero) & 0x7fffffff) == 0 &&
-             !nir_scalar_is_const(nir_scalar_chase_movs(other))) {
-            b->cursor = nir_before_instr(&alu->instr);
-            nir_src_rewrite(&alu->src[0].src, nir_mov_scalar(b, other));
-            alu->src[0].swizzle[0] = 0;
-            return true;
-         }
-      }
-      return false;
-   }
-   if (alu->op != nir_op_bcsel)
-      return false;
-   nir_scalar x;
-   bool sign;
-   nir_scalar self = nir_get_scalar(&alu->def, 0);
-   if (!saturating_conversion(self, &x, &sign))
-      return false;
-   nir_scalar inner = nir_scalar_chase_alu_src(self, 2);
-   b->cursor = nir_before_instr(&alu->instr);
-   nir_def_replace(&alu->def, nir_mov_scalar(b, inner));
-   return true;
-}
-
-bool
-agx_nir_lower_apple9_math(nir_shader *shader)
-{
-   bool progress = agx_nir_lower_apple9_subgroup_denorms(shader);
-   progress |= nir_shader_alu_pass(shader, fold_saturating_conversion,
-                                   nir_metadata_control_flow, NULL);
-   progress |=
-      nir_shader_lower_instructions(shader, math_filter, lower_math, NULL);
-   /* Apple9 has ordinary multiply/add/FMA, but no modeled interpolation
-    * instruction. Use NIR's precision-aware lowering for FP32 mix. */
-   progress |= nir_lower_flrp(shader, 16 | 32, false);
-   if (progress) {
-      nir_opt_constant_folding(shader);
-      nir_opt_copy_prop(shader);
-      nir_opt_dce(shader);
-   }
-   return progress;
-}
-
-/* Compute linear groups are consecutive sets of four local invocations.
- * Use the same subgroup lane transport as quad operations, with explicit
- * subtraction so no fragment-only derivative instruction is required.
- */
-static bool
-lower_compute_derivative(nir_builder *b, nir_intrinsic_instr *intr,
-                         UNUSED void *data)
-{
-   bool y, coarse;
-   switch (intr->intrinsic) {
-   case nir_intrinsic_ddx:
-   case nir_intrinsic_ddx_fine:
-   case nir_intrinsic_ddx_coarse:
-      y = false;
-      break;
-   case nir_intrinsic_ddy:
-   case nir_intrinsic_ddy_fine:
-   case nir_intrinsic_ddy_coarse:
-      y = true;
-      break;
-   default:
-      return false;
-   }
-   coarse = intr->intrinsic == nir_intrinsic_ddx_coarse ||
-            intr->intrinsic == nir_intrinsic_ddy_coarse;
-   b->cursor = nir_before_instr(&intr->instr);
-   nir_def *lane = nir_load_subgroup_invocation(b);
-   unsigned step = y ? 2 : 1;
-   nir_def *lo = nir_iand_imm(b, lane, ~(coarse ? 3u : step));
-   nir_def *hi = nir_ior_imm(b, lo, step);
-   nir_def *value = intr->src[0].ssa;
-   nir_def *a = nir_shuffle(b, value, lo);
-   nir_def *z = nir_shuffle(b, value, hi);
-   nir_def_replace(&intr->def, nir_fsub(b, z, a));
-   return true;
-}
-
-bool
-agx_nir_lower_apple9_compute_derivatives(nir_shader *shader)
-{
-   if (shader->info.stage != MESA_SHADER_COMPUTE ||
-       shader->info.derivative_group != DERIVATIVE_GROUP_LINEAR)
-      return false;
-
-   return nir_shader_intrinsics_pass(shader, lower_compute_derivative,
-                                     nir_metadata_control_flow, NULL);
 }

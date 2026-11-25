@@ -2645,7 +2645,7 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    assert(!nir_alu_instr_is_signed_zero_preserve(alu) &&
           "should've been lowered");
 
-   /* Flushing targets flush FP32 results in agx_nir_lower_apple9_denorms */
+   /* Flushing targets flush FP32 results in agx_nir_flush_denorms */
    assert((b->shader->target.flushes_denorms ||
            (alu->def.bit_size == 16) ==
               (alu->op == nir_op_fmin || alu->op == nir_op_fmax)) &&
@@ -4093,7 +4093,7 @@ agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, UNUSED void *_)
    if (agx_nir_target(b->shader)->word_registers) {
       /* There is no FP16 arithmetic, so reduce in FP32 */
       nir_def *res =
-         agx_nir_sincos_apple9(b, nir_f2f32(b, x), alu->op == nir_op_fcos);
+         agx_nir_sincos_fp32(b, nir_f2f32(b, x), alu->op == nir_op_fcos);
       return nir_f2fN(b, res, alu->def.bit_size);
    }
 
@@ -4332,7 +4332,7 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * should work on unlowered fmin/fmax.
     *
     * Flushing targets flush min/max where needed, in
-    * agx_nir_lower_apple9_denorms.
+    * agx_nir_flush_denorms.
     */
    bool flushes_denorms = agx_nir_target(nir)->flushes_denorms;
    if (!flushes_denorms)
@@ -4419,7 +4419,7 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
 
    /* The algebraic passes can form narrow arithmetic again */
    if (agx_nir_target(nir)->word_registers)
-      NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
+      NIR_PASS(_, nir, agx_nir_lower_word_alu);
 
    NIR_PASS(_, nir, nir_opt_constant_folding);
    NIR_PASS(_, nir, nir_opt_combine_barriers, NULL, NULL);
@@ -5313,11 +5313,11 @@ agx_preprocess_nir(nir_shader *nir)
             nir_metadata_control_flow, NULL);
 
    if (agx_nir_target(nir)->minimal_subgroups)
-      NIR_PASS(_, nir, agx_nir_lower_apple9_compute_derivatives);
+      NIR_PASS(_, nir, agx_nir_lower_compute_derivatives);
 
    /* Flush FP32 min/max reductions */
    if (agx_nir_target(nir)->flushes_denorms)
-      NIR_PASS(_, nir, agx_nir_lower_apple9_subgroup_denorms);
+      NIR_PASS(_, nir, agx_nir_flush_subgroup_denorms);
 
    NIR_PASS(_, nir, agx_nir_lower_subgroups);
    NIR_PASS(_, nir, nir_lower_all_phis_to_scalar);
@@ -5564,7 +5564,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    }
 
    if (target->word_registers)
-      NIR_PASS(_, nir, agx_nir_lower_apple9_math);
+      NIR_PASS(_, nir, agx_nir_lower_word_math);
 
    /* Prolog and epilog builders lower their own parts */
    if (target->tile_domains && nir->info.stage == MESA_SHADER_FRAGMENT &&
@@ -5605,7 +5605,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    if (target->word_memory) {
       NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
                &lower_mem_access_options);
-      NIR_PASS(_, nir, agx_nir_legalize_apple9_memory);
+      NIR_PASS(_, nir, agx_nir_lower_word_memory);
    }
 
    /* Cleanup 8-bit math before lowering */
@@ -5619,7 +5619,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    } while (progress);
 
    if (target->word_registers)
-      NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
+      NIR_PASS(_, nir, agx_nir_lower_word_alu);
    else
       NIR_PASS(_, nir, nir_lower_bit_size, lower_bit_size_callback, NULL);
 
@@ -5663,7 +5663,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    /* Flush FP32 subnormals after the algebraic passes, which could undo it */
    if (target->flushes_denorms) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_denorms);
+      NIR_PASS(_, nir, agx_nir_flush_denorms);
       NIR_PASS(_, nir, agx_nir_lower_apple9_denorm_preserve);
       NIR_PASS(_, nir, nir_opt_dce);
    }
