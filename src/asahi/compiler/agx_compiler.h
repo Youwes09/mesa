@@ -589,6 +589,12 @@ struct agx_isa_target {
     */
    bool word_memory;
 
+   /* Memory accesses are coherent as issued and barriers order them directly.
+    * Device accesses add a signed 16-bit byte offset to an unsigned index, and
+    * returning device atomics write the old value to the private frame.
+    */
+   bool coherent_memory;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };

@@ -1233,9 +1233,9 @@ nir_is_coherent(nir_intrinsic_instr *instr)
    return nir_intrinsic_access(instr) & (ACCESS_COHERENT | ACCESS_VOLATILE);
 }
 
-/* Apple9 accesses are coherent as issued. Volatile ones await earlier ones */
+/* Accesses are coherent as issued. Volatile ones await earlier ones */
 static void
-agx_emit_apple9_access_order(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_access_order(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (nir_intrinsic_access(instr) & ACCESS_VOLATILE)
       agx_memory_barrier_acquire(b);
@@ -1251,19 +1251,21 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset unless sign-extending. Apple9 indices are unsigned */
+   /* Zero-extend offset unless sign-extending. Coherent memory indices are
+    * unsigned
+    */
    bool coherent = nir_is_coherent(instr);
    int byte_offset = nir_intrinsic_byte_offset(instr);
 
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.coherent_memory) {
       assert(!nir_intrinsic_sign_extend(instr));
-      agx_emit_apple9_access_order(b, instr);
+      agx_emit_access_order(b, instr);
       coherent = false;
    } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
    }
 
-   assert(byte_offset == 0 || agx_is_apple9(b->shader));
+   assert(byte_offset == 0 || b->shader->target.coherent_memory);
    agx_device_load_to(b, dest, addr, offset, fmt,
                       BITFIELD_MASK(instr->def.num_components), shift, coherent,
                       byte_offset);
@@ -1280,19 +1282,21 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset unless sign-extending. Apple9 indices are unsigned */
+   /* Zero-extend offset unless sign-extending. Coherent memory indices are
+    * unsigned
+    */
    bool coherent = nir_is_coherent(instr);
    int byte_offset = nir_intrinsic_byte_offset(instr);
 
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.coherent_memory) {
       assert(!nir_intrinsic_sign_extend(instr));
-      agx_emit_apple9_access_order(b, instr);
+      agx_emit_access_order(b, instr);
       coherent = false;
    } else if (!nir_intrinsic_sign_extend(instr)) {
       offset = agx_abs(offset);
    }
 
-   assert(byte_offset == 0 || agx_is_apple9(b->shader));
+   assert(byte_offset == 0 || b->shader->target.coherent_memory);
    agx_device_store(b, agx_recollect_vector(b, instr->src[0]), addr, offset,
                     fmt, BITFIELD_MASK(nir_src_num_components(instr->src[0])),
                     shift, coherent, byte_offset);
@@ -2094,7 +2098,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_global_atomic_agx:
    case nir_intrinsic_global_atomic_swap_agx:
       /* The old value goes through private memory, so only ask if used */
-      if (agx_is_apple9(b->shader) && nir_def_is_unused(&instr->def))
+      if (b->shader->target.coherent_memory && nir_def_is_unused(&instr->def))
          dst = agx_null();
 
       agx_emit_atomic(b, dst, instr, false);
@@ -2302,7 +2306,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_barrier: {
       assert(!b->shader->is_preamble && "invalid");
 
-      if (agx_is_apple9(b->shader)) {
+      if (b->shader->target.coherent_memory) {
          nir_variable_mode modes = nir_intrinsic_memory_modes(instr);
          assert(nir_intrinsic_execution_scope(instr) <= SCOPE_WORKGROUP);
 
@@ -4947,8 +4951,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
          (key->fs.inside_sample_loop || agx_apple9_tests_zs_repeatedly(impl));
    }
 
-   /* A returning Apple9 device atomic writes the private frame's first word */
-   if (agx_is_apple9(ctx) && agx_returns_atomic(impl))
+   /* A returning device atomic writes the private frame's first word */
+   if (ctx->target.coherent_memory && agx_returns_atomic(impl))
       ctx->atomic_frame_B = 16;
 
    ctx->alloc = impl->ssa_alloc;

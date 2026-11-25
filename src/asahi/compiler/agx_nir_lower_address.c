@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "compiler/nir/nir_builder.h"
 #include "agx_compile.h"
+#include "agx_compiler.h"
 #include "agx_nir.h"
 #include "nir.h"
 #include "nir_intrinsics.h"
@@ -57,12 +58,12 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
                  (intr->intrinsic == nir_intrinsic_global_atomic_swap);
    unsigned max_shift = format_shift + (atomic ? 0 : 2);
 
-   /* Apple9 indices are unsigned, and atomics take the whole address */
-   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+   /* Indices may be unsigned only, and atomics take the whole address */
+   bool unsigned_only = agx_nir_target(b->shader)->coherent_memory;
 
-   /* Apple9 loads and stores add a signed 16-bit byte offset to the address */
+   /* Loads and stores may add a signed 16-bit byte offset to the address */
    int byte_offset = 0;
-   while (apple9 && !atomic && nir_scalar_is_alu(base) &&
+   while (unsigned_only && !atomic && nir_scalar_is_alu(base) &&
           nir_scalar_alu_op(base) == nir_op_iadd) {
       bool peeled = false;
 
@@ -87,10 +88,10 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
    match.base = base;
 
-   if (nir_scalar_is_alu(base) && !(apple9 && atomic)) {
+   if (nir_scalar_is_alu(base) && !(unsigned_only && atomic)) {
       nir_op op = nir_scalar_alu_op(base);
       if ((op == nir_op_ulea_agx || op == nir_op_ilea_agx) &&
-          !(apple9 && op == nir_op_ilea_agx)) {
+          !(unsigned_only && op == nir_op_ilea_agx)) {
          unsigned shift = nir_scalar_as_uint(nir_scalar_chase_alu_src(base, 2));
          if (shift >= format_shift && shift <= max_shift) {
             match = (struct match){
@@ -118,7 +119,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
             /* See if the reduced scalar is from a sign extension. We must have
              * at least the format shift to avoid underflowing.
              */
-            if (k > INT32_MAX || k < (apple9 ? 0 : INT32_MIN) ||
+            if (k > INT32_MAX || k < (unsigned_only ? 0 : INT32_MIN) ||
                 shift < format_shift)
                break;
 
@@ -127,7 +128,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
                .base = nir_scalar_chase_alu_src(base, 1 - i),
                .offset = nir_get_scalar(nir_imm_int(b, k), 0),
                .shift = shift - format_shift,
-               .sign_extend = !apple9,
+               .sign_extend = !unsigned_only,
             };
 
             break;
