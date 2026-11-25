@@ -51,6 +51,3 @@ struct nir_tex_instr;
 struct nir_def *agx_apple9_sampler_field(struct nir_builder *b,
                                          const struct nir_tex_instr *tex,
                                          unsigned field);
-
-/* Unnormalized coordinates and offsets the instructions cannot encode */
-bool agx_nir_lower_apple9_sampler_state_runtime(struct nir_shader *nir);
