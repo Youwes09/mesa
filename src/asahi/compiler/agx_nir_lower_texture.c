@@ -203,7 +203,7 @@ lower_buffer_texture(nir_builder *b, nir_tex_instr *tex)
 
 /* The 32-byte texture info of the handle's descriptor or the texture index */
 static nir_def *
-apple9_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
+export_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
 
@@ -226,21 +226,21 @@ apple9_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
 }
 
 /* Texture info fields */
-enum apple9_info {
-   APPLE9_INFO_WIDTH = 0,
-   APPLE9_INFO_HEIGHT = 1,
-   APPLE9_INFO_LAYERS = 2,
-   APPLE9_INFO_LEVELS = 3,
-   APPLE9_INFO_SAMPLES = 4,
+enum texture_info_field {
+   TEXTURE_INFO_WIDTH = 0,
+   TEXTURE_INFO_HEIGHT = 1,
+   TEXTURE_INFO_LAYERS = 2,
+   TEXTURE_INFO_LEVELS = 3,
+   TEXTURE_INFO_SAMPLES = 4,
 
    /* Texel buffers by index: RGB32 views, and swizzle at 3 bits per channel */
-   APPLE9_INFO_RGB32 = 5,
-   APPLE9_INFO_BUFFER_SWIZZLE = 6,
+   TEXTURE_INFO_RGB32 = 5,
+   TEXTURE_INFO_BUFFER_SWIZZLE = 6,
 };
 
 /* Size, level and sample queries, all zero for a null view */
 static bool
-lower_query_apple9(nir_builder *b, nir_tex_instr *tex)
+lower_query_export(nir_builder *b, nir_tex_instr *tex)
 {
    nir_def *result;
 
@@ -253,7 +253,7 @@ lower_query_apple9(nir_builder *b, nir_tex_instr *tex)
       nir_def *size[3];
       for (unsigned c = 0; c < tex->def.num_components; ++c) {
          bool layer = tex->is_array && c + 1 == tex->def.num_components;
-         size[c] = apple9_texture_info(b, tex, layer ? APPLE9_INFO_LAYERS : c);
+         size[c] = export_texture_info(b, tex, layer ? TEXTURE_INFO_LAYERS : c);
 
          if (!layer && tex->sampler_dim != GLSL_SAMPLER_DIM_BUF)
             size[c] = nir_umax(b, nir_ushr(b, size[c], lod), nir_imm_int(b, 1));
@@ -261,16 +261,16 @@ lower_query_apple9(nir_builder *b, nir_tex_instr *tex)
 
       result = nir_vec(b, size, tex->def.num_components);
    } else {
-      result = apple9_texture_info(b, tex,
+      result = export_texture_info(b, tex,
                                    tex->op == nir_texop_query_levels
-                                      ? APPLE9_INFO_LEVELS
-                                      : APPLE9_INFO_SAMPLES);
+                                      ? TEXTURE_INFO_LEVELS
+                                      : TEXTURE_INFO_SAMPLES);
    }
 
    if (tex->op != nir_texop_query_levels &&
        tex->sampler_dim != GLSL_SAMPLER_DIM_BUF) {
       nir_def *null =
-         nir_ieq_imm(b, apple9_texture_info(b, tex, APPLE9_INFO_LEVELS), 0);
+         nir_ieq_imm(b, export_texture_info(b, tex, TEXTURE_INFO_LEVELS), 0);
       result = nir_bcsel(b, null, nir_imm_zero(b, result->num_components, 32),
                          result);
    }
@@ -282,7 +282,7 @@ lower_query_apple9(nir_builder *b, nir_tex_instr *tex)
 
 /* LOD or bias as a signed 6.6 fixed-point value in bits 16-27, floored */
 static nir_def *
-apple9_lod_word(nir_builder *b, nir_def *lod)
+pack_lod_word(nir_builder *b, nir_def *lod)
 {
    nir_def *clamped =
       nir_fmin(b, nir_fmax(b, nir_f2f32(b, lod), nir_imm_float(b, -32.0f)),
@@ -299,7 +299,7 @@ apple9_lod_word(nir_builder *b, nir_def *lod)
 
 /* Minimum LOD as an unsigned 6.6 fixed-point value in bits 0-11 */
 static nir_def *
-apple9_min_lod_word(nir_builder *b, nir_def *min_lod)
+pack_min_lod_word(nir_builder *b, nir_def *min_lod)
 {
    nir_def *clamped =
       nir_fmin(b, nir_fmax(b, nir_f2f32(b, min_lod), nir_imm_float(b, 0.0f)),
@@ -315,28 +315,28 @@ apple9_min_lod_word(nir_builder *b, nir_def *min_lod)
 
 /* The hardware clamps level, layer and sample, so bound fetches explicitly */
 static nir_def *
-apple9_bound_fetch(nir_builder *b, nir_tex_instr *tex, nir_def *coord,
-                   nir_def **lod, nir_def *layer, nir_def *sample)
+bound_fetch(nir_builder *b, nir_tex_instr *tex, nir_def *coord, nir_def **lod,
+            nir_def *layer, nir_def *sample)
 {
    nir_def *valid = nir_imm_true(b);
 
    if (*lod) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, *lod, apple9_texture_info(b, tex, APPLE9_INFO_LEVELS)));
+         nir_ult(b, *lod, export_texture_info(b, tex, TEXTURE_INFO_LEVELS)));
       *lod = nir_bcsel(b, valid, *lod, nir_imm_int(b, 0));
    }
 
    if (layer) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, layer, apple9_texture_info(b, tex, APPLE9_INFO_LAYERS)));
+         nir_ult(b, layer, export_texture_info(b, tex, TEXTURE_INFO_LAYERS)));
    }
 
    if (sample) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, sample, apple9_texture_info(b, tex, APPLE9_INFO_SAMPLES)));
+         nir_ult(b, sample, export_texture_info(b, tex, TEXTURE_INFO_SAMPLES)));
    }
 
    nir_def *x =
@@ -344,9 +344,9 @@ apple9_bound_fetch(nir_builder *b, nir_tex_instr *tex, nir_def *coord,
    return nir_vector_insert_imm(b, coord, x, 0);
 }
 
-/* Apple9 samplers do not apply their LOD bias themselves */
+/* Exported samples do not apply their LOD bias themselves */
 static bool
-lower_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex)
+lower_lod_bias_export(nir_builder *b, nir_tex_instr *tex)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_sampler_handle);
    nir_def *bias;
@@ -374,7 +374,7 @@ lower_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex)
 
 /* Native min LOD: 2D biased and gradient samples, no compare or offset */
 static bool
-apple9_native_min_lod(const nir_tex_instr *tex)
+native_min_lod(const nir_tex_instr *tex)
 {
    return tex->sampler_dim == GLSL_SAMPLER_DIM_2D && !tex->is_shadow &&
           nir_tex_instr_src_index(tex, nir_tex_src_offset) < 0 &&
@@ -383,20 +383,20 @@ apple9_native_min_lod(const nir_tex_instr *tex)
 }
 
 static bool
-lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
+lower_regular_texture_export(nir_builder *b, nir_tex_instr *tex)
 {
    if (tex->op == nir_texop_txs || tex->op == nir_texop_query_levels ||
        tex->op == nir_texop_texture_samples)
-      return lower_query_apple9(b, tex);
+      return lower_query_export(b, tex);
 
    if (tex->op == nir_texop_lod_bias)
-      return lower_lod_bias_apple9(b, tex);
+      return lower_lod_bias_export(b, tex);
 
    if (nir_tex_instr_is_query(tex) && tex->op != nir_texop_lod)
       return false;
 
    assert(tex->sampler_dim != GLSL_SAMPLER_DIM_BUF && !tex->is_sparse &&
-          "lowered by agx_nir_lower_texture_apple9");
+          "lowered by lower_texture_exports");
 
    /* Don't lower twice */
    if (nir_tex_instr_src_index(tex, nir_tex_src_backend1) >= 0)
@@ -459,14 +459,14 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
             b, nir_fmax(b, nir_fround_even(b, layer), nir_imm_float(b, 0.0f)));
          layer = nir_umin(
             b, layer,
-            nir_iadd_imm(b, apple9_texture_info(b, tex, APPLE9_INFO_LAYERS),
+            nir_iadd_imm(b, export_texture_info(b, tex, TEXTURE_INFO_LAYERS),
                          -1));
       }
    }
 
    if (fetch && !(tex->backend_flags &
                   (AGX_TEXTURE_FLAG_FETCH_BOUNDED | AGX_TEXTURE_FLAG_NO_CLAMP)))
-      coord = apple9_bound_fetch(b, tex, coord, &lod, layer, ms);
+      coord = bound_fetch(b, tex, coord, &lod, layer, ms);
 
    /* Native min LOD needs a bias, so implicit samples become zero-biased */
    if (min_lod && tex->op == nir_texop_tex) {
@@ -478,7 +478,7 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
    bool array_min_lod = min_lod && array && tex->op == nir_texop_txb;
 
    if (min_lod) {
-      assert(apple9_native_min_lod(tex) && "other minimum LODs are lowered");
+      assert(native_min_lod(tex) && "other minimum LODs are lowered");
 
       if (!array_min_lod)
          tex->backend_flags |= AGX_TEXTURE_FLAG_MIN_LOD;
@@ -507,9 +507,9 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
    if (tex->op == nir_texop_txf)
       lod_word = nir_ishl_imm(b, lod ? lod : zero, 22);
    else if (lod)
-      lod_word = apple9_lod_word(b, lod);
+      lod_word = pack_lod_word(b, lod);
    else if (bias)
-      lod_word = apple9_lod_word(b, bias);
+      lod_word = pack_lod_word(b, bias);
 
    nir_def *lod_base = lod_word;
    if (layer && !ms)
@@ -522,7 +522,7 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
          nir_def *w3 = layer ? layer : zero;
          if (min_lod)
             w3 = nir_ior(b, w3,
-                         nir_ishl_imm(b, apple9_min_lod_word(b, min_lod), 16));
+                         nir_ishl_imm(b, pack_min_lod_word(b, min_lod), 16));
 
          /* The layer is in word 3, word 2 is the comparator or zero */
          words[2] = (z && z != layer) ? z : zero;
@@ -545,11 +545,11 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
       nr = 4;
    } else {
       if (array_min_lod) {
-         z = nir_ishl_imm(b, apple9_min_lod_word(b, min_lod), 16);
+         z = nir_ishl_imm(b, pack_min_lod_word(b, min_lod), 16);
       } else if (min_lod) {
          /* The bias and minimum LOD share the LOD word */
          z = zero;
-         lod_word = nir_ior(b, lod_word, apple9_min_lod_word(b, min_lod));
+         lod_word = nir_ior(b, lod_word, pack_min_lod_word(b, min_lod));
       }
 
       words[2] = z;
@@ -692,7 +692,7 @@ lower_regular_texture(nir_builder *b, nir_instr *instr, UNUSED void *data)
    b->cursor = nir_before_instr(instr);
 
    if (agx_nir_target(b->shader)->texture_exports)
-      return lower_regular_texture_apple9(b, tex);
+      return lower_regular_texture_export(b, tex);
 
    if (nir_tex_instr_is_query(tex) && tex->op != nir_texop_lod)
       return false;
@@ -1149,7 +1149,8 @@ lower_robustness(nir_builder *b, nir_intrinsic_instr *intr, void *data)
     */
    /* A buffer coordinate indexes elements, and a view can have more than
     * 0xFFF0 of them. Where buffer images are bounds-checked in software
-    * against the element count, as on Apple9, use the largest index instead.
+    * against the element count, as with exported textures, use the largest
+    * index instead.
     */
    const bool *software_buffer_bounds = data;
    unsigned c = size_components - 1;
@@ -1172,7 +1173,7 @@ lower_robustness(nir_builder *b, nir_intrinsic_instr *intr, void *data)
  */
 /* lower_sampler_lod_bias in FP32, which the fixed-point LOD word needs */
 static bool
-lower_sampler_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex,
+lower_sampler_lod_bias_export(nir_builder *b, nir_tex_instr *tex,
                               UNUSED void *data)
 {
    if (!nir_tex_instr_need_sampler(tex) || tex->op == nir_texop_tg4 ||
@@ -1212,8 +1213,8 @@ lower_sampler_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex,
  * array faces misread, so sample with derivatives scaled by the bias.
  */
 static bool
-apple9_lower_implicit_array_compare(nir_builder *b, nir_tex_instr *tex,
-                                    UNUSED void *data)
+lower_implicit_array_compare(nir_builder *b, nir_tex_instr *tex,
+                             UNUSED void *data)
 {
    bool derivatives =
       b->shader->info.stage == MESA_SHADER_FRAGMENT ||
@@ -1253,7 +1254,7 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
    bool exports = agx_nir_target(s)->texture_exports;
 
    if (exports && support_lod_bias) {
-      NIR_PASS(progress, s, nir_shader_tex_pass, lower_sampler_lod_bias_apple9,
+      NIR_PASS(progress, s, nir_shader_tex_pass, lower_sampler_lod_bias_export,
                nir_metadata_control_flow, NULL);
    }
 
@@ -1283,9 +1284,8 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
 
    if (exports) {
       bool gradients = false;
-      NIR_PASS(gradients, s, nir_shader_tex_pass,
-               apple9_lower_implicit_array_compare, nir_metadata_control_flow,
-               NULL);
+      NIR_PASS(gradients, s, nir_shader_tex_pass, lower_implicit_array_compare,
+               nir_metadata_control_flow, NULL);
 
       /* Cube gradients become explicit LODs */
       if (gradients) {
@@ -1327,17 +1327,17 @@ agx_nir_lower_images(nir_shader *s)
 }
 
 static bool
-apple9_lower_txd_min_lod(const nir_tex_instr *tex, UNUSED const void *data)
+lower_txd_min_lod(const nir_tex_instr *tex, UNUSED const void *data)
 {
    return nir_tex_instr_src_index(tex, nir_tex_src_min_lod) >= 0 &&
-          !apple9_native_min_lod(tex);
+          !native_min_lod(tex);
 }
 
 static bool
-apple9_lower_min_lod(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
+lower_min_lod(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 {
    if (nir_tex_instr_src_index(tex, nir_tex_src_min_lod) < 0 ||
-       tex->op == nir_texop_txd || apple9_native_min_lod(tex))
+       tex->op == nir_texop_txd || native_min_lod(tex))
       return false;
 
    b->cursor = nir_before_instr(&tex->instr);
@@ -1355,7 +1355,7 @@ apple9_lower_min_lod(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
                       nir_vector_insert_imm(b, xyz, x, 0));
       return true;
    } else if (tex->op == nir_texop_txf) {
-      /* An out-of-range level is out of bounds (apple9_bound_fetch) */
+      /* An out-of-range level is out of bounds (bound_fetch) */
       nir_def *min_lod =
          nir_f2f32(b, nir_steal_tex_src(tex, nir_tex_src_min_lod));
       int lod_src = nir_tex_instr_src_index(tex, nir_tex_src_lod);
@@ -1393,7 +1393,7 @@ apple9_lower_min_lod(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 
 /* Flag offsets the sample cannot encode, for the software path */
 static bool
-apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
+flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 {
    int offset = nir_tex_instr_src_index(tex, nir_tex_src_offset);
    if (offset < 0 || tex->op == nir_texop_txf ||
@@ -1405,7 +1405,7 @@ apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
                       tex->sampler_dim == GLSL_SAMPLER_DIM_2D;
    bool min_lod = nir_tex_instr_src_index(tex, nir_tex_src_min_lod) >= 0;
 
-   /* The final form, as lower_regular_texture_apple9 and the backend pick it */
+   /* The final form, as lower_regular_texture_export and the backend pick it */
    agx_instr I = {
       .op = AGX_OPCODE_TEXTURE_SAMPLE,
       .dim = tex->sampler_dim == GLSL_SAMPLER_DIM_3D ? AGX_DIM_3D
@@ -1449,7 +1449,7 @@ apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 
 /* A texel of a buffer fetched by texture index, from its linear 2D view */
 static nir_def *
-apple9_fetch_buffer(nir_builder *b, const nir_tex_instr *buf, nir_def *index)
+fetch_buffer(nir_builder *b, const nir_tex_instr *buf, nir_def *index)
 {
    nir_tex_instr *tex = nir_tex_instr_create(b->shader, 2);
    tex->op = nir_texop_txf;
@@ -1470,8 +1470,7 @@ apple9_fetch_buffer(nir_builder *b, const nir_tex_instr *buf, nir_def *index)
 
 /* Texel buffers by index; RGB32 is fetched as three R32 words and swizzled */
 static bool
-apple9_lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex,
-                                UNUSED void *data)
+lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 {
    if (tex->sampler_dim != GLSL_SAMPLER_DIM_BUF || tex->op != nir_texop_txf ||
        nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0)
@@ -1479,22 +1478,22 @@ apple9_lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex,
 
    b->cursor = nir_before_instr(&tex->instr);
    nir_def *index = nir_u2u32(b, nir_get_tex_src(tex, nir_tex_src_coord));
-   nir_def *size = apple9_texture_info(b, tex, APPLE9_INFO_WIDTH);
+   nir_def *size = export_texture_info(b, tex, TEXTURE_INFO_WIDTH);
    nir_push_if(b, nir_ult(b, index, size));
    nir_push_if(
-      b, nir_ine_imm(b, apple9_texture_info(b, tex, APPLE9_INFO_RGB32), 0));
+      b, nir_ine_imm(b, export_texture_info(b, tex, TEXTURE_INFO_RGB32), 0));
 
    nir_def *components[4];
    nir_def *scalar_index = nir_imul_imm(b, index, 3);
    for (unsigned c = 0; c < 3; ++c) {
       components[c] = nir_channel(
-         b, apple9_fetch_buffer(b, tex, nir_iadd_imm(b, scalar_index, c)), 0);
+         b, fetch_buffer(b, tex, nir_iadd_imm(b, scalar_index, c)), 0);
    }
 
    bool floating = nir_alu_type_get_base_type(tex->dest_type) == nir_type_float;
    components[3] = floating ? nir_imm_float(b, 1) : nir_imm_int(b, 1);
 
-   nir_def *swizzle = apple9_texture_info(b, tex, APPLE9_INFO_BUFFER_SWIZZLE);
+   nir_def *swizzle = export_texture_info(b, tex, TEXTURE_INFO_BUFFER_SWIZZLE);
    nir_def *rgba[4];
    for (unsigned c = 0; c < 4; ++c) {
       nir_def *channel = nir_iand_imm(b, nir_ushr_imm(b, swizzle, c * 3), 7);
@@ -1508,7 +1507,7 @@ apple9_lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex,
 
    nir_def *rgb32 = nir_vec(b, rgba, 4);
    nir_push_else(b, NULL);
-   nir_def *native = apple9_fetch_buffer(b, tex, index);
+   nir_def *native = fetch_buffer(b, tex, index);
    nir_pop_if(b, NULL);
    nir_def *texel = nir_if_phi(b, rgb32, native);
    nir_push_else(b, NULL);
@@ -2071,7 +2070,7 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
              (tex->sampler_dim != GLSL_SAMPLER_DIM_2D &&
               (tex->sampler_dim != GLSL_SAMPLER_DIM_3D || is_gather))) {
             *reason =
-               "Apple9 software sampling requires a bound 2D, array, or 3D texture";
+               "software sampling requires a bound 2D, array, or 3D texture";
             return false;
          }
          unsigned dims = tex->sampler_dim == GLSL_SAMPLER_DIM_3D ? 3 : 2;
@@ -2240,29 +2239,29 @@ lower_sampler_state_runtime(nir_shader *nir)
 }
 
 static bool
-agx_nir_lower_texture_apple9(nir_shader *s)
+lower_texture_exports(nir_shader *s)
 {
    bool progress = false;
 
    /* Residency first: it reads the buffer and image dimensions */
    NIR_PASS(progress, s, agx_nir_lower_sparse_residency);
    NIR_PASS(progress, s, agx_nir_lower_texel_buffers);
-   NIR_PASS(progress, s, nir_shader_tex_pass, apple9_lower_texel_buffer_index,
+   NIR_PASS(progress, s, nir_shader_tex_pass, lower_texel_buffer_index,
             nir_metadata_none, NULL);
 
-   NIR_PASS(progress, s, nir_shader_tex_pass, apple9_flag_offsets,
-            nir_metadata_all, NULL);
+   NIR_PASS(progress, s, nir_shader_tex_pass, flag_offsets, nir_metadata_all,
+            NULL);
    NIR_PASS(progress, s, lower_sampler_state_runtime);
 
    /* Lower the divisions and interpolations of the software path */
    nir_lower_idiv_options idiv_options = {.allow_fp16 = true};
    NIR_PASS(progress, s, nir_lower_idiv, &idiv_options);
    NIR_PASS(progress, s, nir_lower_flrp, 16 | 32 | 64, false);
-   NIR_PASS(progress, s, nir_shader_tex_pass, apple9_lower_min_lod,
+   NIR_PASS(progress, s, nir_shader_tex_pass, lower_min_lod,
             nir_metadata_control_flow, NULL);
 
    nir_lower_tex_options options = {
-      .lower_txd_cb = apple9_lower_txd_min_lod,
+      .lower_txd_cb = lower_txd_min_lod,
    };
    NIR_PASS(progress, s, nir_lower_tex, &options);
 
@@ -2278,7 +2277,7 @@ agx_nir_lower_texture(nir_shader *s)
    bool progress = false;
 
    if (agx_nir_target(s)->texture_exports)
-      return agx_nir_lower_texture_apple9(s);
+      return lower_texture_exports(s);
 
    nir_tex_src_type_constraints tex_constraints = {
       [nir_tex_src_lod] = {true, 16},
