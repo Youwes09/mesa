@@ -38,7 +38,7 @@ if with_tests
       'agx_apple9_launcher_tests',
       files('test/test-apple9-launch.cpp', '../../../asahi/lib/agx_apple9_launch.c'),
       include_directories : [inc_src],
-      dependencies : [idep_gtest],
+      dependencies : [idep_gtest, idep_agx3_pack_h],
     ),
     suite : ['asahi'],
     protocol : 'gtest',

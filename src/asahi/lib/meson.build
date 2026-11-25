@@ -66,7 +66,7 @@ libasahi_lib = static_library(
   c_args : [no_override_init_args, '-Wno-c2x-extensions'],
   gnu_symbol_visibility : 'hidden',
   link_with: [libasahi_decode, libvdrm, libpoly_nir],
-  dependencies: [dep_libdrm, dep_valgrind, idep_nir, idep_mesautil, idep_libagx, idep_libpoly],
+  dependencies: [dep_libdrm, dep_valgrind, idep_nir, idep_mesautil, idep_libagx, idep_libpoly, idep_agx3_pack_h],
   build_by_default : false,
 )
 
@@ -102,7 +102,7 @@ if with_tests
       ),
       c_args : [c_msvc_compat_args, no_override_init_args],
       gnu_symbol_visibility : 'hidden',
-      dependencies: [idep_gtest, idep_agx_pack, idep_mesautil, idep_nir],
+      dependencies: [idep_gtest, idep_agx_pack, idep_mesautil, idep_nir, idep_agx3_pack_h],
       link_with : [libasahi_lib, libasahi_layout, libasahi_compiler],
     ),
     suite : ['asahi'],

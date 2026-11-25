@@ -178,9 +178,9 @@ typedef unsigned (*${p}_pack_fn)(uint8_t *out, const struct ${p}_fields *v);
 static inline unsigned
 ${p}_pack_${name}(uint8_t *out, const struct ${p}_fields *v)
 {
-   static const uint8_t template[] = {${chunk_bytes(ins.exact.value, ins.length[0])}};
+   static const uint8_t bytes[] = {${chunk_bytes(ins.exact.value, ins.length[0])}};
    bool ok = true;
-   memcpy(out, template, sizeof(template));
+   memcpy(out, bytes, sizeof(bytes));
 #define SET(start, width, x) ${p}_set(out, start, width, x)
 % for op in ins.dests:
 % for line in deposit(op.bits, 'v->dest', 'SET'):
@@ -206,7 +206,7 @@ ${p}_pack_${name}(uint8_t *out, const struct ${p}_fields *v)
 % endfor
 #undef SET
    ok &= (${' | '.join(unused(ins))}) == 0;
-   return ok ? sizeof(template) : 0;
+   return ok ? sizeof(bytes) : 0;
 }
 
 % endfor

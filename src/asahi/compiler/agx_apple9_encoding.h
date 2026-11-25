@@ -7,57 +7,77 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include "agx3_pack.h"
 
-/* Native mode 2 materializes an arbitrary 32-bit value into
- * r0..r63. Shared by ordinary compiler lowering and stage ABI setup.
- * Destination bits 0..3 occupy byte 0's high nibble; bits 4..5 occupy
- * byte 2 bits 6..7. Byte 2 bit 5 is a separate native modifier, not a
- * destination extension; this established scalar form leaves it clear. */
+/* Instructions of the drivers' launch code and the linker. The helpers
+ * leave out untouched when the values do not fit.
+ */
+
+/* 32-bit register r0-r63 */
+static inline struct agx3_operand
+agx_apple9_register(unsigned reg)
+{
+   return (struct agx3_operand){
+      .kind = AGX3_KIND_REG,
+      .value = reg * 2,
+      .size32 = true,
+   };
+}
+
+static inline bool
+agx_apple9_pack(uint8_t *out, agx3_pack_fn pack, struct agx3_fields f)
+{
+   uint8_t bytes[AGX3_MAX_LENGTH];
+   unsigned length = pack(bytes, &f);
+
+   if (length)
+      memcpy(out, bytes, length);
+
+   return length != 0;
+}
+
+/* Materializes an arbitrary 32-bit value into r0..r63. A seventh destination
+ * bit hung the GPU.
+ */
 static inline bool
 agx_apple9_encode_literal32(uint8_t out[8], unsigned dst, uint32_t value)
 {
-   /* Six destination bits. Setting bit 60 as a seventh hung the GPU, and
-    * native Metal never materializes a long immediate above r63. */
-   if (dst >= 64)
-      return false;
-   const uint8_t bytes[8] = {
-      (uint8_t)(((dst & 0xf) << 4) | 0x0c), (uint8_t)(0x80 | (value & 0x7f)),
-      (uint8_t)(((dst >> 4) << 6) | 0x02),  (uint8_t)((value >> 24) & 0xfe),
-      (uint8_t)((value >> 6) & 0x1e),       (uint8_t)((value >> 9) & 0x0c),
-      (uint8_t)((value >> 13) & 0xff),      (uint8_t)((value >> 21) & 0x0f),
-   };
-   memcpy(out, bytes, sizeof(bytes));
-   return true;
+   return agx_apple9_pack(out, agx3_pack_mov_imm32,
+                          (struct agx3_fields){
+                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
+                             .value = value,
+                          });
 }
 
-/* T8132 entry-table loads: base is a full address in a GPR pair, offset is
- * in eight-byte units, and results remain pending on dependency slot 2.
- * The established widths are one or two consecutive 64-bit pointers. */
+/* Entry-table loads: base is a full address in a GPR pair, offset is in
+ * eight-byte units, and results remain pending on dependency slot 2.
+ * The established widths are one or two consecutive 64-bit pointers.
+ */
 static inline bool
 agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
                                unsigned offset, unsigned count)
 {
-   if ((count != 1 && count != 2) || dst >= 64 || dst + 2 * count > 64 ||
-       base >= 63 || offset > 255)
+   if ((count != 1 && count != 2) || dst + 2 * count > 64 || base >= 63 ||
+       offset > 255)
       return false;
-   const uint8_t bytes[14] = {
-      0x67,
-      0,
-      0x54,
-      (uint8_t)(dst << 1),
-      (uint8_t)base,
-      0,
-      0,
-      0,
-      (uint8_t)(count == 2 ? 0x57 : 0x59),
-      0,
-      (uint8_t)offset,
-      0x40,
-      0x26,
-      0,
-   };
-   memcpy(out, bytes, sizeof(bytes));
-   return true;
+
+   struct agx3_operand pair = agx_apple9_register(base);
+   pair.size32 = false;
+   pair.size64 = true;
+
+   return agx_apple9_pack(
+      out, agx3_pack_device_load,
+      (struct agx3_fields){
+         .dest = agx3_encode_reg(agx_apple9_register(dst)),
+         .src = {agx3_encode_membase(pair),
+                 agx3_encode_memindex(
+                    (struct agx3_operand){.kind = AGX3_KIND_NONE})},
+         .format = count == 2 ? AGX3_MEMFORMAT_I32X4 : AGX3_MEMFORMAT_I32X2,
+         .next = 1,
+         .offset = offset * 8,
+         .shift = 3,
+         .slot = AGX3_SLOT_SLOT2,
+      });
 }
 
 /* Signed, instruction-start-relative branch used by shader control flow and
@@ -66,56 +86,53 @@ agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
 static inline bool
 agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
 {
-   if (!out || (displacement & 1) || displacement < -(INT64_C(1) << 47) ||
-       displacement >= (INT64_C(1) << 47))
+   if (!out || (displacement & 1))
       return false;
-   uint8_t bytes[10] = {0x0f, (uint8_t)(any ? 0x00 : 0x01), 0x54};
-   for (unsigned byte = 0; byte < 6; ++byte)
-      bytes[3 + byte] = (uint64_t)displacement >> (8 * byte);
-   memcpy(out, bytes, sizeof(bytes));
-   return true;
+
+   return agx_apple9_pack(out,
+                          any ? agx3_pack_jmp_exec_any : agx3_pack_jmp_exec_none,
+                          (struct agx3_fields){.offset = displacement});
 }
 
 /* Transfer one pending word to the main's argument window. A first transfer
  * waits for the table-load group on slot 2; subsequent transfers reuse it.
- * Argument word 2*i is the low half of pointer i, word 2*i+1 its high half. */
+ * Argument word 2*i is the low half of pointer i, word 2*i+1 its high half.
+ */
 static inline bool
 agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
                                 bool wait)
 {
-   if (dst >= 64 || src >= 64)
-      return false;
-   const uint8_t bytes[4] = {
-      (uint8_t)(((dst & 15) << 4) | 0x0b),
-      (uint8_t)((src << 1) & 0x7f),
-      (uint8_t)(9 | ((dst >> 4) << 6)),
-      (uint8_t)(4 | (wait ? 0x40 : 0)),
-   };
-   memcpy(out, bytes, sizeof(bytes));
-   return true;
+   return agx_apple9_pack(out, agx3_pack_mov_launch,
+                          (struct agx3_fields){
+                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
+                             .src = {agx3_encode_reg(agx_apple9_register(src))},
+                             .wait = wait,
+                          });
 }
 
 /* Commit export register `word` to varying slot `slot`, without waiting */
 static inline bool
 agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
 {
-   if (word >= 128 || slot >= 138)
+   if (slot >= 138)
       return false;
-   const uint8_t bytes[8] = {
-      0x57,
-      0x06,
-      0x54,
-      (uint8_t)(word << 1),
-      (uint8_t)((slot & 7) << 5),
-      (uint8_t)(0x40 | (slot >> 3)),
-      0,
-      0,
+
+   struct agx3_operand value = {
+      .kind = AGX3_KIND_EXPORT,
+      .value = word * 2,
+      .size32 = true,
    };
-   memcpy(out, bytes, sizeof(bytes));
-   return true;
+
+   return agx_apple9_pack(out, agx3_pack_st_vary,
+                          (struct agx3_fields){
+                             .src = {agx3_encode_export(value)},
+                             .slot = slot,
+                          });
 }
 
-/* Change the varying slot of an encoded VARY_STORE, keeping its wait */
+/* Change the varying slot of an encoded st_vary, keeping its wait. The slot
+ * is at bits 37-44.
+ */
 static inline bool
 agx_apple9_relocate_vary_store(uint8_t bytes[8], unsigned slot)
 {
@@ -127,33 +144,29 @@ agx_apple9_relocate_vary_store(uint8_t bytes[8], unsigned slot)
    return true;
 }
 
-/* Open (TILE_ACCESS) or close (TILE_FENCE) tile and raster order domains */
+/* Open (begin_tile) or close (end_tile) tile and raster order domains */
 static inline void
 agx_apple9_encode_tile(uint8_t out[6], bool begin, unsigned control)
 {
-   const uint8_t bytes[6] = {
-      (uint8_t)(begin ? 0x87 : 0x07), 2, 0x54, (uint8_t)(control & 0xff),
-      (uint8_t)(control >> 8),        0,
-   };
-   memcpy(out, bytes, sizeof(bytes));
+   agx_apple9_pack(out, begin ? agx3_pack_begin_tile : agx3_pack_end_tile,
+                   (struct agx3_fields){.control = control & 0xffff});
 }
 
 /* mov r0..r15 = 0..0x7f */
 static inline bool
 agx_apple9_encode_mov_imm7(uint8_t out[2], unsigned dst, unsigned value)
 {
-   if (dst >= 16 || value > 0x7f)
-      return false;
-   out[0] = (uint8_t)((dst << 4) | 0x0c);
-   out[1] = (uint8_t)value;
-   return true;
+   return agx_apple9_pack(out, agx3_pack_mov_imm,
+                          (struct agx3_fields){
+                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
+                             .value = value,
+                          });
 }
 
 static inline void
 agx_apple9_encode_halt(uint8_t out[4])
 {
-   const uint8_t bytes[4] = {0x0e, 0, 0, 0};
-   memcpy(out, bytes, sizeof(bytes));
+   agx_apple9_pack(out, agx3_pack_stop, (struct agx3_fields){0});
 }
 
 #endif

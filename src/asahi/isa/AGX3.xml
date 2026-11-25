@@ -906,6 +906,15 @@
     <mask_45_47_61_63/>
   </ins>
 
+  <!-- Move of a loaded word into r0-r63, by the drivers' launch code. Bit
+       30 waits for the loads on slot 2. -->
+  <ins name="mov_launch" display="mov" length="4" form="launch_move">
+    <template>0b 00 09 04</template>
+    <dst4/>
+    <src kind="reg" bit="9:14 =0 =0 =0"/>
+    <modifier name="wait" bit="30"/>
+  </ins>
+
   <ins name="mov_uniform" display="mov" length="4" form="uniform_move">
     <template>0b 00 01 08</template>
     <dst4/>
@@ -2302,6 +2311,11 @@
     <operand role="dest" widths="16,32,64" max="95" align="1"/>
     <operand role="src1" max="94" evidence="byte_diff"/>
     <operand role="src2" max="95" evidence="byte_diff"/>
+  </form>
+
+  <form name="launch_move" length="4" encoding="mov_launch" packed="false">
+    <operand role="dest" max="63"/>
+    <operand role="src0" max="63"/>
   </form>
 
   <form name="uniform_move" length="4" encoding="mov_uniform" evidence="byte_diff">
