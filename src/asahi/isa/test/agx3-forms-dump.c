@@ -6,40 +6,40 @@
 /* Prints the compiler's table of forms for test-agx3-forms.py to check */
 
 #include <stdio.h>
-#include "asahi/compiler/agx_apple9_machine.h"
+#include "asahi/compiler/agx3_machine.h"
 #include "util/macros.h"
 
 static const char *evidence[] = {
-   [AGX_APPLE9_EVIDENCE_UNRESOLVED] = "unresolved",
-   [AGX_APPLE9_EVIDENCE_BYTE_DIFF] = "byte_diff",
-   [AGX_APPLE9_EVIDENCE_HARDWARE] = "hardware",
+   [AGX3_EVIDENCE_UNRESOLVED] = "unresolved",
+   [AGX3_EVIDENCE_BYTE_DIFF] = "byte_diff",
+   [AGX3_EVIDENCE_HARDWARE] = "hardware",
 };
 
 static const char *dependency[] = {
-   [AGX_APPLE9_DEPENDENCY_NONE] = "none",
-   [AGX_APPLE9_DEPENDENCY_INDEX_45_47] = "index_45_47",
-   [AGX_APPLE9_DEPENDENCY_INDEX_61_63] = "index_61_63",
-   [AGX_APPLE9_DEPENDENCY_MASK_12_17] = "mask_12_17",
-   [AGX_APPLE9_DEPENDENCY_MASK_45_47_61_63] = "mask_45_47_61_63",
-   [AGX_APPLE9_DEPENDENCY_MASK_61_63_77_79] = "mask_61_63_77_79",
-   [AGX_APPLE9_DEPENDENCY_MASK_61_63_93_95] = "mask_61_63_93_95",
+   [AGX3_DEPENDENCY_NONE] = "none",
+   [AGX3_DEPENDENCY_INDEX_45_47] = "index_45_47",
+   [AGX3_DEPENDENCY_INDEX_61_63] = "index_61_63",
+   [AGX3_DEPENDENCY_MASK_12_17] = "mask_12_17",
+   [AGX3_DEPENDENCY_MASK_45_47_61_63] = "mask_45_47_61_63",
+   [AGX3_DEPENDENCY_MASK_61_63_77_79] = "mask_61_63_77_79",
+   [AGX3_DEPENDENCY_MASK_61_63_93_95] = "mask_61_63_93_95",
 };
 
 static const char *roles[] = {
-   [AGX_APPLE9_OPERAND_DEST] = "dest",
-   [AGX_APPLE9_OPERAND_SRC0] = "src0",
-   [AGX_APPLE9_OPERAND_SRC1] = "src1",
-   [AGX_APPLE9_OPERAND_SRC2] = "src2",
-   [AGX_APPLE9_OPERAND_SRC3] = "src3",
-   [AGX_APPLE9_OPERAND_SRC4] = "src4",
-   [AGX_APPLE9_OPERAND_SRC5] = "src5",
-   [AGX_APPLE9_OPERAND_SRC6] = "src6",
-   [AGX_APPLE9_OPERAND_SRC7] = "src7",
-   [AGX_APPLE9_OPERAND_SRC8] = "src8",
-   [AGX_APPLE9_OPERAND_SRC9] = "src9",
-   [AGX_APPLE9_OPERAND_INDEX] = "index",
-   [AGX_APPLE9_OPERAND_STORE_DATA] = "store_data",
-   [AGX_APPLE9_OPERAND_ATOMIC_DATA] = "atomic_data",
+   [AGX3_OPERAND_DEST] = "dest",
+   [AGX3_OPERAND_SRC0] = "src0",
+   [AGX3_OPERAND_SRC1] = "src1",
+   [AGX3_OPERAND_SRC2] = "src2",
+   [AGX3_OPERAND_SRC3] = "src3",
+   [AGX3_OPERAND_SRC4] = "src4",
+   [AGX3_OPERAND_SRC5] = "src5",
+   [AGX3_OPERAND_SRC6] = "src6",
+   [AGX3_OPERAND_SRC7] = "src7",
+   [AGX3_OPERAND_SRC8] = "src8",
+   [AGX3_OPERAND_SRC9] = "src9",
+   [AGX3_OPERAND_INDEX] = "index",
+   [AGX3_OPERAND_STORE_DATA] = "store_data",
+   [AGX3_OPERAND_ATOMIC_DATA] = "atomic_data",
 };
 
 static const char *files[] = {"gpr", "uniform", "immediate", "implicit"};
@@ -87,18 +87,17 @@ print_slots(const char *key, unsigned mask)
 int
 main(void)
 {
-   const struct agx_apple9_machine *m = &agx_apple9_machine;
+   const struct agx3_machine *m = &agx3_machine;
    printf("machine gpr_count=%u half_register_count=%u "
           "hardware_register_interlocks=%u software_waits=%u "
           "spilling_supported=%u publication_count=%u uniform_count=%u "
           "fill_word_count=%u save_word_count=%u\n",
           m->gpr_count, m->half_register_count, m->hardware_register_interlocks,
-          m->software_waits, m->spilling_supported,
-          AGX_APPLE9_PUBLICATION_COUNT, AGX_APPLE9_UNIFORM_COUNT,
-          AGX_APPLE9_FILL_WORD_COUNT, AGX_APPLE9_SAVE_WORD_COUNT);
+          m->software_waits, m->spilling_supported, AGX3_PUBLICATION_COUNT,
+          AGX3_UNIFORM_COUNT, AGX3_FILL_WORD_COUNT, AGX3_SAVE_WORD_COUNT);
 
-   for (unsigned e = 0; e < AGX_APPLE9_ENC_COUNT; ++e) {
-      const struct agx_apple9_encoding_info *info = agx_apple9_encoding_info(e);
+   for (unsigned e = 0; e < AGX3_ENC_COUNT; ++e) {
+      const struct agx3_encoding_info *info = agx3_encoding_info(e);
 
       printf("form %s length=%u allocator_safe=%u evidence=%s dependency=%s "
              "retains=%u",
@@ -113,7 +112,7 @@ main(void)
       printf(" split=%u\n", info->split_result);
 
       for (unsigned i = 0; i < info->operand_count; ++i) {
-         const struct agx_apple9_operand_constraint *op = &info->operands[i];
+         const struct agx3_operand_constraint *op = &info->operands[i];
 
          printf("operand %s", roles[op->role]);
          print_set("files", op->files, files, ARRAY_SIZE(files));

@@ -122,9 +122,9 @@ class Agx3Pack : public testing::Test {
       }
    }
 
-   enum agx_apple9_encoding form(agx_instr *I)
+   enum agx3_encoding form(agx_instr *I)
    {
-      return agx_apple9_encoding_for(I);
+      return agx3_encoding_for(I);
    }
 
    void *mem_ctx;
@@ -381,13 +381,13 @@ TEST_F(Agx3Pack, UniformMoves)
    for (const auto &test : cases) {
       agx_instr *I =
          agx_bitop_to(b, r(test.dst), u(test.uniform), agx_zero(), 0xa);
-      EXPECT_EQ(form(I), AGX_APPLE9_ENC_UNIFORM_MOVE);
+      EXPECT_EQ(form(I), AGX3_ENC_UNIFORM_MOVE);
       check(I, std::vector<uint8_t>(test.bytes, test.bytes + 4));
    }
 
    /* r64 and up take the long form */
    agx_instr *I = agx_bitop_to(b, r(64), u(4), agx_zero(), 0xa);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_LOGIC_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_LOGIC_EXTENDED);
 }
 
 /* 16-bit sources of integer add and multiply-add sign-extend without abs */
@@ -465,7 +465,7 @@ TEST_F(Agx3Pack, Fp16Sources)
 
    /* Four-byte form with a low half */
    I = agx_fadd_to(b, r(0), k(rl(2)), k(r(0)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_BASE);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_BASE);
    check(I, {0x09, 0x04, 0x18, 0x01}, {0, 0, 0x20, 0});
 
    check(agx_ffma_to(b, r(0), k(r(0)), k(r(2)), k(rh(4))),
@@ -500,7 +500,7 @@ TEST_F(Agx3Pack, MoveImmediate)
 
    /* Bit 7 of the short form is not a value bit */
    I->imm = 0x80;
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_MOV_IMM32);
+   EXPECT_EQ(form(I), AGX3_ENC_MOV_IMM32);
 
    static const struct {
       unsigned dst;
@@ -595,7 +595,7 @@ TEST_F(Agx3Pack, IntegerMinMax)
       agx_index a = test.keep_a ? r(2) : k(r(2));
       agx_index c = test.keep_b ? r(3) : k(r(3));
       agx_instr *I = agx_icmpsel_to(b, r(4), a, c, a, c, AGX_ICOND_ULT);
-      EXPECT_EQ(form(I), AGX_APPLE9_ENC_MINMAX_COMPACT);
+      EXPECT_EQ(form(I), AGX3_ENC_MINMAX_COMPACT);
       check(I, std::vector<uint8_t>(test.bytes, test.bytes + 6));
    }
 
@@ -686,7 +686,7 @@ TEST_F(Agx3Pack, FmaStateAndRelease)
       agx_instr *I = agx_ffma_to(b, r(4), test.keep_a ? r(2) : k(r(2)),
                                  test.keep_b ? r(3) : k(r(3)),
                                  test.keep_c ? r(5) : k(r(5)));
-      EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_COMPACT);
+      EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_COMPACT);
 
       wait(I, 6);
       std::vector<uint8_t> expected(test.bytes, test.bytes + 8);
@@ -713,9 +713,9 @@ TEST_F(Agx3Pack, FmaUniformBanks)
 
    /* The six-byte form reaches u0-u63 in operand B */
    I = agx_ffma_to(b, r(4), r(5), u(63), r(6));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_COMPACT);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_COMPACT);
    I->src[1] = u(64);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_EXTENDED);
 }
 
 TEST_F(Agx3Pack, LowRegisterSelect)
@@ -902,7 +902,7 @@ TEST_F(Agx3Pack, FloatExport)
 TEST_F(Agx3Pack, LogicExportBounds)
 {
    agx_instr *I = agx_xor_to(b, e(127), k(r(95)), k(r(95)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_LOGIC_EXPORT);
+   EXPECT_EQ(form(I), AGX3_ENC_LOGIC_EXPORT);
    EXPECT_EQ(pack(I)[4] & 0x40, 0x40);
 }
 
@@ -1228,7 +1228,7 @@ TEST_F(Agx3Pack, PointerLoads)
          b, dst, k(r64(0)), agx_immediate(test.index), test.format,
          BITFIELD_MASK(test.components), 0, false, 0);
       I->scoreboard = 5;
-      EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_LOAD_POINTER);
+      EXPECT_EQ(form(I), AGX3_ENC_DEVICE_LOAD_POINTER);
       check(I, std::vector<uint8_t>(test.bytes, test.bytes + 14),
             {0, 0xf0, 0x03});
    }
@@ -1238,7 +1238,7 @@ TEST_F(Agx3Pack, DeviceAtomics)
 {
    agx_instr *I =
       agx_atomic_to(b, r(30), r(22), u64(5), r(23), AGX_ATOMIC_OPC_ADD);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN);
+   EXPECT_EQ(form(I), AGX3_ENC_DEVICE_ATOMIC_RETURN);
    std::vector<uint8_t> p = pack(I);
    const uint8_t add[] = {0x67, 0x01, 0x54, 0x00, 0x00, 0x05, 0x8b,
                           0x8b, 0x00, 0x02, 0x00, 0x00, 0x60, 0x02};
@@ -1254,7 +1254,7 @@ TEST_F(Agx3Pack, DeviceAtomics)
    EXPECT_EQ(memcmp(p.data(), cmpxchg, sizeof(cmpxchg)), 0);
 
    I = agx_atomic_to(b, agx_null(), r(4), u64(9), r(5), AGX_ATOMIC_OPC_XOR);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC);
+   EXPECT_EQ(form(I), AGX3_ENC_DEVICE_ATOMIC);
    check(I, {0x67, 0x01, 0x54, 0x00, 0x00, 0x09, 0x82, 0x82, 0x00, 0x40, 0x00,
              0x00, 0x7e, 0x02});
 
@@ -1296,7 +1296,7 @@ TEST_F(Agx3Pack, UnverifiedThreadgroupMemory)
 {
    agx_instr *I =
       agx_local_load_to(b, r(5), agx_immediate(3), k(rl(7)), AGX_FORMAT_I32, 1);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_SHARED_LOAD);
+   EXPECT_EQ(form(I), AGX3_ENC_SHARED_LOAD);
    check(I, {0x67, 0x02, 0x54, 0x0a, 0x0c, 0x1c, 0x80, 0, 0x44, 0x0d, 0, 0xc0,
              0x08, 0});
 
@@ -1339,12 +1339,12 @@ TEST_F(Agx3Pack, PublicationPair)
    pair.channels_m1 = 1;
 
    agx_instr *I = agx_publication_pair_to(b, pair, r(10), k(r(41)), false);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PUBLICATION_PAIR);
+   EXPECT_EQ(form(I), AGX3_ENC_PUBLICATION_PAIR);
    check(I, {0x6b, 0x95, 0x27, 0x00, 0x42, 0x00, 0x00, 0x00, 0x10, 0x00,
              0x7b, 0x53, 0x2f, 0x00, 0x42, 0x00, 0x00, 0x00, 0x10, 0x00});
 
    I = agx_publication_pair_to(b, pair, k(r(10)), k(r(10)), true);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PUBLICATION_SPLIT);
+   EXPECT_EQ(form(I), AGX3_ENC_PUBLICATION_SPLIT);
    check(I, {0x6b, 0x15, 0x2f, 0x00, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00});
 }
 
@@ -1411,17 +1411,17 @@ TEST_F(Agx3Pack, UnverifiedPointerStoreAndAtomic)
 {
    agx_instr *I = agx_device_store(b, r(3), r64(10), k(r(4)), AGX_FORMAT_I32, 1,
                                    0, false, 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT);
+   EXPECT_EQ(form(I), AGX3_ENC_DEVICE_STORE_INDIRECT);
    check(I, {0xe7, 0x00, 0x54, 0x06, 0x0a, 0x04, 0x21, 0x00, 0x11, 0x00, 0x00,
              0x90, 0x19, 0x00});
 
    I = agx_atomic_to(b, agx_null(), r(4), r64(10), r(5), AGX_ATOMIC_OPC_ADD);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT);
+   EXPECT_EQ(form(I), AGX3_ENC_DEVICE_ATOMIC_INDIRECT);
    check(I, {0x67, 0x01, 0x54, 0x00, 0x00, 0x0a, 0x82, 0x82, 0x00, 0x60, 0x00,
              0x00, 0x60, 0x03});
 
    I = agx_atomic_to(b, r(6), r(4), r64(10), r(5), AGX_ATOMIC_OPC_ADD);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN);
+   EXPECT_EQ(form(I), AGX3_ENC_DEVICE_ATOMIC_INDIRECT_RETURN);
    EXPECT_EQ(pack(I).size(), 22u);
 }
 
@@ -1430,7 +1430,7 @@ TEST_F(Agx3Pack, HalfSpecial)
 {
    agx_instr *I = agx_rcp_to(b, r(18), k(r(7)));
    I->format = AGX_FORMAT_F16;
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_SPECIAL);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_SPECIAL);
    check(I, {0xaf, 0x00, 0x54, 0x24, 0x03, 0x1c, 0x10, 0x46, 0x30, 0x00});
 
    I = agx_rsqrt_to(b, r(18), r(70));
@@ -1451,14 +1451,14 @@ TEST_F(Agx3Pack, HalfSpecial)
 TEST_F(Agx3Pack, HalfArithmetic)
 {
    agx_instr *I = agx_hmul_to(b, r(6), r(4), r(3));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF2);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF2);
    check(I, {0x60, 0x88, 0x05, 0x86, 0x00, 0x00});
 
    check(agx_hadd_to(b, r(4), k(r(4)), r(3)),
          {0x40, 0x08, 0x0c, 0x86, 0x00, 0x00});
 
    I = agx_hfma_to(b, r(5), r(4), r(3), r(4));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF3);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF3);
    check(I, {0x50, 0x88, 0x06, 0x86, 0x01, 0x88, 0x00, 0x00});
 }
 
@@ -1466,11 +1466,11 @@ TEST_F(Agx3Pack, HalfArithmetic)
 TEST_F(Agx3Pack, HalfConversionsOfRegisters)
 {
    agx_instr *I = agx_f16_to_f32_to(b, r(10), k(r(5)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_TO_FLOAT);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_TO_FLOAT);
    check(I, {0xa9, 0x0a, 0x1c, 0x81, 0x00, 0x02});
 
    I = agx_f32_to_f16_to(b, r(4), k(r(70)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_TO_HALF);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT_TO_HALF);
    check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03});
 }
 
@@ -1478,7 +1478,7 @@ TEST_F(Agx3Pack, HalfConversionsOfRegisters)
 TEST_F(Agx3Pack, PackHalf)
 {
    agx_instr *I = agx_pack_half_to(b, r(4), k(r(70)), r(5));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_HALF_2X16);
+   EXPECT_EQ(form(I), AGX3_ENC_PACK_HALF_2X16);
    check(I, {0x41, 0x0d, 0x1c, 0x81, 0x00, 0x03, 0x41, 0x8b, 0x14, 0x81, 0x04,
              0x02});
 
@@ -1491,12 +1491,12 @@ TEST_F(Agx3Pack, PackHalf)
 TEST_F(Agx3Pack, IndexedPrivateMemory)
 {
    agx_instr *I = agx_stack_load_to(b, r(3), r(3), AGX_FORMAT_I32, 1);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PRIVATE_LOAD);
+   EXPECT_EQ(form(I), AGX3_ENC_PRIVATE_LOAD);
    check(I, {0x6f, 0x00, 0x54, 0x06, 0x06, 0x02, 0x49, 0x01, 0x00, 0x00, 0x03,
              0x00});
 
    I = agx_stack_store(b, r(5), r(4), AGX_FORMAT_I32, 1);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PRIVATE_STORE);
+   EXPECT_EQ(form(I), AGX3_ENC_PRIVATE_STORE);
    check(I, {0xef, 0x00, 0x54, 0x0a, 0x08, 0x02, 0x09, 0x03, 0x00, 0x60});
 }
 
@@ -1596,14 +1596,14 @@ TEST_F(Agx3Pack, Texture)
          c.lod == AGX_LOD_MODE_LOD_GRAD || c.lod == AGX_LOD_MODE_LOD_GRAD_MIN;
       if (c.reg_tex) {
          EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
-                               ? AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED
-                            : grad ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
-                                   : AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED);
+                               ? AGX3_ENC_TEXTURE_SAMPLE_INDEXED
+                            : grad ? AGX3_ENC_TEXTURE_GRAD_INDEXED
+                                   : AGX3_ENC_TEXTURE_LOD_INDEXED);
       } else {
          EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
-                               ? AGX_APPLE9_ENC_TEXTURE_SAMPLE
-                            : grad ? AGX_APPLE9_ENC_TEXTURE_GRAD
-                                   : AGX_APPLE9_ENC_TEXTURE_LOD);
+                               ? AGX3_ENC_TEXTURE_SAMPLE
+                            : grad ? AGX3_ENC_TEXTURE_GRAD
+                                   : AGX3_ENC_TEXTURE_LOD);
       }
       check(I, c.bytes);
    }
@@ -1621,7 +1621,7 @@ TEST_F(Agx3Pack, RegisterTextureForms)
       b, dst, coords, agx_null(), agx_null(), k(r(40)), agx_immediate(3),
       agx_null(), AGX_DIM_2D, AGX_LOD_MODE_AUTO_LOD, 0xf, false, false, false,
       AGX_GATHER_NONE, false);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED);
+   EXPECT_EQ(form(I), AGX3_ENC_TEXTURE_SAMPLE_INDEXED);
    check(I, {0x35, 0x82, 0x0c, 0xb8, 0xb1, 0x00, 0x00, 0x00, 0x50, 0x03,
              0x90, 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x00, 0x40, 0x02});
 
@@ -1631,7 +1631,7 @@ TEST_F(Agx3Pack, RegisterTextureForms)
                              agx_immediate(3), agx_null(), AGX_DIM_2D,
                              AGX_LOD_MODE_LOD_GRAD, 0xf, false, false, false,
                              AGX_GATHER_NONE, false);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED);
+   EXPECT_EQ(form(I), AGX3_ENC_TEXTURE_GRAD_INDEXED);
    check(I, {0x35, 0x80, 0x0c, 0xb9, 0xb1, 0x00, 0x04, 0x01, 0x50, 0x03,
              0x90, 0x00, 0x01, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40, 0x02});
 }
@@ -1666,7 +1666,7 @@ TEST_F(Agx3Pack, Cube)
    major.channels_m1 = 1;
 
    agx_instr *I = agx_cube_to(b, major, r(5), r(70), r(33), 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_CUBE);
+   EXPECT_EQ(form(I), AGX3_ENC_CUBE);
    check(I, {0x17, 0x01, 0x54, 0x28, 0x03, 0x0a, 0x19, 0x0b, 0x55, 0x21, 0x92,
              0x00});
 
@@ -1689,7 +1689,7 @@ TEST_F(Agx3Pack, ImageWrite)
 
    agx_instr *I = agx_image_write(b, params, agx_null(), agx_null(), agx_null(),
                                   image, AGX_DIM_2D, false, false);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_IMAGE_WRITE);
+   EXPECT_EQ(form(I), AGX3_ENC_IMAGE_WRITE);
    check(I, {0xd7, 0x10, 0x54, 0x00, 0x00, 0x40, 0x00, 0x04, 0x21, 0x04, 0x00,
              0x00, 0x88, 0x3a, 0x89, 0x00, 0x07, 0x12, 0x54, 0x00, 0x03, 0x00});
 
@@ -1750,8 +1750,8 @@ TEST_F(Agx3Pack, BlockImageStore)
          b, params, agx_immediate(c.image), agx_null(), agx_null(),
          (enum agx_format)c.format, c.dim, false);
       EXPECT_EQ(form(I), (c.dim == AGX_DIM_2D)
-                            ? AGX_APPLE9_ENC_BLOCK_IMAGE_STORE
-                            : AGX_APPLE9_ENC_BLOCK_IMAGE_STORE_EXTENDED);
+                            ? AGX3_ENC_BLOCK_IMAGE_STORE
+                            : AGX3_ENC_BLOCK_IMAGE_STORE_EXTENDED);
       check(I, c.bytes);
    }
 }
@@ -1760,15 +1760,15 @@ TEST_F(Agx3Pack, BlockImageStore)
 TEST_F(Agx3Pack, GraphicsSystemRegisters)
 {
    agx_instr *I = agx_get_sr_to(b, r(5), AGX_SR_VERTEX_ID);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_DRAW_ID);
+   EXPECT_EQ(form(I), AGX3_ENC_GET_DRAW_ID);
    check(I, {0x5c, 0xdd, 0x10, 0x06});
 
    I = agx_get_sr_to(b, r(40), AGX_SR_INSTANCE_ID);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_DRAW_ID);
+   EXPECT_EQ(form(I), AGX3_ENC_GET_DRAW_ID);
    check(I, {0x8c, 0xd8, 0x90, 0x06});
 
    I = agx_get_sr_to(b, r(2), AGX_SR_LAYER_ID);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_SR);
+   EXPECT_EQ(form(I), AGX3_ENC_GET_SR);
    check(I, {0x2c, 0xc3, 0x10, 0x06});
 }
 
@@ -1776,49 +1776,49 @@ TEST_F(Agx3Pack, GraphicsSystemRegisters)
 TEST_F(Agx3Pack, ModifierForms)
 {
    agx_instr *I = agx_fadd_to(b, r(4), agx_abs(k(r(2))), r(3));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_ABS_EXTENDED);
    check(I, {0x49, 0x05, 0x2c, 0x87, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00});
 
    I = agx_fmul_to(b, r(4), r(2), agx_abs(k(r(3))));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_MUL_ABS_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_MUL_ABS_EXTENDED);
    check(I, {0x49, 0x85, 0x35, 0x07, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
              0x00, 0x00});
 
    I = agx_fadd_to(b, r(4), agx_neg(k(r(2))), k(r(3)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_MODIFIER_EXTENDED);
    check(I, {0x49, 0x05, 0x3c, 0x07, 0x01, 0x00, 0x02, 0x00});
 
    I = agx_fmul_to(b, r(4), k(r(2)), f(0.5));
    I->saturate = true;
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_IMMEDIATE_EXTENDED);
    check(I, {0x49, 0xa1, 0x35, 0x05, 0x81, 0x00, 0x00, 0x02});
 
    I = agx_ffma_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_MODIFIER_EXTENDED);
    check(I, {0x49, 0x05, 0x3e, 0x07, 0x83, 0x0a, 0x02, 0x00, 0x00, 0x00,
              0x01, 0x00});
 
    I = agx_ffma_to(b, r(4), k(r(2)), k(r(3)), k(r(5)));
    I->saturate = true;
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_SATURATE_EXTENDED);
    check(I, {0x49, 0x05, 0x3e, 0x07, 0x82, 0x0a, 0x02, 0x00, 0x00, 0x02});
 
    I = agx_fcmpsel_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)), k(r(6)),
                       AGX_FCOND_LT);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_SELECT_MODIFIER_EXTENDED);
    check(I, {0x42, 0x05, 0x1f, 0x07, 0x83, 0x0a, 0x03, 0x00, 0x80, 0x0c,
              0x00, 0x00, 0x01, 0x00});
 
    I = agx_floor_to(b, r(4), u(9));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM);
+   EXPECT_EQ(form(I), AGX3_ENC_FLOAT_SPECIAL_UNIFORM);
    check(I, {0x2f, 0x00, 0x54, 0x08, 0x03, 0x24, 0xb0, 0x00, 0x02, 0x00});
 
    I = agx_asr_to(b, r(12), k(r(13)), k(r(14)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_SHIFT_ARITH_REGISTER);
+   EXPECT_EQ(form(I), AGX3_ENC_SHIFT_ARITH_REGISTER);
    check(I, {0xa7, 0x01, 0x54, 0x18, 0x02, 0x34, 0x70, 0xd8, 0xe2, 0x00});
 
    I = agx_get_sr_to(b, r(7), AGX_SR_COVERAGE_MASK);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_COVERAGE);
+   EXPECT_EQ(form(I), AGX3_ENC_GET_COVERAGE);
    check(I, {0x7c, 0xc2, 0x10, 0x06});
 }
 
@@ -1829,7 +1829,7 @@ TEST_F(Agx3Pack, NormalizedPacking)
    pair.channels_m1 = 1;
 
    agx_instr *I = agx_unpack_norm_to(b, pair, r(1), AGX_FORMAT_U8NORM, 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_UNPACK_NORM);
+   EXPECT_EQ(form(I), AGX3_ENC_UNPACK_NORM);
    check(I, {0x17, 0x04, 0x54, 0x04, 0x00, 0x04, 0x06, 0xea});
 
    pair = r(4);
@@ -1845,12 +1845,12 @@ TEST_F(Agx3Pack, NormalizedPacking)
          {0x17, 0x04, 0x54, 0x04, 0x00, 0x04, 0x0e, 0xca});
 
    I = agx_pack_unorm_4x8_to(b, r(6), r(2), r(3), r(4), r(1));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_UNORM_4X8);
+   EXPECT_EQ(form(I), AGX3_ENC_PACK_UNORM_4X8);
    check(I, {0x97, 0x04, 0x54, 0x0c, 0x02, 0x08, 0x18, 0x50, 0x44, 0xc2,
              0x97, 0x04, 0x54, 0x0d, 0x02, 0x10, 0x08, 0x50, 0x44, 0xc2});
 
    I = agx_pack_unorm_2x16_to(b, r(7), r(1), r(2));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_UNORM_2X16);
+   EXPECT_EQ(form(I), AGX3_ENC_PACK_UNORM_2X16);
    check(I, {0x97, 0x04, 0x56, 0x0e, 0x02, 0x04, 0x10, 0x50, 0x44, 0x82});
 }
 
@@ -1858,14 +1858,14 @@ TEST_F(Agx3Pack, NormalizedPacking)
 TEST_F(Agx3Pack, HalfMinMaxSelect)
 {
    agx_instr *I = agx_hmax_to(b, r(3), k(r(4)), k(r(3)));
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_MINMAX);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_MINMAX);
    check(I, {0x32, 0x08, 0x3c, 0x06, 0x00, 0x00});
 
    check(agx_hmin_to(b, r(3), k(r(3)), k(r(4))),
          {0x32, 0x06, 0x3c, 0x08, 0x01, 0x00});
 
    I = agx_hcmpsel_to(b, r(10), r(5), r(2), k(r(4)), r(3), AGX_FCOND_LT);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_COMPARE_SELECT);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_COMPARE_SELECT);
    check(I, {0xa2, 0x8a, 0x07, 0x84, 0x82, 0x08, 0x03, 0x00, 0x00, 0x86});
 }
 
@@ -1873,11 +1873,11 @@ TEST_F(Agx3Pack, HalfMinMaxSelect)
 TEST_F(Agx3Pack, HalfPredicates)
 {
    agx_instr *I = agx_hcmp_pred(b, r(2), r(70), AGX_FCOND_LT, false, 1);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_SHORT);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_PREDICATE_SHORT);
    check(I, {0x2a, 0x04, 0x22, 0x0c, 0x03, 0x04});
 
    I = agx_hcmp_pred(b, k(r(2)), k(r(70)), AGX_FCOND_EQ, false, 2);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED);
+   EXPECT_EQ(form(I), AGX3_ENC_HALF_PREDICATE_EXTENDED);
    check(I, {0x4a, 0x04, 0x3b, 0x0c, 0x06, 0x00, 0x00, 0x04, 0x00, 0x00});
 }
 
@@ -1886,7 +1886,7 @@ TEST_F(Agx3Pack, UniformDestinations)
 {
    agx_instr *I =
       agx_iadd_to(b, agx_uniform(400, AGX_SIZE_32), r(3), k(r(70)), 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_ADD);
+   EXPECT_EQ(form(I), AGX3_ENC_STORE_UNIFORM_ADD);
    check(I, {0x9f, 0x01, 0x54, 0x90, 0x01, 0x0c, 0x32, 0xaa, 0x15, 0x05});
 
    check(agx_iadd_to(b, agx_uniform(26, AGX_SIZE_32), k(r(3)),
@@ -1894,13 +1894,13 @@ TEST_F(Agx3Pack, UniformDestinations)
          {0x1f, 0x01, 0x54, 0x1a, 0x00, 0x0c, 0x30, 0xaa, 0x17, 0x05});
 
    I = agx_imad_to(b, agx_uniform(34, AGX_SIZE_32), r(3), k(r(70)), r(9), 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_MAD);
+   EXPECT_EQ(form(I), AGX3_ENC_STORE_UNIFORM_MAD);
    check(I, {0x9f, 0x00, 0x54, 0x22, 0x00, 0x0c, 0x32, 0x92, 0xd8, 0x25, 0x2a,
              0x00});
 
    I = agx_imad_to(b, agx_uniform(80, AGX_SIZE_64), agx_abs(k(r(3))),
                    agx_abs(k(r(70))), agx_zero(), 0);
-   EXPECT_EQ(form(I), AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE);
+   EXPECT_EQ(form(I), AGX3_ENC_STORE_UNIFORM_MUL_WIDE);
    check(I, {0x9f, 0x00, 0x54, 0x50, 0x00, 0x0c, 0x30, 0x02, 0xe0, 0x26, 0x0a,
              0x00});
 

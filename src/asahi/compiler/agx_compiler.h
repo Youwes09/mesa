@@ -13,7 +13,7 @@
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
 #include "util/u_worklist.h"
-#include "agx_apple9_machine.h"
+#include "agx3_machine.h"
 #include "agx_compile.h"
 #include "agx_opcodes.h"
 
@@ -1339,8 +1339,8 @@ void agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 unsigned agx3_pack_instr(const agx_instr *I, bool load_follows,
                          bool alu_reads_result, uint8_t *bytes);
 
-/* Encoding form of an allocated instruction, or AGX_APPLE9_ENC_PSEUDO */
-enum agx_apple9_encoding agx_apple9_encoding_for(const agx_instr *I);
+/* Encoding form of an allocated instruction, or AGX3_ENC_PSEUDO */
+enum agx3_encoding agx3_encoding_for(const agx_instr *I);
 
 bool agx_apple9_float_immediate_ok(agx_index idx, bool wide);
 bool agx_apple9_sr_supported(enum agx_sr sr);

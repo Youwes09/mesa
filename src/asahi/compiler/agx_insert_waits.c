@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "agx_apple9_machine.h"
+#include "agx3_machine.h"
 #include "agx_builder.h"
 #include "agx_compiler.h"
 #include "agx_debug.h"
@@ -26,7 +26,7 @@ instr_is_async(agx_instr *I)
 struct producer {
    bool async;
    int fixed_slot;
-   enum agx_apple9_completion_class completion;
+   enum agx3_completion_class completion;
    bool reads_sources;
 };
 
@@ -36,28 +36,28 @@ classified_producer(const agx_instr *I)
    struct producer p = {
       .async = true,
       .fixed_slot = -1,
-      .completion = AGX_APPLE9_COMPLETION_OTHER,
+      .completion = AGX3_COMPLETION_OTHER,
    };
 
    switch (I->op) {
    case AGX_OPCODE_DEVICE_LOAD:
-      p.completion = AGX_APPLE9_COMPLETION_MEMORY;
+      p.completion = AGX3_COMPLETION_MEMORY;
       return p;
 
    case AGX_OPCODE_ATOMIC:
       /* Only a returning atomic has a result to wait for */
       p.async = !agx_is_null(I->dest[0]);
-      p.completion = AGX_APPLE9_COMPLETION_MEMORY;
+      p.completion = AGX3_COMPLETION_MEMORY;
       return p;
 
    case AGX_OPCODE_LOCAL_LOAD:
       p.fixed_slot = 5;
-      p.completion = AGX_APPLE9_COMPLETION_MEMORY;
+      p.completion = AGX3_COMPLETION_MEMORY;
       return p;
 
    case AGX_OPCODE_LOCAL_ATOMIC:
       p.fixed_slot = 0;
-      p.completion = AGX_APPLE9_COMPLETION_MEMORY;
+      p.completion = AGX3_COMPLETION_MEMORY;
       return p;
 
    case AGX_OPCODE_STACK_STORE:
@@ -99,7 +99,7 @@ classified_producer(const agx_instr *I)
       /* Export register writes complete on export group 0 */
       p.async = I->dest[0].reg_class == RA_EXPORT;
       p.fixed_slot = 0;
-      p.completion = AGX_APPLE9_COMPLETION_PUBLICATION;
+      p.completion = AGX3_COMPLETION_PUBLICATION;
       return p;
 
    default:
@@ -151,12 +151,11 @@ prior_completion(agx_context *ctx, agx_instr *I, struct slot *slots)
    uint8_t mask = 0;
 
    if (ctx->target.dependency_waits) {
-      enum agx_apple9_encoding form = agx_apple9_encoding_for(I);
-      if (form == AGX_APPLE9_ENC_PSEUDO)
+      enum agx3_encoding form = agx3_encoding_for(I);
+      if (form == AGX3_ENC_PSEUDO)
          return 0;
 
-      const struct agx_apple9_encoding_info *info =
-         agx_apple9_encoding_info(form);
+      const struct agx3_encoding_info *info = agx3_encoding_info(form);
       if (!info->requires_prior_completion)
          return 0;
 
@@ -232,13 +231,12 @@ fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
    I->wait = true;
    I->wait_slot = slot;
 
-   enum agx_apple9_encoding form = agx_apple9_encoding_for(I);
-   bool ok = form != AGX_APPLE9_ENC_PSEUDO;
+   enum agx3_encoding form = agx3_encoding_for(I);
+   bool ok = form != AGX3_ENC_PSEUDO;
 
    if (ok) {
-      const struct agx_apple9_encoding_info *info =
-         agx_apple9_encoding_info(form);
-      ok = info->dependency_layout != AGX_APPLE9_DEPENDENCY_NONE;
+      const struct agx3_encoding_info *info = agx3_encoding_info(form);
+      ok = info->dependency_layout != AGX3_DEPENDENCY_NONE;
 
       if (ok && !info->dependency_retains_sources) {
          agx_foreach_reg_src(I, i) {

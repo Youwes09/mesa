@@ -3,7 +3,7 @@
 
 # Generates the compiler's table of encoding forms from the forms of an ISA
 # description: their operand constraints and scheduling rules. The forms are
-# enumerated in agx_apple9_machine.h, in the order of the description.
+# enumerated in agx3_machine.h, in the order of the description.
 #
 # usage: gen-forms.py ISA.xml
 
@@ -49,15 +49,15 @@ def operand(o):
     files = a('files').split(',')
     implicit = files == ['implicit']
     return {
-        'role': f'AGX_APPLE9_OPERAND_{o.get("role").upper()}',
-        'files': flag_set('AGX_APPLE9_FILE_', a('files')),
-        'widths': flag_set('AGX_APPLE9_WIDTH_', a('widths')),
+        'role': f'AGX3_OPERAND_{o.get("role").upper()}',
+        'files': flag_set('AGX3_FILE_', a('files')),
+        'widths': flag_set('AGX3_WIDTH_', a('widths')),
         'min_index': '0xff' if implicit else a('min'),
         'max_index': '0xff' if implicit else o.get('max'),
         'uniform_max_index': a('uniform_max'),
         'alignment_halves': a('align'),
-        'flags': flag_set('AGX_APPLE9_OPERAND_', a('flags')),
-        'evidence': f'AGX_APPLE9_EVIDENCE_{a("evidence").upper()}',
+        'flags': flag_set('AGX3_OPERAND_', a('flags')),
+        'evidence': f'AGX3_EVIDENCE_{a("evidence").upper()}',
     }
 
 def form(f):
@@ -67,13 +67,13 @@ def form(f):
         'length': f.get('length'),
         'operand_count': str(len(f.findall('operand'))),
         'allocator_safe': boolean(a('allocator_safe')),
-        'evidence': f'AGX_APPLE9_EVIDENCE_{a("evidence").upper()}',
-        'dependency_layout': f'AGX_APPLE9_DEPENDENCY_{a("dependency").upper()}',
+        'evidence': f'AGX3_EVIDENCE_{a("evidence").upper()}',
+        'dependency_layout': f'AGX3_DEPENDENCY_{a("dependency").upper()}',
         'dependency_retains_sources': boolean(a('retains')),
         'fixed_producer_slot': a('fixed_slot'),
         'fixed_producer_alternates': slots(a('alternates')),
         'requires_prior_completion': boolean(a('prior')),
-        'prior_completion_exempt': flag_set('AGX_APPLE9_COMPLETION_', a('exempt')),
+        'prior_completion_exempt': flag_set('AGX3_COMPLETION_', a('exempt')),
         'split_result': boolean(a('split')),
     }
 
@@ -83,27 +83,27 @@ source = """/*
  */
 
 #include <assert.h>
-#include "agx_apple9_machine.h"
+#include "agx3_machine.h"
 
 % for key in ['gpr_count', 'half_register_count', 'publication_count', 'uniform_count', 'fill_word_count', 'save_word_count']:
-static_assert(AGX_APPLE9_${key.upper()} == ${machine.get(key)}, "${key}");
+static_assert(AGX3_${key.upper()} == ${machine.get(key)}, "${key}");
 % endfor
 
-const struct agx_apple9_machine agx_apple9_machine = {
-   .gpr_count = AGX_APPLE9_GPR_COUNT,
-   .half_register_count = AGX_APPLE9_HALF_REGISTER_COUNT,
+const struct agx3_machine agx3_machine = {
+   .gpr_count = AGX3_GPR_COUNT,
+   .half_register_count = AGX3_HALF_REGISTER_COUNT,
    .hardware_register_interlocks = ${machine.get('hardware_register_interlocks')},
    .software_waits = ${machine.get('software_waits')},
    .spilling_supported = ${machine.get('spilling_supported')},
-   .occupancy_model = AGX_APPLE9_OCCUPANCY_UNMEASURED,
+   .occupancy_model = AGX3_OCCUPANCY_UNMEASURED,
 };
 
 % for i, f in enumerate(forms):
-static_assert(AGX_APPLE9_ENC_${f.get('name').upper()} == ${i}, "form order");
+static_assert(AGX3_ENC_${f.get('name').upper()} == ${i}, "form order");
 % endfor
-static_assert(AGX_APPLE9_ENC_COUNT == ${len(forms)}, "form count");
+static_assert(AGX3_ENC_COUNT == ${len(forms)}, "form count");
 
-static const struct agx_apple9_encoding_info encodings[] = {
+static const struct agx3_encoding_info encodings[] = {
 % for f in forms:
    {
 % for k, v in form(f).items():
@@ -124,10 +124,10 @@ static const struct agx_apple9_encoding_info encodings[] = {
 % endfor
 };
 
-const struct agx_apple9_encoding_info *
-agx_apple9_encoding_info(enum agx_apple9_encoding encoding)
+const struct agx3_encoding_info *
+agx3_encoding_info(enum agx3_encoding encoding)
 {
-   assert(encoding < AGX_APPLE9_ENC_COUNT);
+   assert(encoding < AGX3_ENC_COUNT);
    return &encodings[encoding];
 }
 """

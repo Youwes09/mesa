@@ -94,7 +94,7 @@ TEST_F(InsertWaits, Apple9FoldsIntoTheConsumer)
    EXPECT_TRUE(waits(b->shader).empty());
    EXPECT_TRUE(add->wait);
    EXPECT_EQ(add->wait_slot, ld->scoreboard);
-   EXPECT_EQ(agx_apple9_encoding_for(add), AGX_APPLE9_ENC_FLOAT2_COMPACT);
+   EXPECT_EQ(agx3_encoding_for(add), AGX3_ENC_FLOAT2_COMPACT);
 }
 
 /* Non-retaining forms release the operand, so only fold at its last use */

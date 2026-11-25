@@ -4,7 +4,7 @@
  */
 
 #include "agx3_pack.h"
-#include "agx_apple9_machine.h"
+#include "agx3_machine.h"
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
 
@@ -19,7 +19,7 @@
 struct a9_packed {
    uint8_t bytes[A9_MAX_BYTES + AGX3_MAX_LENGTH];
    unsigned length;
-   enum agx_apple9_encoding form;
+   enum agx3_encoding form;
 
    /* Only select the form, without packing */
    bool form_only;
@@ -56,36 +56,36 @@ hw_slot(unsigned slot)
 
 /* Fields an instruction waits through, by the layout of its form */
 static void
-set_wait(struct agx3_fields *f, enum agx_apple9_dependency_layout layout,
+set_wait(struct agx3_fields *f, enum agx3_dependency_layout layout,
          unsigned slot)
 {
    switch (layout) {
-   case AGX_APPLE9_DEPENDENCY_INDEX_45_47:
+   case AGX3_DEPENDENCY_INDEX_45_47:
       f->index_45_47 = slot;
       return;
-   case AGX_APPLE9_DEPENDENCY_INDEX_61_63:
+   case AGX3_DEPENDENCY_INDEX_61_63:
       f->index_61_63 = slot;
       return;
-   case AGX_APPLE9_DEPENDENCY_MASK_12_17:
+   case AGX3_DEPENDENCY_MASK_12_17:
       f->mask_12_17 = BITFIELD_BIT(slot - 1);
       return;
-   case AGX_APPLE9_DEPENDENCY_MASK_45_47_61_63:
+   case AGX3_DEPENDENCY_MASK_45_47_61_63:
       f->mask_45_47_61_63 = BITFIELD_BIT(slot - 1);
       return;
-   case AGX_APPLE9_DEPENDENCY_MASK_61_63_77_79:
+   case AGX3_DEPENDENCY_MASK_61_63_77_79:
       f->mask_61_63_77_79 = BITFIELD_BIT(slot - 1);
       return;
-   case AGX_APPLE9_DEPENDENCY_MASK_61_63_93_95:
+   case AGX3_DEPENDENCY_MASK_61_63_93_95:
       f->mask_61_63_93_95 = BITFIELD_BIT(slot - 1);
       return;
-   case AGX_APPLE9_DEPENDENCY_NONE:
+   case AGX3_DEPENDENCY_NONE:
       UNREACHABLE("no dependency field");
    }
 }
 
 /* Appends an instruction of the form. The first one folds the wait. */
 static void
-emit(const agx_instr *I, struct a9_packed *p, enum agx_apple9_encoding form,
+emit(const agx_instr *I, struct a9_packed *p, enum agx3_encoding form,
      agx3_pack_fn pack, struct agx3_fields f)
 {
    p->form = form;
@@ -93,10 +93,10 @@ emit(const agx_instr *I, struct a9_packed *p, enum agx_apple9_encoding form,
       return;
 
    if (p->length == 0 && I->wait) {
-      enum agx_apple9_dependency_layout layout =
-         agx_apple9_encoding_info(form)->dependency_layout;
+      enum agx3_dependency_layout layout =
+         agx3_encoding_info(form)->dependency_layout;
 
-      pack_assert(I, layout != AGX_APPLE9_DEPENDENCY_NONE);
+      pack_assert(I, layout != AGX3_DEPENDENCY_NONE);
       set_wait(&f, layout, hw_slot(I->wait_slot));
    }
 
@@ -139,14 +139,14 @@ plain(const agx_instr *I, agx_index idx)
 
    if (is_gpr(idx)) {
       kind = AGX3_KIND_REG;
-      count = AGX_APPLE9_GPR_COUNT;
+      count = AGX3_GPR_COUNT;
    } else if (is_export(idx)) {
       kind = AGX3_KIND_EXPORT;
-      count = AGX_APPLE9_PUBLICATION_COUNT;
+      count = AGX3_PUBLICATION_COUNT;
    } else {
       pack_assert(I, is_uniform(idx));
       kind = AGX3_KIND_UNIFORM;
-      count = AGX_APPLE9_UNIFORM_COUNT;
+      count = AGX3_UNIFORM_COUNT;
    }
 
    pack_assert(I, idx.value + agx_index_size_16(idx) <= count * 2);
@@ -331,10 +331,10 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
       };
 
       if (I->saturate)
-         emit(I, p, AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_EXTENDED,
+         emit(I, p, AGX3_ENC_FLOAT2_IMMEDIATE_EXTENDED,
               mul ? agx3_pack_fmul_mod : agx3_pack_fadd_mod, f);
       else
-         emit(I, p, AGX_APPLE9_ENC_FLOAT2_IMMEDIATE_COMPACT,
+         emit(I, p, AGX3_ENC_FLOAT2_IMMEDIATE_COMPACT,
               mul ? agx3_pack_fmul : agx3_pack_fadd, f);
       return;
    }
@@ -372,21 +372,21 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
    };
 
    if (a.abs || b.abs) {
-      emit(I, p,
-           mul ? AGX_APPLE9_ENC_FLOAT2_MUL_ABS_EXTENDED
-               : AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED,
-           mul ? agx3_pack_fmul_abs : agx3_pack_fadd_abs, f);
+      emit(
+         I, p,
+         mul ? AGX3_ENC_FLOAT2_MUL_ABS_EXTENDED : AGX3_ENC_FLOAT2_ABS_EXTENDED,
+         mul ? agx3_pack_fmul_abs : agx3_pack_fadd_abs, f);
    } else if (a.neg || I->saturate) {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED,
+      emit(I, p, AGX3_ENC_FLOAT2_MODIFIER_EXTENDED,
            mul ? agx3_pack_fmul_mod : agx3_pack_fadd_mod, f);
    } else if (!b.neg && !hi && !is_uniform(a) && !is_uniform(b) && !I->wait &&
               low) {
       f.dstate = 0;
-      emit(I, p, AGX_APPLE9_ENC_FLOAT2_BASE,
+      emit(I, p, AGX3_ENC_FLOAT2_BASE,
            mul ? agx3_pack_fmul_base : agx3_pack_fadd_base, f);
    } else {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT2_COMPACT,
-           mul ? agx3_pack_fmul : agx3_pack_fadd, f);
+      emit(I, p, AGX3_ENC_FLOAT2_COMPACT, mul ? agx3_pack_fmul : agx3_pack_fadd,
+           f);
    }
 }
 
@@ -400,7 +400,7 @@ pack_float2_export(const agx_instr *I, struct a9_packed *p)
    struct agx3_operand y = src(I, b);
    y.neg = b.neg;
 
-   emit(I, p, AGX_APPLE9_ENC_FLOAT2_EXPORT, agx3_pack_fmul_export,
+   emit(I, p, AGX3_ENC_FLOAT2_EXPORT, agx3_pack_fmul_export,
         (struct agx3_fields){
            .dest = agx3_encode_export(plain(I, I->dest[0])),
            .src = {agx3_encode_fsrc(src(I, a)), agx3_encode_fsrc(y)},
@@ -418,7 +418,7 @@ pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg && !I->saturate);
    pack_assert(I, I->component < AGX_APPLE9_NUM_COEFFICIENTS);
 
-   emit(I, p, AGX_APPLE9_ENC_FLOAT2_PROJECT, agx3_pack_fmul_cf,
+   emit(I, p, AGX3_ENC_FLOAT2_PROJECT, agx3_pack_fmul_cf,
         (struct agx3_fields){
            .dest = agx3_encode_dst(plain(I, I->dest[0])),
            .src = {agx3_encode_fsrc(src(I, a)), agx3_encode_fsrc(src(I, b))},
@@ -450,9 +450,9 @@ pack_float_convert(const agx_instr *I, struct a9_packed *p)
    };
 
    if (widen) {
-      emit(I, p, AGX_APPLE9_ENC_HALF_TO_FLOAT, agx3_pack_fadd, f);
+      emit(I, p, AGX3_ENC_HALF_TO_FLOAT, agx3_pack_fadd, f);
    } else {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT_TO_HALF, agx3_pack_fadd_f16, f);
+      emit(I, p, AGX3_ENC_FLOAT_TO_HALF, agx3_pack_fadd_f16, f);
    }
 }
 
@@ -473,7 +473,7 @@ pack_half_pair(const agx_instr *I, struct a9_packed *p)
       x.lu = !x.cache;
 
       d.value = I->dest[0].value + h;
-      emit(I, p, AGX_APPLE9_ENC_PACK_HALF_2X16, agx3_pack_fadd_f16,
+      emit(I, p, AGX3_ENC_PACK_HALF_2X16, agx3_pack_fadd_f16,
            (struct agx3_fields){
               .dest = agx3_encode_dst(d),
               .src = {agx3_encode_fsrc(x), agx3_encode_fsrc(negzero)},
@@ -508,9 +508,9 @@ pack_half_alu(const agx_instr *I, struct a9_packed *p)
       f.src[0] = agx3_encode_fsrc3(s[0]);
       f.src[1] = agx3_encode_fsrc3(s[1]);
       f.src[2] = agx3_encode_fsrc3(s[2]);
-      emit(I, p, AGX_APPLE9_ENC_HALF3, agx3_pack_hfma, f);
+      emit(I, p, AGX3_ENC_HALF3, agx3_pack_hfma, f);
    } else {
-      emit(I, p, AGX_APPLE9_ENC_HALF2,
+      emit(I, p, AGX3_ENC_HALF2,
            I->op == AGX_OPCODE_HMUL ? agx3_pack_hmul : agx3_pack_hadd, f);
    }
 }
@@ -579,15 +579,13 @@ pack_float3(const agx_instr *I, struct a9_packed *p)
 
    if (!I->wait && !I->saturate && !a.abs && !b.abs && !c.abs && !neg_a &&
        !neg_b && !neg_c && !half && is_gpr(a) && is_gpr(c) && low) {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT3_COMPACT, agx3_pack_ffma_compact, f);
+      emit(I, p, AGX3_ENC_FLOAT3_COMPACT, agx3_pack_ffma_compact, f);
    } else if (a.abs || b.abs) {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT3_MODIFIER_EXTENDED, agx3_pack_ffma_mod,
-           f);
+      emit(I, p, AGX3_ENC_FLOAT3_MODIFIER_EXTENDED, agx3_pack_ffma_mod, f);
    } else if (I->saturate) {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT3_SATURATE_EXTENDED, agx3_pack_ffma_sat,
-           f);
+      emit(I, p, AGX3_ENC_FLOAT3_SATURATE_EXTENDED, agx3_pack_ffma_sat, f);
    } else {
-      emit(I, p, AGX_APPLE9_ENC_FLOAT3_EXTENDED, agx3_pack_ffma, f);
+      emit(I, p, AGX3_ENC_FLOAT3_EXTENDED, agx3_pack_ffma, f);
    }
 }
 
@@ -634,9 +632,7 @@ pack_iadd(const agx_instr *I, struct a9_packed *p)
    if (uniform)
       check_uniform_destination(I);
 
-   emit(I, p,
-        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_ADD
-                : AGX_APPLE9_ENC_INT_ADD_EXTENDED,
+   emit(I, p, uniform ? AGX3_ENC_STORE_UNIFORM_ADD : AGX3_ENC_INT_ADD_EXTENDED,
         b.neg ? agx3_pack_isub : agx3_pack_iadd,
         (struct agx3_fields){
            .dest = agx3_encode_idst(plain(I, I->dest[0])),
@@ -657,9 +653,7 @@ pack_imul_wide(const agx_instr *I, struct a9_packed *p)
    if (uniform)
       check_uniform_destination(I);
 
-   emit(I, p,
-        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MUL_WIDE
-                : AGX_APPLE9_ENC_INT_MUL_WIDE,
+   emit(I, p, uniform ? AGX3_ENC_STORE_UNIFORM_MUL_WIDE : AGX3_ENC_INT_MUL_WIDE,
         a.abs ? agx3_pack_umul_wide : agx3_pack_imul_wide,
         (struct agx3_fields){
            .dest = agx3_encode_idst64(plain(I, I->dest[0])),
@@ -697,9 +691,7 @@ pack_imad(const agx_instr *I, struct a9_packed *p)
    if (uniform)
       check_uniform_destination(I);
 
-   emit(I, p,
-        uniform ? AGX_APPLE9_ENC_STORE_UNIFORM_MAD
-                : AGX_APPLE9_ENC_INT_MAD_EXTENDED,
+   emit(I, p, uniform ? AGX3_ENC_STORE_UNIFORM_MAD : AGX3_ENC_INT_MAD_EXTENDED,
         agx3_pack_imad,
         (struct agx3_fields){
            .dest = agx3_encode_idst(plain(I, I->dest[0])),
@@ -739,15 +731,14 @@ pack_shift(const agx_instr *I, struct a9_packed *p)
 
    if (arithmetic) {
       emit(I, p,
-           variable ? AGX_APPLE9_ENC_SHIFT_ARITH_REGISTER
-                    : AGX_APPLE9_ENC_SHIFT_EXTENDED,
+           variable ? AGX3_ENC_SHIFT_ARITH_REGISTER : AGX3_ENC_SHIFT_EXTENDED,
            variable ? agx3_pack_asr_reg : agx3_pack_asr, f);
    } else if (variable) {
-      emit(I, p, AGX_APPLE9_ENC_SHIFT_LOGICAL_REGISTER,
+      emit(I, p, AGX3_ENC_SHIFT_LOGICAL_REGISTER,
            left ? agx3_pack_shl_reg : agx3_pack_shr_reg, f);
    } else {
       f.width = width;
-      emit(I, p, AGX_APPLE9_ENC_SHIFT_LOGICAL_IMMEDIATE,
+      emit(I, p, AGX3_ENC_SHIFT_LOGICAL_IMMEDIATE,
            left ? agx3_pack_shl : agx3_pack_shr, f);
    }
 }
@@ -768,8 +759,7 @@ pack_convert(const agx_instr *I, struct a9_packed *p)
       bool sign = mode == AGX_CONVERT_S32_TO_F;
       pack_assert(I, I->round == AGX_ROUND_RTE);
 
-      emit(I, p,
-           sign ? AGX_APPLE9_ENC_SINT_TO_FLOAT : AGX_APPLE9_ENC_UINT_TO_FLOAT,
+      emit(I, p, sign ? AGX3_ENC_SINT_TO_FLOAT : AGX3_ENC_UINT_TO_FLOAT,
            sign ? agx3_pack_s32_to_f : agx3_pack_u32_to_f,
            (struct agx3_fields){
               .dest = dest,
@@ -784,8 +774,7 @@ pack_convert(const agx_instr *I, struct a9_packed *p)
       bool sign = mode == AGX_CONVERT_F_TO_S32;
       pack_assert(I, I->round == AGX_ROUND_RTZ);
 
-      emit(I, p,
-           sign ? AGX_APPLE9_ENC_FLOAT_TO_SINT : AGX_APPLE9_ENC_FLOAT_TO_UINT,
+      emit(I, p, sign ? AGX3_ENC_FLOAT_TO_SINT : AGX3_ENC_FLOAT_TO_UINT,
            sign ? agx3_pack_f_to_s32 : agx3_pack_f_to_u32,
            (struct agx3_fields){
               .dest = dest,
@@ -821,7 +810,7 @@ pack_bit_unary(const agx_instr *I, struct a9_packed *p)
       UNREACHABLE("not a bit operation");
    }
 
-   emit(I, p, AGX_APPLE9_ENC_BIT_UNARY, pack,
+   emit(I, p, AGX3_ENC_BIT_UNARY, pack,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
            .src = {agx3_encode_usrc(src(I, x))},
@@ -891,9 +880,9 @@ pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    op.abs = x.abs;
 
    emit(I, p,
-        half            ? AGX_APPLE9_ENC_HALF_SPECIAL
-        : is_uniform(x) ? AGX_APPLE9_ENC_FLOAT_SPECIAL_UNIFORM
-                        : AGX_APPLE9_ENC_FLOAT_SPECIAL,
+        half            ? AGX3_ENC_HALF_SPECIAL
+        : is_uniform(x) ? AGX3_ENC_FLOAT_SPECIAL_UNIFORM
+                        : AGX3_ENC_FLOAT_SPECIAL,
         half ? f16 : f32,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
@@ -913,7 +902,7 @@ pack_derivative(const agx_instr *I, struct a9_packed *p)
    struct agx3_operand op = plain(I, x);
    op.cache = !x.discard;
 
-   emit(I, p, AGX_APPLE9_ENC_DERIVATIVE,
+   emit(I, p, AGX3_ENC_DERIVATIVE,
         I->op == AGX_OPCODE_DFDY ? agx3_pack_dfdy : agx3_pack_dfdx,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
@@ -1065,8 +1054,7 @@ pack_minmax(const agx_instr *I, agx3_pack_fn pack, struct a9_packed *p)
    uint64_t (*encode)(struct agx3_operand) =
       floating ? agx3_encode_fsrc : agx3_encode_isrc;
 
-   emit(I, p, half ? AGX_APPLE9_ENC_HALF_MINMAX : AGX_APPLE9_ENC_MINMAX_COMPACT,
-        pack,
+   emit(I, p, half ? AGX3_ENC_HALF_MINMAX : AGX3_ENC_MINMAX_COMPACT, pack,
         (struct agx3_fields){
            .dest = agx3_encode_dst(plain(I, I->dest[0])),
            .src = {encode(x), encode(y)},
@@ -1145,12 +1133,11 @@ pack_select(const agx_instr *I, struct a9_packed *p)
    };
 
    if (half)
-      emit(I, p, AGX_APPLE9_ENC_HALF_COMPARE_SELECT, agx3_pack_fcmpsel, f);
+      emit(I, p, AGX3_ENC_HALF_COMPARE_SELECT, agx3_pack_fcmpsel, f);
    else if (s[0].abs || s[1].abs)
-      emit(I, p, AGX_APPLE9_ENC_SELECT_MODIFIER_EXTENDED, agx3_pack_fcmpsel_mod,
-           f);
+      emit(I, p, AGX3_ENC_SELECT_MODIFIER_EXTENDED, agx3_pack_fcmpsel_mod, f);
    else
-      emit(I, p, AGX_APPLE9_ENC_SELECT_GPR_WIDE,
+      emit(I, p, AGX3_ENC_SELECT_GPR_WIDE,
            floating ? agx3_pack_fcmpsel : agx3_pack_icmpsel, f);
 }
 
@@ -1188,7 +1175,7 @@ pack_logic(const agx_instr *I, struct a9_packed *p)
          a = b;
 
       if (is_uniform(a) && !to_export && !I->wait && I->dest[0].value < 128) {
-         emit(I, p, AGX_APPLE9_ENC_UNIFORM_MOVE, agx3_pack_mov_uniform,
+         emit(I, p, AGX3_ENC_UNIFORM_MOVE, agx3_pack_mov_uniform,
               (struct agx3_fields){
                  .dest = agx3_encode_dst(plain(I, I->dest[0])),
                  .src = {agx3_encode_uniform(plain(I, a))},
@@ -1221,10 +1208,10 @@ pack_logic(const agx_instr *I, struct a9_packed *p)
    if (to_export) {
       f.dest = agx3_encode_export(plain(I, I->dest[0]));
       f.slot = completion_slot(I);
-      emit(I, p, AGX_APPLE9_ENC_LOGIC_EXPORT, agx3_pack_bitop_export, f);
+      emit(I, p, AGX3_ENC_LOGIC_EXPORT, agx3_pack_bitop_export, f);
    } else {
       f.dest = agx3_encode_dst(plain(I, I->dest[0]));
-      emit(I, p, AGX_APPLE9_ENC_LOGIC_EXTENDED, agx3_pack_bitop, f);
+      emit(I, p, AGX3_ENC_LOGIC_EXTENDED, agx3_pack_bitop, f);
    }
 }
 
@@ -1247,9 +1234,7 @@ pack_publication_pair(const agx_instr *I, struct a9_packed *p)
       x.lu = !x.cache;
 
       dest.value = I->dest[0].value + 2 * c;
-      emit(I, p,
-           split ? AGX_APPLE9_ENC_PUBLICATION_SPLIT
-                 : AGX_APPLE9_ENC_PUBLICATION_PAIR,
+      emit(I, p, split ? AGX3_ENC_PUBLICATION_SPLIT : AGX3_ENC_PUBLICATION_PAIR,
            agx3_pack_bitop_export,
            (struct agx3_fields){
               .dest = agx3_encode_export(dest),
@@ -1275,9 +1260,9 @@ pack_mov_imm(const agx_instr *I, struct a9_packed *p)
    };
 
    if (dst.value < 32 && I->imm <= 0x7f)
-      emit(I, p, AGX_APPLE9_ENC_MOV_IMM_COMPACT, agx3_pack_mov_imm, f);
+      emit(I, p, AGX3_ENC_MOV_IMM_COMPACT, agx3_pack_mov_imm, f);
    else
-      emit(I, p, AGX_APPLE9_ENC_MOV_IMM32, agx3_pack_mov_imm32, f);
+      emit(I, p, AGX3_ENC_MOV_IMM32, agx3_pack_mov_imm32, f);
 }
 
 /* System registers. 16-bit reads are followed by an in-place zero extend */
@@ -1365,18 +1350,18 @@ pack_get_sr(const agx_instr *I, struct a9_packed *p)
    };
 
    if (sr.zext16) {
-      emit(I, p, AGX_APPLE9_ENC_GET_SR_ZEXT16, agx3_pack_get_sr16, f);
-      emit(I, p, AGX_APPLE9_ENC_GET_SR_ZEXT16, agx3_pack_zext16,
+      emit(I, p, AGX3_ENC_GET_SR_ZEXT16, agx3_pack_get_sr16, f);
+      emit(I, p, AGX3_ENC_GET_SR_ZEXT16, agx3_pack_zext16,
            (struct agx3_fields){.dest = f.dest});
       return;
    }
 
    /* Coverage, vertex and instance IDs are asynchronous, in one layout */
    emit(I, p,
-        I->sr == AGX_SR_COVERAGE_MASK ? AGX_APPLE9_ENC_GET_COVERAGE
+        I->sr == AGX_SR_COVERAGE_MASK ? AGX3_ENC_GET_COVERAGE
         : I->sr == AGX_SR_VERTEX_ID || I->sr == AGX_SR_INSTANCE_ID
-           ? AGX_APPLE9_ENC_GET_DRAW_ID
-           : AGX_APPLE9_ENC_GET_SR,
+           ? AGX3_ENC_GET_DRAW_ID
+           : AGX3_ENC_GET_SR,
         agx3_pack_get_sr, f);
 }
 
@@ -1460,9 +1445,9 @@ pack_device_load(const agx_instr *I, const struct a9_state *st,
    pack_assert(I, offset >= INT16_MIN && offset <= INT16_MAX);
 
    emit(I, p,
-        pointer    ? AGX_APPLE9_ENC_DEVICE_LOAD_POINTER
-        : indirect ? AGX_APPLE9_ENC_DEVICE_LOAD_INDIRECT
-                   : AGX_APPLE9_ENC_DEVICE_LOAD,
+        pointer    ? AGX3_ENC_DEVICE_LOAD_POINTER
+        : indirect ? AGX3_ENC_DEVICE_LOAD_INDIRECT
+                   : AGX3_ENC_DEVICE_LOAD,
         agx3_pack_device_load,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
@@ -1488,8 +1473,7 @@ pack_device_store(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->byte_offset >= INT16_MIN && I->byte_offset <= INT16_MAX);
 
    emit(I, p,
-        is_gpr(base) ? AGX_APPLE9_ENC_DEVICE_STORE_INDIRECT
-                     : AGX_APPLE9_ENC_DEVICE_STORE,
+        is_gpr(base) ? AGX3_ENC_DEVICE_STORE_INDIRECT : AGX3_ENC_DEVICE_STORE,
         agx3_pack_device_store,
         (struct agx3_fields){
            .src = {agx3_encode_reg(plain(I, value)),
@@ -1551,10 +1535,10 @@ pack_device_atomic(const agx_instr *I, struct a9_packed *p)
    struct agx3_operand b = memory_base(I, base, false);
 
    emit(I, p,
-        returning ? (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT_RETURN
-                              : AGX_APPLE9_ENC_DEVICE_ATOMIC_RETURN)
-                  : (indirect ? AGX_APPLE9_ENC_DEVICE_ATOMIC_INDIRECT
-                              : AGX_APPLE9_ENC_DEVICE_ATOMIC),
+        returning ? (indirect ? AGX3_ENC_DEVICE_ATOMIC_INDIRECT_RETURN
+                              : AGX3_ENC_DEVICE_ATOMIC_RETURN)
+                  : (indirect ? AGX3_ENC_DEVICE_ATOMIC_INDIRECT
+                              : AGX3_ENC_DEVICE_ATOMIC),
         indirect ? agx3_pack_atomic_indirect : agx3_pack_atomic,
         (struct agx3_fields){
            .src = {agx3_encode_reg(plain(I, value)),
@@ -1614,11 +1598,11 @@ pack_local_load_store(const agx_instr *I, struct a9_packed *p)
 
    if (load) {
       f.dest = agx3_encode_reg(plain(I, data));
-      emit(I, p, AGX_APPLE9_ENC_SHARED_LOAD, agx3_pack_local_load, f);
+      emit(I, p, AGX3_ENC_SHARED_LOAD, agx3_pack_local_load, f);
    } else {
       f.src[1] = f.src[0];
       f.src[0] = agx3_encode_reg(plain(I, data));
-      emit(I, p, AGX_APPLE9_ENC_SHARED_STORE, agx3_pack_local_store, f);
+      emit(I, p, AGX3_ENC_SHARED_STORE, agx3_pack_local_store, f);
    }
 }
 
@@ -1634,7 +1618,7 @@ pack_local_atomic(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->dest[0].value < 128 && I->src[2].value < 128 &&
                      data.value + (cmpxchg ? 2 : 0) < 128);
 
-   emit(I, p, AGX_APPLE9_ENC_SHARED_ATOMIC, agx3_pack_local_atomic,
+   emit(I, p, AGX3_ENC_SHARED_ATOMIC, agx3_pack_local_atomic,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
            .src = {agx3_encode_reg(data),
@@ -1652,13 +1636,13 @@ pack_private(const agx_instr *I, struct a9_packed *p)
                      (I->nr_srcs < 2 || I->src[1].value < 128));
 
    if (I->op == AGX_OPCODE_STACK_LOAD) {
-      emit(I, p, AGX_APPLE9_ENC_PRIVATE_LOAD, agx3_pack_stack_load_indexed,
+      emit(I, p, AGX3_ENC_PRIVATE_LOAD, agx3_pack_stack_load_indexed,
            (struct agx3_fields){
               .dest = agx3_encode_reg(plain(I, I->dest[0])),
               .src = {agx3_encode_reg(plain(I, I->src[0]))},
            });
    } else {
-      emit(I, p, AGX_APPLE9_ENC_PRIVATE_STORE, agx3_pack_stack_store_indexed,
+      emit(I, p, AGX3_ENC_PRIVATE_STORE, agx3_pack_stack_store_indexed,
            (struct agx3_fields){
               .src = {agx3_encode_reg(plain(I, I->src[0])),
                       agx3_encode_reg(plain(I, I->src[1]))},
@@ -1684,16 +1668,16 @@ pack_stack(const agx_instr *I, struct a9_packed *p)
    unsigned word = offset.value / 4;
 
    if (load) {
-      pack_assert(I, word < AGX_APPLE9_FILL_WORD_COUNT);
-      emit(I, p, AGX_APPLE9_ENC_SPILL_LOAD, agx3_pack_stack_load,
+      pack_assert(I, word < AGX3_FILL_WORD_COUNT);
+      emit(I, p, AGX3_ENC_SPILL_LOAD, agx3_pack_stack_load,
            (struct agx3_fields){
               .dest = agx3_encode_dst(plain(I, I->dest[0])),
               .word = word,
               .slot = completion_slot(I),
            });
    } else {
-      pack_assert(I, word < AGX_APPLE9_SAVE_WORD_COUNT);
-      emit(I, p, AGX_APPLE9_ENC_SPILL_STORE, agx3_pack_stack_store,
+      pack_assert(I, word < AGX3_SAVE_WORD_COUNT);
+      emit(I, p, AGX3_ENC_SPILL_STORE, agx3_pack_stack_store,
            (struct agx3_fields){
               .src = {agx3_encode_reg(plain(I, I->src[0]))},
               .word = word,
@@ -1708,7 +1692,7 @@ pack_uniform_store(const agx_instr *I, struct a9_packed *p)
 {
    agx_index value = I->src[0], index = I->src[1];
    pack_assert(I, value.size == AGX_SIZE_32 && agx_channels(value) == 1);
-   pack_assert(I, is_imm(index) && index.value < AGX_APPLE9_UNIFORM_COUNT * 2);
+   pack_assert(I, is_imm(index) && index.value < AGX3_UNIFORM_COUNT * 2);
 
    struct agx3_operand dest = {
       .kind = AGX3_KIND_UNIFORM,
@@ -1716,7 +1700,7 @@ pack_uniform_store(const agx_instr *I, struct a9_packed *p)
       .size32 = true,
    };
 
-   emit(I, p, AGX_APPLE9_ENC_STORE_UNIFORM, agx3_pack_iadd,
+   emit(I, p, AGX3_ENC_STORE_UNIFORM, agx3_pack_iadd,
         (struct agx3_fields){
            .dest = agx3_encode_idst(dest),
            .src = {agx3_encode_isrc_desc(src(I, value)),
@@ -1741,7 +1725,7 @@ pack_subgroup(const agx_instr *I, struct a9_packed *p)
    case AGX_OPCODE_SIMD_PREFIX:
       /* Exclusive scan. The source stays live. */
       pack_assert(I, I->simd_op == AGX_SIMD_OP_IADD);
-      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_SCAN_IADD, agx3_pack_simd_prefix_iadd,
+      emit(I, p, AGX3_ENC_SUBGROUP_SCAN_IADD, agx3_pack_simd_prefix_iadd,
            (struct agx3_fields){
               .dest = subgroup_dest(I),
               .src = {agx3_encode_reg(plain(I, x))},
@@ -1761,7 +1745,7 @@ pack_subgroup(const agx_instr *I, struct a9_packed *p)
       s.cache = x.cache;
       s.lu = x.discard;
 
-      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_REDUCE_UMAX,
+      emit(I, p, AGX3_ENC_SUBGROUP_REDUCE_UMAX,
            wide ? agx3_pack_simd_reduce_umax32 : agx3_pack_simd_reduce_umax,
            (struct agx3_fields){
               .dest = wide ? agx3_encode_reg_half(d) : agx3_encode_half(d),
@@ -1777,7 +1761,7 @@ pack_subgroup(const agx_instr *I, struct a9_packed *p)
       pack_assert(I, !(lane.value & 1));
       l.size32 = true;
 
-      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_BROADCAST, agx3_pack_shuffle,
+      emit(I, p, AGX3_ENC_SUBGROUP_BROADCAST, agx3_pack_shuffle,
            (struct agx3_fields){
               .dest = subgroup_dest(I),
               .src = {agx3_encode_reg(plain(I, x)), agx3_encode_reg(l)},
@@ -1787,7 +1771,7 @@ pack_subgroup(const agx_instr *I, struct a9_packed *p)
 
    case AGX_OPCODE_BALLOT:
       /* Mask of active lanes with a nonzero source. Destroys the source. */
-      emit(I, p, AGX_APPLE9_ENC_SUBGROUP_BALLOT, agx3_pack_ballot,
+      emit(I, p, AGX3_ENC_SUBGROUP_BALLOT, agx3_pack_ballot,
            (struct agx3_fields){
               .dest = subgroup_dest(I),
               .src = {agx3_encode_reg(plain(I, x))},
@@ -1897,13 +1881,13 @@ pack_compare_pred(const agx_instr *I, struct a9_packed *p)
 
    if (extended) {
       emit(I, p,
-           half ? AGX_APPLE9_ENC_HALF_PREDICATE_EXTENDED
-                : AGX_APPLE9_ENC_PREDICATE_COMPARE_EXTENDED,
+           half ? AGX3_ENC_HALF_PREDICATE_EXTENDED
+                : AGX3_ENC_PREDICATE_COMPARE_EXTENDED,
            floating ? agx3_pack_fcmp_pred_ext : agx3_pack_icmp_pred_ext, f);
    } else {
       emit(I, p,
-           half ? AGX_APPLE9_ENC_HALF_PREDICATE_SHORT
-                : AGX_APPLE9_ENC_PREDICATE_COMPARE_SHORT,
+           half ? AGX3_ENC_HALF_PREDICATE_SHORT
+                : AGX3_ENC_PREDICATE_COMPARE_SHORT,
            floating ? agx3_pack_fcmp_pred : agx3_pack_icmp_pred, f);
    }
 }
@@ -1915,10 +1899,10 @@ static void
 pack_jump(const agx_instr *I, struct a9_packed *p)
 {
    if (I->op == AGX_OPCODE_JMP_EXEC_ANY)
-      emit(I, p, AGX_APPLE9_ENC_JMP_EXEC_ANY, agx3_pack_jmp_exec_any,
+      emit(I, p, AGX3_ENC_JMP_EXEC_ANY, agx3_pack_jmp_exec_any,
            (struct agx3_fields){0});
    else
-      emit(I, p, AGX_APPLE9_ENC_JMP_EXEC_NONE, agx3_pack_jmp_exec_none,
+      emit(I, p, AGX3_ENC_JMP_EXEC_NONE, agx3_pack_jmp_exec_none,
            (struct agx3_fields){0});
 }
 
@@ -1928,7 +1912,7 @@ pack_control(const agx_instr *I, struct a9_packed *p)
    switch (I->op) {
    case AGX_OPCODE_IF_PRED:
       /* Predicates 6 and 7 are the constants true and false */
-      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_PUSH, agx3_pack_if_pred,
+      emit(I, p, AGX3_ENC_EXEC_MASK_PUSH, agx3_pack_if_pred,
            (struct agx3_fields){
               .pred = I->pred,
               .invert = I->invert_cond,
@@ -1936,25 +1920,25 @@ pack_control(const agx_instr *I, struct a9_packed *p)
       return;
 
    case AGX_OPCODE_ELSE_EXEC:
-      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_ELSE, agx3_pack_else,
+      emit(I, p, AGX3_ENC_EXEC_MASK_ELSE, agx3_pack_else,
            (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_POP_EXEC:
       pack_assert(I, I->nest == 1);
-      emit(I, p, AGX_APPLE9_ENC_EXEC_MASK_POP, agx3_pack_pop_exec,
+      emit(I, p, AGX3_ENC_EXEC_MASK_POP, agx3_pack_pop_exec,
            (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_BEGIN_LOOP:
-      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_PUSH, agx3_pack_begin_loop,
+      emit(I, p, AGX3_ENC_LOOP_MASK_PUSH, agx3_pack_begin_loop,
            (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_WHILE_PRED:
       /* Metal's loops set bit 29 */
       pack_assert(I, I->pred < 6);
-      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_UPDATE, agx3_pack_while_pred,
+      emit(I, p, AGX3_ENC_LOOP_MASK_UPDATE, agx3_pack_while_pred,
            (struct agx3_fields){
               .pred = I->pred,
               .bit29 = !I->invert_cond,
@@ -1962,7 +1946,7 @@ pack_control(const agx_instr *I, struct a9_packed *p)
       return;
 
    case AGX_OPCODE_END_LOOP:
-      emit(I, p, AGX_APPLE9_ENC_LOOP_MASK_POP, agx3_pack_end_loop,
+      emit(I, p, AGX3_ENC_LOOP_MASK_POP, agx3_pack_end_loop,
            (struct agx3_fields){0});
       return;
 
@@ -1970,7 +1954,7 @@ pack_control(const agx_instr *I, struct a9_packed *p)
       /* A loop break unwinds two scopes plus one per enclosing if */
       pack_assert(I, I->nest >= 2);
       pack_assert(I, I->pred >= 1 && I->pred < 6);
-      emit(I, p, AGX_APPLE9_ENC_BREAK_MASK_UNWIND, agx3_pack_break_pred,
+      emit(I, p, AGX3_ENC_BREAK_MASK_UNWIND, agx3_pack_break_pred,
            (struct agx3_fields){
               .nest = I->nest,
               .pred = I->pred,
@@ -1987,24 +1971,24 @@ pack_sync(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
    case AGX_OPCODE_THREADGROUP_BARRIER:
-      emit(I, p, AGX_APPLE9_ENC_WORKGROUP_BARRIER,
-           agx3_pack_threadgroup_barrier, (struct agx3_fields){0});
+      emit(I, p, AGX3_ENC_WORKGROUP_BARRIER, agx3_pack_threadgroup_barrier,
+           (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_MEMORY_BARRIER:
    case AGX_OPCODE_MEMORY_BARRIER_ACQUIRE:
       /* Acquire only differs in what it waits for beforehand */
-      emit(I, p, AGX_APPLE9_ENC_DEVICE_FENCE, agx3_pack_memory_barrier,
+      emit(I, p, AGX3_ENC_DEVICE_FENCE, agx3_pack_memory_barrier,
            (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_RASTER_ORDER_FENCE:
-      emit(I, p, AGX_APPLE9_ENC_DEVICE_FENCE, agx3_pack_raster_order_fence,
+      emit(I, p, AGX3_ENC_DEVICE_FENCE, agx3_pack_raster_order_fence,
            (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_STOP:
-      emit(I, p, AGX_APPLE9_ENC_HALT, agx3_pack_stop, (struct agx3_fields){0});
+      emit(I, p, AGX3_ENC_HALT, agx3_pack_stop, (struct agx3_fields){0});
       return;
 
    case AGX_OPCODE_WAIT:
@@ -2012,7 +1996,7 @@ pack_sync(const agx_instr *I, struct a9_packed *p)
       unsigned mask =
          I->op == AGX_OPCODE_WAIT ? BITFIELD_BIT(I->scoreboard) : I->imm;
       pack_assert(I, mask != 0);
-      emit(I, p, AGX_APPLE9_ENC_WAIT, agx3_pack_wait,
+      emit(I, p, AGX3_ENC_WAIT, agx3_pack_wait,
            (struct agx3_fields){.slots = mask});
       return;
    }
@@ -2037,8 +2021,7 @@ pack_pack_format(const agx_instr *I, struct a9_packed *p)
    for (unsigned s = 0; s < (rgba ? 4 : 3); ++s)
       f.src[s] = agx3_encode_reg(src(I, I->src[s]));
 
-   emit(I, p,
-        rgba ? AGX_APPLE9_ENC_PACK_FORMAT : AGX_APPLE9_ENC_PACK_FORMAT_RGB,
+   emit(I, p, rgba ? AGX3_ENC_PACK_FORMAT : AGX3_ENC_PACK_FORMAT_RGB,
         rgba ? agx3_pack_pack_rgb10a2 : agx3_pack_pack_rg11b10f, f);
 }
 
@@ -2275,7 +2258,7 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
                      I->lod_mode == AGX_LOD_MODE_AUTO_LOD);
 
    pack_assert(I, I->dest[0].value + 2 * comps <=
-                     (register_texture ? AGX_APPLE9_GPR_COUNT * 2 : 128));
+                     (register_texture ? AGX3_GPR_COUNT * 2 : 128));
 
    unsigned coord = params.value / 2;
    pack_assert(I, coord <= (t.gradient ? 32 - t.words : t.lod ? 28 : 30));
@@ -2316,18 +2299,18 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
 
    if (!register_texture) {
       emit(I, p,
-           t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD
-           : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD
-                      : AGX_APPLE9_ENC_TEXTURE_SAMPLE,
+           t.gradient ? AGX3_ENC_TEXTURE_GRAD
+           : t.lod    ? AGX3_ENC_TEXTURE_LOD
+                      : AGX3_ENC_TEXTURE_SAMPLE,
            agx3_pack_texture, f);
       return;
    }
 
    /* The 20-byte forms read the texture, and the sampler, from registers */
    emit(I, p,
-        t.gradient ? AGX_APPLE9_ENC_TEXTURE_GRAD_INDEXED
-        : t.lod    ? AGX_APPLE9_ENC_TEXTURE_LOD_INDEXED
-                   : AGX_APPLE9_ENC_TEXTURE_SAMPLE_INDEXED,
+        t.gradient ? AGX3_ENC_TEXTURE_GRAD_INDEXED
+        : t.lod    ? AGX3_ENC_TEXTURE_LOD_INDEXED
+                   : AGX3_ENC_TEXTURE_SAMPLE_INDEXED,
         register_sampler ? agx3_pack_texture_reg2 : agx3_pack_texture_reg, f);
 }
 
@@ -2353,7 +2336,7 @@ pack_unpack_norm(const agx_instr *I, struct a9_packed *p)
    d.size32 = false;
    d.size64 = true;
 
-   emit(I, p, AGX_APPLE9_ENC_UNPACK_NORM, agx3_pack_unpack_norm,
+   emit(I, p, AGX3_ENC_UNPACK_NORM, agx3_pack_unpack_norm,
         (struct agx3_fields){
            .dest = agx3_encode_reg64(d),
            .src = {agx3_encode_reg(src(I, I->src[0]))},
@@ -2382,10 +2365,9 @@ pack_pack_unorm(const agx_instr *I, struct a9_packed *p)
 
       if (bytes) {
          f.hi = pair;
-         emit(I, p, AGX_APPLE9_ENC_PACK_UNORM_4X8, agx3_pack_pack_unorm_4x8, f);
+         emit(I, p, AGX3_ENC_PACK_UNORM_4X8, agx3_pack_pack_unorm_4x8, f);
       } else {
-         emit(I, p, AGX_APPLE9_ENC_PACK_UNORM_2X16, agx3_pack_pack_unorm_2x16,
-              f);
+         emit(I, p, AGX3_ENC_PACK_UNORM_2X16, agx3_pack_pack_unorm_2x16, f);
       }
    }
 }
@@ -2397,7 +2379,7 @@ pack_cube(const agx_instr *I, struct a9_packed *p)
    pack_assert(I, I->imm <= 2);
    pack_assert(I, agx_channels(I->dest[0]) == (I->imm == 0 ? 2 : 1));
 
-   emit(I, p, AGX_APPLE9_ENC_CUBE, agx3_pack_cube,
+   emit(I, p, AGX3_ENC_CUBE, agx3_pack_cube,
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
            .src = {agx3_encode_reg(src(I, I->src[0])),
@@ -2422,13 +2404,13 @@ pack_image_write(const agx_instr *I, struct a9_packed *p)
    descriptor.size32 = false;
    descriptor.size64 = true;
 
-   emit(I, p, AGX_APPLE9_ENC_IMAGE_WRITE, agx3_pack_image_write,
+   emit(I, p, AGX3_ENC_IMAGE_WRITE, agx3_pack_image_write,
         (struct agx3_fields){
            .src = {agx3_encode_export(plain(I, params)),
                    agx3_encode_reg64(descriptor)},
            .floating = !I->integer,
         });
-   emit(I, p, AGX_APPLE9_ENC_IMAGE_WRITE, agx3_pack_join_export,
+   emit(I, p, AGX3_ENC_IMAGE_WRITE, agx3_pack_join_export,
         (struct agx3_fields){0});
 }
 
@@ -2439,9 +2421,8 @@ pack_block_image_store(const agx_instr *I, struct a9_packed *p)
    agx_index params = I->src[0];
    bool ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY;
    bool array = I->dim == AGX_DIM_2D_ARRAY || I->dim == AGX_DIM_2D_MS_ARRAY;
-   enum agx_apple9_encoding form =
-      (array || ms) ? AGX_APPLE9_ENC_BLOCK_IMAGE_STORE_EXTENDED
-                    : AGX_APPLE9_ENC_BLOCK_IMAGE_STORE;
+   enum agx3_encoding form = (array || ms) ? AGX3_ENC_BLOCK_IMAGE_STORE_EXTENDED
+                                           : AGX3_ENC_BLOCK_IMAGE_STORE;
 
    pack_assert(I, is_export(params) && agx_channels(params) == 4 &&
                      params.value <= 24 && !(params.value & 7));
@@ -2465,7 +2446,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
    switch (I->op) {
    case AGX_OPCODE_WRITE_COVERAGE:
       pack_assert(I, I->src[0].value < 128);
-      emit(I, p, AGX_APPLE9_ENC_COVERAGE, agx3_pack_write_coverage,
+      emit(I, p, AGX3_ENC_COVERAGE, agx3_pack_write_coverage,
            (struct agx3_fields){
               .src = {agx3_encode_export(plain(I, I->src[0]))},
            });
@@ -2482,7 +2463,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       pack_assert(
          I, I->zs >= 1 && I->zs <= 3 && !(zs.value & 3) && zs.value < 126);
 
-      emit(I, p, AGX_APPLE9_ENC_DEPTH_STORE, agx3_pack_zs_store,
+      emit(I, p, AGX3_ENC_DEPTH_STORE, agx3_pack_zs_store,
            (struct agx3_fields){
               .src = {agx3_encode_export(plain(I, zs))},
               .mode = modes[I->zs],
@@ -2500,7 +2481,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
                            : (c == 0x300 || (c & ~0xfcull) == 0 ||
                               (c & ~0xfcull) == 0x200 || c == 1));
 
-      emit(I, p, begin ? AGX_APPLE9_ENC_TILE_ACCESS : AGX_APPLE9_ENC_TILE_FENCE,
+      emit(I, p, begin ? AGX3_ENC_TILE_ACCESS : AGX3_ENC_TILE_FENCE,
            begin ? agx3_pack_begin_tile : agx3_pack_end_tile,
            (struct agx3_fields){.control = c});
       return;
@@ -2530,9 +2511,7 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       if (!load) {
          f.src[0] = value;
          f.src[1] = dynamic_mask;
-         emit(I, p,
-              dynamic ? AGX_APPLE9_ENC_TILE_STORE_MASK
-                      : AGX_APPLE9_ENC_TILE_STORE,
+         emit(I, p, dynamic ? AGX3_ENC_TILE_STORE_MASK : AGX3_ENC_TILE_STORE,
               dynamic ? agx3_pack_st_tile_mask : agx3_pack_st_tile, f);
          return;
       }
@@ -2543,13 +2522,12 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       if (coords) {
          f.src[0] = agx3_encode_reg(plain(I, I->src[1]));
          f.mask = mask.value;
-         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD_COORDS, agx3_pack_ld_tile_coords,
-              f);
+         emit(I, p, AGX3_ENC_TILE_LOAD_COORDS, agx3_pack_ld_tile_coords, f);
       } else if (dynamic) {
          f.src[0] = dynamic_mask;
-         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD_MASK, agx3_pack_ld_tile_mask, f);
+         emit(I, p, AGX3_ENC_TILE_LOAD_MASK, agx3_pack_ld_tile_mask, f);
       } else {
-         emit(I, p, AGX_APPLE9_ENC_TILE_LOAD, agx3_pack_ld_tile, f);
+         emit(I, p, AGX3_ENC_TILE_LOAD, agx3_pack_ld_tile, f);
       }
       return;
    }
@@ -2567,7 +2545,7 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
    case AGX_OPCODE_ST_VARY:
       /* Commits an export register to a varying slot */
       pack_assert(I, is_imm(I->src[0]) && I->src[0].value < 138);
-      emit(I, p, AGX_APPLE9_ENC_VARY_STORE, agx3_pack_st_vary,
+      emit(I, p, AGX3_ENC_VARY_STORE, agx3_pack_st_vary,
            (struct agx3_fields){
               .src = {agx3_encode_export(plain(I, I->src[1]))},
               .slot = I->src[0].value,
@@ -2590,9 +2568,9 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
 
       if (coord) {
          f.src[0] = agx3_encode_reg(src(I, I->src[1]));
-         emit(I, p, AGX_APPLE9_ENC_ITER_COORD, agx3_pack_iter_coord, f);
+         emit(I, p, AGX3_ENC_ITER_COORD, agx3_pack_iter_coord, f);
       } else {
-         emit(I, p, AGX_APPLE9_ENC_ITER, agx3_pack_iter, f);
+         emit(I, p, AGX3_ENC_ITER, agx3_pack_iter, f);
       }
       return;
    }
@@ -2602,7 +2580,7 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
       pack_assert(I, is_imm(I->src[0]) && I->channels == 3);
       pack_assert(I, agx_channels(I->dest[0]) == 3);
 
-      emit(I, p, AGX_APPLE9_ENC_ITER_FLAT, agx3_pack_ldcf,
+      emit(I, p, AGX3_ENC_ITER_FLAT, agx3_pack_ldcf,
            (struct agx3_fields){
               .dest = agx3_encode_reg(plain(I, I->dest[0])),
               .cf = I->src[0].value,
@@ -2616,7 +2594,7 @@ pack_varying(const agx_instr *I, struct a9_packed *p)
                     I->interpolation == AGX_INTERPOLATION_SAMPLE_REGISTER;
       pack_assert(I, sample || I->interpolation == AGX_INTERPOLATION_CENTROID);
 
-      emit(I, p, AGX_APPLE9_ENC_INTERPOLATION_POSITION,
+      emit(I, p, AGX3_ENC_INTERPOLATION_POSITION,
            agx3_pack_interpolation_position,
            (struct agx3_fields){
               .dest = agx3_encode_reg(plain(I, I->dest[0])),
@@ -2881,11 +2859,11 @@ is_empty(const agx_instr *I)
    return I->op == AGX_OPCODE_EXPORT;
 }
 
-enum agx_apple9_encoding
-agx_apple9_encoding_for(const agx_instr *I)
+enum agx3_encoding
+agx3_encoding_for(const agx_instr *I)
 {
    struct a9_state st = {0};
-   struct a9_packed p = {.form = AGX_APPLE9_ENC_PSEUDO, .form_only = true};
+   struct a9_packed p = {.form = AGX3_ENC_PSEUDO, .form_only = true};
    pack_body(I, &st, &p);
    return p.form;
 }
@@ -2901,10 +2879,10 @@ agx3_pack_instr(const agx_instr *I, bool load_follows,
       .load_follows = load_follows,
       .alu_reads_result = alu_reads_result,
    };
-   struct a9_packed p = {.form = AGX_APPLE9_ENC_PSEUDO};
+   struct a9_packed p = {.form = AGX3_ENC_PSEUDO};
 
    pack_body(I, &st, &p);
-   pack_assert(I, p.form != AGX_APPLE9_ENC_PSEUDO && "no Apple9 encoding");
+   pack_assert(I, p.form != AGX3_ENC_PSEUDO && "no Apple9 encoding");
    memcpy(bytes, p.bytes, p.length);
    return p.length;
 }

@@ -7,7 +7,7 @@
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
 #include "util/set.h"
-#include "agx_apple9_machine.h"
+#include "agx3_machine.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
 
@@ -49,7 +49,7 @@ fp32_result_is_canonical(nir_scalar s, unsigned depth,
       if (intr->intrinsic == nir_intrinsic_load_preamble &&
           nir_intrinsic_preamble_class(intr) == nir_preamble_class_general) {
          unsigned word = nir_intrinsic_base(intr) + s.comp;
-         return word < AGX_APPLE9_UNIFORM_COUNT &&
+         return word < AGX3_UNIFORM_COUNT &&
                 BITSET_TEST(canonical_uniforms, word);
       }
    }
@@ -152,7 +152,7 @@ fp32_minmax_has_normal_bound(nir_scalar s, bool lower,
           nir_intrinsic_preamble_class(intr) != nir_preamble_class_general)
          return false;
       unsigned word = nir_intrinsic_base(intr) + s.comp;
-      if (word >= AGX_APPLE9_UNIFORM_COUNT)
+      if (word >= AGX3_UNIFORM_COUNT)
          return false;
       value = uniform_constants[word];
    } else {
@@ -333,8 +333,8 @@ agx_nir_flush_denorms(nir_shader *shader)
    struct set *flush = _mesa_pointer_set_create(NULL);
    if (nir_is_denorm_flush_to_zero(shader->info.float_controls_execution_mode,
                                    32)) {
-      BITSET_DECLARE(canonical_uniforms, AGX_APPLE9_UNIFORM_COUNT) = {0};
-      uint32_t uniform_constants[AGX_APPLE9_UNIFORM_COUNT] = {0};
+      BITSET_DECLARE(canonical_uniforms, AGX3_UNIFORM_COUNT) = {0};
+      uint32_t uniform_constants[AGX3_UNIFORM_COUNT] = {0};
       nir_function *preamble = nir_shader_get_entrypoint(shader)->preamble;
       if (preamble) {
          /* Extraction replaces SSA edges by uniform transfers. Retain the
@@ -355,10 +355,10 @@ agx_nir_flush_denorms(nir_shader *shader)
                for (unsigned c = 0; c < intr->src[0].ssa->num_components; ++c) {
                   nir_scalar value =
                      nir_scalar_chase_movs(nir_get_scalar(intr->src[0].ssa, c));
-                  if (base + c < AGX_APPLE9_UNIFORM_COUNT &&
+                  if (base + c < AGX3_UNIFORM_COUNT &&
                       nir_scalar_is_const(value))
                      uniform_constants[base + c] = nir_scalar_as_uint(value);
-                  if (base + c < AGX_APPLE9_UNIFORM_COUNT &&
+                  if (base + c < AGX3_UNIFORM_COUNT &&
                       fp32_result_is_canonical(
                          nir_get_scalar(intr->src[0].ssa, c), 0, NULL))
                      BITSET_SET(canonical_uniforms, base + c);
