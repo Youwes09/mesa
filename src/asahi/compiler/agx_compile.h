@@ -664,6 +664,11 @@ struct agx_isa_target {
     */
    bool avoid_export_targets;
 
+   /* Device loads return raw integers, with no format conversion, and load
+    * narrow vectors one component at a time.
+    */
+   bool raw_loads;
+
    /* Packs the shader into machine code */
    void (*pack)(struct agx_context *ctx, struct util_dynarray *emission);
 

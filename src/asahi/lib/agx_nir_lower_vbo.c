@@ -147,9 +147,9 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned interchange_align = util_format_get_blocksize(interchange_format);
    unsigned interchange_comps = util_format_get_nr_components(attrib.format);
 
-   /* Apple9 loads only integers, so load the raw bits and convert below */
-   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
-   bool raw = apple9 && !util_format_is_pure_uint(interchange_format);
+   /* Without format conversion, load the raw bits and convert below */
+   bool raw_loads = agx_nir_target(b->shader)->raw_loads;
+   bool raw = raw_loads && !util_format_is_pure_uint(interchange_format);
    if (raw) {
       interchange_format = interchange_align == 4   ? PIPE_FORMAT_R32_UINT
                            : interchange_align == 2 ? PIPE_FORMAT_R16_UINT
@@ -221,8 +221,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
     * an instruction. Shifts are only available for regular interchange formats,
     * i.e. the set of formats that support masking.
     */
-   /* Apple9 loads narrow components one at a time, by element index */
-   bool scalarize = apple9 && interchange_align < 4 && interchange_comps > 1;
+   /* Narrow components then load one at a time, by element index */
+   bool scalarize = raw_loads && interchange_align < 4 && interchange_comps > 1;
 
    if ((stride_el == 2 || stride_el == 4) && !scalarize &&
        ail_isa_format_supports_mask((enum ail_isa_format)interchange_format)) {
