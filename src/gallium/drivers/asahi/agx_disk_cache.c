@@ -95,7 +95,7 @@ read_shader(struct agx_screen *screen, struct blob_reader *blob,
    size_t size = binary->b.info.binary_size;
 
    /* Apple9 links vertex, fragment and rasterization programs from binaries */
-   bool apple9 = agx_is_apple9(&screen->dev);
+   bool launch_programs = agx_has_launch_programs(&screen->dev);
    linked_part |= uncompiled->type == MESA_SHADER_VERTEX ||
                   uncompiled->type == MESA_SHADER_TESS_EVAL ||
                   uncompiled->type == MESA_SHADER_FRAGMENT;
@@ -104,7 +104,7 @@ read_shader(struct agx_screen *screen, struct blob_reader *blob,
       binary->b.binary = malloc(size);
       blob_copy_bytes(blob, binary->b.binary, size);
 
-      if (size && !apple9) {
+      if (size && !launch_programs) {
          binary->bo = agx_bo_create(&screen->dev, size, 0,
                                     AGX_BO_EXEC | AGX_BO_LOW_VA, "Executable");
          memcpy(agx_bo_map(binary->bo), binary->b.binary, size);
@@ -128,7 +128,8 @@ read_shader(struct agx_screen *screen, struct blob_reader *blob,
       binary->pre_gs = read_shader(screen, blob, uncompiled, false, false);
 
       if (blob_read_uint8(blob))
-         binary->gs_copy = read_shader(screen, blob, uncompiled, false, apple9);
+         binary->gs_copy =
+            read_shader(screen, blob, uncompiled, false, launch_programs);
 
       if (blob_read_uint8(blob))
          binary->gs_count = read_shader(screen, blob, uncompiled, false, false);

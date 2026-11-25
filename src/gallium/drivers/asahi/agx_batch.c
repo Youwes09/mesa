@@ -80,7 +80,7 @@ agx_batch_mark_complete(struct agx_batch *batch)
 struct agx_encoder
 agx_encoder_allocate(struct agx_device *dev, bool vdm)
 {
-   unsigned flags = vdm && agx_apple9_direct_render_enabled(dev)
+   unsigned flags = vdm && agx_has_render_context(dev)
                        ? AGX_BO_CONTEXT | AGX_BO_WRITEBACK
                        : 0;
 
@@ -114,12 +114,10 @@ agx_batch_init(struct agx_context *ctx,
 
    agx_bo_reference(screen->rodata);
    agx_pool_init(&batch->pool, dev, "Batch pool", 0, true);
-   agx_pool_init(
-      &batch->pipeline_pool, dev, "Batch low VA pool",
-      AGX_BO_LOW_VA |
-         (agx_apple9_direct_render_enabled(dev) ? AGX_BO_WRITEBACK : 0),
-      true);
-   agx_pool_init(&batch->apple9_context_pool, dev, "Apple9 batch context state",
+   agx_pool_init(&batch->pipeline_pool, dev, "Batch low VA pool",
+                 AGX_BO_LOW_VA | (agx_is_apple9(dev) ? AGX_BO_WRITEBACK : 0),
+                 true);
+   agx_pool_init(&batch->render_context_pool, dev, "Apple9 batch context state",
                  AGX_BO_CONTEXT | AGX_BO_WRITEBACK, false);
 
    /* These allocations can happen only once and will just be zeroed (not freed)
@@ -133,10 +131,10 @@ agx_batch_init(struct agx_context *ctx,
    }
    batch->bo_bytes = 0;
 
-   batch->apple9_render_initialized = false;
+   batch->render_initialized = false;
    batch->attachments_were_valid = 0;
-   batch->apple9_draw_count = 0;
-   batch->apple9_vdm_draws = 0;
+   batch->launch_draw_count = 0;
+   batch->vdm_draws = 0;
    batch->primitive_count = 0;
 
    if (agx_batch_is_compute(batch)) {
@@ -150,7 +148,7 @@ agx_batch_init(struct agx_context *ctx,
    util_dynarray_init(&batch->scissor, ctx);
    util_dynarray_init(&batch->depth_bias, ctx);
    util_dynarray_init(&batch->timestamps, ctx);
-   util_dynarray_init(&batch->apple9_attachments, ctx);
+   util_dynarray_init(&batch->launch_attachments, ctx);
 
    batch->clear = 0;
    batch->draw = 0;
@@ -303,17 +301,17 @@ agx_batch_cleanup(struct agx_context *ctx, struct agx_batch *batch, bool reset)
    agx_bo_unreference(dev, screen->rodata);
    agx_bo_unreference(dev, batch->vdm.bo);
    agx_bo_unreference(dev, batch->cdm.bo);
-   batch->apple9_render_initialized = false;
-   batch->apple9_draw_count = 0;
-   batch->apple9_vdm_draws = 0;
+   batch->render_initialized = false;
+   batch->launch_draw_count = 0;
+   batch->vdm_draws = 0;
    agx_pool_cleanup(&batch->pool);
    agx_pool_cleanup(&batch->pipeline_pool);
-   agx_pool_cleanup(&batch->apple9_context_pool);
+   agx_pool_cleanup(&batch->render_context_pool);
 
    util_dynarray_fini(&batch->scissor);
    util_dynarray_fini(&batch->depth_bias);
    util_dynarray_fini(&batch->timestamps);
-   util_dynarray_fini(&batch->apple9_attachments);
+   util_dynarray_fini(&batch->launch_attachments);
 
    if (!(dev->debug & (AGX_DBG_TRACE | AGX_DBG_SYNC))) {
       agx_batch_print_stats(dev, batch);
@@ -948,18 +946,18 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
    struct util_dynarray cmdbuf = UTIL_DYNARRAY_INIT;
 
    if (compute) {
-      if (batch->apple9_attachments.size) {
+      if (batch->launch_attachments.size) {
          struct drm_asahi_cmd_header attachment_header = {
             .cmd_type = DRM_ASAHI_SET_COMPUTE_ATTACHMENTS,
-            .size = batch->apple9_attachments.size,
+            .size = batch->launch_attachments.size,
             .cdm_barrier = DRM_ASAHI_BARRIER_NONE,
             .vdm_barrier = DRM_ASAHI_BARRIER_NONE,
          };
          util_dynarray_append(&cmdbuf, attachment_header);
          util_dynarray_append_array(
             &cmdbuf, struct drm_asahi_attachment,
-            util_dynarray_begin(&batch->apple9_attachments),
-            util_dynarray_num_elements(&batch->apple9_attachments,
+            util_dynarray_begin(&batch->launch_attachments),
+            util_dynarray_num_elements(&batch->launch_attachments,
                                        struct drm_asahi_attachment));
       }
 
@@ -1010,7 +1008,7 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
        * serialized.
        */
       if (!compute && !batch->tiling_dependency &&
-          agx_apple9_direct_render_enabled(dev) &&
+          agx_has_launch_programs(dev) &&
           (dev->params.features & DRM_ASAHI_FEATURE_FRAGMENT_BARRIER))
          render->flags |= DRM_ASAHI_RENDER_VDM_BARRIER_FRAGMENT;
 

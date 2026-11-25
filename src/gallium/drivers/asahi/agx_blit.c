@@ -539,7 +539,7 @@ agx_blit(struct pipe_context *pipe, const struct pipe_blit_info *info)
    agx_legalize_compression(ctx, agx_resource(info->src.resource),
                             info->src.format);
 
-   bool apple9 = agx_apple9_direct_render_enabled(agx_device(pipe->screen));
+   bool launch_programs = agx_has_launch_programs(agx_device(pipe->screen));
    /* Copy matching depth/stencil planes through integer colour views. These
     * views preserve both the pixel bits and the compression channel class.
     * In particular, compressed MSAA planes cannot use the raw resolve, and
@@ -547,7 +547,7 @@ agx_blit(struct pipe_context *pipe, const struct pipe_blit_info *info)
     * sample compressed planes and resolves by selecting one sample rather
     * than averaging the reinterpreted depth bits.
     */
-   if (apple9 && util_format_is_depth_or_stencil(info->src.format) &&
+   if (launch_programs && util_format_is_depth_or_stencil(info->src.format) &&
        util_format_is_depth_or_stencil(info->dst.format) &&
        !(info->mask & ~PIPE_MASK_ZS) &&
        info->filter == PIPE_TEX_FILTER_NEAREST) {
@@ -592,17 +592,18 @@ agx_blit(struct pipe_context *pipe, const struct pipe_blit_info *info)
          return;
       }
    }
-   if (apple9 && asahi_raw_resolve(pipe, info))
+   if (launch_programs && asahi_raw_resolve(pipe, info))
       return;
 
    /* Raw copies cannot access lossless-compressed pixels. Keep them on the
     * texture/PBE path, including staging transfers used for CPU mapping. */
-   if (apple9 && !agx_resource(info->src.resource)->layout.compressed &&
+   if (launch_programs &&
+       !agx_resource(info->src.resource)->layout.compressed &&
        !agx_resource(info->dst.resource)->layout.compressed &&
        util_try_blit_via_copy_region(pipe, info, false))
       return;
 
-   if (!apple9 && asahi_compute_blit_supported(info)) {
+   if (!launch_programs && asahi_compute_blit_supported(info)) {
       asahi_compute_blit(pipe, info, &ctx->compute_blitter);
       return;
    }
@@ -634,7 +635,7 @@ try_copy_via_blit(struct pipe_context *pctx, struct pipe_resource *dst,
 
    /* TODO: Handle these for rusticl copies */
    if (dst->target != src->target &&
-       !agx_apple9_direct_render_enabled(agx_device(pctx->screen)))
+       !agx_has_launch_programs(agx_device(pctx->screen)))
       return false;
 
    struct pipe_blit_info info = {
@@ -1201,7 +1202,7 @@ agx_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
                          unsigned dstz, struct pipe_resource *src,
                          unsigned src_level, const struct pipe_box *src_box)
 {
-   if (agx_apple9_direct_render_enabled(agx_device(pctx->screen))) {
+   if (agx_has_launch_programs(agx_device(pctx->screen))) {
       if (!src_box->width || !src_box->height || !src_box->depth)
          return;
       bool buffers = src->target == PIPE_BUFFER && dst->target == PIPE_BUFFER;

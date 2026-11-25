@@ -193,6 +193,6 @@ void
 agx_cleanup_streamout(struct pipe_context *pctx)
 {
    struct agx_context *ctx = agx_context(pctx);
-   if (ctx->apple9_primconvert)
-      util_primconvert_destroy(ctx->apple9_primconvert);
+   if (ctx->launch_primconvert)
+      util_primconvert_destroy(ctx->launch_primconvert);
 }

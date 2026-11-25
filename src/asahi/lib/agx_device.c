@@ -763,9 +763,6 @@ agx_open_device(void *memctx, struct agx_device *dev)
       dev->libagx_programs = libagx_g13g;
    }
 
-   /* Apple9 GPUs require their generation-specific graphics path. */
-   dev->apple9_direct_render = agx_is_apple9(dev);
-
    if (agx_has_launch_programs(dev)) {
       simple_mtx_init(&dev->entry_lock, mtx_plain);
       list_inithead(&dev->entry_lru);

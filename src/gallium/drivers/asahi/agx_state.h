@@ -419,7 +419,7 @@ struct agx_batch {
    uint32_t clear, draw, load, resolve, feedback;
    bool initialized;
    /* Apple9: draws emitted into the VDM stream */
-   unsigned apple9_vdm_draws;
+   unsigned vdm_draws;
 
    uint64_t uploaded_clear_color[PIPE_MAX_COLOR_BUFS];
    union pipe_color_union clear_color[PIPE_MAX_COLOR_BUFS];
@@ -483,17 +483,17 @@ struct agx_batch {
    struct agx_encoder cdm;
 
    /* Attachment snapshot and immutable draw allocations live with the batch. */
-   bool apple9_render_initialized;
+   bool render_initialized;
    /* Attachments the batch marked valid when its state was initialized
     * (color targets 0-7, then depth, then separate stencil). A render that
     * is never submitted restores them, see agx_batch_undo_render_writes. */
    uint16_t attachments_were_valid;
-   struct agx_pool apple9_context_pool;
-   unsigned apple9_draw_count;
-   struct agx_draw_record apple9_previous_draw;
+   struct agx_pool render_context_pool;
+   unsigned launch_draw_count;
+   struct agx_draw_record previous_draw_record;
 
    /* Apple9 direct records appended to cdm for this command. */
-   struct util_dynarray apple9_attachments;
+   struct util_dynarray launch_attachments;
 
    /* Scissor and depth-bias descriptors, uploaded at GPU time */
    struct util_dynarray scissor, depth_bias;
@@ -725,12 +725,12 @@ struct agx_context {
    struct pipe_scissor_state scissor[AGX_MAX_VIEWPORTS];
    struct pipe_stencil_ref stencil_ref;
    struct agx_streamout streamout;
-   struct primconvert_context *apple9_primconvert;
+   struct primconvert_context *launch_primconvert;
 
    /* Apple9 in-place decompression: driver-internal stores to this resource
     * use an uncompressed descriptor while the decompress pass is recorded.
     */
-   struct agx_resource *apple9_uncompressed_store;
+   struct agx_resource *uncompressed_store;
    uint16_t sample_mask;
    struct pipe_framebuffer_state framebuffer;
 
@@ -1340,9 +1340,8 @@ agx_texture_buffer_size_el(enum pipe_format format, uint32_t size)
    return MIN2(AGX_TEXTURE_BUFFER_MAX_SIZE, size / blocksize);
 }
 
-void agx_apple9_decompress_inplace(struct agx_context *ctx,
-                                   struct agx_resource *rsrc,
-                                   struct pipe_surface *surf,
-                                   const char *reason);
+void agx_decompress_by_self_blit(struct agx_context *ctx,
+                                 struct agx_resource *rsrc,
+                                 struct pipe_surface *surf, const char *reason);
 void agx_decompress_inplace(struct agx_batch *batch, struct pipe_surface *surf,
                             const char *reason);

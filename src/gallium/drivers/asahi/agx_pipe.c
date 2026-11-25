@@ -174,8 +174,7 @@ static bool
 agx_resource_layout_valid(struct agx_device *dev,
                           const struct agx_resource *rsrc)
 {
-   if (!agx_apple9_direct_render_enabled(dev) ||
-       rsrc->base.target == PIPE_BUFFER)
+   if (!agx_has_usc_descriptors(dev) || rsrc->base.target == PIPE_BUFFER)
       return true;
 
    const struct ail_layout *layout = &rsrc->layout;
@@ -225,8 +224,7 @@ agx_resource_from_handle(struct pipe_screen *pscreen,
     * T8132 Metal also requires 16-byte offsets; pitches above 1 MiB fail to
     * address subsequent rows correctly on both Metal and our native path.
     */
-   if (agx_apple9_direct_render_enabled(dev) &&
-       rsc->modifier == DRM_FORMAT_MOD_LINEAR &&
+   if (agx_has_usc_descriptors(dev) && rsc->modifier == DRM_FORMAT_MOD_LINEAR &&
        templat->target != PIPE_BUFFER &&
        ((whandle->offset & 15) || !whandle->stride ||
         whandle->stride > AGX_USC_MAX_LINEAR_STRIDE)) {
@@ -415,7 +413,7 @@ agx_linear_allowed(const struct agx_resource *pres)
     * could be neither sampled nor reloaded as a render target. Keep arrays
     * tiled there unless linear is explicitly required. */
    if (pres->base.array_size > 1 && !(pres->base.bind & PIPE_BIND_LINEAR) &&
-       agx_apple9_direct_render_enabled(agx_device(pres->base.screen)))
+       agx_has_usc_descriptors(agx_device(pres->base.screen)))
       return false;
 
    switch (pres->base.target) {
@@ -636,7 +634,7 @@ agx_resource_create_with_modifiers(struct pipe_screen *screen,
     * an array/copy buffer and later use the same storage for element indices.
     * Keep buffer resources addressable by the index fetcher from allocation.
     */
-   if (agx_apple9_direct_render_enabled(dev) && templ->target == PIPE_BUFFER)
+   if (agx_has_usc_indices(dev) && templ->target == PIPE_BUFFER)
       create_flags |= AGX_BO_LOW_VA;
 
    /* Default to write-combine resources, but use writeback if that is expected
@@ -980,7 +978,7 @@ agx_alloc_staging(struct pipe_screen *screen, struct agx_resource *rsc,
       PIPE_BIND_LINEAR | PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
 
    struct pipe_resource *pstaging;
-   if (agx_apple9_direct_render_enabled(agx_device(screen)) &&
+   if (agx_has_usc_descriptors(agx_device(screen)) &&
        tmpl.target == PIPE_TEXTURE_2D_ARRAY) {
       /* Apple9's native descriptors do not support linear array strides.
        * Use an uncompressed tiled staging image and the ordinary CPU tiling
@@ -1297,8 +1295,8 @@ agx_clear(struct pipe_context *pctx, unsigned buffers,
    unsigned fastclear = buffers & ~(batch->draw | batch->load);
    unsigned slowclear = buffers & ~fastclear;
    /* Apple9 never submits a render without draws, so clear with a draw */
-   if (agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
-       (!batch->apple9_render_initialized || !batch->apple9_vdm_draws))
+   if (agx_has_launch_programs(agx_device(pctx->screen)) &&
+       (!batch->render_initialized || !batch->vdm_draws))
       slowclear |= fastclear;
 
    assert(scissor_state == NULL &&
@@ -1332,9 +1330,8 @@ agx_clear(struct pipe_context *pctx, unsigned buffers,
        * viewport. Apple9's [-1, 1] clip-Z lowering would round it (0.3
        * becomes 0.29999995), so draw the clear in [0, W] clip space, where
        * window Z is the value itself. */
-      bool exact_depth =
-         agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
-         (slowclear & PIPE_CLEAR_DEPTH);
+      bool exact_depth = agx_is_apple9(agx_device(pctx->screen)) &&
+                         (slowclear & PIPE_CLEAR_DEPTH);
       if (exact_depth) {
          ctx->force_clip_halfz = true;
          ctx->dirty |= AGX_DIRTY_VS_PROG | AGX_DIRTY_RS | AGX_DIRTY_VIEWPORT;
@@ -1801,7 +1798,7 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
    /* Apple9 keeps current at the native terminator emitted by the last draw.
     * Appending either a draw or a buffer link replaces that terminator.
     */
-   if (batch->apple9_render_initialized) {
+   if (batch->render_initialized) {
       uint32_t terminator;
       memcpy(&terminator, batch->vdm.current, sizeof(terminator));
       assert(terminator == 0xc0000000);
@@ -1852,7 +1849,7 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
       batch->clear_depth, batch->clear_stencil, &batch->tilebuffer_layout);
 
    /* Apple9 tile programs are entered through their launch programs */
-   if (agx_is_apple9(dev)) {
+   if (agx_has_launch_programs(dev)) {
       if (!pipeline_background.usc || !pipeline_background_partial.usc ||
           !pipeline_store.usc) {
          mesa_loge("Apple9: could not prepare the tile programs of a render");
@@ -1891,10 +1888,9 @@ agx_flush_batch(struct agx_context *ctx, struct agx_batch *batch)
     * were prepared). Never submit one: drop it like any other render that is
     * not submitted. Clears are drawn or follow a draw (see agx_clear), so a
     * clear is only lost here if its own draw was rejected. */
-   bool apple9_empty =
-      agx_apple9_direct_render_enabled(agx_device(ctx->base.screen)) &&
-      batch->vdm.bo && batch->initialized && !batch->apple9_vdm_draws;
-   if (apple9_empty && batch->clear) {
+   bool empty_render = agx_is_apple9(agx_device(ctx->base.screen)) &&
+                       batch->vdm.bo && batch->initialized && !batch->vdm_draws;
+   if (empty_render && batch->clear) {
       static bool warned;
       if (!warned) {
          mesa_logw("Apple9: dropping a clear whose render has no draw");
@@ -1902,7 +1898,7 @@ agx_flush_batch(struct agx_context *ctx, struct agx_batch *batch)
       }
    }
    if (batch->vdm.bo && (batch->clear || batch->initialized)) {
-      has_vdm = !apple9_empty && agx_flush_render(ctx, batch, &render);
+      has_vdm = !empty_render && agx_flush_render(ctx, batch, &render);
 
       /* The render half is dropped: nothing it recorded reaches the GPU. */
       if (!has_vdm && batch->initialized)
@@ -2198,7 +2194,7 @@ static void
 agx_init_shader_caps(struct pipe_screen *pscreen)
 {
    bool is_no16 = agx_device(pscreen)->debug & AGX_DBG_NO16;
-   bool apple9 = agx_apple9_direct_render_enabled(agx_device(pscreen));
+   bool launch_programs = agx_has_launch_programs(agx_device(pscreen));
 
    for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
@@ -2219,8 +2215,8 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
                           : i == MESA_SHADER_VERTEX ? 24
                                                     : 32;
 
-      /* Apple9 links up to 31 varyings, like max_varyings */
-      if (apple9 && i != MESA_SHADER_FRAGMENT)
+      /* Launch programs link up to 31 varyings, like max_varyings */
+      if (launch_programs && i != MESA_SHADER_FRAGMENT)
          caps->max_outputs = 32;
 
       caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
@@ -2302,7 +2298,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
 {
    struct pipe_caps *caps = (struct pipe_caps *)&pscreen->caps;
    struct agx_screen *screen = agx_screen(pscreen);
-   const bool apple9_render = agx_apple9_direct_render_enabled(&screen->dev);
+   const bool launch_render = agx_is_apple9(&screen->dev);
 
    u_init_pipe_screen_caps(pscreen, 1);
 
@@ -2437,10 +2433,9 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->generate_mipmap = false;
    /* Apple9 has CPU texture transfers, but its compute image blitter is not
     * implemented yet. Use Mesa's existing CPU format-conversion fallback. */
-   caps->texture_transfer_modes =
-      agx_apple9_direct_render_enabled(agx_device(pscreen))
-         ? PIPE_TEXTURE_TRANSFER_DEFAULT
-         : PIPE_TEXTURE_TRANSFER_BLIT;
+   caps->texture_transfer_modes = agx_is_apple9(agx_device(pscreen))
+                                     ? PIPE_TEXTURE_TRANSFER_DEFAULT
+                                     : PIPE_TEXTURE_TRANSFER_BLIT;
 
    caps->device_type = PIPE_DEVICE_TYPE_INTEGRATED_GPU;
    caps->endianness = PIPE_ENDIAN_LITTLE;
@@ -2522,9 +2517,9 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
    caps->max_texture_lod_bias = 16.0; /* arbitrary */
 
    /* Up to 16 bytes are accelerated */
-   caps->hw_clear_buffer_sizes = apple9_render ? 0 : (1 | 2 | 4 | 8 | 16);
+   caps->hw_clear_buffer_sizes = launch_render ? 0 : (1 | 2 | 4 | 8 | 16);
 
-   if (apple9_render) {
+   if (launch_render) {
       caps->robust_buffer_access_behavior = false;
       /* Lost-context reporting (EGL_EXT_create_context_robustness, reset
        * status queries) works: failed work and rejected submissions mark the
@@ -2590,7 +2585,7 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
    if (format == PIPE_FORMAT_NONE)
       return true;
 
-   if (agx_apple9_direct_render_enabled(agx_device(pscreen))) {
+   if (agx_is_apple9(agx_device(pscreen))) {
       if ((usage & PIPE_BIND_RENDER_TARGET) &&
           ((target != PIPE_TEXTURE_1D && target != PIPE_TEXTURE_1D_ARRAY &&
             target != PIPE_TEXTURE_RECT && target != PIPE_TEXTURE_2D &&

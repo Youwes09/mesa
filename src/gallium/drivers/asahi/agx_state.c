@@ -424,7 +424,7 @@ agx_bind_rasterizer_state(struct pipe_context *pctx, void *cso)
                                 (ctx->rast->depth_bias != so->depth_bias);
 
    ctx->dirty |= AGX_DIRTY_RS;
-   if (agx_apple9_direct_render_enabled(agx_device(pctx->screen)) &&
+   if (agx_has_launch_programs(agx_device(pctx->screen)) &&
        (base_cso_changed || ctx->rast->base.clip_halfz != so->base.clip_halfz ||
         ctx->rast->base.clip_plane_enable != so->base.clip_plane_enable))
       ctx->dirty |= AGX_DIRTY_VS_PROG;
@@ -737,7 +737,7 @@ agx_pack_texture(void *out, struct agx_resource *rsrc,
 
       /* Apple9 buffers are above this word's 40 bits, and read elsewhere */
       if (state->target == PIPE_BUFFER &&
-          agx_apple9_direct_render_enabled(agx_device(rsrc->base.screen)))
+          agx_has_usc_descriptors(agx_device(rsrc->base.screen)))
          cfg.address = 0;
 
       if (rsrc->layout.compressed) {
@@ -1229,7 +1229,7 @@ agx_batch_upload_pbe(struct agx_batch *batch, struct agx_pbe_packed *out,
          cfg.buffer += view->u.buf.offset;
 
          /* As for textures, Apple9 stores through the texel metadata */
-         if (agx_apple9_direct_render_enabled(agx_device(tex->base.screen)))
+         if (agx_has_usc_descriptors(agx_device(tex->base.screen)))
             cfg.buffer = 0;
 
          /* Use a 2D texture to increase the maximum size */
@@ -1538,7 +1538,7 @@ agx_compile_nir(struct agx_device *dev, nir_shader *nir,
                          &compiled->b.info.stats);
 
    /* Apple9 links parts into a program of its own, see agx_fast_link */
-   bool linked_part = agx_is_apple9(dev) && !terminal;
+   bool linked_part = agx_has_launch_programs(dev) && !terminal;
 
    if (compiled->b.info.binary_size && !secondary && !linked_part) {
       compiled->bo = agx_bo_create(dev, compiled->b.info.binary_size, 0,
@@ -1592,12 +1592,12 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
    bool translucent = false;
 
    /* Apple9 links all vertex and fragment stages with parts */
-   bool apple9 = agx_is_apple9(dev);
+   bool launch_programs = agx_has_launch_programs(dev);
    bool terminal = so->type != MESA_SHADER_FRAGMENT;
 
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       struct asahi_vs_shader_key *key = &key_->vs;
-      terminal &= !apple9;
+      terminal &= !launch_programs;
 
       if (nir->info.vs.tes_poly) {
          NIR_PASS(_, nir, poly_nir_lower_tes, key->hw);
@@ -1641,10 +1641,10 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
 
       if (nir->info.fs.uses_fbfetch_output) {
          struct agx_tilebuffer_layout tib =
-            (apple9 ? agx_build_raw_tilebuffer_layout
-                    : agx_build_tilebuffer_layout)(key->rt_formats,
-                                                   ARRAY_SIZE(key->rt_formats),
-                                                   key->nr_samples, true);
+            (launch_programs ? agx_build_raw_tilebuffer_layout
+                             : agx_build_tilebuffer_layout)(
+               key->rt_formats, ARRAY_SIZE(key->rt_formats), key->nr_samples,
+               true);
 
          if (dev->debug & AGX_DBG_SMALLTILE)
             tib.tile_size = 16 * 16;
@@ -1728,7 +1728,7 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
       /* Apple9 links the rasterization program with a vertex ID prolog */
       compiled->gs_copy =
          agx_compile_nir(dev, gs_copy, &pctx->debug, MESA_SHADER_GEOMETRY,
-                         !apple9, false, 0, NULL);
+                         !launch_programs, false, 0, NULL);
       if (!compiled->gs_copy)
          goto fail_compiled;
 
@@ -1868,8 +1868,8 @@ agx_flag_texture_metadata_queries(nir_builder *b, nir_tex_instr *tex,
 
 /* Apple9 LOD queries return the clamped LOD, so apply the mipmap filter */
 static bool
-agx_apple9_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
-                                      UNUSED void *data)
+agx_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
+                               UNUSED void *data)
 {
    if (tex->op != nir_texop_lod)
       return false;
@@ -1895,8 +1895,8 @@ agx_apple9_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
 
 /* Clamp the reference for normalized formats, as Z24 is stored as Z32F */
 static bool
-agx_apple9_clamp_shadow_reference(nir_builder *b, nir_tex_instr *tex,
-                                  UNUSED void *data)
+agx_clamp_shadow_reference(nir_builder *b, nir_tex_instr *tex,
+                           UNUSED void *data)
 {
    int comparator = nir_tex_instr_src_index(tex, nir_tex_src_comparator);
    if (!tex->is_shadow || comparator < 0 ||
@@ -2036,10 +2036,9 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
       NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
                nir_metadata_all, NULL);
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
-      NIR_PASS(_, nir, nir_shader_tex_pass,
-               agx_apple9_lower_lod_query_mip_filter, nir_metadata_control_flow,
-               NULL);
-      NIR_PASS(_, nir, nir_shader_tex_pass, agx_apple9_clamp_shadow_reference,
+      NIR_PASS(_, nir, nir_shader_tex_pass, agx_lower_lod_query_mip_filter,
+               nir_metadata_control_flow, NULL);
+      NIR_PASS(_, nir, nir_shader_tex_pass, agx_clamp_shadow_reference,
                nir_metadata_control_flow, NULL);
    }
 
@@ -2358,7 +2357,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
 
    struct agx_device *dev = agx_device(ctx->base.screen);
    struct agx_compiled_shader *prolog = NULL, *epilog = NULL;
-   bool apple9 = agx_is_apple9(dev);
+   bool launch_programs = agx_has_launch_programs(dev);
 
    /* Build the prolog/epilog now */
    if (so->type == MESA_SHADER_FRAGMENT) {
@@ -2370,7 +2369,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
          agx_build_meta_shader_internal(ctx, agx_nir_fs_epilog, &key->epilog.fs,
                                         sizeof(key->epilog.fs), false, true, 0);
 
-   } else if (so->type == MESA_SHADER_VERTEX || apple9) {
+   } else if (so->type == MESA_SHADER_VERTEX || launch_programs) {
       /* Apple9 does not preload vertex and instance IDs, a prolog loads them */
       assert(so->type == MESA_SHADER_VERTEX || key->prolog.vs.static_vi);
 
@@ -2386,7 +2385,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
    uint8_t uvs_slots[AGX_APPLE9_MAX_UVS_SLOTS];
    bool hw_vertex = so->type != MESA_SHADER_FRAGMENT &&
                     key->main->b.info.stage != MESA_SHADER_COMPUTE;
-   if (apple9 && hw_vertex) {
+   if (launch_programs && hw_vertex) {
       struct agx_varyings_vs varyings;
       agx_assign_uvs(&varyings, &key->main->uvs, key->uvs_flat,
                      key->uvs_linear);
@@ -2398,7 +2397,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
       rzalloc(so->linked_shaders, struct agx_linked_shader);
    agx_fast_link(linked, dev, so->type == MESA_SHADER_FRAGMENT, &key->main->b,
                  &prolog->b, &epilog->b, key->nr_samples_shaded,
-                 apple9 && hw_vertex ? uvs_slots : NULL);
+                 launch_programs && hw_vertex ? uvs_slots : NULL);
 
    if (!linked->bo) {
       ralloc_free(linked);
@@ -2415,7 +2414,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
 /* Apple9's sampler holds three preset colors. Other colors use a shader
  * correction weighted by a second sample with identical filtering state. */
 static unsigned
-apple9_border_preset(const struct pipe_sampler_state *state)
+usc_border_preset(const struct pipe_sampler_state *state)
 {
    bool zero[4], one[4];
    for (unsigned c = 0; c < 4; ++c) {
@@ -2484,7 +2483,7 @@ agx_update_vs(struct agx_batch *batch, unsigned index_size_B)
       .main = ctx->vs,
    };
 
-   if (agx_is_apple9(dev) && key.hw && fs) {
+   if (agx_has_launch_programs(dev) && key.hw && fs) {
       link_key.uvs_flat = fs->info.inputs_flat_shaded;
       link_key.uvs_linear = fs->info.inputs_linear_shaded;
    }
@@ -2552,7 +2551,7 @@ agx_update_gs(struct agx_context *ctx, const struct pipe_draw_info *info,
       return false;
 
    /* Link the rasterization program with a prolog and the FS varying slots */
-   if (agx_is_apple9(agx_device(ctx->base.screen))) {
+   if (agx_has_launch_programs(agx_device(ctx->base.screen))) {
       struct agx_uncompiled_shader *fs =
          ctx->stage[MESA_SHADER_FRAGMENT].shader;
       struct agx_fast_link_key link_key = {
@@ -2956,7 +2955,7 @@ agx_build_meta_shader_internal(struct agx_context *ctx,
    /* Apple9 parts never stop, the linker ends the program */
    struct agx_compiled_shader *shader =
       agx_compile_nir(dev, b.shader, NULL, MESA_SHADER_COMPUTE,
-                      !prolog && !agx_is_apple9(dev) &&
+                      !prolog && !agx_has_launch_programs(dev) &&
                          !(b.shader->info.stage == MESA_SHADER_FRAGMENT &&
                            b.shader->info.fs.uses_sample_shading),
                       prolog || epilog, cf_base, NULL);
@@ -3230,15 +3229,15 @@ agx_update_descriptors(struct agx_batch *batch, struct agx_compiled_shader *cs)
       agx_set_ssbo_uniforms(batch, stage);
 
    /* Apple9 uploads the texture and sampler tables with each launch */
-   bool apple9 = agx_is_apple9(agx_device(ctx->base.screen));
+   bool launch_programs = agx_has_launch_programs(agx_device(ctx->base.screen));
 
-   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_IMAGE) && !apple9)
+   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_IMAGE) && !launch_programs)
       agx_upload_textures(batch, cs, stage);
 
    if (ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER)
       agx_set_sampler_uniforms(batch, stage);
 
-   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER) && !apple9)
+   if ((ctx->stage[stage].dirty & AGX_STAGE_DIRTY_SAMPLER) && !launch_programs)
       agx_upload_samplers(batch, cs, stage);
 
    struct agx_stage_uniforms *unif = &batch->stage_uniforms[stage];
@@ -3381,7 +3380,7 @@ agx_launch_internal(struct agx_batch *batch, struct agx_grid grid,
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
 
-   assert(!agx_is_apple9(dev) && "see agx_apple9_launch_compute");
+   assert(!agx_is_apple9(dev) && "see agx_launch_compute_program");
 
    uint32_t *out = (uint32_t *)batch->cdm.current;
 
@@ -3409,7 +3408,7 @@ static void agx_ensure_cmdbuf_has_space(struct agx_batch *batch,
                                         struct agx_encoder *enc, size_t space);
 
 static uint64_t
-agx_apple9_indirect_local_groups(struct agx_batch *batch, uint64_t grid)
+agx_indirect_local_groups(struct agx_batch *batch, uint64_t grid)
 {
    struct agx_ptr groups = agx_pool_alloc_aligned(&batch->pool, 12, 4);
    libagx_workgroups_from_threads(batch, agx_1d(1), AGX_BARRIER_ALL, groups.gpu,
@@ -3420,7 +3419,7 @@ agx_apple9_indirect_local_groups(struct agx_batch *batch, uint64_t grid)
 /* Every chunk of the shader entry arena backed so far: the batch's entries
  * were allocated, and their chunks backed, before it is built. */
 static void
-agx_batch_add_apple9_entries(struct agx_batch *batch, struct agx_device *dev)
+agx_batch_pin_entries(struct agx_batch *batch, struct agx_device *dev)
 {
    for (unsigned i = 0; i < AGX_ENTRY_CHUNKS; ++i) {
       if (dev->entry_chunks[i])
@@ -3429,7 +3428,7 @@ agx_batch_add_apple9_entries(struct agx_batch *batch, struct agx_device *dev)
 }
 
 static bool
-agx_apple9_native_linear_texture(struct agx_resource *rsrc)
+agx_usc_linear_texture(struct agx_resource *rsrc)
 {
    const struct pipe_resource *src = &rsrc->base;
    uint64_t stride = rsrc->layout.linear_stride_B;
@@ -3446,7 +3445,7 @@ agx_apple9_native_linear_texture(struct agx_resource *rsrc)
  * address and compression metadata by first_layer, as hk does for
  * baseArrayLayer, and the Apple9 descriptor is translated from that. */
 static bool
-agx_apple9_texture_view_supported(const struct agx_sampler_view *view)
+agx_usc_texture_view_supported(const struct agx_sampler_view *view)
 {
    const struct pipe_sampler_view *state = &view->base;
    struct agx_resource *resource = view->rsrc;
@@ -3468,13 +3467,12 @@ agx_apple9_texture_view_supported(const struct agx_sampler_view *view)
            state->target == PIPE_TEXTURE_CUBE_ARRAY) &&
           agx_usc_texture_format_supported(view->format) &&
           (resource->layout.tiling == AIL_TILING_GPU ||
-           agx_apple9_native_linear_texture(resource));
+           agx_usc_linear_texture(resource));
 }
 
 /* Runtime sampler record (AGX_APPLE9_SAMP_*) for state applied in software */
 static void
-agx_apple9_runtime_sampler(uint32_t *record,
-                           const struct pipe_sampler_state *state)
+agx_runtime_sampler(uint32_t *record, const struct pipe_sampler_state *state)
 {
    memset(record, 0, AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
    if (!state)
@@ -3490,7 +3488,7 @@ agx_apple9_runtime_sampler(uint32_t *record,
    record[AGX_APPLE9_SAMP_MIN_LOD] = fui(state->min_lod);
    record[AGX_APPLE9_SAMP_MAX_LOD] = fui(state->max_lod);
    record[AGX_APPLE9_SAMP_BIAS] = fui(CLAMP(state->lod_bias, -16.f, 16.f));
-   record[AGX_APPLE9_SAMP_BORDER] = apple9_border_preset(state);
+   record[AGX_APPLE9_SAMP_BORDER] = usc_border_preset(state);
    /* Rectangle textures are normalized in NIR, so SAMP_PIXEL_COORDS stays 0 */
    record[AGX_APPLE9_SAMP_MAX_ANISOTROPY] = fui(MAX2(state->max_anisotropy, 1));
    record[AGX_APPLE9_SAMP_SEAMFUL_CUBE] = !state->seamless_cube_map;
@@ -3498,7 +3496,7 @@ agx_apple9_runtime_sampler(uint32_t *record,
 
 /* Texture and sampler records the shader reads from the sysval UBO */
 static uint64_t
-agx_apple9_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
+agx_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
 {
    static_assert(PIPE_MAX_SAMPLERS * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE +
                        AGX_APPLE9_RUNTIME_SAMPLER_OFFSET ==
@@ -3529,7 +3527,7 @@ agx_apple9_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
                                       AGX_APPLE9_RUNTIME_SAMPLER_OFFSET +
                                       i * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
 
-      agx_apple9_runtime_sampler(record, sampler ? &sampler->base : NULL);
+      agx_runtime_sampler(record, sampler ? &sampler->base : NULL);
 
       if (sampler && i < AGX_APPLE9_SAMPLER_BIAS_COUNT)
          bias[i] = CLAMP(sampler->base.lod_bias, -16.f, 16.f);
@@ -3594,7 +3592,7 @@ agx_apple9_store_uncompressed(const struct agx_batch *batch,
        !(view->access & PIPE_IMAGE_ACCESS_DRIVER_INTERNAL))
       return false;
 
-   if (batch->ctx->apple9_uncompressed_store == rsrc)
+   if (batch->ctx->uncompressed_store == rsrc)
       return true;
 
    for (unsigned rt = 0; rt < batch->key.nr_cbufs; ++rt) {
@@ -3655,9 +3653,9 @@ agx_apple9_storage_slots(const struct pipe_image_view *view)
 
 /* PBE entries of a view, one per layer, at index `slot` of the texture table */
 static void
-agx_apple9_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
-                             const struct pipe_image_view *view,
-                             uint8_t *entries, unsigned slot)
+agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
+                      const struct pipe_image_view *view, uint8_t *entries,
+                      unsigned slot)
 {
    struct agx_resource *rsrc = agx_resource(view->resource);
    const struct ail_layout *layout = &rsrc->layout;
@@ -3687,10 +3685,10 @@ agx_apple9_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
 
 /* Storage descriptor of an image view: texture and PBE words, texel layout */
 static void
-agx_apple9_pack_storage(struct agx_batch *batch,
-                        struct agx_apple9_storage_descriptor *desc,
-                        struct pipe_image_view *view, uint8_t *table,
-                        unsigned slot)
+agx_pack_usc_storage(struct agx_batch *batch,
+                     struct agx_apple9_storage_descriptor *desc,
+                     struct pipe_image_view *view, uint8_t *table,
+                     unsigned slot)
 {
    struct agx_resource *rsrc = agx_resource(view->resource);
    agx_apple9_null_storage(desc);
@@ -3726,8 +3724,8 @@ agx_apple9_pack_storage(struct agx_batch *batch,
    else
       agx_set_null_usc_texture(entry);
 
-   agx_apple9_pack_storage_pbes(
-      desc, view, entry + AGX_APPLE9_TEXTURE_TABLE_STRIDE, slot + 1);
+   agx_pack_storage_pbes(desc, view, entry + AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                         slot + 1);
 }
 
 /* Native texture record of a view. Layouts only allow views Apple9 samples */
@@ -3735,7 +3733,7 @@ static void
 agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
 {
    struct agx_resource *resource = view->rsrc;
-   assert(agx_apple9_texture_view_supported(view));
+   assert(agx_usc_texture_view_supported(view));
 
    struct pipe_sampler_view physical = view->base;
    enum pipe_format format = view->format;
@@ -3774,7 +3772,7 @@ agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
 
 /* Stage tables. Sampler 0 is texel fetch, API sampler i is sampler 1 + i */
 static void
-agx_apple9_upload_tables(struct agx_batch *batch,
+agx_upload_launch_tables(struct agx_batch *batch,
                          const struct agx_compiled_shader *cs,
                          uint64_t *textures, uint64_t *samplers)
 {
@@ -3862,7 +3860,7 @@ agx_apple9_upload_tables(struct agx_batch *batch,
          struct pipe_image_view *view = &st->images[i];
          agx_batch_track_image(batch, view, stage);
 
-         agx_apple9_pack_storage(batch, &out[i], view, table, table_size);
+         agx_pack_usc_storage(batch, &out[i], view, table, table_size);
          table_size += agx_apple9_storage_slots(view);
       }
 
@@ -3912,7 +3910,7 @@ agx_apple9_upload_tables(struct agx_batch *batch,
 
 /* Push words: the uniforms Apple8 preloads, copied on the CPU */
 static uint64_t
-agx_apple9_upload_push(struct agx_batch *batch,
+agx_upload_launch_push(struct agx_batch *batch,
                        const struct agx_compiled_shader *cs)
 {
    unsigned halves = 0;
@@ -3948,7 +3946,7 @@ agx_apple9_upload_push(struct agx_batch *batch,
 
 /* The buffer table of an Apple9 program, in the order of its profile */
 static void
-agx_apple9_upload_buffers(struct agx_batch *batch, struct agx_stage *stage,
+agx_upload_launch_buffers(struct agx_batch *batch, struct agx_stage *stage,
                           const struct agx_apple9_compute_profile *profile,
                           uint64_t *addresses)
 {
@@ -3960,18 +3958,18 @@ agx_apple9_upload_buffers(struct agx_batch *batch, struct agx_stage *stage,
          assert(profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
                 profile->resource_binding[i] ==
                    AGX_APPLE9_GRAPHICS_SYSVAL_BINDING);
-         addresses[i] = agx_apple9_upload_texture_info(batch, stage);
+         addresses[i] = agx_upload_texture_info(batch, stage);
       }
    }
 }
 
 /* Dispatch an Apple9 compute program */
 static bool
-agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
-                          struct agx_workgroup wg, struct agx_bo *bo,
-                          const struct agx_apple9_compute_profile *profile,
-                          const uint64_t *addresses, uint64_t textures,
-                          uint64_t samplers, uint64_t push)
+agx_launch_compute_program(struct agx_batch *batch, struct agx_grid grid,
+                           struct agx_workgroup wg, struct agx_bo *bo,
+                           const struct agx_apple9_compute_profile *profile,
+                           const uint64_t *addresses, uint64_t textures,
+                           uint64_t samplers, uint64_t push)
 {
    struct agx_device *dev = agx_device(batch->ctx->base.screen);
    struct agx_cdm_geometry geometry = {
@@ -3985,7 +3983,7 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
 
    /* Indirect grids of threads are made into workgroup counts on the GPU */
    if (indirect_local)
-      geometry.group_counts = agx_apple9_indirect_local_groups(batch, grid.ptr);
+      geometry.group_counts = agx_indirect_local_groups(batch, grid.ptr);
    else if (indirect)
       geometry.group_counts = grid.ptr;
    else
@@ -4018,14 +4016,14 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
 
    batch->cdm.current += size;
    agx_batch_add_bo(batch, bo);
-   agx_batch_add_apple9_entries(batch, dev);
+   agx_batch_pin_entries(batch, dev);
    batch->incoherent_writes = true;
    return true;
 }
 
 static void
-agx_apple9_add_compute_attachment(struct agx_batch *batch,
-                                  struct agx_resource *resource)
+agx_add_compute_attachment(struct agx_batch *batch,
+                           struct agx_resource *resource)
 {
    /* Attachments are optional firmware hints, not bounds on shader writes.
     * Coalesce all ranges of one BO into the same whole-resource hint.
@@ -4035,7 +4033,7 @@ agx_apple9_add_compute_attachment(struct agx_batch *batch,
       .size = resource->layout.size_B - resource->layout.level_offsets_B[0],
    };
 
-   util_dynarray_foreach(&batch->apple9_attachments,
+   util_dynarray_foreach(&batch->launch_attachments,
                          struct drm_asahi_attachment, existing) {
       if (existing->pointer == attachment.pointer &&
           existing->size == attachment.size)
@@ -4046,18 +4044,18 @@ agx_apple9_add_compute_attachment(struct agx_batch *batch,
     * hints for. Keep the advertised bound without dropping resource references
     * or hazards, or splitting otherwise valid compute command streams. */
    struct agx_device *dev = agx_device(batch->ctx->base.screen);
-   if (util_dynarray_num_elements(&batch->apple9_attachments,
+   if (util_dynarray_num_elements(&batch->launch_attachments,
                                   struct drm_asahi_attachment) <
        dev->params.max_attachments)
-      util_dynarray_append(&batch->apple9_attachments, attachment);
+      util_dynarray_append(&batch->launch_attachments, attachment);
 }
 
 /* Launch a compiled compute stage, or a linked program from it */
 static void
-agx_launch_apple9(struct agx_batch *batch, struct agx_grid grid,
-                  struct agx_workgroup wg, struct agx_compiled_shader *cs,
-                  struct agx_linked_shader *linked,
-                  unsigned variable_shared_mem)
+agx_dispatch_launched(struct agx_batch *batch, struct agx_grid grid,
+                      struct agx_workgroup wg, struct agx_compiled_shader *cs,
+                      struct agx_linked_shader *linked,
+                      unsigned variable_shared_mem)
 {
    struct agx_context *ctx = batch->ctx;
    struct agx_bo *bo = linked ? linked->bo : cs->bo;
@@ -4077,27 +4075,26 @@ agx_launch_apple9(struct agx_batch *batch, struct agx_grid grid,
    uint64_t textures, samplers;
    uint64_t addresses[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
 
-   agx_apple9_upload_tables(batch, cs, &textures, &samplers);
-   agx_apple9_upload_buffers(batch, &ctx->stage[cs->stage], &profile,
+   agx_upload_launch_tables(batch, cs, &textures, &samplers);
+   agx_upload_launch_buffers(batch, &ctx->stage[cs->stage], &profile,
                              addresses);
 
-   if (!agx_apple9_launch_compute(batch, grid, wg, bo, &profile, addresses,
-                                  textures, samplers,
-                                  agx_apple9_upload_push(batch, cs)))
+   if (!agx_launch_compute_program(batch, grid, wg, bo, &profile, addresses,
+                                   textures, samplers,
+                                   agx_upload_launch_push(batch, cs)))
       return;
 
    /* Tell the firmware which resources compute writes */
    struct agx_stage *st = &ctx->stage[cs->stage];
    u_foreach_bit(i, st->ssbo_writable_mask) {
       if (st->ssbo[i].buffer)
-         agx_apple9_add_compute_attachment(batch,
-                                           agx_resource(st->ssbo[i].buffer));
+         agx_add_compute_attachment(batch, agx_resource(st->ssbo[i].buffer));
    }
 
    u_foreach_bit(i, st->image_mask) {
       if (st->images[i].access & PIPE_IMAGE_ACCESS_WRITE)
-         agx_apple9_add_compute_attachment(
-            batch, agx_resource(st->images[i].resource));
+         agx_add_compute_attachment(batch,
+                                    agx_resource(st->images[i].resource));
    }
 }
 
@@ -4126,8 +4123,8 @@ agx_launch_precomp(struct agx_batch *batch, struct agx_grid grid,
             addresses[i] = uploaded_data;
          }
       }
-      agx_apple9_launch_compute(batch, grid, cs->b.workgroup, cs->bo, profile,
-                                addresses, 0, 0, 0);
+      agx_launch_compute_program(batch, grid, cs->b.workgroup, cs->bo, profile,
+                                 addresses, 0, 0, 0);
       return;
    }
 
@@ -4143,14 +4140,14 @@ agx_launch_precomp(struct agx_batch *batch, struct agx_grid grid,
 }
 
 static struct agx_ptr
-agx_apple9_pool_alloc(void *pool, size_t size, size_t alignment)
+agx_pool_alloc_cb(void *pool, size_t size, size_t alignment)
 {
    return agx_pool_alloc_aligned(pool, size, alignment);
 }
 
 /* Tile programs load texture 2 * rt and store image rt, clear colours pushed */
 static struct asahi_bg_eot
-agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
+agx_launch_bg_eot(struct agx_batch *batch, struct agx_bg_eot_key *key)
 {
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
@@ -4251,13 +4248,13 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
    unsigned samples = key->tib.nr_samples;
    uint32_t launch;
    if (!agx_prepare_stage_launch(
-          dev, &batch->pipeline_pool, agx_apple9_pool_alloc, &stage, true, 0,
+          dev, &batch->pipeline_pool, agx_pool_alloc_cb, &stage, true, 0,
           texture_table, sampler_table, push_table,
           agx_launch_tile_bytes(key->tib.sample_size_B, samples), samples,
           &launch))
       return (struct asahi_bg_eot){0};
 
-   agx_batch_add_apple9_entries(batch, dev);
+   agx_batch_pin_entries(batch, dev);
    return (struct asahi_bg_eot){.usc = launch};
 }
 
@@ -4307,8 +4304,8 @@ agx_build_bg_eot(struct agx_batch *batch, bool store, bool partial_render)
       }
    }
 
-   if (agx_is_apple9(agx_device(ctx->base.screen)))
-      return agx_build_bg_eot_apple9(batch, &key);
+   if (agx_has_launch_programs(agx_device(ctx->base.screen)))
+      return agx_launch_bg_eot(batch, &key);
 
    /* Begin building the pipeline */
    size_t usc_size = agx_usc_size(3 + PIPE_MAX_COLOR_BUFS);
@@ -4506,10 +4503,9 @@ agx_batch_init_state(struct agx_batch *batch)
 
    /* Emit state on the batch that we don't change and so don't dirty track */
    uint8_t *out = batch->vdm.current;
-   bool apple9_direct =
-      agx_apple9_direct_render_enabled(agx_device(batch->ctx->base.screen));
+   bool launched = agx_has_launch_programs(agx_device(batch->ctx->base.screen));
 
-   if (apple9_direct) {
+   if (launched) {
       /* Completed render work can leave stale resources cached for the next
        * batch. T8132 requires all three bits; the older USC-invalidate bit
        * alone does not make texture, sampler and depth/stencil reuse coherent.
@@ -4561,15 +4557,15 @@ agx_batch_init_state(struct agx_batch *batch)
       formats[i] = batch->key.cbufs[i].format;
    }
 
-   bool apple9 = agx_is_apple9(agx_device(batch->ctx->base.screen));
-   batch->tilebuffer_layout =
-      (apple9 ? agx_build_raw_tilebuffer_layout : agx_build_tilebuffer_layout)(
-         formats, batch->key.nr_cbufs,
-         util_framebuffer_get_num_samples(&batch->key),
-         util_framebuffer_get_num_layers(&batch->key) > 1);
+   bool raw_tiles = agx_has_raw_tiles(agx_device(batch->ctx->base.screen));
+   batch->tilebuffer_layout = (raw_tiles ? agx_build_raw_tilebuffer_layout
+                                         : agx_build_tilebuffer_layout)(
+      formats, batch->key.nr_cbufs,
+      util_framebuffer_get_num_samples(&batch->key),
+      util_framebuffer_get_num_layers(&batch->key) > 1);
 
    /* Renders allocate whole double words per sample, Apple9 MSAA some always */
-   if (apple9) {
+   if (raw_tiles) {
       struct agx_tilebuffer_layout *tib = &batch->tilebuffer_layout;
       tib->sample_size_B = ALIGN_POT(
          agx_launch_tile_bytes(tib->sample_size_B, tib->nr_samples), 8);
@@ -5004,7 +5000,7 @@ agx_index_buffer_direct_ptr(struct agx_batch *batch,
       *extent = ALIGN_POT(max_extent, 4);
 
       struct agx_pool *pool =
-         agx_apple9_direct_render_enabled(agx_device(batch->ctx->base.screen))
+         agx_has_usc_indices(agx_device(batch->ctx->base.screen))
             ? &batch->pipeline_pool
             : &batch->pool;
       return agx_pool_upload_aligned(pool,
@@ -5054,7 +5050,7 @@ agx_ensure_cmdbuf_has_space(struct agx_batch *batch, struct agx_encoder *enc,
    size_t size = 65536;
    bool context_relative = enc->bo->flags & AGX_BO_CONTEXT;
    struct agx_pool *pool =
-      context_relative ? &batch->apple9_context_pool : &batch->pool;
+      context_relative ? &batch->render_context_pool : &batch->pool;
    struct agx_ptr T = agx_pool_alloc_aligned(pool, size, 256);
 
    /* Apple9 VDM links use a 32-bit render-context offset, like the stream
@@ -5270,10 +5266,10 @@ agx_batch_geometry_params(struct agx_batch *batch, uint64_t input_index_buffer,
 
          /* Apple9 VDM encodes index addresses relative to the USC aperture.
           * GPU-generated indices obey the same placement as API index BOs. */
-         struct agx_pool *index_pool = agx_apple9_direct_render_enabled(
-                                          agx_device(batch->ctx->base.screen))
-                                          ? &batch->pipeline_pool
-                                          : &batch->pool;
+         struct agx_pool *index_pool =
+            agx_has_usc_indices(agx_device(batch->ctx->base.screen))
+               ? &batch->pipeline_pool
+               : &batch->pool;
          params.output_index_buffer =
             agx_pool_alloc_aligned_with_bo(index_pool, idx_size * 4, 4,
                                            &batch->geom_index_bo)
@@ -5513,12 +5509,11 @@ agx_draw_without_restart(struct agx_batch *batch,
 /* A passthrough GS needed for another feature must forward primitive IDs
  * explicitly. Ordinary draws use the rasterizer-generated coefficient. */
 static bool
-agx_apple9_reads_generated_primitive_id(struct agx_context *ctx)
+agx_reads_generated_primitive_id(struct agx_context *ctx)
 {
    const struct agx_uncompiled_shader *fs =
       ctx->stage[MESA_SHADER_FRAGMENT].shader;
-   return fs &&
-          agx_apple9_direct_render_enabled(agx_device(ctx->base.screen)) &&
+   return fs && agx_has_launch_programs(agx_device(ctx->base.screen)) &&
           (fs->info.inputs_read & VARYING_BIT_PRIMITIVE_ID);
 }
 
@@ -5603,7 +5598,7 @@ agx_get_passthrough_gs(struct agx_context *ctx,
                        enum mesa_prim mode, bool xfb_passthrough)
 {
    bool edgeflags = has_edgeflags(ctx, mode);
-   bool primitive_id = agx_apple9_reads_generated_primitive_id(ctx);
+   bool primitive_id = agx_reads_generated_primitive_id(ctx);
 
    if (mode == MESA_PRIM_PATCHES) {
       mode = agx_tess_output_prim(ctx->stage[MESA_SHADER_TESS_CTRL].shader,
@@ -6054,7 +6049,7 @@ agx_legalize_feedback_loop_surf(struct agx_context *ctx,
 
    /* Decompress if we can and shadow if we can't. */
    if ((rsrc->base.bind & PIPE_BIND_SHARED) &&
-       agx_apple9_direct_render_enabled(agx_device(ctx->base.screen))) {
+       agx_is_apple9(agx_device(ctx->base.screen))) {
       /* Shared depth/stencil is never compressed in practice. */
       if (bit == PIPE_CLEAR_DEPTH) {
          mesa_logw_once("asahi: Apple9 feedback loop on shared compressed "
@@ -6066,7 +6061,7 @@ agx_legalize_feedback_loop_surf(struct agx_context *ctx,
       if (agx_get_batch(ctx)->feedback & bit)
          return;
 
-      agx_apple9_decompress_inplace(ctx, rsrc, surf, "Texture feedback loop");
+      agx_decompress_by_self_blit(ctx, rsrc, surf, "Texture feedback loop");
 
       /* The decompress pass replaced the batch. Write this attachment
        * uncompressed for the rest of the feedback loop.
@@ -6166,8 +6161,8 @@ agx_legalize_xfb(struct agx_context *ctx)
  * single-layer linear image of either is the same descriptor as a 2D one.
  * Transfers stage those targets linearly with their own target. */
 static bool
-agx_apple9_collect_color_targets(const struct agx_batch *batch,
-                                 struct agx_draw_pipeline *pipeline)
+agx_collect_color_targets(const struct agx_batch *batch,
+                          struct agx_draw_pipeline *pipeline)
 {
    if (batch->key.nr_cbufs > 8)
       return false;
@@ -6209,11 +6204,11 @@ agx_draw_stage(struct agx_draw_stage *stage,
 
 /* Draw stages: programs, UVS varyings linked to the FS, coefficient bindings */
 static void
-agx_apple9_render_stages(struct agx_batch *batch,
-                         const struct agx_linked_shader *linked_vs,
-                         const struct agx_compiled_shader *vs,
-                         enum mesa_prim prim, struct agx_draw_stage *vertex,
-                         struct agx_draw_stage *fragment)
+agx_draw_stages_for_batch(struct agx_batch *batch,
+                          const struct agx_linked_shader *linked_vs,
+                          const struct agx_compiled_shader *vs,
+                          enum mesa_prim prim, struct agx_draw_stage *vertex,
+                          struct agx_draw_stage *fragment)
 {
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
@@ -6314,7 +6309,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       return;
    }
 
-   if (agx_apple9_direct_render_enabled(dev) && indirect &&
+   if (agx_has_launch_programs(dev) && indirect &&
        indirect->indirect_draw_count) {
       if (!indirect->draw_count)
          return;
@@ -6367,16 +6362,16 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
    }
 
    /* Restart queries need counts without restart markers, so use the GS path */
-   bool apple9_restart_query = agx_apple9_direct_render_enabled(dev) &&
-                               info->primitive_restart && ctx->active_queries &&
-                               ctx->prims_generated[0];
-   if (!ctx->stage[MESA_SHADER_GEOMETRY].shader && apple9_restart_query) {
+   bool restart_query = agx_has_launch_programs(dev) &&
+                        info->primitive_restart && ctx->active_queries &&
+                        ctx->prims_generated[0];
+   if (!ctx->stage[MESA_SHADER_GEOMETRY].shader && restart_query) {
       agx_apply_passthrough_gs(ctx, info, drawid_offset, indirect, draws,
                                num_draws, false);
       return;
    }
 
-   const unsigned apple9_native_prims =
+   const unsigned native_prims =
       BITFIELD_BIT(MESA_PRIM_POINTS) | BITFIELD_BIT(MESA_PRIM_LINES) |
       BITFIELD_BIT(MESA_PRIM_LINE_STRIP) | BITFIELD_BIT(MESA_PRIM_LINE_LOOP) |
       BITFIELD_BIT(MESA_PRIM_TRIANGLES) |
@@ -6386,12 +6381,12 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
     * including a passthrough GS when the application has no GS. Primconvert
     * preserves adjacency, so sending those modes there would recurse. Only
     * convert primitives which will be rasterized directly. */
-   if (agx_apple9_direct_render_enabled(dev) &&
+   if (agx_has_launch_programs(dev) &&
        !ctx->stage[MESA_SHADER_GEOMETRY].shader &&
        !mesa_prim_has_adjacency(info->mode) &&
        info->mode != MESA_PRIM_PATCHES &&
-       !(apple9_native_prims & BITFIELD_BIT(info->mode))) {
-      if (!ctx->apple9_primconvert) {
+       !(native_prims & BITFIELD_BIT(info->mode))) {
+      if (!ctx->launch_primconvert) {
          struct primconvert_config config = {
             /* Restart segments are concatenated by primconvert, so its
              * output must consist of independent primitives. */
@@ -6400,18 +6395,18 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
                               BITFIELD_BIT(MESA_PRIM_TRIANGLES),
             .restart_primtypes_mask = 0,
          };
-         ctx->apple9_primconvert =
+         ctx->launch_primconvert =
             util_primconvert_create_config(pctx, &config);
-         if (!ctx->apple9_primconvert)
+         if (!ctx->launch_primconvert)
             return;
       }
-      util_primconvert_save_rasterizer_state(ctx->apple9_primconvert,
+      util_primconvert_save_rasterizer_state(ctx->launch_primconvert,
                                              &ctx->rast->base);
       /* Capture consumed the original primitive order above. Conversion is
        * solely for rasterization and must not capture the expanded draw again. */
       unsigned saved_targets = ctx->streamout.num_targets;
       ctx->streamout.num_targets = 0;
-      util_primconvert_draw_vbo(ctx->apple9_primconvert, info, drawid_offset,
+      util_primconvert_draw_vbo(ctx->launch_primconvert, info, drawid_offset,
                                 indirect, draws, num_draws);
       ctx->streamout.num_targets = saved_targets;
       return;
@@ -6682,9 +6677,8 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          ib = batch->geom_index;
          ib_extent = index_rsrc.bo->size - (batch->geom_index - ib);
       } else if (gsi->shape == POLY_GS_SHAPE_STATIC_INDEXED) {
-         struct agx_pool *index_pool = agx_apple9_direct_render_enabled(dev)
-                                          ? &batch->pipeline_pool
-                                          : &batch->pool;
+         struct agx_pool *index_pool =
+            agx_has_usc_indices(dev) ? &batch->pipeline_pool : &batch->pool;
          ib = agx_pool_upload(index_pool, gsi->topology, gsi->max_indices);
          ib_extent = gsi->max_indices;
       }
@@ -6728,12 +6722,12 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
    uint8_t *out;
 
-   if (agx_apple9_direct_render_enabled(dev)) {
+   if (agx_has_launch_programs(dev)) {
       /* Apple9 encodes all GLES primitive modes and index widths directly,
        * including restart and GPU-provided draw arguments. */
       assert(!info->index_size || info->index_size == 1 ||
              info->index_size == 2 || info->index_size == 4);
-      assert(apple9_native_prims & BITFIELD_BIT(info->mode));
+      assert(native_prims & BITFIELD_BIT(info->mode));
       assert(indirect || (draws->count > 0 && info->instance_count > 0));
 
       struct agx_linked_shader *linked_vs =
@@ -6743,8 +6737,8 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          return;
 
       struct agx_draw_stage vertex, fragment;
-      agx_apple9_render_stages(batch, linked_vs, vs, info->mode, &vertex,
-                               &fragment);
+      agx_draw_stages_for_batch(batch, linked_vs, vs, info->mode, &vertex,
+                                &fragment);
 
       /* The linked programs respect the varying, clip and RT limits */
       struct agx_draw_pipeline pipeline;
@@ -6752,17 +6746,17 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          agx_link_draw_pipeline(&pipeline, &vertex, &fragment);
       assert(linked);
 
-      if (!agx_apple9_collect_color_targets(batch, &pipeline)) {
+      if (!agx_collect_color_targets(batch, &pipeline)) {
          mesa_loge("Apple9 direct render requires one to eight color surfaces");
          return;
       }
-      batch->apple9_render_initialized = true;
+      batch->render_initialized = true;
       bool depth_enabled =
          ctx->zs->base.depth_enabled && batch->key.zsbuf.texture;
       struct agx_draw_record draw_record = {0};
       struct agx_draw_record *record = &draw_record;
       const struct agx_draw_record *previous =
-         batch->apple9_draw_count ? &batch->apple9_previous_draw : NULL;
+         batch->launch_draw_count ? &batch->previous_draw_record : NULL;
       agx_batch_add_bo(batch, pipeline.vertex->bo);
       agx_batch_add_bo(batch, pipeline.fragment->bo);
       record->flatshade_first = ctx->rast->base.flatshade_first;
@@ -6889,13 +6883,13 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
             &programs[stage]->program.profile;
          struct agx_stage *shader = &ctx->stage[mains[stage]->stage];
 
-         agx_apple9_upload_tables(batch, mains[stage],
+         agx_upload_launch_tables(batch, mains[stage],
                                   &record->texture_table[stage],
                                   &record->sampler_table[stage]);
-         agx_apple9_upload_buffers(batch, shader, profile,
+         agx_upload_launch_buffers(batch, shader, profile,
                                    record->buffers[stage]);
 
-         record->push[stage] = agx_apple9_upload_push(batch, mains[stage]);
+         record->push[stage] = agx_upload_launch_push(batch, mains[stage]);
          record->buffer_count[stage] = profile->resource_binding_count;
 
          bool reuse = previous && previous->buffer_count[stage] ==
@@ -6928,13 +6922,13 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
          indirect ? ib_extent
                   : MIN2(ib_extent, (uint64_t)draws->count * info->index_size);
       if (!agx_prepare_draw_record(dev, &batch->pipeline_pool,
-                                   &batch->apple9_context_pool, &pipeline,
+                                   &batch->render_context_pool, &pipeline,
                                    record, previous)) {
          mesa_loge("Apple9: out of memory for the state of a draw");
          return;
       }
-      batch->apple9_previous_draw = *record;
-      ++batch->apple9_draw_count;
+      batch->previous_draw_record = *record;
+      ++batch->launch_draw_count;
       pipeline.ppp = record->ppp;
       pipeline.ppp_viewport_offset = record->ppp_viewport_offset;
       pipeline.ppp_viewport_words = record->ppp_viewport_words;
@@ -6953,8 +6947,8 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
                   info->instance_count,
                   info->index_size ? draws->index_bias : draws->start)) -
          sizeof(uint32_t);
-      agx_batch_add_apple9_entries(batch, dev);
-      ++batch->apple9_vdm_draws;
+      agx_batch_pin_entries(batch, dev);
+      ++batch->vdm_draws;
 
       /* Barrier the rasterization program's XFB writes for later vertex reads.
        * The barrier replaces the terminator, which current points at.
@@ -7119,8 +7113,8 @@ agx_launch(struct agx_batch *batch, struct agx_grid grid,
    agx_update_descriptors(batch, cs);
    agx_upload_uniforms(batch);
 
-   if (agx_is_apple9(agx_device(ctx->base.screen))) {
-      agx_launch_apple9(batch, grid, wg, cs, linked, variable_shared_mem);
+   if (agx_has_launch_programs(agx_device(ctx->base.screen))) {
+      agx_dispatch_launched(batch, grid, wg, cs, linked, variable_shared_mem);
       return;
    }
 
@@ -7322,9 +7316,8 @@ void agx_init_state_functions(struct pipe_context *ctx);
  * pass, so the compressed reads in it still see the original modes.
  */
 void
-agx_apple9_decompress_inplace(struct agx_context *ctx,
-                              struct agx_resource *rsrc,
-                              struct pipe_surface *surf, const char *reason)
+agx_decompress_by_self_blit(struct agx_context *ctx, struct agx_resource *rsrc,
+                            struct pipe_surface *surf, const char *reason)
 {
    struct agx_device *dev = agx_device(ctx->base.screen);
    struct ail_layout *layout = &rsrc->layout;
@@ -7364,10 +7357,10 @@ agx_apple9_decompress_inplace(struct agx_context *ctx,
    };
    blit.src = blit.dst;
 
-   ctx->apple9_uncompressed_store = rsrc;
+   ctx->uncompressed_store = rsrc;
    ctx->base.blit(&ctx->base, &blit);
    agx_flush_writer(ctx, rsrc, "Apple9 in-place decompress");
-   ctx->apple9_uncompressed_store = NULL;
+   ctx->uncompressed_store = NULL;
 
    /* Metadata is 8 bytes per 16x16 tile, padded to cachelines per level. */
    uint64_t start = layout->level_offsets_compressed_B[level];

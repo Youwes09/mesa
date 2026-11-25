@@ -106,9 +106,6 @@ int agx_bind_timestamps(struct agx_device *dev, struct agx_bo *bo,
 struct agx_device {
    uint32_t debug;
 
-   /* Environment options captured at device creation, immutable while in use. */
-   bool apple9_direct_render;
-
    /* Precompiled libagx binary table */
    const uint32_t **libagx_programs;
 
@@ -298,12 +295,6 @@ static inline bool
 agx_has_native_border_colors(const struct agx_device *dev)
 {
    return agx_is_apple9(dev);
-}
-
-static inline bool
-agx_apple9_direct_render_enabled(const struct agx_device *dev)
-{
-   return dev->apple9_direct_render;
 }
 
 /*
