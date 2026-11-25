@@ -600,6 +600,12 @@ struct agx_isa_target {
     */
    bool tile_domains;
 
+   /* Varyings are named by immediate slot. Vertex outputs are stored from
+    * export registers at the end, fragment inputs are iterated one coefficient
+    * at a time.
+    */
+   bool varying_exports;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
@@ -731,7 +737,7 @@ typedef struct agx_context {
    /* Exports (struct agx_pending_export), placed once the exit block is known */
    struct util_dynarray exports;
 
-   /* Apple9 vertex outputs: each UVS word's value by unlinked index, or null */
+   /* Exported vertex outputs: each UVS word's value by unlinked index, or null */
    agx_index uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
 
    /* Promoted constants. These will be appended to the binary at the end. */

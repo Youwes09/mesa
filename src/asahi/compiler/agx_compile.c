@@ -758,10 +758,10 @@ agx_interp_for_bary(agx_builder *b, nir_intrinsic_instr *bary,
 
 /* Iterates one coefficient at a time, multiplying by W for perspective */
 static void
-agx_emit_load_vary_apple9(agx_builder *b, agx_index dest,
-                          nir_intrinsic_instr *instr, agx_index I,
-                          nir_intrinsic_instr *bary,
-                          enum agx_interpolation interp, agx_index sample)
+agx_emit_iterate_coefficients(agx_builder *b, agx_index dest,
+                              nir_intrinsic_instr *instr, agx_index I,
+                              nir_intrinsic_instr *bary,
+                              enum agx_interpolation interp, agx_index sample)
 {
    unsigned components = instr->num_components;
    assert(I.type == AGX_INDEX_IMMEDIATE &&
@@ -826,9 +826,10 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    agx_index I = cf_for_intrinsic(b, instr);
 
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.varying_exports) {
       /* The collect caches the channels, so the vector itself is unused */
-      agx_emit_load_vary_apple9(b, dest, instr, I, bary, interp, sample_index);
+      agx_emit_iterate_coefficients(b, dest, instr, I, bary, interp,
+                                    sample_index);
       return;
    }
 
@@ -971,14 +972,14 @@ agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
                       nir_intrinsic_base(instr), explicit);
 }
 
-/* Outputs stay ordinary values until agx_commit_uvs_apple9, as texture and
+/* Outputs stay ordinary values until agx_commit_uvs, as texture and
  * image bundles need the first 32 export registers.
  */
 static agx_instr *
-agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_store_uvs_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    agx_context *ctx = b->shader;
-   assert(nir_src_is_const(instr->src[1]) && "Apple9 varying slots are fixed");
+   assert(nir_src_is_const(instr->src[1]) && "varying slots are fixed");
    assert(instr->instr.block->cf_node.parent->type == nir_cf_node_function &&
           "outputs are stored at the top level");
 
@@ -1019,7 +1020,7 @@ agx_hold_tile_domains(agx_context *ctx)
 
 /* VARY_STORE frees its export register, so all outputs fit the export file */
 static void
-agx_commit_uvs_apple9(agx_context *ctx)
+agx_commit_uvs(agx_context *ctx)
 {
    agx_block *exit = agx_exit_block(ctx);
    agx_builder b = agx_init_builder(ctx, agx_after_block_logical(exit));
@@ -2063,9 +2064,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_load_coefficients_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
-      /* Apple9 names the three words of the coefficient */
+      /* The three words of the coefficient are named */
       agx_ldcf_to(b, dst, cf_for_intrinsic(b, instr),
-                  agx_is_apple9(b->shader) ? 3 : 1);
+                  b->shader->target.varying_exports ? 3 : 1);
       agx_emit_cached_split(b, dst, 3);
       return NULL;
 
@@ -2076,8 +2077,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_store_uvs_agx:
       assert(stage == MESA_SHADER_VERTEX || stage == MESA_SHADER_TESS_EVAL);
-      if (agx_is_apple9(b->shader))
-         return agx_emit_store_uvs_apple9(b, instr);
+      if (b->shader->target.varying_exports)
+         return agx_emit_store_uvs_export(b, instr);
 
       return agx_st_vary(b, agx_src_index(b->shader, &instr->src[1]),
                          agx_src_index(b->shader, &instr->src[0]));
@@ -4964,10 +4965,10 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    util_dynarray_foreach(&ctx->exports, struct agx_pending_export, export)
       agx_export(&export_b, export->value, export->base);
 
-   if (agx_is_apple9(ctx) && !ctx->is_preamble &&
+   if (ctx->target.varying_exports && !ctx->is_preamble &&
        (ctx->stage == MESA_SHADER_VERTEX ||
         ctx->stage == MESA_SHADER_TESS_EVAL))
-      agx_commit_uvs_apple9(ctx);
+      agx_commit_uvs(ctx);
 
    /* The linker holds the tile domains of shader parts */
    if (ctx->target.tile_domains && !ctx->is_preamble &&
@@ -5111,11 +5112,11 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
          out->scratch_size = stack_size;
    }
 
-   /* Apple9 marks no final varying store */
+   /* Exported varyings mark no final store */
    if ((ctx->stage == MESA_SHADER_VERTEX ||
         ctx->stage == MESA_SHADER_TESS_EVAL) &&
        !impl->function->is_preamble && !ctx->key->secondary &&
-       !agx_is_apple9(ctx))
+       !ctx->target.varying_exports)
       agx_set_st_vary_final(ctx);
 
    agx_insert_waits(ctx);
@@ -5280,13 +5281,13 @@ agx_preprocess_nir(nir_shader *nir)
 
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
-   /* Apple9 names varyings in instructions, so indexing must be direct */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+   /* Varyings named in instructions must be indexed directly */
+   if (agx_nir_target(nir)->varying_exports)
       NIR_PASS(_, nir, agx_nir_lower_apple9_indirect_io);
 
-   /* Lower large arrays to scratch and small to csel. Apple9 has fewer GPRs */
+   /* Lower large arrays to scratch and small to csel, fewer with fewer GPRs */
    unsigned scratch_threshold =
-      agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9 ? 128 : 256;
+      agx_nir_target(nir)->gpr_halves < 256 ? 128 : 256;
 
    NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_threshold,
             glsl_get_natural_size_align_bytes, glsl_get_word_size_align_bytes);

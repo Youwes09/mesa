@@ -64,6 +64,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .word_memory = true,
    .coherent_memory = true,
    .tile_domains = true,
+   .varying_exports = true,
    .scoreboard_slots = 6,
    .shader_sized_frame = true,
    .occupancy_table = false,
