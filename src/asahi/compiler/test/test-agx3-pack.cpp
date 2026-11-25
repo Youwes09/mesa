@@ -94,8 +94,7 @@ class Agx3Pack : public testing::Test {
                              bool alu_reads = true)
    {
       uint8_t bytes[32];
-      unsigned length =
-         agx3_pack_instr(I, load_follows, alu_reads, bytes);
+      unsigned length = agx3_pack_instr(I, load_follows, alu_reads, bytes);
       return std::vector<uint8_t>(bytes, bytes + length);
    }
 
@@ -1782,8 +1781,8 @@ TEST_F(Agx3Pack, ModifierForms)
 
    I = agx_fmul_to(b, r(4), r(2), agx_abs(k(r(3))));
    EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_MUL_ABS_EXTENDED);
-   check(I, {0x49, 0x85, 0x35, 0x07, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
-             0x00, 0x00});
+   check(I, {0x49, 0x85, 0x35, 0x07, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+             0x00});
 
    I = agx_fadd_to(b, r(4), agx_neg(k(r(2))), k(r(3)));
    EXPECT_EQ(form(I), AGX3_ENC_FLOAT2_MODIFIER_EXTENDED);
@@ -1796,8 +1795,8 @@ TEST_F(Agx3Pack, ModifierForms)
 
    I = agx_ffma_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)));
    EXPECT_EQ(form(I), AGX3_ENC_FLOAT3_MODIFIER_EXTENDED);
-   check(I, {0x49, 0x05, 0x3e, 0x07, 0x83, 0x0a, 0x02, 0x00, 0x00, 0x00,
-             0x01, 0x00});
+   check(I, {0x49, 0x05, 0x3e, 0x07, 0x83, 0x0a, 0x02, 0x00, 0x00, 0x00, 0x01,
+             0x00});
 
    I = agx_ffma_to(b, r(4), k(r(2)), k(r(3)), k(r(5)));
    I->saturate = true;
@@ -1807,8 +1806,8 @@ TEST_F(Agx3Pack, ModifierForms)
    I = agx_fcmpsel_to(b, r(4), agx_abs(k(r(2))), k(r(3)), k(r(5)), k(r(6)),
                       AGX_FCOND_LT);
    EXPECT_EQ(form(I), AGX3_ENC_SELECT_MODIFIER_EXTENDED);
-   check(I, {0x42, 0x05, 0x1f, 0x07, 0x83, 0x0a, 0x03, 0x00, 0x80, 0x0c,
-             0x00, 0x00, 0x01, 0x00});
+   check(I, {0x42, 0x05, 0x1f, 0x07, 0x83, 0x0a, 0x03, 0x00, 0x80, 0x0c, 0x00,
+             0x00, 0x01, 0x00});
 
    I = agx_floor_to(b, r(4), u(9));
    EXPECT_EQ(form(I), AGX3_ENC_FLOAT_SPECIAL_UNIFORM);

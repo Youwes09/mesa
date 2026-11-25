@@ -47,8 +47,9 @@ static const char *files[] = {"gpr", "uniform", "immediate", "implicit"};
 static const char *widths[] = {"16", "32", "64"};
 
 static const char *operand_flags[] = {
-   "allocatable", "hard_low", "compact_preferred", "scattered",
-   "implicit",    "uniform_alternative", "clobber", "publication",
+   "allocatable", "hard_low",    "compact_preferred",
+   "scattered",   "implicit",    "uniform_alternative",
+   "clobber",     "publication",
 };
 
 static const char *completion[] = {"memory", "publication", "other"};

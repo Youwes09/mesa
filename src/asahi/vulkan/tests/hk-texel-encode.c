@@ -248,8 +248,8 @@ path_alu_count(enum pipe_format format, enum agx_store_encode encode)
       nir_load_global(&b, 4, 32, nir_imm_int64(&b, 0), .align_mul = 16);
    nir_def *layout = nir_imm_ivec4(&b, m.component[0], m.component[1],
                                    m.component[2], m.component[3]);
-   nir_def *words = agx_encode_texel_fast(&b, value, layout, true,
-                                                 nir_imm_int(&b, encode));
+   nir_def *words =
+      agx_encode_texel_fast(&b, value, layout, true, nir_imm_int(&b, encode));
    nir_store_global(&b, words, nir_imm_int64(&b, 64), .align_mul = 16,
                     .write_mask = 0xf);
    fold(b.shader);

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/compiler/agx_nir.h"
+#include "asahi/compiler/agx_nir_texture.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
 #include "agx_state.h"

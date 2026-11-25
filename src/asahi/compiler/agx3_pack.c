@@ -2869,8 +2869,8 @@ agx3_encoding_for(const agx_instr *I)
 }
 
 unsigned
-agx3_pack_instr(const agx_instr *I, bool load_follows,
-                bool alu_reads_result, uint8_t *bytes)
+agx3_pack_instr(const agx_instr *I, bool load_follows, bool alu_reads_result,
+                uint8_t *bytes)
 {
    if (is_empty(I))
       return 0;
