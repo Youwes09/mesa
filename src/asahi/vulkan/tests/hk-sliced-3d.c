@@ -138,7 +138,7 @@ get_descriptor(struct hk_device *dev, VkImageView view, VkDescriptorType type,
 
 static void
 check_updates(struct hk_device *dev, VkImageView view,
-              const struct agx_apple9_storage_descriptor *expected)
+              const struct agx_storage_descriptor *expected)
 {
    struct hk_descriptor_set_layout *layout =
       calloc(1, sizeof(*layout) + sizeof(layout->binding[0]));
@@ -329,7 +329,7 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
    get_descriptor(dev, sliced, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                   &sliced_sampled);
    CHECK(!memcmp(&full_sampled, &sliced_sampled, sizeof(full_sampled)));
-   struct agx_apple9_storage_descriptor desc;
+   struct agx_storage_descriptor desc;
    get_descriptor(dev, sliced, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &desc);
    CHECK(sizeof(desc) == HK_DB_STORAGE_SIZE);
    /* Native stores get one 2D PBE per slice of the view, from its slice
@@ -339,9 +339,9 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
       !alias && level == 0 &&
       !(flags & (VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
                  VK_IMAGE_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT));
-   CHECK((desc.native_ok & BITFIELD_MASK(AGX_APPLE9_STORAGE_PBE_SHIFT)) ==
-         ((alias ? 0 : AGX_APPLE9_STORAGE_READ_VALID) |
-          (pbes ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID : 0)));
+   CHECK((desc.native_ok & BITFIELD_MASK(AGX_STORAGE_PBE_SHIFT)) ==
+         ((alias ? 0 : AGX_STORAGE_READ_VALID) |
+          (pbes ? AGX_STORAGE_LAYER_WRITE_VALID : 0)));
    CHECK(!!s->storage_pbes.map == pbes);
    if (pbes) {
       CHECK(s->storage_pbes.size >=
@@ -468,7 +468,7 @@ main(void)
                  VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
                     VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT |
                     VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
-   struct agx_apple9_storage_descriptor null;
+   struct agx_storage_descriptor null;
    get_descriptor(dev, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &null);
    check_size(&null.common.tex, 0, 0, 0);
    CHECK(null.native_ok == 0);

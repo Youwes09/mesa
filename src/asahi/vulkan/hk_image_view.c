@@ -626,12 +626,12 @@ hk_init_usc_view_descriptors(struct hk_image_view *view)
    if (view->plane_count != 1)
       return;
 
-   struct agx_apple9_storage_descriptor *storage = &view->usc_storage;
+   struct agx_storage_descriptor *storage = &view->usc_storage;
    storage->common.tex = view->planes[0].ro_storage;
    storage->common.pbe = view->planes[0].storage;
    enum pipe_format format = vk_format_to_pipe_format(view->vk.format);
-   agx_apple9_texel_layout(format, &storage->metadata);
-   storage->store_encode = agx_apple9_store_encode(format);
+   agx_texel_layout(format, &storage->metadata);
+   storage->store_encode = agx_store_encode(format);
    storage->metadata.elements =
       view->vk.base_mip_level | (view->vk.base_array_layer << 16);
    /* A block-texel alias rebases to a single level. Its native 3D
@@ -643,7 +643,7 @@ hk_init_usc_view_descriptors(struct hk_image_view *view)
                          !vk_format_is_compressed(view->vk.format);
    if (!alias_3d &&
        agx_translate_usc_texture(storage->texture, &storage->common.tex))
-      storage->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+      storage->native_ok = AGX_STORAGE_READ_VALID;
 
    /* Native fetches need the original depth: it participates in the
     * inferred XY miptree stride when Z is the longest axis. Queries and all
@@ -825,7 +825,7 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
    view->storage_pbe_index = 0;
    if (!agx_has_usc_descriptors(&dev->dev) || view->plane_count != 1 ||
        !(view->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) ||
-       !agx_apple9_native_store_format(format_for_plane(view, 0)) ||
+       !agx_native_store_format(format_for_plane(view, 0)) ||
        view->vk.image->samples != 1)
       return;
    bool array = view->vk.view_type == VK_IMAGE_VIEW_TYPE_2D_ARRAY ||
@@ -872,7 +872,7 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
       return;
    uint64_t index = (view->storage_pbes.addr - dev->dev.shader_base) /
                     AGX_TEXTURE_TABLE_STRIDE;
-   if (index + count - 1 > AGX_APPLE9_STORAGE_PBE_MASK) {
+   if (index + count - 1 > AGX_STORAGE_PBE_MASK) {
       simple_mtx_lock(&dev->usc_heap_lock);
       hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
       simple_mtx_unlock(&dev->usc_heap_lock);
@@ -893,8 +893,8 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
       }
    }
    view->storage_pbe_index = index;
-   view->storage_flags = array || slices ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
-                                         : AGX_APPLE9_STORAGE_WRITE_VALID;
+   view->storage_flags =
+      array || slices ? AGX_STORAGE_LAYER_WRITE_VALID : AGX_STORAGE_WRITE_VALID;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

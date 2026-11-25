@@ -70,7 +70,7 @@ struct hk_storage_image_descriptor {
 static_assert(sizeof(struct hk_storage_image_descriptor) == 48,
               "hk_storage_image_descriptor has no holes");
 static_assert(sizeof(struct hk_storage_image_descriptor) ==
-                 sizeof(struct agx_apple9_storage_words),
+                 sizeof(struct agx_storage_words),
               "Apple9 storage descriptors begin with it");
 
 /* G16 descriptor records, 128 bytes each so translation layers can copy
@@ -95,7 +95,7 @@ struct hk_usc_image_part {
 };
 static_assert(sizeof(struct hk_usc_image_part) == 128, "128-byte record");
 static_assert(offsetof(struct hk_usc_image_part, residency_lo) ==
-                 AGX_APPLE9_DESCRIPTOR_RESIDENCY,
+                 AGX_DESCRIPTOR_RESIDENCY,
               "residency table where shaders read it");
 static_assert(offsetof(struct hk_usc_image_part, texture_info) ==
                  AGX_DESCRIPTOR_TEXTURE_INFO,

@@ -1053,7 +1053,7 @@ hk_image_init(struct hk_device *dev, struct hk_image *image,
 }
 
 void
-hk_residency_init(struct agx_apple9_residency *r,
+hk_residency_init(struct agx_residency_table *r,
                   const struct ail_layout *layout)
 {
    const unsigned block_w = util_format_get_blockwidth(layout->format);
@@ -1067,7 +1067,7 @@ hk_residency_init(struct agx_apple9_residency *r,
       struct ail_tile tile = layout->tilesize_el[level];
       unsigned tile_w = tile.width_el * block_w;
       unsigned tile_h = tile.height_el * block_h;
-      struct agx_apple9_residency_level *out = &r->level[l];
+      struct agx_residency_level *out = &r->level[l];
 
       /* Outside the mip tail, a hardware tile is exactly one page. */
       out->page = layout->level_offsets_B[level] / AIL_PAGESIZE;
@@ -1131,7 +1131,7 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
       /* Unbound pages read the scratch page. Every page starts unbound. */
       const struct ail_layout *layout = &plane->layout;
       size_t size_B =
-         sizeof(struct agx_apple9_residency) +
+         sizeof(struct agx_residency_table) +
          align(ail_bytes_to_pages(layout->layer_stride_B) * layout->depth_px,
                4);
       enum agx_va_flags va_flags =
@@ -1148,7 +1148,7 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
                           "Residency table allocation failed");
       }
 
-      struct agx_apple9_residency *r = agx_bo_map(plane->residency_table);
+      struct agx_residency_table *r = agx_bo_map(plane->residency_table);
       memset(r, 0, size_B);
       hk_residency_init(r, layout);
    } else if (sparse_resident) {

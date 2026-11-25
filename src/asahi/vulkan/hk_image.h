@@ -78,12 +78,12 @@ struct hk_image_plane {
    struct agx_bo *sparse_map;
 
    /* Apple9 has no texture residency mode. Its sparse-resident planes instead
-    * have a struct agx_apple9_residency table, which shaders consult.
+    * have a struct agx_residency_table table, which shaders consult.
     */
    struct agx_bo *residency_table;
 };
 
-void hk_residency_init(struct agx_apple9_residency *r,
+void hk_residency_init(struct agx_residency_table *r,
                        const struct ail_layout *layout);
 
 struct hk_image {

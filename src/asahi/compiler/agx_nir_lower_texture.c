@@ -1999,7 +1999,7 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
 }
 
 static bool
-agx_apple9_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
+agx_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
 {
    int offset = nir_tex_instr_src_index(tex, nir_tex_src_offset);
    /* The shape of an encodable offset. Whether the sample's final form has
@@ -2055,7 +2055,7 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
           * lowers the offset with runtime sampler state, which the driver
           * must supply for any stage that samples with an offset, static
           * key or not. */
-         if (agx_apple9_texture_native_offset(tex, NULL))
+         if (agx_texture_native_offset(tex, NULL))
             continue;
          if ((tex->op != nir_texop_tex && tex->op != nir_texop_txb &&
               tex->op != nir_texop_txl && tex->op != nir_texop_txd &&

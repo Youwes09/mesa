@@ -75,9 +75,7 @@ lower(nir_builder *b, nir_instr *instr, void *data)
                     intr->intrinsic != nir_intrinsic_image_size &&
                     intr->intrinsic != nir_intrinsic_image_samples;
          nir_def *offset = nir_iadd_imm(
-            b,
-            nir_imul_imm(b, index,
-                         sizeof(struct agx_apple9_storage_descriptor)),
+            b, nir_imul_imm(b, index, sizeof(struct agx_storage_descriptor)),
             pbe ? sizeof(struct agx_texture_packed) : 0);
 
          nir_rewrite_image_intrinsic(

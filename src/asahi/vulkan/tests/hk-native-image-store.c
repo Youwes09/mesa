@@ -84,30 +84,29 @@ main(void)
       PIPE_FORMAT_R16G16B16A16_UINT,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(supported); ++i)
-      CHECK(agx_apple9_native_store_format(supported[i]));
+      CHECK(agx_native_store_format(supported[i]));
    const enum pipe_format fallback[] = {
       PIPE_FORMAT_R8G8B8A8_SRGB,  PIPE_FORMAT_R8G8B8A8_SINT,
       PIPE_FORMAT_R16_UINT,       PIPE_FORMAT_R16_FLOAT,
       PIPE_FORMAT_R9G9B9E5_FLOAT, PIPE_FORMAT_Z32_FLOAT,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(fallback); ++i)
-      CHECK(!agx_apple9_native_store_format(fallback[i]));
-   CHECK(sizeof(struct agx_apple9_storage_descriptor) == 128);
+      CHECK(!agx_native_store_format(fallback[i]));
+   CHECK(sizeof(struct agx_storage_descriptor) == 128);
    CHECK(HK_DB_STORAGE_SIZE == 128);
-   CHECK(offsetof(struct agx_apple9_storage_descriptor, native_ok) == 88);
-   CHECK(offsetof(struct agx_apple9_storage_descriptor, store_encode) == 92);
-   const uint32_t indices[] = {0, 1, 2048, AGX_APPLE9_STORAGE_PBE_MASK};
+   CHECK(offsetof(struct agx_storage_descriptor, native_ok) == 88);
+   CHECK(offsetof(struct agx_storage_descriptor, store_encode) == 92);
+   const uint32_t indices[] = {0, 1, 2048, AGX_STORAGE_PBE_MASK};
    for (unsigned i = 0; i < ARRAY_SIZE(indices); ++i) {
-      uint32_t packed = (indices[i] << AGX_APPLE9_STORAGE_PBE_SHIFT) | 7;
+      uint32_t packed = (indices[i] << AGX_STORAGE_PBE_SHIFT) | 7;
       CHECK((packed & 7) == 7);
-      CHECK(((packed >> AGX_APPLE9_STORAGE_PBE_SHIFT) &
-             AGX_APPLE9_STORAGE_PBE_MASK) == indices[i]);
+      CHECK(((packed >> AGX_STORAGE_PBE_SHIFT) & AGX_STORAGE_PBE_MASK) ==
+            indices[i]);
    }
-   CHECK(HK_DB_STORAGE_SIZE >= sizeof(struct agx_apple9_storage_descriptor));
+   CHECK(HK_DB_STORAGE_SIZE >= sizeof(struct agx_storage_descriptor));
    CHECK(util_is_power_of_two_nonzero(HK_DB_STORAGE_SIZE));
-   CHECK(!(AGX_APPLE9_STORAGE_READ_VALID & AGX_APPLE9_STORAGE_WRITE_VALID));
-   CHECK(
-      !(AGX_APPLE9_STORAGE_READ_VALID & AGX_APPLE9_STORAGE_LAYER_WRITE_VALID));
+   CHECK(!(AGX_STORAGE_READ_VALID & AGX_STORAGE_WRITE_VALID));
+   CHECK(!(AGX_STORAGE_READ_VALID & AGX_STORAGE_LAYER_WRITE_VALID));
 
    /* Each face gets an immutable 2D entry; its address must advance by the
     * allocation's layer stride, including nonzero view base layers. */

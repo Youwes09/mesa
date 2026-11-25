@@ -184,14 +184,14 @@ check(void)
 
    view.plane_count = 1;
    memset(&view.usc_storage, 0x61, sizeof(view.usc_storage));
-   view.usc_storage.native_ok = AGX_APPLE9_STORAGE_READ_VALID;
-   view.usc_storage.store_encode = AGX_APPLE9_STORE_ENCODE_UNORM8;
-   view.storage_flags = AGX_APPLE9_STORAGE_LAYER_WRITE_VALID;
+   view.usc_storage.native_ok = AGX_STORAGE_READ_VALID;
+   view.usc_storage.store_encode = AGX_STORE_ENCODE_UNORM8;
+   view.storage_flags = AGX_STORAGE_LAYER_WRITE_VALID;
    view.storage_pbe_index = 0x1234;
-   struct agx_apple9_storage_descriptor storage = view.usc_storage;
+   struct agx_storage_descriptor storage = view.usc_storage;
    storage.metadata.base = va[0].addr;
    storage.native_ok |= view.storage_flags | view.storage_pbe_index
-                                                << AGX_APPLE9_STORAGE_PBE_SHIFT;
+                                                << AGX_STORAGE_PBE_SHIFT;
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,
                        sizeof(storage)));
    CHECK(view.usc_storage.metadata.base == UINT64_C(0x6161616161616161));
@@ -224,16 +224,15 @@ check(void)
    }
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, info,
                        combined, sizeof(combined)));
-   struct agx_apple9_texel_descriptor texel = {.tex = tex};
+   struct agx_texel_descriptor texel = {.tex = tex};
    memcpy(texel.texture, null.texture, sizeof(texel.texture));
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, info,
                        &texel, sizeof(texel)));
-   struct agx_apple9_storage_descriptor storage_texel = {.common.tex = tex};
+   struct agx_storage_descriptor storage_texel = {.common.tex = tex};
    agx_set_null_pbe(&storage_texel.common.pbe);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, info,
                        &storage_texel, sizeof(storage_texel)));
-   storage =
-      (struct agx_apple9_storage_descriptor){.metadata.base = va[0].addr};
+   storage = (struct agx_storage_descriptor){.metadata.base = va[0].addr};
    agx_set_null_texture(&storage.common.tex);
    agx_set_null_pbe(&storage.common.pbe);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,

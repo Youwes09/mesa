@@ -52,13 +52,13 @@ struct hk_image_view {
        * since image memory can be bound after creating a view. */
       struct hk_usc_image_part usc_sampled, usc_input;
    } planes[3];
-   struct agx_apple9_storage_descriptor usc_storage;
+   struct agx_storage_descriptor usc_storage;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_image_view, vk.base, VkImageView,
                                VK_OBJECT_TYPE_IMAGE_VIEW)
 
-/* Address of the struct agx_apple9_residency table for a plane of the view. */
+/* Address of the struct agx_residency_table table for a plane of the view. */
 uint64_t hk_view_residency(const struct hk_device *dev,
                            const struct hk_image_view *view, unsigned plane);
 

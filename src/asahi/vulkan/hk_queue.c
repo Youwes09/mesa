@@ -456,7 +456,7 @@ hk_flush_bind(struct hk_bind_builder *b)
    }
 
    if (b->image && b->image->planes[0].residency_table != NULL) {
-      struct agx_apple9_residency *r =
+      struct agx_residency_table *r =
          agx_bo_map(b->image->planes[0].residency_table);
       uint64_t first_page = ail_bytes_to_pages(b->resourceOffset);
       uint64_t end_page =

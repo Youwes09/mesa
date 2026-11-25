@@ -227,15 +227,14 @@ hk_pack_storage_image(struct hk_device *dev, void *out,
       assert(view->plane_count == 1);
 
    if (agx_has_usc_descriptors(&dev->dev)) {
-      struct agx_apple9_storage_descriptor *ext = out;
+      struct agx_storage_descriptor *ext = out;
       if (view) {
          *ext = view->usc_storage;
          ext->metadata.base = hk_view_residency(dev, view, 0);
-         ext->native_ok |=
-            view->storage_flags |
-            (view->storage_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT);
+         ext->native_ok |= view->storage_flags |
+                           (view->storage_pbe_index << AGX_STORAGE_PBE_SHIFT);
       } else {
-         *ext = (struct agx_apple9_storage_descriptor){0};
+         *ext = (struct agx_storage_descriptor){0};
          agx_set_null_texture(&ext->common.tex);
          agx_set_null_pbe(&ext->common.pbe);
          ext->metadata.base = dev->resident_table->va->addr;
@@ -262,7 +261,7 @@ write_storage_image_view_desc(struct hk_descriptor_set *set,
                               uint32_t binding, uint32_t elem)
 {
    struct hk_device *dev = (struct hk_device *)set->layout->vk.base.device;
-   struct agx_apple9_storage_descriptor out;
+   struct agx_storage_descriptor out;
    static_assert(sizeof(out) >= sizeof(struct hk_storage_image_descriptor),
                  "room for either record");
    write_desc(set, binding, elem, &out, hk_pack_storage_image(dev, &out, info));
@@ -313,13 +312,13 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
                           VkDescriptorType type,
                           const struct agx_texture_packed *tex,
                           const struct agx_pbe_packed *pbe,
-                          const struct agx_apple9_texel_metadata *m,
+                          const struct agx_texel_metadata *m,
                           const uint8_t *usc_texture)
 {
    /* G16 uniform texel buffers carry load metadata, also in mutable bindings. */
    if (agx_has_usc_descriptors(&dev->dev) &&
        type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
-      struct agx_apple9_texel_descriptor desc = {};
+      struct agx_texel_descriptor desc = {};
       if (tex) {
          desc.tex = *tex;
          desc.metadata = *m;
@@ -331,7 +330,7 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
       memcpy(out, &desc, sizeof(desc));
       return sizeof(desc);
    } else if (agx_has_usc_descriptors(&dev->dev)) {
-      struct agx_apple9_storage_descriptor desc = {};
+      struct agx_storage_descriptor desc = {};
       if (tex) {
          desc.common.tex = *tex;
          desc.common.pbe = *pbe;
@@ -1082,7 +1081,7 @@ hk_get_texel_buffer_descriptor(struct hk_device *dev, VkDescriptorType type,
    if (info && info->address) {
       struct agx_texture_packed tex;
       struct agx_pbe_packed pbe;
-      struct agx_apple9_texel_metadata m = {0};
+      struct agx_texel_metadata m = {0};
       uint8_t texture[AGX_TEXTURE_TABLE_STRIDE] = {0};
       enum pipe_format format = hk_format_to_pipe_format(info->format);
       uint32_t elements = info->range / util_format_get_blocksize(format);
@@ -1131,7 +1130,7 @@ hk_GetDescriptorEXT(VkDevice _device, const VkDescriptorGetInfoEXT *info,
    }
 
    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
-      struct agx_apple9_storage_descriptor out;
+      struct agx_storage_descriptor out;
       VkDescriptorImageInfo image = {0};
       if (info->data.pStorageImage)
          image = *info->data.pStorageImage;

@@ -3604,9 +3604,9 @@ agx_store_uncompressed(const struct agx_batch *batch,
 }
 
 static void
-agx_null_usc_storage(struct agx_apple9_storage_descriptor *desc)
+agx_null_usc_storage(struct agx_storage_descriptor *desc)
 {
-   *desc = (struct agx_apple9_storage_descriptor){0};
+   *desc = (struct agx_storage_descriptor){0};
    agx_set_null_texture(&desc->common.tex);
    agx_set_null_pbe(&desc->common.pbe);
 }
@@ -3625,7 +3625,7 @@ agx_usc_storage_pbe_count(const struct pipe_image_view *view, bool *layered)
    bool slices = target == PIPE_TEXTURE_3D && view->u.tex.level == 0;
 
    if (target == PIPE_BUFFER || !(view->access & PIPE_IMAGE_ACCESS_WRITE) ||
-       !agx_apple9_native_store_format(view->format) ||
+       !agx_native_store_format(view->format) ||
        util_res_sample_count(&rsrc->base) > 1 || layout->compressed ||
        util_format_is_compressed(layout->format) ||
        util_format_get_blocksize(layout->format) !=
@@ -3652,7 +3652,7 @@ agx_usc_storage_slots(const struct pipe_image_view *view)
 
 /* PBE entries of a view, one per layer, at index `slot` of the texture table */
 static void
-agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
+agx_pack_storage_pbes(struct agx_storage_descriptor *desc,
                       const struct pipe_image_view *view, uint8_t *entries,
                       unsigned slot)
 {
@@ -3663,7 +3663,7 @@ agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
    if (!count)
       return;
 
-   assert(slot + count - 1 <= AGX_APPLE9_STORAGE_PBE_MASK);
+   assert(slot + count - 1 <= AGX_STORAGE_PBE_MASK);
 
    for (unsigned i = 0; i < count; ++i) {
       uint64_t base = agx_map_gpu(rsrc) +
@@ -3677,15 +3677,15 @@ agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
          return;
    }
 
-   desc->native_ok |= (layered ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
-                               : AGX_APPLE9_STORAGE_WRITE_VALID) |
-                      (slot << AGX_APPLE9_STORAGE_PBE_SHIFT);
+   desc->native_ok |=
+      (layered ? AGX_STORAGE_LAYER_WRITE_VALID : AGX_STORAGE_WRITE_VALID) |
+      (slot << AGX_STORAGE_PBE_SHIFT);
 }
 
 /* Storage descriptor of an image view: texture and PBE words, texel layout */
 static void
 agx_pack_usc_storage(struct agx_batch *batch,
-                     struct agx_apple9_storage_descriptor *desc,
+                     struct agx_storage_descriptor *desc,
                      struct pipe_image_view *view, uint8_t *table,
                      unsigned slot)
 {
@@ -3701,8 +3701,8 @@ agx_pack_usc_storage(struct agx_batch *batch,
    agx_batch_upload_pbe(batch, &desc->common.pbe, view, false, false, false,
                         false);
 
-   agx_apple9_texel_layout(view->format, &desc->metadata);
-   desc->store_encode = agx_apple9_store_encode(view->format);
+   agx_texel_layout(view->format, &desc->metadata);
+   desc->store_encode = agx_store_encode(view->format);
 
    if (rsrc->base.target == PIPE_BUFFER) {
       desc->metadata.base = agx_map_gpu(rsrc) + view->u.buf.offset;
@@ -3719,7 +3719,7 @@ agx_pack_usc_storage(struct agx_batch *batch,
    desc->texture_index = slot;
 
    if (agx_translate_usc_texture(entry, &desc->common.tex))
-      desc->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+      desc->native_ok = AGX_STORAGE_READ_VALID;
    else
       agx_set_null_usc_texture(entry);
 
@@ -3846,9 +3846,9 @@ agx_upload_launch_tables(struct agx_batch *batch,
    if (nr_images) {
       struct agx_ptr t = agx_pool_alloc_aligned(
          &batch->pipeline_pool,
-         nr_images * sizeof(struct agx_apple9_storage_descriptor),
+         nr_images * sizeof(struct agx_storage_descriptor),
          AGX_TEXTURE_TABLE_STRIDE);
-      struct agx_apple9_storage_descriptor *out = t.cpu;
+      struct agx_storage_descriptor *out = t.cpu;
 
       for (unsigned i = 0; i < nr_images; ++i) {
          if (!(st->image_mask & BITFIELD_BIT(i))) {
