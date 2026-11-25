@@ -6,8 +6,8 @@
 <!--
   Apple9 (G16, G17P) instruction set.
 
-  The layouts follow the Apple9 packer (src/asahi/compiler/agx_pack_apple9.c)
-  and agx_apple9_encoding.h. Bit n is bit n % 8 of byte n / 8.
+  gen-pack.py generates the compiler's instruction packers from the layouts,
+  gen-disasm.py the disassembler. Bit n is bit n % 8 of byte n / 8.
 
   Instructions have a fixed length. Every bit not covered by a field has the
   value given by the instruction's template, so an instruction only matches
@@ -60,9 +60,9 @@
     </case>
 
     <!-- The constant's exponent is at least 8, so its top bit is the cache
-         bit. Its sign is the release bit. -->
+         bit. Its sign is the release bit. Constants are 32-bit. -->
     <case>
-      <exact bit="8 10">11</exact>
+      <exact bit="7 8 10">111</exact>
       <immediate name="a9fimm" bit="0:5 8 11"/>
       <modifier name="neg" bit="9"/>
       <modifier name="abs" bit="13"/>
@@ -78,7 +78,8 @@
   </encoding>
 
   <!-- As fsrc, with an 8-bit integer constant: bit 0 in the high half bit,
-       bits 1-6 in the register field and bit 7 in the release bit. -->
+       bits 1-6 in the register field and bit 7 in the release bit. The
+       width bit of a constant varies with the operand. -->
   <encoding name="isrc">
     <case>
       <exact bit="7 10">01</exact>
@@ -103,6 +104,7 @@
     <case>
       <exact bit="8 10">11</exact>
       <immediate name="imm" bit="11 0:5 9"/>
+      <modifier name="size32" bit="7"/>
       <modifier name="neg" bit="12"/>
       <modifier name="abs" bit="13"/>
     </case>
@@ -140,7 +142,7 @@
     </case>
 
     <case>
-      <exact bit="8 10">11</exact>
+      <exact bit="7 8 10">111</exact>
       <zero bit="6 9"/>
       <immediate name="a9fimm" bit="0:5 8 11"/>
       <modifier name="neg" bit="12"/>
@@ -248,8 +250,8 @@
   <!--
     Integer add and multiply-add source. Value bits: 0-6 register or uniform
     bits 0-6, 7 cache (uniform bit 7), 8 low bit (high half, constant bit 0),
-    9 width (32-bit), 10 release (uniform), 11 file (register), 12 sign
-    extension of a 16-bit register.
+    9 width (32-bit, varying for constants), 10 release (uniform), 11 file
+    (register), 12 sign extension of a 16-bit register.
   -->
   <encoding name="isrc_desc">
     <case>
@@ -270,7 +272,7 @@
     </case>
 
     <case>
-      <exact bit="10 11">01</exact>
+      <exact bit="9 10 11">011</exact>
       <zero bit="8 12"/>
       <immediate name="uniform" bit="0:7" shift="1"/>
       <property name="size32"/>
@@ -280,6 +282,7 @@
       <exact bit="10 11">00</exact>
       <zero bit="7 12"/>
       <immediate name="imm" bit="8 0:6"/>
+      <modifier name="size32" bit="9"/>
     </case>
   </encoding>
 
@@ -330,10 +333,10 @@
     </case>
   </encoding>
 
-  <!-- Device memory index: bits 0-6 the register, 7 release, 8 present -->
+  <!-- Device memory index: bits 0-6 the register, 7 release, 8-9 present -->
   <encoding name="memindex">
     <case>
-      <exact bit="8">1</exact>
+      <exact bit="8 9">11</exact>
       <immediate name="reg" bit="0:6" shift="1"/>
       <property name="size32"/>
       <modifier name="lu" bit="7"/>
@@ -1100,10 +1103,9 @@
   </ins>
 
   <!--
-    FP16 special functions, which agx_pack_apple9.c does not emit. Byte 6
-    and the precision byte 7 carry the source type; the reciprocal and the
-    square root factor have variants reading an FP16 source for an FP32
-    result.
+    FP16 special functions. Byte 6 and the precision byte 7 carry the source
+    type; the reciprocal and the square root factor have variants reading an
+    FP16 source for an FP32 result.
   -->
   <group name="FP16 special function" length="10" form="half_special">
     <template>2f 00 54 00 02 00 8c 60 00 00</template>
@@ -1558,7 +1560,7 @@
     <template>d7 10 54 00 00 40 00 00 20 04 00 00 88 1a 89 00</template>
     <src kind="export" bit="25:31"/>
     <src kind="reg64" bit="57:63 =0 64"/>
-    <modifier name="float" bit="109"/>
+    <modifier name="floating" display="float" bit="109"/>
   </ins>
 
   <ins name="block_image_store" length="12" form="block_image_store block_image_store_extended">

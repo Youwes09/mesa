@@ -50,6 +50,19 @@ agx3_forms_c = custom_target(
   capture : true,
 )
 
+agx3_pack_h = custom_target(
+  input : ['gen-pack.py', 'AGX3.xml'],
+  output : 'agx3_pack.h',
+  command : [prog_python, '@INPUT@'],
+  capture : true,
+  depend_files : files('isa.py'),
+)
+
+idep_agx3_pack_h = declare_dependency(
+  sources : [agx3_pack_h],
+  include_directories : include_directories('.'),
+)
+
 agx3_disasm_c = custom_target(
   input : ['gen-disasm.py', 'AGX3.xml'],
   output : 'agx3_disasm.c',
