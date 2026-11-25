@@ -2986,7 +2986,7 @@ agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission)
 
          /* The linker relocates the slots of varying commits */
          if (I->op == AGX_OPCODE_ST_VARY) {
-            assert(I->src[0].value < AGX_APPLE9_MAX_UVS_SLOTS &&
+            assert(I->src[0].value < AGX_MAX_UVS_SLOTS &&
                    !ctx->out->vary_stores[I->src[0].value]);
             ctx->out->vary_stores[I->src[0].value] = emission->size + 1;
          }

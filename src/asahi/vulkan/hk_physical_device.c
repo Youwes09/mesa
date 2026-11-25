@@ -1874,7 +1874,7 @@ hk_restrict_launch_features(struct vk_device_extension_table *ext,
     * and count against the API output limit, so do not reserve them twice.
     * Their rasterizer copies share the ordinary varying exports.
     */
-   const unsigned outputs = AGX_APPLE9_MAX_VARYING_COMPONENTS - 2;
+   const unsigned outputs = AGX_MAX_EXPORTED_COMPONENTS - 2;
    props->maxVertexOutputComponents = outputs;
    props->maxTessellationEvaluationOutputComponents = outputs;
    props->maxGeometryOutputComponents = outputs;

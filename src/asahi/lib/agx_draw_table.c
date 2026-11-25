@@ -60,7 +60,7 @@ pool_alloc(void *pool, size_t size, size_t alignment)
 
 /* One binding per user scalar in the worst case, then 1/W, primitive ID,
  * Z and point coordinates. */
-static_assert(4 + 4 * (AGX_APPLE9_MAX_VARYING_COMPONENTS + 1 + 1 + 1 + 1) <=
+static_assert(4 + 4 * (AGX_MAX_EXPORTED_COMPONENTS + 1 + 1 + 1 + 1) <=
                  AGX_CF_TABLE_SIZE,
               "coefficient table must fit its worst-case bindings");
 
@@ -71,13 +71,13 @@ draw_provoking_vertex(unsigned primitive, bool first)
 }
 
 static enum agx_shade_model
-cf_shade_model(struct agx_apple9_interp_mask linear_mask,
-               struct agx_apple9_interp_mask flat_mask,
+cf_shade_model(struct agx_interp_mask linear_mask,
+               struct agx_interp_mask flat_mask,
                enum agx_shade_model flat_shade, unsigned i)
 {
-   if (agx_apple9_interp_mask_test(flat_mask, i))
+   if (agx_interp_mask_test(flat_mask, i))
       return flat_shade;
-   else if (agx_apple9_interp_mask_test(linear_mask, i))
+   else if (agx_interp_mask_test(linear_mask, i))
       return AGX_SHADE_MODEL_LINEAR;
    else
       return AGX_SHADE_MODEL_PERSPECTIVE;
@@ -85,16 +85,15 @@ cf_shade_model(struct agx_apple9_interp_mask linear_mask,
 
 static unsigned
 build_cf_table(uint8_t *table, unsigned components,
-               struct agx_apple9_interp_mask linear_mask,
-               struct agx_apple9_interp_mask flat_mask,
-               unsigned provoking_vertex, bool reads_z, bool reads_point_coord,
-               bool reads_primitive_id)
+               struct agx_interp_mask linear_mask,
+               struct agx_interp_mask flat_mask, unsigned provoking_vertex,
+               bool reads_z, bool reads_point_coord, bool reads_primitive_id)
 {
    const enum agx_shade_model flat_shade =
       provoking_vertex == 1   ? AGX_SHADE_MODEL_FLAT_VERTEX_1
       : provoking_vertex == 0 ? AGX_SHADE_MODEL_FLAT_VERTEX_0
                               : AGX_SHADE_MODEL_FLAT_VERTEX_2;
-   assert(components <= AGX_APPLE9_MAX_VARYING_COMPONENTS);
+   assert(components <= AGX_MAX_EXPORTED_COMPONENTS);
    memset(table, 0, AGX_CF_TABLE_SIZE);
    unsigned slots =
       components + 1 + reads_z + 2 * reads_point_coord + reads_primitive_id;
@@ -504,7 +503,7 @@ agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
     * order.
     */
    if (vertex->position_components != 4 ||
-       vertex->varying_components > AGX_APPLE9_MAX_VARYING_COMPONENTS ||
+       vertex->varying_components > AGX_MAX_EXPORTED_COMPONENTS ||
        vertex->clip_distance_count > 8 || fragment->position_components != 0 ||
        fragment->varying_components != vertex->varying_components ||
        memcmp(&vertex->varyings, &fragment->varyings,

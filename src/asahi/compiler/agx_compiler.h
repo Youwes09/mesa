@@ -791,7 +791,7 @@ typedef struct agx_context {
    struct util_dynarray exports;
 
    /* Exported vertex outputs: each UVS word's value by unlinked index, or null */
-   agx_index uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];
+   agx_index uvs_exports[AGX_MAX_UVS_SLOTS];
 
    /* Promoted constants. These will be appended to the binary at the end. */
    uint16_t rodata[512];

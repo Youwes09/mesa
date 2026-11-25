@@ -3120,10 +3120,10 @@ hk_launch_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
    uint64_t linear = fs->info.fs.interp.linear |
                      BITFIELD64_RANGE(VARYING_SLOT_CULL_PRIMITIVE, 2);
 
-   struct agx_apple9_varying_layout layout = {.count = uvs->user_size};
+   struct agx_varying_layout layout = {.count = uvs->user_size};
    u_foreach_bit64(loc, uvs->written) {
       layout.mask[loc] = BITFIELD_MASK(uvs->components[loc]);
-      layout.group[loc] = agx_apple9_varying_group(flat, linear, loc);
+      layout.group[loc] = agx_varying_group(flat, linear, loc);
    }
 
    vertex->varyings = fragment->varyings = layout;

@@ -2552,7 +2552,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
       caps->seamless_cube_map_per_texture = true;
       /* Gathers use the native gather sample, including constant offsets. */
       caps->max_texture_gather_components = 4;
-      caps->max_varyings = AGX_APPLE9_MAX_VARYING_COMPONENTS / 4;
+      caps->max_varyings = AGX_MAX_EXPORTED_COMPONENTS / 4;
    }
 }
 

@@ -63,7 +63,7 @@ bool agx_nir_preload_push(struct nir_shader *nir, unsigned first,
                           unsigned count);
 bool agx_nir_lower_indirect_io(struct nir_shader *nir);
 
-/* User varying components, limited to AGX_APPLE9_MAX_VARYING_COMPONENTS */
+/* User varying components, limited to AGX_MAX_EXPORTED_COMPONENTS */
 unsigned agx_user_varying_components(const struct nir_shader *nir);
 bool agx_varyings_fit(const struct nir_shader *nir);
 bool agx_nir_lower_killed_samples(struct nir_shader *nir, bool load_killed,

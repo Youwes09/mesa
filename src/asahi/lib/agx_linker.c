@@ -268,7 +268,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
       append(&d, parts[i]->binary, parts[i]->info.main_size);
 
       /* Commit the vertex outputs to their linked varying slots */
-      for (unsigned s = 0; uvs_slots && s < AGX_APPLE9_MAX_UVS_SLOTS; ++s) {
+      for (unsigned s = 0; uvs_slots && s < AGX_MAX_UVS_SLOTS; ++s) {
          uint32_t store = parts[i]->info.vary_stores[s];
 
          if (store) {

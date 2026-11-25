@@ -93,7 +93,7 @@ build_direct_bind_group(uint8_t *page, unsigned varying_components)
    page[0x09] = 0x04;
    page[0x15] = 0x8c;
    page[0x22] = 0x01;
-   assert(varying_components <= AGX_APPLE9_MAX_VARYING_COMPONENTS);
+   assert(varying_components <= AGX_MAX_EXPORTED_COMPONENTS);
    page[0x2c] = 4 + varying_components;
    /* G16's fragment-state layout moves the coefficient pointer ahead of
     * the pipeline words. */
@@ -115,8 +115,7 @@ agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
    memset(ppp, 0, AGX_PPP_STATIC_SIZE);
    put_u32(ppp, 0x10040000);
    unsigned counts[3] = {0};
-   const struct agx_apple9_varying_layout *varyings =
-      &pipeline->vertex->varyings;
+   const struct agx_varying_layout *varyings = &pipeline->vertex->varyings;
    for (unsigned i = 0; i < ARRAY_SIZE(varyings->mask); ++i) {
       assert(varyings->group[i] < ARRAY_SIZE(counts));
       counts[varyings->group[i]] += util_bitcount(varyings->mask[i]);

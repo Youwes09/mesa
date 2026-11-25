@@ -2382,7 +2382,7 @@ asahi_fast_link(struct agx_context *ctx, struct agx_uncompiled_shader *so,
    }
 
    /* Apple9 varying slots depend on the fragment shader's interpolation */
-   uint8_t uvs_slots[AGX_APPLE9_MAX_UVS_SLOTS];
+   uint8_t uvs_slots[AGX_MAX_UVS_SLOTS];
    bool hw_vertex = so->type != MESA_SHADER_FRAGMENT &&
                     key->main->b.info.stage != MESA_SHADER_COMPUTE;
    if (launch_programs && hw_vertex) {
@@ -6217,10 +6217,10 @@ agx_draw_stages_for_batch(struct agx_batch *batch,
    agx_draw_stage(fragment, ctx->linked.fs);
 
    /* Varying groups in the order agx_assign_uvs links them */
-   struct agx_apple9_varying_layout varyings = {.count = uvs->user_size};
+   struct agx_varying_layout varyings = {.count = uvs->user_size};
    u_foreach_bit64(loc, uvs->written) {
       varyings.mask[loc] = BITFIELD_MASK(uvs->components[loc]);
-      varyings.group[loc] = agx_apple9_varying_group(
+      varyings.group[loc] = agx_varying_group(
          (fs->info.inputs_flat_shaded &
           (BITFIELD64_RANGE(VARYING_SLOT_VAR0, 32) | VARYING_BITS_COLOR)) |
             VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT,

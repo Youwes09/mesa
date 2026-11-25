@@ -85,18 +85,18 @@ struct agx_rodata {
  * limit on declared fragment inputs: semantic locations are compacted
  * independently of declaration order and never encoded directly as
  * hardware slot numbers. */
-#define AGX_APPLE9_MAX_VARYING_COMPONENTS 124
+#define AGX_MAX_EXPORTED_COMPONENTS 124
 /* UVS slots: position, user scalars, point size, the layer/viewport word and
  * eight clip distances. */
-#define AGX_APPLE9_MAX_UVS_SLOTS (4 + AGX_APPLE9_MAX_VARYING_COMPONENTS + 10)
+#define AGX_MAX_UVS_SLOTS (4 + AGX_MAX_EXPORTED_COMPONENTS + 10)
 /* Interpolation modes are indexed by compacted scalar, independent of API
  * locations. Two words cover the complete publication-addressing namespace. */
-struct agx_apple9_interp_mask {
+struct agx_interp_mask {
    uint64_t lo, hi;
 };
 
 static inline void
-agx_apple9_interp_mask_set(struct agx_apple9_interp_mask *mask, unsigned index)
+agx_interp_mask_set(struct agx_interp_mask *mask, unsigned index)
 {
    assert(index < 128);
    if (index < 64)
@@ -106,13 +106,13 @@ agx_apple9_interp_mask_set(struct agx_apple9_interp_mask *mask, unsigned index)
 }
 
 static inline bool
-agx_apple9_interp_mask_test(struct agx_apple9_interp_mask mask, unsigned index)
+agx_interp_mask_test(struct agx_interp_mask mask, unsigned index)
 {
    assert(index < 128);
    return ((index < 64 ? mask.lo : mask.hi) >> (index & 63)) & 1;
 }
 
-struct agx_apple9_varying_layout {
+struct agx_varying_layout {
    uint8_t mask[64]; /* Per-component masks indexed by gl_varying_slot. */
    /* Physical UVS order is smooth, flat, then linear, as required by the
     * clipper's varying counts. Values within each group use semantic order. */
@@ -123,7 +123,7 @@ struct agx_apple9_varying_layout {
 };
 
 static inline unsigned
-agx_apple9_varying_group(uint64_t flat, uint64_t linear, unsigned location)
+agx_varying_group(uint64_t flat, uint64_t linear, unsigned location)
 {
    return (flat & BITFIELD64_BIT(location))     ? 1
           : (linear & BITFIELD64_BIT(location)) ? 2
@@ -132,7 +132,7 @@ agx_apple9_varying_group(uint64_t flat, uint64_t linear, unsigned location)
 
 /* Software capacity of the graphics address table, separate from launcher
  * slots. */
-#define AGX_APPLE9_MAX_GRAPHICS_BUFFERS 32
+#define AGX_MAX_GRAPHICS_BUFFERS 32
 
 struct agx_shader_info {
    mesa_shader_stage stage;
@@ -144,7 +144,7 @@ struct agx_shader_info {
    /* One plus the binary offset of the VARY_STORE of each unlinked
     * UVS index, or zero if unwritten. The linker relocates the slots.
     */
-   uint32_t vary_stores[AGX_APPLE9_MAX_UVS_SLOTS];
+   uint32_t vary_stores[AGX_MAX_UVS_SLOTS];
 
    /* Fragment parts: the TILE_ACCESS control the linked program holds
     * throughout (0x600, 0x700 with images, 0xf00 with tile coordinates) or 0.

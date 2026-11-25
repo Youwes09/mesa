@@ -49,7 +49,7 @@ struct agx_draw_stage {
    bool publication_count_valid;
    uint32_t resource_ssbo_mask, resource_write_mask;
    uint8_t resource_count;
-   uint8_t resource_binding[AGX_APPLE9_MAX_GRAPHICS_BUFFERS];
+   uint8_t resource_binding[AGX_MAX_GRAPHICS_BUFFERS];
    uint32_t texture_mask, sampler_mask, image_mask;
    bool uses_texel_fetch;
    bool uses_discard;
@@ -63,8 +63,8 @@ struct agx_draw_stage {
    /* Scalar interface counts used by the bounded stage linker. */
    uint8_t position_components;
    uint8_t varying_components;
-   struct agx_apple9_varying_layout varyings;
-   struct agx_apple9_interp_mask linear_mask, flat_mask;
+   struct agx_varying_layout varyings;
+   struct agx_interp_mask linear_mask, flat_mask;
    bool reads_z;
    bool reads_primitive_id;
    bool writes_point_size;
@@ -133,7 +133,7 @@ struct agx_draw_record {
     */
    uint8_t ppp_record[AGX_PPP_RECORD_MAX];
    uint16_t ppp_size, ppp_viewport_offset, ppp_viewport_words;
-   uint64_t buffers[2][AGX_APPLE9_MAX_GRAPHICS_BUFFERS];
+   uint64_t buffers[2][AGX_MAX_GRAPHICS_BUFFERS];
    uint8_t buffer_count[2];
    uint64_t vertex_table;
    uint64_t fragment_table;

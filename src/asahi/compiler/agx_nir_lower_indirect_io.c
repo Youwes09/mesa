@@ -341,5 +341,5 @@ agx_user_varying_components(const nir_shader *nir)
 bool
 agx_varyings_fit(const nir_shader *nir)
 {
-   return agx_user_varying_components(nir) <= AGX_APPLE9_MAX_VARYING_COMPONENTS;
+   return agx_user_varying_components(nir) <= AGX_MAX_EXPORTED_COMPONENTS;
 }

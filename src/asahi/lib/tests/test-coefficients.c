@@ -50,8 +50,7 @@ main(void)
    list_add(&bo.shader_body.entry_link, &dev->entry_lru);
    uint8_t code[128] = {0};
    unsigned cases = 0;
-   const unsigned components[] = {0, 1, 4, 65,
-                                  AGX_APPLE9_MAX_VARYING_COMPONENTS};
+   const unsigned components[] = {0, 1, 4, 65, AGX_MAX_EXPORTED_COMPONENTS};
    for (unsigned c = 0; c < ARRAY_SIZE(components); ++c) {
       for (unsigned mode = 0; mode < 4; ++mode) {
          for (unsigned extras = 0; extras < 8; ++extras) {
@@ -73,9 +72,9 @@ main(void)
             fs.reads_primitive_id = extras & 4;
             for (unsigned i = 0; i < components[c]; ++i) {
                if (mode == 1 || (mode == 3 && i % 3 == 0))
-                  agx_apple9_interp_mask_set(&fs.flat_mask, i);
+                  agx_interp_mask_set(&fs.flat_mask, i);
                if (mode == 2 || (mode == 3 && i % 3 == 1))
-                  agx_apple9_interp_mask_set(&fs.linear_mask, i);
+                  agx_interp_mask_set(&fs.linear_mask, i);
             }
             struct agx_draw_stage owned = fs;
             uint8_t immutable[AGX_CF_TABLES_SIZE];

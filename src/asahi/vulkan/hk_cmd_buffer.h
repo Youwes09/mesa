@@ -709,7 +709,7 @@ struct hk_cmd_buffer {
       uint32_t size;
       /* The largest table: vertex buffers or a stage's resource table. */
       uint8_t data[MAX2(AGX_MAX_VBUFS * 32,
-                        AGX_APPLE9_MAX_GRAPHICS_BUFFERS * sizeof(uint64_t))];
+                        AGX_MAX_GRAPHICS_BUFFERS * sizeof(uint64_t))];
    } upload_last[HK_UPLOAD_LAST_COUNT];
 
    /* The current and previous Apple9 draw records, alternating: a draw
