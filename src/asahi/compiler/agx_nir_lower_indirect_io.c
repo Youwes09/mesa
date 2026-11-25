@@ -7,8 +7,9 @@
 #include "agx_compile.h"
 #include "agx_nir.h"
 
-/* Apple9 instructions name varyings by immediate. Dynamic input indices become
- * selects, dynamic outputs a temporary array stored out at the end.
+/* With varying_exports, instructions name varyings by immediate slot. Dynamic
+ * input indices become selects, dynamic outputs a temporary array stored out at
+ * the end.
  */
 
 static bool
@@ -198,7 +199,7 @@ lower_outputs(nir_shader *nir)
 }
 
 bool
-agx_nir_lower_apple9_indirect_io(nir_shader *nir)
+agx_nir_lower_indirect_io(nir_shader *nir)
 {
    bool progress = false;
 
@@ -238,7 +239,7 @@ add_components(uint8_t *masks, unsigned loc, unsigned slots, unsigned mask)
 }
 
 unsigned
-agx_apple9_user_varying_components(const nir_shader *nir)
+agx_user_varying_components(const nir_shader *nir)
 {
    bool fragment = nir->info.stage == MESA_SHADER_FRAGMENT;
    uint8_t masks[VARYING_SLOT_MAX] = {0};
@@ -306,10 +307,10 @@ agx_apple9_user_varying_components(const nir_shader *nir)
 
          unsigned slots = glsl_count_attribute_slots(type, false);
          const struct glsl_type *elem = glsl_without_array(type);
-         unsigned comps = var->data.compact
-                             ? glsl_get_aoa_size(type)
-                             : glsl_get_components(elem) *
-                                  (glsl_type_is_64bit(elem) ? 2 : 1);
+         unsigned comps =
+            var->data.compact
+               ? glsl_get_aoa_size(type)
+               : glsl_get_components(elem) * (glsl_type_is_64bit(elem) ? 2 : 1);
          unsigned frac = var->data.location_frac;
 
          if (var->data.compact) {
@@ -338,8 +339,7 @@ agx_apple9_user_varying_components(const nir_shader *nir)
 }
 
 bool
-agx_apple9_varyings_fit(const nir_shader *nir)
+agx_varyings_fit(const nir_shader *nir)
 {
-   return agx_apple9_user_varying_components(nir) <=
-          AGX_APPLE9_MAX_VARYING_COMPONENTS;
+   return agx_user_varying_components(nir) <= AGX_APPLE9_MAX_VARYING_COMPONENTS;
 }

@@ -2123,7 +2123,7 @@ agx_create_shader_state(struct pipe_context *pctx,
                      nir->info.next_stage == MESA_SHADER_NONE));
 
    if (agx_is_apple9(dev) && cso->report_compile_error && varyings &&
-       !agx_apple9_varyings_fit(nir)) {
+       !agx_varyings_fit(nir)) {
       ((struct pipe_shader_state *)cso)->error_message =
          strdup("Too many varying components for Apple9");
       ralloc_free(nir);

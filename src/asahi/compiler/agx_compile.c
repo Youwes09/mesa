@@ -759,7 +759,7 @@ agx_emit_iterate_coefficients(agx_builder *b, agx_index dest,
 {
    unsigned components = instr->num_components;
    assert(I.type == AGX_INDEX_IMMEDIATE &&
-          "lowered by agx_nir_lower_apple9_indirect_io");
+          "lowered by agx_nir_lower_indirect_io");
 
    agx_index position = agx_zero();
    if (interp == AGX_INTERPOLATION_SAMPLE) {
@@ -5281,7 +5281,7 @@ agx_preprocess_nir(nir_shader *nir)
 
    /* Varyings named in instructions must be indexed directly */
    if (agx_nir_target(nir)->varying_exports)
-      NIR_PASS(_, nir, agx_nir_lower_apple9_indirect_io);
+      NIR_PASS(_, nir, agx_nir_lower_indirect_io);
 
    /* Lower large arrays to scratch and small to csel, fewer with fewer GPRs */
    unsigned scratch_threshold =

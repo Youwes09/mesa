@@ -56,11 +56,11 @@ unsigned agx_nir_lower_apple9_abi(struct nir_shader *nir, bool graphics,
                                   struct agx_apple9_compute_profile *profile);
 bool agx_nir_preload_apple9_push(struct nir_shader *nir, unsigned first,
                                  unsigned count);
-bool agx_nir_lower_apple9_indirect_io(struct nir_shader *nir);
+bool agx_nir_lower_indirect_io(struct nir_shader *nir);
 
 /* User varying components, limited to AGX_APPLE9_MAX_VARYING_COMPONENTS */
-unsigned agx_apple9_user_varying_components(const struct nir_shader *nir);
-bool agx_apple9_varyings_fit(const struct nir_shader *nir);
+unsigned agx_user_varying_components(const struct nir_shader *nir);
+bool agx_varyings_fit(const struct nir_shader *nir);
 bool agx_nir_lower_killed_samples(struct nir_shader *nir, bool load_killed,
                                   bool export_killed);
 unsigned
