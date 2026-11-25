@@ -49,7 +49,7 @@ main(void)
       .primitive = AGX_PRIMITIVE_TRIANGLES,
       .pipeline_word = 0x1000000,
       .vertex_launch = 0x100,
-      .vertex_state_class = 0x404,
+      .output_count = 4,
    };
    CHECK(hk_apple9_draw_state_reusable(cmd, draw));
 

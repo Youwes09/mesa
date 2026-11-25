@@ -738,11 +738,11 @@ agx_apple9_emit_indirect_dispatch(
                                     : AGX_CDM_MODE_INDIRECT_GLOBAL);
    record += AGX_CDM_LAUNCH_G16_LENGTH;
 
-   agx_pack(record, CDM_INDIRECT_G16, cfg) {
+   agx_pack(record, INDIRECT_G16, cfg) {
       cfg.address_hi = indirect >> 32;
       cfg.address_lo = indirect;
    }
-   record += AGX_CDM_INDIRECT_G16_LENGTH;
+   record += AGX_INDIRECT_G16_LENGTH;
 
    /* Indirect local reads the local size with the thread counts, indirect
     * global reads workgroup counts and takes the local size from here. */
@@ -1726,11 +1726,6 @@ agx_apple9_prepare_draw(struct agx_device *dev, struct agx_pool *usc_pool,
                                         pipeline, draw, previous);
 }
 
-struct agx_apple9_ppp_update {
-   uint32_t relative;
-   uint32_t control;
-};
-
 /*
  * These payload objects describe fixed-function state, not shaders or
  * scheduler state.  Their contents live in the client context and are built
@@ -1741,9 +1736,13 @@ static_assert(AGX_APPLE9_PPP_RECORD_MAX >=
                  ALIGN_POT(0x100 + (8 * AGX_APPLE9_MAX_VIEWPORTS + 2) * 4, 64),
               "PPP record holds the largest viewport block");
 
-static const struct agx_apple9_ppp_update direct_ppp[] = {
-   {0x00, 0x700}, {0x40, 0x500}, {0x5c, 0x700}, {0x70, 0x500},
-   {0x8c, 0xa00}, {0xc0, 0x300}, {0xa0, 0x200}, {0xac, 0x200},
+/* The PPP record's blocks, in the order a draw updates them */
+static const struct {
+   uint16_t offset, words;
+} apple9_ppp_blocks[] = {
+   {0x00, 5}, {0x40, 7}, {0x5c, 5}, {0x70, 7}, {0x8c, 5},
+   {0xc0, 10}, /* viewports */
+   {0xa0, 3}, {0xac, 2}, {0xf0, 2},
 };
 
 bool
@@ -1778,7 +1777,7 @@ agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
       /* Filled from the installed entry BO before VDM emission. */
       .pipeline_word = 0,
       /* Launch and PPP offsets are filled from batch-owned allocations. */
-      .vertex_state_class = scalar_outputs | (scalar_outputs << 8),
+      .output_count = scalar_outputs,
       .primitive = AGX_PRIMITIVE_TRIANGLES,
    };
    return true;
@@ -1798,37 +1797,122 @@ agx_apple9_emit_draw_state(uint8_t *out,
    assert(pipeline && pipeline->vertex->binary && pipeline->fragment->binary);
    assert(pipeline->ppp && !(pipeline->ppp & 0x3f));
 
-   uint32_t header[] = {
-      0x4000002e, /* direct vertex state, Apple9 envelope */
-      0x00000000, /* vertex word 0 */
-      pipeline->pipeline_word,
-      pipeline->vertex_launch,
-      pipeline->vertex_state_class,
-      apple9_provoking_vertex(pipeline->primitive, pipeline->flatshade_first) |
-         (pipeline->fragment->reads_primitive_id ? (1u << 6) : 0),
-      0x00000000, /* VDM padding */
-      0x00000500, /* first PPP state update header */
-   };
-   memcpy(out, header, sizeof(header));
-   out += sizeof(header);
-
-   /* Each update names a block and the length in words of the next one;
-    * the viewport block follows the entry at 0x8c.
-    */
-   struct agx_apple9_ppp_update ppp[ARRAY_SIZE(direct_ppp)];
-   for (unsigned i = 0; i < ARRAY_SIZE(ppp); i++) {
-      ppp[i] = direct_ppp[i];
-      if (pipeline->ppp_viewport_words && ppp[i].relative == 0x8c)
-         ppp[i].control = pipeline->ppp_viewport_words << 8;
-      if (pipeline->ppp_viewport_offset && ppp[i].relative == 0xc0)
-         ppp[i].relative = pipeline->ppp_viewport_offset;
-      ppp[i].relative += pipeline->ppp;
+   agx_push(out, VDM_STATE, cfg) {
+      cfg.vertex_shader_word_0_present = true;
+      cfg.vertex_shader_word_1_present = true;
+      cfg.vertex_outputs_present = true;
+      cfg.vertex_unknown_present = true;
    }
-   memcpy(out, ppp, sizeof(ppp));
-   out += sizeof(ppp);
 
-   apple9_put_u32(out, pipeline->ppp + 0xf0);
-   return out + 4;
+   uint32_t word0 = 0;
+   memcpy(out, &word0, sizeof(word0));
+   out += sizeof(word0);
+
+   agx_push(out, VDM_STATE_VERTEX_SHADER_WORD_1_G16, cfg) {
+      cfg.unknown = pipeline->pipeline_word;
+      cfg.launch = pipeline->vertex_launch;
+   }
+
+   agx_push(out, VDM_STATE_VERTEX_OUTPUTS, cfg) {
+      cfg.output_count_1 = pipeline->output_count;
+      cfg.output_count_2 = pipeline->output_count;
+   }
+
+   agx_push(out, VDM_STATE_VERTEX_UNKNOWN, cfg) {
+      cfg.flat_shading_control =
+         apple9_provoking_vertex(pipeline->primitive, pipeline->flatshade_first);
+      cfg.generate_primitive_id = pipeline->fragment->reads_primitive_id;
+   }
+
+   /* Padding */
+   memcpy(out, &word0, sizeof(word0));
+   out += sizeof(word0);
+
+   for (unsigned i = 0; i < ARRAY_SIZE(apple9_ppp_blocks); ++i) {
+      unsigned offset = apple9_ppp_blocks[i].offset;
+      unsigned words = apple9_ppp_blocks[i].words;
+
+      if (offset == 0xc0) {
+         if (pipeline->ppp_viewport_offset)
+            offset = pipeline->ppp_viewport_offset;
+         if (pipeline->ppp_viewport_words)
+            words = pipeline->ppp_viewport_words;
+      }
+
+      agx_push(out, PPP_STATE, cfg) {
+         cfg.size_words = words;
+         cfg.pointer_lo = pipeline->ppp + offset;
+      }
+   }
+
+   return out;
+}
+
+/* Index fetch is relative to the USC aperture. The range is measured from
+ * the word holding the first index, which preserves byte and halfword starts
+ * without copies.
+ */
+static uint8_t *
+apple9_emit_index_list(uint8_t *out,
+                       const struct agx_apple9_render_pipeline *pipeline,
+                       bool indirect)
+{
+   assert(pipeline->index_size == 1 || pipeline->index_size == 2 ||
+          pipeline->index_size == 4);
+   assert(pipeline->index_buffer >= (1ull << 40) &&
+          pipeline->index_buffer < (1ull << 40) + (1ull << 32));
+   assert(pipeline->index_extent);
+
+   agx_push(out, VDM_STATE, cfg) {
+      cfg.restart_index_present = true;
+   }
+
+   agx_push(out, VDM_STATE_RESTART_INDEX, cfg) {
+      cfg.value = pipeline->restart_index;
+   }
+
+   agx_push(out, INDEX_LIST, cfg) {
+      cfg.primitive = pipeline->primitive;
+      cfg.restart_enable = pipeline->primitive_restart;
+      cfg.index_size = agx_translate_index_size(pipeline->index_size);
+      cfg.index_buffer_size_present = true;
+      cfg.index_buffer_present = true;
+      cfg.index_count_present = !indirect;
+      cfg.instance_count_present = !indirect;
+      cfg.start_present = !indirect;
+      cfg.indirect_buffer_present = indirect;
+   }
+
+   agx_push(out, INDEX_LIST_BUFFER_LO, cfg) {
+      cfg.buffer_lo = pipeline->index_buffer;
+   }
+
+   return out;
+}
+
+static uint8_t *
+apple9_emit_index_list_end(uint8_t *out,
+                           const struct agx_apple9_render_pipeline *pipeline)
+{
+   agx_push(out, INDEX_LIST_BUFFER_SIZE_G16, cfg) {
+      cfg.size =
+         DIV_ROUND_UP(pipeline->index_extent + (pipeline->index_buffer & 3), 4);
+   }
+
+   agx_push(out, INDEX_LIST_UNKNOWN_G16, cfg) {
+      cfg.unknown = 1;
+   }
+
+   return out;
+}
+
+/* The caller overwrites the terminator with its next command */
+static uint8_t *
+apple9_emit_end(uint8_t *out)
+{
+   uint32_t end = AGX_VDM_BLOCK_TYPE_STREAM_TERMINATE << 29;
+   memcpy(out, &end, sizeof(end));
+   return out + sizeof(end);
 }
 
 uint8_t *
@@ -1839,46 +1923,36 @@ agx_apple9_emit_direct_draw(uint8_t *out,
 {
    assert(vertex_count > 0 && instance_count > 0);
    out = agx_apple9_emit_draw_state(out, pipeline);
+
    if (pipeline->index_size) {
-      assert(pipeline->index_size == 1 || pipeline->index_size == 2 ||
-             pipeline->index_size == 4);
-      assert(pipeline->index_buffer >= (1ull << 40) &&
-             pipeline->index_buffer < (1ull << 40) + (1ull << 32));
-      assert(pipeline->index_extent);
-      /* Indices use a byte address relative to the USC aperture. The range
-       * is measured from its containing dword, so include the leading bytes
-       * before rounding. This preserves byte/halfword starts without copies.
-       * Bit 16 enables restart independently of the primitive topology. */
-      uint32_t draw[] = {
-         0x40000001, /* publish the draw's restart comparand */
-         pipeline->restart_index,
-         (0x61f00000 | (util_logbase2(pipeline->index_size) << 17)) |
-            (pipeline->primitive << 8) |
-            (pipeline->primitive_restart ? (1u << 16) : 0),
-         (uint32_t)pipeline->index_buffer,
-         vertex_count,
-         instance_count,
-         vertex_start, /* signed baseVertex, represented in two's complement */
-         DIV_ROUND_UP(pipeline->index_extent + (pipeline->index_buffer & 3),
-                      4) -
-            1,
-         1, /* indexed tail word, shared by the measured u8/u16/u32 forms */
-         0xc0000000,
-      };
-      memcpy(out, draw, sizeof(draw));
-      out += sizeof(draw);
+      out = apple9_emit_index_list(out, pipeline, false);
    } else {
-      uint32_t draw[] = {
-         0x61c40000 | (pipeline->primitive << 8),
-         vertex_count,
-         instance_count,
-         vertex_start,
-         0xc0000000,
-      };
-      memcpy(out, draw, sizeof(draw));
-      out += sizeof(draw);
+      agx_push(out, INDEX_LIST, cfg) {
+         cfg.primitive = pipeline->primitive;
+         cfg.index_size = AGX_INDEX_SIZE_U32;
+         cfg.index_count_present = true;
+         cfg.instance_count_present = true;
+         cfg.start_present = true;
+      }
    }
-   return out;
+
+   agx_push(out, INDEX_LIST_COUNT, cfg) {
+      cfg.count = vertex_count;
+   }
+
+   agx_push(out, INDEX_LIST_INSTANCES, cfg) {
+      cfg.count = instance_count;
+   }
+
+   /* Signed base vertex of indexed draws, in two's complement */
+   agx_push(out, INDEX_LIST_START, cfg) {
+      cfg.start = vertex_start;
+   }
+
+   if (pipeline->index_size)
+      out = apple9_emit_index_list_end(out, pipeline);
+
+   return apple9_emit_end(out);
 }
 
 uint8_t *
@@ -1888,40 +1962,24 @@ agx_apple9_emit_indirect_draw(uint8_t *out,
 {
    assert(indirect && !(indirect & 3));
    out = agx_apple9_emit_draw_state(out, pipeline);
+
    if (pipeline->index_size) {
-      assert(pipeline->index_size == 1 || pipeline->index_size == 2 ||
-             pipeline->index_size == 4);
-      assert(pipeline->index_buffer >= (1ull << 40) &&
-             pipeline->index_buffer < (1ull << 40) + (1ull << 32));
-      assert(pipeline->index_extent);
-      uint32_t draw[] = {
-         0x40000001,
-         pipeline->restart_index,
-         0x64300000 | (util_logbase2(pipeline->index_size) << 17) |
-            (pipeline->primitive << 8) |
-            (pipeline->primitive_restart ? (1u << 16) : 0),
-         (uint32_t)pipeline->index_buffer,
-         indirect >> 32,
-         indirect,
-         DIV_ROUND_UP(pipeline->index_extent + (pipeline->index_buffer & 3),
-                      4) -
-            1,
-         1,
-         0xc0000000,
-      };
-      memcpy(out, draw, sizeof(draw));
-      out += sizeof(draw);
+      out = apple9_emit_index_list(out, pipeline, true);
    } else {
-      /* As in CDM, the indirect pointer is high word then low word. The
-       * VDM consumes count, instances and first vertex at execution time. */
-      uint32_t draw[] = {
-         0x64040000 | (pipeline->primitive << 8),
-         indirect >> 32,
-         indirect,
-         0xc0000000,
-      };
-      memcpy(out, draw, sizeof(draw));
-      out += sizeof(draw);
+      agx_push(out, INDEX_LIST, cfg) {
+         cfg.primitive = pipeline->primitive;
+         cfg.index_size = AGX_INDEX_SIZE_U32;
+         cfg.indirect_buffer_present = true;
+      }
    }
-   return out;
+
+   agx_push(out, INDIRECT_G16, cfg) {
+      cfg.address_hi = indirect >> 32;
+      cfg.address_lo = indirect;
+   }
+
+   if (pipeline->index_size)
+      out = apple9_emit_index_list_end(out, pipeline);
+
+   return apple9_emit_end(out);
 }

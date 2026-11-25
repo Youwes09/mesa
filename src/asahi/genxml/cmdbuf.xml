@@ -1259,8 +1259,26 @@
     <field name="Unk 126" size="1" start="126" type="bool"/>
   </struct>
 
-  <struct name="CDM Indirect G16" size="8">
+  <!-- G16 indirect buffers, for both CDM and VDM -->
+  <struct name="Indirect G16" size="8">
     <field name="Address hi" size="32" start="0:0" type="hex"/>
     <field name="Address lo" size="32" start="1:0" type="hex"/>
+  </struct>
+
+  <!-- G16 vertex state has a second word here, the launch program -->
+  <struct name="VDM State Vertex Shader Word 1 G16" size="8">
+    <field name="Unknown" size="32" start="0:0" type="hex"/>
+    <!-- USC offset in 64-byte units -->
+    <field name="Launch" size="32" start="1:0" type="hex"/>
+  </struct>
+
+  <struct name="Index List: Buffer size G16" size="4">
+    <!-- In 32-bit words, from the word holding the first index -->
+    <field name="Size" size="32" start="0" type="uint" modifier="minus(1)"/>
+  </struct>
+
+  <!-- Follows the buffer size of G16 indexed draws -->
+  <struct name="Index List: Unknown G16" size="4">
+    <field name="Unknown" size="32" start="0" type="hex"/>
   </struct>
 </genxml>
