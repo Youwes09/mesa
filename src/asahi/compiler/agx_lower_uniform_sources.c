@@ -17,7 +17,7 @@ agx_instr_accepts_uniform(const agx_context *ctx, agx_instr *I,
                           unsigned src_index, unsigned value,
                           enum agx_size size)
 {
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+   if (ctx->target.operand_limits) {
       agx_index uniform =
          agx_replace_index(I->src[src_index], agx_uniform(value, size));
       return agx_src_is_legal(ctx, I, src_index, uniform);

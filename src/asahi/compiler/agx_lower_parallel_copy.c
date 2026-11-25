@@ -60,7 +60,7 @@ do_copy(agx_builder *b, const struct agx_copy *copy)
       agx_mov_to(b, scratch_reg, copy->src);
       agx_mov_to(b, dst, scratch_reg);
    } else if (copy->src.type == AGX_INDEX_IMMEDIATE) {
-      if (b->shader->target.isa == AGX_SHADER_ISA_APPLE9 && !copy->dest_mem &&
+      if (b->shader->target.operand_limits && !copy->dest_mem &&
           copy->dest + 2 > b->shader->target.mov_imm_halves) {
          assert(copy->src.value <= UINT8_MAX && "legalized");
          agx_iadd_to(b, dst, agx_immediate(copy->src.value), agx_zero(), 0);

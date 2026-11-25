@@ -5,8 +5,9 @@
 
 #include "agx_compiler.h"
 
-/* Apple9 operand legality, for the validator and passes rewriting operands.
- * Register limits are agx_set_reg_constraints'. Apple8 is always legal here.
+/* Operand legality of targets with operand_limits, for the validator and
+ * passes rewriting operands. Register limits are agx_set_reg_constraints'.
+ * Other targets are always legal here.
  */
 
 /* A GPR value or register */
@@ -579,7 +580,7 @@ pred_compare_ok(const agx_instr *I)
    }
 }
 
-static bool apple9_instr_is_legal(const agx_instr *I);
+static bool instr_within_limits(const agx_instr *I);
 
 /* Texture table index: a constant or a 32-bit register */
 static bool
@@ -616,11 +617,11 @@ cmp_ok(const agx_instr *I)
    sel.op = I->op == AGX_OPCODE_ICMP ? AGX_OPCODE_ICMPSEL : AGX_OPCODE_FCMPSEL;
    sel.src = srcs;
    sel.nr_srcs = 4;
-   return apple9_instr_is_legal(&sel);
+   return instr_within_limits(&sel);
 }
 
 static bool
-apple9_instr_is_legal(const agx_instr *I)
+instr_within_limits(const agx_instr *I)
 {
    switch (I->op) {
    case AGX_OPCODE_ICMP:
@@ -918,7 +919,7 @@ apple9_instr_is_legal(const agx_instr *I)
               I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY);
 
    case AGX_OPCODE_IMAGE_LOAD:
-      /* No known Apple9 encoding */
+      /* No known encoding */
       return false;
 
    default:
@@ -930,29 +931,29 @@ apple9_instr_is_legal(const agx_instr *I)
 bool
 agx_instr_is_legal(const agx_context *ctx, const agx_instr *I)
 {
-   if (ctx->target.isa != AGX_SHADER_ISA_APPLE9)
+   if (!ctx->target.operand_limits)
       return true;
 
-   return apple9_instr_is_legal(I);
+   return instr_within_limits(I);
 }
 
 bool
 agx_src_is_legal(const agx_context *ctx, agx_instr *I, unsigned s,
                  agx_index src)
 {
-   if (ctx->target.isa != AGX_SHADER_ISA_APPLE9)
+   if (!ctx->target.operand_limits)
       return true;
 
    agx_index old = I->src[s];
    I->src[s] = src;
-   bool legal = apple9_instr_is_legal(I);
+   bool legal = instr_within_limits(I);
    I->src[s] = old;
    return legal;
 }
 
-/* Hard register limits of Apple9 operations, in 16-bit units */
+/* Hard register limits of operations, in 16-bit units */
 static bool
-apple9_constraints(const agx_instr *I, struct agx_reg_constraint *c)
+register_limits(const agx_instr *I, struct agx_reg_constraint *c)
 {
    unsigned D = I->nr_dests;
    const uint16_t r63 = 2 * 63;
@@ -1148,7 +1149,7 @@ constrain_export_definitions(agx_context *ctx)
 void
 agx_set_reg_constraints(agx_context *ctx)
 {
-   if (ctx->target.isa != AGX_SHADER_ISA_APPLE9)
+   if (!ctx->target.operand_limits)
       return;
 
    agx_foreach_instr_global(ctx, I) {
@@ -1161,7 +1162,7 @@ agx_set_reg_constraints(agx_context *ctx)
       for (unsigned i = 0; i < n; ++i)
          c[i] = (struct agx_reg_constraint){0, UINT16_MAX, 1};
 
-      if (apple9_constraints(I, c)) {
+      if (register_limits(I, c)) {
          I->reg_constraints = ralloc_array(I, struct agx_reg_constraint, n);
          memcpy(I->reg_constraints, c, sizeof(c[0]) * n);
       }
