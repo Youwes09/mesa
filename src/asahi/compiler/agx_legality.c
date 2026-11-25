@@ -136,7 +136,7 @@ static bool
 float_src_ok(agx_index idx, bool imm_wide, bool allow_half)
 {
    if (is_imm(idx))
-      return agx_apple9_float_immediate_ok(idx, imm_wide);
+      return agx3_float_immediate_ok(idx, imm_wide);
 
    return reg32(idx) || uni32(idx) || (allow_half && reg16(idx));
 }
@@ -179,7 +179,7 @@ is_minmax(const agx_instr *I)
 
       agx_index k = is_imm(a) ? a : b;
       agx_index x = is_imm(a) ? b : a;
-      if (is_imm(k) && (k.neg || !agx_apple9_float_immediate_ok(k, true)))
+      if (is_imm(k) && (k.neg || !agx3_float_immediate_ok(k, true)))
          return false;
 
       return (reg32(x) || uni32(x)) && (is_imm(k) || reg32(k) || uni32(k));
@@ -233,8 +233,7 @@ select_ok(const agx_instr *I)
 
    if (is_imm(b)) {
       if (b.neg || b.abs ||
-          (floating ? !agx_apple9_float_immediate_ok(b, true)
-                    : b.value > UINT8_MAX))
+          (floating ? !agx3_float_immediate_ok(b, true) : b.value > UINT8_MAX))
          return false;
    } else if (!(reg32(b) || uni32(b))) {
       return false;
@@ -305,7 +304,7 @@ fadd_fmul_ok(const agx_instr *I)
       bool fmov = I->op == AGX_OPCODE_FADD && agx_is_equiv(k, agx_negzero());
 
       return !is_imm(x) && reg32(x) && (!x.abs || fmov) &&
-             agx_apple9_float_immediate_ok(k, true);
+             agx3_float_immediate_ok(k, true);
    }
 
    return float_src_ok(a, false, true) && float_src_ok(b, false, true);
@@ -575,7 +574,7 @@ pred_compare_ok(const agx_instr *I)
          return false;
       }
 
-      return is_imm(b) ? agx_apple9_float_immediate_ok(b, true)
+      return is_imm(b) ? agx3_float_immediate_ok(b, true)
                        : (reg32(b) || uni32(b));
    }
 }
@@ -596,8 +595,8 @@ texture_ok(const agx_instr *I)
    agx_index params = I->src[0];
    unsigned comps = I->gather != AGX_GATHER_NONE ? 4 : util_bitcount(I->mask);
 
-   return agx_apple9_texture_encodable(I) && is_export(params) &&
-          agx_channels(params) == agx_apple9_texture_params(I) &&
+   return agx3_texture_encodable(I) && is_export(params) &&
+          agx_channels(params) == agx3_texture_params(I) &&
           agx_is_null(I->src[1]) && agx_is_null(I->src[2]) &&
           table_index_ok(I->src[3], 256) && table_index_ok(I->src[4], 32) &&
           (is_imm(I->src[4]) || !is_imm(I->src[3])) &&
@@ -683,7 +682,7 @@ instr_within_limits(const agx_instr *I)
    case AGX_OPCODE_FMUL_PERSPECTIVE:
       return reg32(I->dest[0]) && reg32(I->src[0]) && reg32(I->src[1]) &&
              plain(I->src[0]) && plain(I->src[1]) && !I->saturate &&
-             I->component < AGX_APPLE9_NUM_COEFFICIENTS;
+             I->component < AGX3_NUM_COEFFICIENTS;
 
    case AGX_OPCODE_FFMA:
       return ffma_ok(I);
@@ -759,7 +758,7 @@ instr_within_limits(const agx_instr *I)
    case AGX_OPCODE_GET_SR:
    case AGX_OPCODE_GET_SR_COVERAGE:
    case AGX_OPCODE_GET_SR_BARRIER:
-      return reg32(I->dest[0]) && agx_apple9_sr_supported(I->sr);
+      return reg32(I->dest[0]) && agx3_sr_supported(I->sr);
 
    case AGX_OPCODE_DEVICE_LOAD:
    case AGX_OPCODE_DEVICE_STORE:
@@ -872,8 +871,7 @@ instr_within_limits(const agx_instr *I)
              is_export(I->src[1]) && agx_channels(I->src[1]) == 1;
 
    case AGX_OPCODE_ITER:
-      return is_imm(I->src[0]) &&
-             I->src[0].value < AGX_APPLE9_NUM_COEFFICIENTS &&
+      return is_imm(I->src[0]) && I->src[0].value < AGX3_NUM_COEFFICIENTS &&
              I->channels == 1 && reg32(I->dest[0]) &&
              (I->interpolation == AGX_INTERPOLATION_CENTER || reg32(I->src[1]));
 
@@ -1070,7 +1068,7 @@ register_limits(const agx_instr *I, struct agx_reg_constraint *c)
    case AGX_OPCODE_TEXTURE_SAMPLE:
    case AGX_OPCODE_TEXTURE_LOAD: {
       /* Parameters in exports 0-31, results in r0-r63 with constant indices */
-      unsigned words = agx_apple9_texture_params(I);
+      unsigned words = agx3_texture_params(I);
       unsigned last = words == 2 ? 30 : words == 4 ? 28 : 32 - words;
       c[D].max = 2 * last;
       c[D].align = words == 2 ? 4 : 8;

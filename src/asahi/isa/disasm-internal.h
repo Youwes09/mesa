@@ -69,7 +69,7 @@ enum operand_kind {
 
 /* Apple9 inline float: mantissa in bits 0-2 and 7, exponent in bits 3-6 */
 static inline float
-apple9_minifloat_decode(unsigned v)
+agx3_minifloat_decode(unsigned v)
 {
    unsigned m = ((v & 7) << 1) | ((v >> 7) & 1);
    unsigned e = (v >> 3) & 15;
@@ -133,7 +133,7 @@ _print_operand(struct disasm_ctx *ctx, struct operand_desc d)
       else
          fprintf(ctx->fp, "%g", agx_minifloat_decode(d.value));
    } else if (d.kind == KIND_A9FIMM) {
-      float f = apple9_minifloat_decode(d.value);
+      float f = agx3_minifloat_decode(d.value);
 
       if (((d.value >> 3) & 15) < 8) {
          fprintf(ctx->fp, "# XXX: Invalid constant %u", d.value);

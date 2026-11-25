@@ -1435,8 +1435,7 @@ flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    }
 
    if (nir_src_is_const(tex->src[offset].src) && !min_lod &&
-       tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE &&
-       agx_apple9_texture_encodable(&I))
+       tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE && agx3_texture_encodable(&I))
       return false;
 
    tex->backend_flags |= AGX_TEXTURE_FLAG_OFFSET_FALLBACK;

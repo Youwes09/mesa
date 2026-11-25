@@ -3428,7 +3428,7 @@ agx_emit_tex_export(agx_builder *b, nir_tex_instr *instr)
    if (fetch)
       I->op = AGX_OPCODE_TEXTURE_LOAD;
 
-   assert(agx_channels(params) == agx_apple9_texture_params(I));
+   assert(agx_channels(params) == agx3_texture_params(I));
 
    agx_index unpacked[4] = {agx_null()};
    agx_index packed[4];

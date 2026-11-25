@@ -30,7 +30,7 @@ extern "C" {
 #define AGX_NUM_EXPORT_REGS (256)
 
 /* Coefficients iter can name, by a 7-bit index. Index 0 is 1/W */
-#define AGX_APPLE9_NUM_COEFFICIENTS (128)
+#define AGX3_NUM_COEFFICIENTS (128)
 
 /* Largest register file of any target: the spill slots of a 32 KiB frame */
 #define AGX_NUM_MODELED_REGS_LOG2 (14)
@@ -1338,12 +1338,12 @@ void agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 unsigned agx3_pack_instr(const agx_instr *I, bool load_follows,
                          bool alu_reads_result, uint8_t *bytes);
 
-bool agx_apple9_float_immediate_ok(agx_index idx, bool wide);
-bool agx_apple9_sr_supported(enum agx_sr sr);
+bool agx3_float_immediate_ok(agx_index idx, bool wide);
+bool agx3_sr_supported(enum agx_sr sr);
 
 /* Export words an Apple9 texture operation reads, and whether it encodes */
-unsigned agx_apple9_texture_params(const agx_instr *I);
-bool agx_apple9_texture_encodable(const agx_instr *I);
+unsigned agx3_texture_params(const agx_instr *I);
+bool agx3_texture_encodable(const agx_instr *I);
 
 #ifndef NDEBUG
 void agx_validate(agx_context *ctx, const char *after_str);

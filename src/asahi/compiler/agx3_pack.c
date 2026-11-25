@@ -258,7 +258,7 @@ imm_float_bits(agx_index idx)
 }
 
 bool
-agx_apple9_float_immediate_ok(agx_index idx, bool wide)
+agx3_float_immediate_ok(agx_index idx, bool wide)
 {
    uint8_t encoded;
    bool low;
@@ -416,7 +416,7 @@ pack_float2_perspective(const agx_instr *I, struct a9_packed *p)
    agx_index a = I->src[0], b = I->src[1];
    pack_assert(I, is_gpr(a) && is_gpr(b));
    pack_assert(I, !a.abs && !a.neg && !b.abs && !b.neg && !I->saturate);
-   pack_assert(I, I->component < AGX_APPLE9_NUM_COEFFICIENTS);
+   pack_assert(I, I->component < AGX3_NUM_COEFFICIENTS);
 
    emit(I, p, AGX3_ENC_FLOAT2_PROJECT, agx3_pack_fmul_cf,
         (struct agx3_fields){
@@ -1331,7 +1331,7 @@ sr_selector(enum agx_sr sr, struct a9_sr *out)
 }
 
 bool
-agx_apple9_sr_supported(enum agx_sr sr)
+agx3_sr_supported(enum agx_sr sr)
 {
    struct a9_sr out;
    return sr_selector(sr, &out);
@@ -2097,7 +2097,7 @@ texture_gradient(const agx_instr *I)
 
 /* Words of the parameter bundle a texture operation reads */
 unsigned
-agx_apple9_texture_params(const agx_instr *I)
+agx3_texture_params(const agx_instr *I)
 {
    if (texture_gradient(I))
       return I->dim == AGX_DIM_3D ? 16 : 8;
@@ -2121,7 +2121,7 @@ a9_texture(const agx_instr *I)
 {
    struct a9_texture t = {
       .gradient = texture_gradient(I),
-      .words = agx_apple9_texture_params(I),
+      .words = agx3_texture_params(I),
       .ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY,
       .bias = I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS ||
               I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN,
@@ -2207,7 +2207,7 @@ texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
 
 /* Whether the texture operation has a measured encoding */
 bool
-agx_apple9_texture_encodable(const agx_instr *I)
+agx3_texture_encodable(const agx_instr *I)
 {
    struct a9_texture t = a9_texture(I);
    uint16_t mode;
@@ -2246,7 +2246,7 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
    unsigned comps = util_bitcount(mask);
    uint16_t mode;
 
-   pack_assert(I, agx_apple9_texture_encodable(I));
+   pack_assert(I, agx3_texture_encodable(I));
    pack_assert(I, texture_mode(I, &t, &mode));
    pack_assert(I, is_export(params) && agx_channels(params) == t.words);
    pack_assert(I, !I->sparse && mask != 0);

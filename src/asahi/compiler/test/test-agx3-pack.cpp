@@ -1591,17 +1591,17 @@ TEST_F(Agx3Pack, Texture)
          c.mask, c.offset >= 0, c.shadow, c.query, c.gather, false);
       I->op = c.op;
       I->scoreboard = c.slot;
-      I->src[0].channels_m1 = agx_apple9_texture_params(I) - 1;
+      I->src[0].channels_m1 = agx3_texture_params(I) - 1;
 
       bool grad =
          c.lod == AGX_LOD_MODE_LOD_GRAD || c.lod == AGX_LOD_MODE_LOD_GRAD_MIN;
       if (c.reg_tex) {
-         EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
+         EXPECT_EQ(form(I), agx3_texture_params(I) == 2
                                ? AGX3_ENC_TEXTURE_SAMPLE_INDEXED
                             : grad ? AGX3_ENC_TEXTURE_GRAD_INDEXED
                                    : AGX3_ENC_TEXTURE_LOD_INDEXED);
       } else {
-         EXPECT_EQ(form(I), agx_apple9_texture_params(I) == 2
+         EXPECT_EQ(form(I), agx3_texture_params(I) == 2
                                ? AGX3_ENC_TEXTURE_SAMPLE
                             : grad ? AGX3_ENC_TEXTURE_GRAD
                                    : AGX3_ENC_TEXTURE_LOD);
@@ -1644,20 +1644,20 @@ TEST_F(Agx3Pack, TextureForms)
       b, r(0), e(0), agx_null(), agx_null(), agx_immediate(0), agx_immediate(0),
       agx_null(), AGX_DIM_CUBE, AGX_LOD_MODE_LOD_MIN, 1, false, false, false,
       AGX_GATHER_NONE, false);
-   EXPECT_TRUE(agx_apple9_texture_encodable(I));
+   EXPECT_TRUE(agx3_texture_encodable(I));
 
    /* Cubes have no texel fetch, 3D no minimum LOD, cubes no offsets */
    I->op = AGX_OPCODE_TEXTURE_LOAD;
-   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+   EXPECT_FALSE(agx3_texture_encodable(I));
 
    I->op = AGX_OPCODE_TEXTURE_SAMPLE;
    I->offset = true;
-   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+   EXPECT_FALSE(agx3_texture_encodable(I));
 
    I->offset = false;
    I->dim = AGX_DIM_3D;
    I->lod_mode = AGX_LOD_MODE_LOD_GRAD_MIN;
-   EXPECT_FALSE(agx_apple9_texture_encodable(I));
+   EXPECT_FALSE(agx3_texture_encodable(I));
 }
 
 /* Cube face selection of r5, r70 and r33: kept sources, then released ones */

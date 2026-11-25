@@ -39,7 +39,7 @@ def map_mod(v, mod):
         assert(mod.bits.size() == 1)
         return mod.display if v != 0 else None
 
-def decode_apple9_float_immediate(n):
+def decode_agx3_float_immediate(n):
 	m = ((n & 7) << 1) | ((n >> 7) & 1)
 	e = (n >> 3) & 15
 	if e == 8:
@@ -94,7 +94,7 @@ def operand(desc, length):
     elif kind == 'a9fimm':
         if ((base >> 3) & 15) < 8:
             return None
-        return str(decode_apple9_float_immediate(base)) + suffixes
+        return str(decode_agx3_float_immediate(base)) + suffixes
     elif kind in ['imm', 'signed']:
         return map_value(base, kind, length) + suffixes
 
