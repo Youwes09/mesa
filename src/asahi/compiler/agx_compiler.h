@@ -606,6 +606,11 @@ struct agx_isa_target {
     */
    bool varying_exports;
 
+   /* Textures are table indices. Texture and image operations read their
+    * parameters from export registers, packed in NIR.
+    */
+   bool texture_exports;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };

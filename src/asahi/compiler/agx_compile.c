@@ -1448,13 +1448,13 @@ agx_tex_dim(enum glsl_sampler_dim dim, bool array)
 
 /* Exports the implicit tile through the PBE descriptor at a table index */
 static agx_instr *
-agx_emit_block_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_block_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
       b->shader->out->apple9_tile_domain = 0x700;
 
    assert(instr->intrinsic == nir_intrinsic_image_store_block_agx &&
-          "Apple9 block stores address the PBE table");
+          "exported block stores address the PBE table");
    assert(!nir_intrinsic_explicit_coord(instr));
 
    bool ms = nir_intrinsic_image_dim(instr) == GLSL_SAMPLER_DIM_MS;
@@ -1488,8 +1488,8 @@ agx_emit_block_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 static agx_instr *
 agx_emit_block_image_store(agx_builder *b, nir_intrinsic_instr *instr)
 {
-   if (agx_is_apple9(b->shader))
-      return agx_emit_block_image_store_apple9(b, instr);
+   if (b->shader->target.texture_exports)
+      return agx_emit_block_image_store_export(b, instr);
 
    agx_index offset = agx_src_index(b->shader, &instr->src[1]);
    agx_index coords = agx_src_index(b->shader, &instr->src[2]);
@@ -1981,7 +1981,7 @@ agx_emit_image_store(agx_builder *b, nir_intrinsic_instr *instr)
 
 /* Coordinates and four data words are exported. The PBE gives the format */
 static agx_instr *
-agx_emit_image_store_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
       b->shader->out->apple9_tile_domain = 0x700;
@@ -2039,8 +2039,8 @@ translate_simd_op(nir_op op)
 #undef CASE
 }
 
-static agx_instr *agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
-                                            nir_intrinsic_instr *instr);
+static agx_instr *agx_emit_cube_face(agx_builder *b, agx_index dst,
+                                     nir_intrinsic_instr *instr);
 
 static agx_instr *
 agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
@@ -2120,11 +2120,11 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_emit_local_store_pixel(b, instr);
 
    case nir_intrinsic_cube_face_agx:
-      return agx_emit_cube_face_apple9(b, dst, instr);
+      return agx_emit_cube_face(b, dst, instr);
 
    case nir_intrinsic_pack_format_agx: {
       /* RGB10A2 from four channels, RG11B10F from three */
-      assert(agx_is_apple9(b->shader));
+      assert(b->shader->target.texture_exports);
       agx_index c[4] = {agx_null(), agx_null(), agx_null(), agx_null()};
       for (unsigned i = 0; i < nir_src_num_components(instr->src[0]); ++i)
          c[i] = agx_extract_nir_src(b, instr->src[0], i);
@@ -2270,7 +2270,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_emit_block_image_store(b, instr);
 
    case nir_intrinsic_image_store_apple9_agx:
-      return agx_emit_image_store_apple9(b, instr);
+      return agx_emit_image_store_export(b, instr);
 
    case nir_intrinsic_load_workgroup_id:
       return agx_load_compute_dimension(b, dst, instr,
@@ -3314,8 +3314,7 @@ agx_gather_for_nir(nir_tex_instr *tex)
 
 /* CUBE mode 0 gives the major axis and face, modes 1 and 2 the components */
 static agx_instr *
-agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
-                          nir_intrinsic_instr *instr)
+agx_emit_cube_face(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
    agx_index c[3];
    for (unsigned i = 0; i < 3; ++i)
@@ -3340,7 +3339,7 @@ agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
 
 /* Parameters are exported. Fetches use sampler 0, so API samplers start at 1 */
 static void
-agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
+agx_emit_tex_export(agx_builder *b, nir_tex_instr *instr)
 {
    agx_index texture = agx_immediate(instr->texture_index);
    agx_index sampler = agx_immediate(instr->sampler_index + 1);
@@ -3461,8 +3460,8 @@ agx_emit_tex_apple9(agx_builder *b, nir_tex_instr *instr)
 static void
 agx_emit_tex(agx_builder *b, nir_tex_instr *instr)
 {
-   if (agx_is_apple9(b->shader)) {
-      agx_emit_tex_apple9(b, instr);
+   if (b->shader->target.texture_exports) {
+      agx_emit_tex_export(b, instr);
       return;
    }
 

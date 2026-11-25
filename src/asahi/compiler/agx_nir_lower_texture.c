@@ -691,7 +691,7 @@ lower_regular_texture(nir_builder *b, nir_instr *instr, UNUSED void *data)
    nir_tex_instr *tex = nir_instr_as_tex(instr);
    b->cursor = nir_before_instr(instr);
 
-   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+   if (agx_nir_target(b->shader)->texture_exports)
       return lower_regular_texture_apple9(b, tex);
 
    if (nir_tex_instr_is_query(tex) && tex->op != nir_texop_lod)
@@ -1250,9 +1250,9 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
                             bool software_buffer_bounds)
 {
    bool progress = false;
-   bool apple9 = agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9;
+   bool exports = agx_nir_target(s)->texture_exports;
 
-   if (apple9 && support_lod_bias) {
+   if (exports && support_lod_bias) {
       NIR_PASS(progress, s, nir_shader_tex_pass, lower_sampler_lod_bias_apple9,
                nir_metadata_control_flow, NULL);
    }
@@ -1265,10 +1265,10 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
       .lower_invalid_implicit_lod = true,
       .lower_tg4_offsets = true,
       .lower_index_to_offset = true,
-      .lower_sampler_lod_bias = support_lod_bias && !apple9,
+      .lower_sampler_lod_bias = support_lod_bias && !exports,
 
-      /* Apple9 texel fetches have no offset form */
-      .lower_txf_offset = apple9,
+      /* Exported texel fetches have no offset form */
+      .lower_txf_offset = exports,
 
       /* Unclear if/how mipmapped 1D textures work in the hardware. */
       .lower_1d = true,
@@ -1281,7 +1281,7 @@ agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
 
    NIR_PASS(progress, s, nir_lower_tex, &lower_tex_options);
 
-   if (apple9) {
+   if (exports) {
       bool gradients = false;
       NIR_PASS(gradients, s, nir_shader_tex_pass,
                apple9_lower_implicit_array_compare, nir_metadata_control_flow,
@@ -1559,7 +1559,7 @@ agx_nir_lower_texture(nir_shader *s)
 {
    bool progress = false;
 
-   if (agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9)
+   if (agx_nir_target(s)->texture_exports)
       return agx_nir_lower_texture_apple9(s);
 
    nir_tex_src_type_constraints tex_constraints = {
