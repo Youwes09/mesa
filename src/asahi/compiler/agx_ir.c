@@ -77,6 +77,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .operand_limits = true,
    .avoid_export_targets = true,
    .raw_loads = true,
+   .normalized_coords = true,
    .scoreboard_slots = 6,
    .shader_sized_frame = true,
    .occupancy_table = false,

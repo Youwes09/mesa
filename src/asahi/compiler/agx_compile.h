@@ -669,6 +669,9 @@ struct agx_isa_target {
     */
    bool raw_loads;
 
+   /* Samplers take normalized coordinates only */
+   bool normalized_coords;
+
    /* Packs the shader into machine code */
    void (*pack)(struct agx_context *ctx, struct util_dynarray *emission);
 

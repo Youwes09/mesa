@@ -1949,8 +1949,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    NIR_PASS(_, nir, agx_nir_lower_texture_early, support_lod_bias,
             false /* software_buffer_bounds */);
 
-   /* Apple9 samplers take normalized coordinates only */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
+   if (agx_nir_target(nir)->normalized_coords) {
       NIR_PASS(_, nir, nir_lower_tex,
                &(nir_lower_tex_options){.lower_rect = true});
    }
