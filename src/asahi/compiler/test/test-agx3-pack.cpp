@@ -8,6 +8,7 @@
  */
 
 #include <vector>
+#include "agx3_machine.h"
 #include "agx_builder.h"
 #include "agx_compiler.h"
 #include "agx_test.h"

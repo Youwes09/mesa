@@ -43,10 +43,22 @@ if with_tests
 endif
 
 # Apple9 (G16, G17P)
+agx3_forms_h = custom_target(
+  input : ['gen-forms.py', 'AGX3.xml'],
+  output : 'agx3_forms.h',
+  command : [prog_python, '@INPUT@', 'header'],
+  capture : true,
+)
+
+idep_agx3_forms_h = declare_dependency(
+  sources : [agx3_forms_h],
+  include_directories : include_directories('.'),
+)
+
 agx3_forms_c = custom_target(
   input : ['gen-forms.py', 'AGX3.xml'],
   output : 'agx3_forms.c',
-  command : [prog_python, '@INPUT@'],
+  command : [prog_python, '@INPUT@', 'source'],
   capture : true,
 )
 
@@ -112,6 +124,7 @@ if with_tests
               'agx3_forms_dump',
               [files('test/agx3-forms-dump.c'), agx3_forms_c],
               include_directories : [inc_include, inc_src, inc_asahi],
+              dependencies : [idep_agx3_forms_h],
               gnu_symbol_visibility : 'hidden',
             ),
             files('test/agx3-forms.txt')],

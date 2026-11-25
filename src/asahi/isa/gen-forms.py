@@ -1,11 +1,11 @@
 # Copyright 2026 The Asahi Linux Contributors
 # SPDX-License-Identifier: MIT
 
-# Generates the compiler's table of encoding forms from the forms of an ISA
-# description: their operand constraints and scheduling rules. The forms are
-# enumerated in agx3_machine.h, in the order of the description.
+# Generates the compiler's encoding forms from the forms of an ISA description:
+# their enumeration (header) and table of operand constraints and scheduling
+# rules (source).
 #
-# usage: gen-forms.py ISA.xml
+# usage: gen-forms.py ISA.xml header|source
 
 import sys
 import xml.etree.ElementTree as ET
@@ -98,11 +98,6 @@ const struct agx3_machine agx3_machine = {
    .occupancy_model = AGX3_OCCUPANCY_UNMEASURED,
 };
 
-% for i, f in enumerate(forms):
-static_assert(AGX3_ENC_${f.get('name').upper()} == ${i}, "form order");
-% endfor
-static_assert(AGX3_ENC_COUNT == ${len(forms)}, "form count");
-
 static const struct agx3_encoding_info encodings[] = {
 % for f in forms:
    {
@@ -132,8 +127,35 @@ agx3_encoding_info(enum agx3_encoding encoding)
 }
 """
 
+header = """/*
+ * Generated from ${xml} by gen-forms.py. Do not edit.
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef AGX3_FORMS_H
+#define AGX3_FORMS_H
+
+/*
+ * These are encoding forms, not NIR operations. An operation may have both a
+ * compact low-register form and a longer form with a different source layout.
+ * The allocator must choose a form before the packer commits physical
+ * registers.
+ */
+enum agx3_encoding {
+% for f in forms:
+   AGX3_ENC_${f.get('name').upper()},
+% endfor
+   AGX3_ENC_COUNT,
+
+   /* IR pseudo-instructions have no encoding */
+   AGX3_ENC_PSEUDO = 0xff,
+};
+
+#endif
+"""
+
 try:
-    print(Template(source).render(
+    print(Template(header if sys.argv[2] == 'header' else source).render(
         xml=sys.argv[1].split('/')[-1], forms=forms, machine=machine,
         form=form, operand=operand))
 except:
