@@ -35,7 +35,7 @@ agx_nir_legalize_apple9_texture_sources(nir_shader *nir)
 static nir_def *
 descriptor_word(nir_builder *b, nir_def *handle, unsigned offset)
 {
-   nir_def *address = agx_nir_apple9_descriptor_address(b, handle, offset);
+   nir_def *address = agx_nir_descriptor_address(b, handle, offset);
    /* EXP: descriptor records are constant for the draw; speculating them
     * lets the preamble hoist uniform sampler work out of control flow. */
    return nir_load_global_constant(

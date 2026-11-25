@@ -255,7 +255,7 @@ hk_apple9_compute_sysvals(struct hk_device *dev, void *out)
           sizeof(fetch));
 }
 
-/* Descriptors live in the USC aperture, see agx_nir_lower_apple9_handles */
+/* Descriptors live in the USC aperture, see agx_nir_lower_handle_offsets */
 void
 hk_apple9_upload_textures(struct hk_cmd_buffer *cmd, uint64_t *textures,
                           uint64_t *samplers, uint64_t *sysvals)

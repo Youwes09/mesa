@@ -1598,8 +1598,7 @@ agx_local_word(agx_builder *b, nir_src offset, unsigned base)
 static agx_index
 agx_local_root(agx_builder *b)
 {
-   return agx_immediate(
-      agx_apple9_shared_root(&b->shader->out->apple9_compute));
+   return agx_immediate(agx_shared_root(&b->shader->out->apple9_compute));
 }
 
 static void
@@ -5554,10 +5553,10 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                        (!mesa_shader_stage_is_compute(nir->info.stage) ||
                         key->apple9_graphics_abi);
    if (target->root_uniforms) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_handles);
+      NIR_PASS(_, nir, agx_nir_lower_handle_offsets);
 
       unsigned roots =
-         agx_nir_lower_apple9_abi(nir, graphics_abi, &info->apple9_compute);
+         agx_nir_lower_root_uniforms(nir, graphics_abi, &info->apple9_compute);
 
       reserved_preamble =
          roots * 2 + (graphics_abi ? ALIGN_POT(key->reserved_preamble, 2) : 0);
@@ -5649,8 +5648,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                                          : ALIGN_POT(key->reserved_preamble, 2);
 
    if (graphics_abi &&
-       agx_nir_preload_apple9_push(nir, 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS,
-                                   push_halves)) {
+       agx_nir_preload_push(nir, 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS,
+                            push_halves)) {
       NIR_PASS(_, nir, agx_nir_lower_address);
       NIR_PASS(_, nir, nir_lower_pack);
       NIR_PASS(_, nir, nir_opt_dce);

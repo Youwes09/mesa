@@ -208,7 +208,7 @@ apple9_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
 
    if (handle >= 0) {
-      nir_def *address = agx_nir_apple9_descriptor_address(
+      nir_def *address = agx_nir_descriptor_address(
          b, tex->src[handle].src.ssa,
          AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO + field * 4);
 
@@ -352,10 +352,10 @@ lower_lod_bias_apple9(nir_builder *b, nir_tex_instr *tex)
    nir_def *bias;
 
    if (handle >= 0) {
-      nir_def *address = agx_nir_apple9_descriptor_address(
-         b, tex->src[handle].src.ssa,
-         AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER +
-            AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
+      nir_def *address =
+         agx_nir_descriptor_address(b, tex->src[handle].src.ssa,
+                                    AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER +
+                                       AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
 
       bias = nir_load_global_constant(
          b, 1, 16, address, .align_mul = 2,
