@@ -7,8 +7,8 @@
 
 extern "C" {
 #include "asahi/compiler/agx_apple9_profile.h"
-#include "asahi/lib/agx_launch_program.h"
 }
+#include "asahi/lib/agx_launch_program.h"
 
 static agx_launch_parameters
 parameters()

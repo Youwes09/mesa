@@ -10,7 +10,6 @@
 #include "util/bitset.h"
 #include "util/u_dynarray.h"
 #include "util/u_range.h"
-#include "agx_apple9.h"
 #include "agx_device.h"
 #include "agx_state.h"
 #include "vdrm.h"

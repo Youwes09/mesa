@@ -7,7 +7,12 @@
 
 #pragma once
 
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_cdm.h"
+#include "asahi/lib/agx_draw_table.h"
+#include "asahi/lib/agx_launch_program.h"
+#include "asahi/lib/agx_ppp_record.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_primitive_count.h"
 
 #include "util/macros.h"

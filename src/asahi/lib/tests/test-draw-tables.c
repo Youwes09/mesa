@@ -2,7 +2,11 @@
  * Compare binding-only updates with complete preparation at fixed addresses.
  * The reference rebuilds all raster state; both arms emit real launch/VDM bytes.
  */
-#include "agx_apple9.h"
+#include "agx_cdm.h"
+#include "agx_draw_table.h"
+#include "agx_launch_program.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "agx_device.h"
 
 #define CHECK(c)                                                               \

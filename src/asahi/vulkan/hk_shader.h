@@ -9,7 +9,8 @@
 
 #include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_draw_table.h"
+#include "asahi/lib/agx_launch_program.h"
 #include "poly/nir/poly_nir.h"
 #include "util/macros.h"
 #include "agx_linker.h"
@@ -19,7 +20,8 @@
 #include "agx_uvs.h"
 #include "hk_descriptor_memory.h"
 
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_cdm.h"
+#include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "hk_device.h"
 #include "hk_device_memory.h"

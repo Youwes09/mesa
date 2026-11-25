@@ -11,7 +11,8 @@
 #include "hk_private.h"
 
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_usc_descriptor.h"
+#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "hk_device.h"
 #include "vk_descriptor_update_template.h"

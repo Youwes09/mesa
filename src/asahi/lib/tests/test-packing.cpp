@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "agx_apple9.h"
+#include "agx_usc_descriptor.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "agx_pack.h"
 
 #include <gtest/gtest.h>

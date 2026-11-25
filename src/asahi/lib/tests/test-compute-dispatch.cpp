@@ -2,7 +2,9 @@
 #include <algorithm>
 #include <iterator>
 #include <gtest/gtest.h>
-#include "agx_apple9.h"
+#include "agx_cdm.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
 {

@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
-#include "agx_apple9.h"
+#include "agx_cdm.h"
+#include "agx_draw_table.h"
+#include "agx_launch_program.h"
 #include "agx_device.h"
 #define CHECK(c)                                                               \
    do {                                                                        \

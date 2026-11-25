@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "util/simple_mtx.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +110,53 @@ bool agx_launch_template_emit(
 bool agx_launch_template_set_roots(
    uint8_t *out, const struct agx_launch_template *tmpl,
    const uint32_t *root_words);
+
+struct agx_apple9_render_stage;
+struct agx_device;
+struct agx_ptr;
+
+
+/* Graphics launch programs of one compiled stage, built on first use for each
+ * fragment tile allocation and sample count (vertex stages use 0/0) and then
+ * patched per launch. Entries are immutable once published; owned by the
+ * compiled shader alongside its BO. */
+#define AGX_APPLE9_STAGE_LAUNCH_TEMPLATES 4
+struct agx_apple9_stage_launch_cache {
+   simple_mtx_t lock;
+   /* Published entries; written with release ordering under the lock. */
+   unsigned count;
+   struct {
+      uint8_t tile_bytes, samples;
+      struct agx_launch_template tmpl;
+   } entry[AGX_APPLE9_STAGE_LAUNCH_TEMPLATES];
+};
+
+void
+agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c);
+void
+agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c);
+
+/* Per-sample tile allocation for a fragment-stage launch or render. As in
+ * agx_build_tilebuffer_layout, multisampled renders keep a nonempty
+ * allocation even without colour targets: a large G16 2x depth-only render
+ * with zero-byte fragment launches can leave its fragment stage unretired.
+ */
+static inline unsigned
+agx_apple9_tile_sample_bytes(unsigned color_bytes, unsigned samples)
+{
+   return color_bytes || samples <= 1 ? color_bytes : 8;
+}
+
+/* Prepare one native stage independently, including background/EOT helpers.
+ * The caller retains the shader BO and immutable allocation until completion.
+ * push is the address of the stage's push words (AGX_APPLE9_PUSH_ROOT).
+ */
+bool agx_apple9_prepare_graphics_stage(
+   struct agx_device *dev, void *allocator,
+   struct agx_ptr (*alloc)(void *, size_t, size_t),
+   const struct agx_apple9_render_stage *shader, bool fragment, uint64_t table,
+   uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
+   unsigned samples, uint32_t *launch);
 
 #ifdef __cplusplus
 }

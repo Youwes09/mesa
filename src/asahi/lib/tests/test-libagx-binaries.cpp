@@ -5,7 +5,10 @@
 
 #include <array>
 #include "asahi/compiler/agx_compile.h"
-#include "agx_apple9.h"
+#include "agx_cdm.h"
+#include "agx_draw_table.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 
 #include <gtest/gtest.h>
 

@@ -6,7 +6,9 @@
  */
 #include "hk_image.h"
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_usc_descriptor.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "drm-uapi/drm_fourcc.h"
 #include "util/bitscan.h"
 #include "util/format/u_format.h"

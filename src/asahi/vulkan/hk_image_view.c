@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_image_view.h"
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_usc_descriptor.h"
+#include "asahi/lib/agx_apple9_color.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
 #include "vulkan/vulkan_core.h"

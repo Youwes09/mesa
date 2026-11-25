@@ -5,10 +5,10 @@
 #include <string.h>
 #include <gtest/gtest.h>
 
+#include "asahi/lib/agx_launch_program.h"
 extern "C" {
 #include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/compiler/agx_apple9_profile.h"
-#include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_apple9_layout.h"
 }
 

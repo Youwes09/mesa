@@ -9,7 +9,9 @@
 #include "vk_util.h"
 #include "wsi_common_entrypoints.h"
 
-#include "agx_apple9.h"
+#include "agx_usc_descriptor.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "agx_bg_eot.h"
 #include "agx_helpers.h"
 #include "agx_scratch.h"

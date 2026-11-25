@@ -25,7 +25,7 @@
 #include "util/ralloc.h"
 #include "util/u_sampler.h"
 #include "util/u_surface.h"
-#include "agx_apple9.h"
+#include "asahi/lib/agx_apple9_color.h"
 #include "agx_state.h"
 #include "glsl_types.h"
 #include "nir.h"

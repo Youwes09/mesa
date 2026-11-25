@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 #include "hk_feedback.h"
-#include "asahi/lib/agx_apple9.h"
 #include "util/format/u_format.h"
 #include "hk_cmd_buffer.h"
 #include "hk_image.h"

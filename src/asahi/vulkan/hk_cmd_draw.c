@@ -5,7 +5,12 @@
  * SPDX-License-Identifier: MIT
  */
 #include <assert.h>
-#include "asahi/lib/agx_apple9.h"
+#include "asahi/lib/agx_cdm.h"
+#include "asahi/lib/agx_draw_table.h"
+#include "asahi/lib/agx_launch_program.h"
+#include "asahi/lib/agx_ppp_record.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/compiler/agx_nir.h"
 #include "agx_abi.h"
 #include "agx_bg_eot.h"

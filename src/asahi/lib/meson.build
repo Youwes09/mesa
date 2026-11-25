@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: MIT
 
 libasahi_lib_files = files(
-  'agx_apple9.c',
+  'agx_cdm.c',
+  'agx_draw_table.c',
   'agx_launch_program.c',
   'agx_bo.c',
   'agx_shader_body.c',
@@ -12,6 +13,7 @@ libasahi_lib_files = files(
   'agx_device.c',
   'agx_device_virtio.c',
   'agx_linker.c',
+  'agx_ppp_record.c',
   'agx_bg_eot.c',
   'agx_tilebuffer.c',
   'agx_nir_lower_tilebuffer.c',
@@ -20,6 +22,7 @@ libasahi_lib_files = files(
   'agx_nir_prolog_epilog.c',
   'agx_ppp.h',
   'agx_scratch.c',
+  'agx_usc_descriptor.c',
   'agx_va.c',
   'pool.c',
 )

@@ -1,0 +1,744 @@
+/*
+ * Copyright 2026 Asahi Linux Contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+#include "agx_draw_table.h"
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "asahi/lib/pool.h"
+#include "asahi/libagx/libagx_dgc.h"
+#include "util/u_math.h"
+#include "agx_apple9_color.h"
+#include "agx_device.h"
+#include "agx_pack.h"
+#include "agx_ppp_record.h"
+#include "agx_shader_body.h"
+
+static inline void
+apple9_put_u32(void *ptr, uint32_t value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline void
+apple9_put_u64(void *ptr, uint64_t value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline uint32_t
+apple9_get_u32(const void *ptr)
+{
+   uint32_t value;
+   memcpy(&value, ptr, sizeof(value));
+   return value;
+}
+
+static inline uint64_t
+apple9_get_u64(const void *ptr)
+{
+   uint64_t value;
+   memcpy(&value, ptr, sizeof(value));
+   return value;
+}
+
+static inline void
+apple9_put_f32(void *ptr, float value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static struct agx_ptr
+apple9_pool_alloc(void *pool, size_t size, size_t alignment)
+{
+   return agx_pool_alloc_aligned(pool, size, alignment);
+}
+
+#define APPLE9_CF_BINDINGS_SIZE AGX_APPLE9_CF_BINDINGS_SIZE
+/* One binding per user scalar in the worst case, then 1/W, primitive ID,
+ * Z and point coordinates. */
+static_assert(4 + 4 * (AGX_APPLE9_MAX_VARYING_COMPONENTS + 1 + 1 + 1 + 1) <=
+                 APPLE9_CF_BINDINGS_SIZE,
+              "coefficient table must fit its worst-case bindings");
+
+static unsigned
+apple9_provoking_vertex(unsigned primitive, bool first)
+{
+   return first ? (primitive == AGX_PRIMITIVE_TRIANGLE_FAN ? 1 : 0) : 2;
+}
+
+static enum agx_shade_model
+apple9_shade_model(struct agx_apple9_interp_mask linear_mask,
+                   struct agx_apple9_interp_mask flat_mask,
+                   enum agx_shade_model flat_shade, unsigned i)
+{
+   if (agx_apple9_interp_mask_test(flat_mask, i))
+      return flat_shade;
+   else if (agx_apple9_interp_mask_test(linear_mask, i))
+      return AGX_SHADE_MODEL_LINEAR;
+   else
+      return AGX_SHADE_MODEL_PERSPECTIVE;
+}
+
+static unsigned
+apple9_build_cf_bindings(uint8_t *table, unsigned components,
+                         struct agx_apple9_interp_mask linear_mask,
+                         struct agx_apple9_interp_mask flat_mask,
+                         unsigned provoking_vertex, bool reads_z,
+                         bool reads_point_coord, bool reads_primitive_id)
+{
+   const enum agx_shade_model flat_shade =
+      provoking_vertex == 1   ? AGX_SHADE_MODEL_FLAT_VERTEX_1
+      : provoking_vertex == 0 ? AGX_SHADE_MODEL_FLAT_VERTEX_0
+                              : AGX_SHADE_MODEL_FLAT_VERTEX_2;
+   assert(components <= AGX_APPLE9_MAX_VARYING_COMPONENTS);
+   memset(table, 0, APPLE9_CF_BINDINGS_SIZE);
+   unsigned slots =
+      components + 1 + reads_z + 2 * reads_point_coord + reads_primitive_id;
+
+   agx_pack(table, CF_BINDING_HEADER, cfg) {
+      cfg.number_of_32_bit_slots = slots;
+      cfg.number_of_coefficient_registers = slots;
+   }
+
+   struct agx_cf_binding_packed *bindings =
+      (void *)(table + AGX_CF_BINDING_HEADER_LENGTH);
+   unsigned binding = 0;
+
+   /* Coefficient zero is 1/W. Keep stable scalar indices across all modes. */
+   agx_pack(&bindings[binding++], CF_BINDING, cfg) {
+      cfg.components = 1;
+      cfg.shade_model = AGX_SHADE_MODEL_LINEAR;
+   }
+
+   for (unsigned start = 0; start < components;) {
+      enum agx_shade_model shade =
+         apple9_shade_model(linear_mask, flat_mask, flat_shade, start);
+      unsigned count = 1;
+      while (count < 4 && start + count < components &&
+             apple9_shade_model(linear_mask, flat_mask, flat_shade,
+                                start + count) == shade)
+         ++count;
+
+      agx_pack(&bindings[binding++], CF_BINDING, cfg) {
+         cfg.components = count;
+         cfg.shade_model = shade;
+         cfg.base_slot = start + 1 + reads_z;
+         cfg.base_coefficient_register = start + 1;
+      }
+
+      start += count;
+   }
+
+   unsigned coefficient = components + 1;
+
+   /* Rasterizer-generated scalar; independent of the provoking vertex. */
+   if (reads_primitive_id) {
+      agx_pack(&bindings[binding++], CF_BINDING, cfg) {
+         cfg.components = 1;
+         cfg.shade_model = AGX_SHADE_MODEL_FLAT_VERTEX_0;
+         cfg.source = AGX_COEFFICIENT_SOURCE_PRIMITIVE_ID;
+         cfg.base_coefficient_register = coefficient++;
+      }
+   }
+
+   /* Keep user coefficient indices stable and append the depth coefficient */
+   if (reads_z) {
+      agx_pack(&bindings[binding++], CF_BINDING, cfg) {
+         cfg.components = 1;
+         cfg.shade_model = AGX_SHADE_MODEL_LINEAR;
+         cfg.source = AGX_COEFFICIENT_SOURCE_FRAGCOORD_Z;
+         cfg.base_slot = 1;
+         cfg.base_coefficient_register = coefficient++;
+      }
+   }
+
+   /* Two linear coefficients generated by the point rasterizer */
+   if (reads_point_coord) {
+      agx_pack(&bindings[binding++], CF_BINDING, cfg) {
+         cfg.components = 2;
+         cfg.shade_model = AGX_SHADE_MODEL_LINEAR;
+         cfg.source = AGX_COEFFICIENT_SOURCE_POINT_COORD;
+         cfg.base_coefficient_register = coefficient;
+      }
+   }
+
+   assert(4 + 4 * binding <= APPLE9_CF_BINDINGS_SIZE);
+   return binding;
+}
+
+unsigned
+agx_apple9_coefficients_size(const struct agx_apple9_render_stage *fragment)
+{
+   bool flat = fragment->apple9_flat_mask.lo || fragment->apple9_flat_mask.hi;
+   return (flat ? 3 : 1) * AGX_APPLE9_CF_BINDINGS_STRIDE;
+}
+
+void
+agx_apple9_init_coefficients(struct agx_device *dev,
+                             struct agx_apple9_render_stage *fragment,
+                             struct agx_ptr allocation)
+{
+   unsigned count =
+      agx_apple9_coefficients_size(fragment) / AGX_APPLE9_CF_BINDINGS_STRIDE;
+   memset(allocation.cpu, 0, count * AGX_APPLE9_CF_BINDINGS_STRIDE);
+   for (unsigned pv = 0; pv < count; ++pv) {
+      unsigned offset = pv * AGX_APPLE9_CF_BINDINGS_STRIDE;
+      fragment->coefficient_count = apple9_build_cf_bindings(
+         (uint8_t *)allocation.cpu + offset, fragment->varying_components,
+         fragment->apple9_linear_mask, fragment->apple9_flat_mask, pv,
+         fragment->apple9_reads_z, fragment->reads_point_coord,
+         fragment->reads_primitive_id);
+      fragment->coefficients[pv] = agx_usc_addr(dev, allocation.gpu + offset);
+   }
+   if (count == 1)
+      fragment->coefficients[1] = fragment->coefficients[2] =
+         fragment->coefficients[0];
+}
+
+/* Launches, roots, coefficients and PPP records are immutable batch storage.
+ * The selected entry has the lifetime of its independently owned shader BO. */
+bool
+agx_apple9_prepare_draw_alloc(
+   struct agx_device *dev, void *usc_allocator,
+   struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
+   struct agx_ptr (*context_alloc)(void *, size_t, size_t),
+   const struct agx_apple9_render_pipeline *pipeline,
+   struct agx_apple9_uniform_draw *draw,
+   const struct agx_apple9_uniform_draw *previous)
+{
+   const struct agx_apple9_render_stage *stages[] = {pipeline->vertex,
+                                                     pipeline->fragment};
+   unsigned tile_bytes = 0;
+   for (unsigned rt = 0; rt < pipeline->fragment->render_targets; rt++)
+      tile_bytes += 4 * agx_apple9_color_words(pipeline->color_formats[rt]);
+   unsigned samples = MAX2(pipeline->samples, 1);
+   /* Each sample holds up to 128 bytes at every sample count; the default
+    * micro-tiles fit such allocations in tile memory. */
+   if (tile_bytes > 128) {
+      fprintf(stderr,
+              "Apple9 draw: unsupported tile allocation %u bytes, %u samples\n",
+              tile_bytes, samples);
+      return false;
+   }
+   draw->samples = samples;
+   draw->tile_bytes = tile_bytes;
+   for (unsigned stage = 0; stage < 2; stage++) {
+      const struct agx_apple9_render_stage *shader = stages[stage];
+      if (!shader->bo || !shader->publication_count_valid) {
+         fprintf(
+            stderr,
+            "Apple9 draw: stage %u missing shader BO or publication count\n",
+            stage);
+         return false;
+      }
+      draw->program_id[stage] = shader->program_id;
+      draw->code[stage] = apple9_stage_body(shader)->addr;
+   }
+   for (unsigned stage = 0; stage < 2; stage++) {
+      const struct agx_apple9_render_stage *shader = stages[stage];
+      uint64_t table = stage ? draw->fragment_table : draw->vertex_table;
+      if (agx_apple9_draw_reuses_launch(previous, draw, stage)) {
+         draw->launch[stage] = previous->launch[stage];
+         continue;
+      }
+      if (!agx_apple9_prepare_graphics_stage(
+             dev, usc_allocator, usc_alloc, shader, stage != 0, table,
+             draw->texture_table[stage], draw->sampler_table[stage],
+             draw->push[stage],
+             agx_apple9_tile_sample_bytes(tile_bytes, samples), samples,
+             &draw->launch[stage]))
+         return false;
+   }
+   draw->provoking_vertex =
+      apple9_provoking_vertex(pipeline->primitive, draw->flatshade_first);
+   bool reuse_coefficients =
+      agx_apple9_draw_reuses_coefficients(previous, draw);
+   unsigned cf_count;
+   if (pipeline->fragment->coefficients[draw->provoking_vertex]) {
+      draw->coefficients =
+         pipeline->fragment->coefficients[draw->provoking_vertex];
+      cf_count = pipeline->fragment->coefficient_count;
+   } else if (reuse_coefficients) {
+      draw->coefficients = previous->coefficients;
+      cf_count = previous->cf_count;
+   } else {
+      uint8_t contents[APPLE9_CF_BINDINGS_SIZE];
+      cf_count = apple9_build_cf_bindings(
+         contents, pipeline->vertex->varying_components,
+         pipeline->fragment->apple9_linear_mask,
+         pipeline->fragment->apple9_flat_mask, draw->provoking_vertex,
+         pipeline->fragment->apple9_reads_z,
+         pipeline->fragment->reads_point_coord,
+         pipeline->fragment->reads_primitive_id);
+      struct agx_ptr cf = usc_alloc(usc_allocator, sizeof(contents), 64);
+      if (!cf.cpu)
+         return false;
+      memcpy(cf.cpu, contents, sizeof(contents));
+      draw->coefficients = agx_usc_addr(dev, cf.gpu);
+   }
+   draw->cf_count = cf_count;
+   uint8_t *ppp = draw->ppp_record;
+   /* Stage-derived bytes come from the link (or are built here); the rest of
+    * the record starts zeroed and takes the draw's state. */
+   if (pipeline->ppp_static) {
+      memcpy(ppp, pipeline->ppp_static, AGX_APPLE9_PPP_STATIC_SIZE);
+#ifndef NDEBUG
+      uint8_t check[AGX_APPLE9_PPP_STATIC_SIZE];
+      agx_apple9_build_ppp_static(pipeline, check);
+      assert(!memcmp(check, ppp, sizeof(check)) && "stale linked PPP template");
+#endif
+   } else {
+      agx_apple9_build_ppp_static(pipeline, ppp);
+   }
+   memset(ppp + AGX_APPLE9_PPP_STATIC_SIZE, 0,
+          sizeof(draw->ppp_record) - AGX_APPLE9_PPP_STATIC_SIZE);
+   uint8_t *group = ppp + 0x40;
+   apple9_put_u32(group + 8, draw->coefficients);
+   apple9_put_u32(group + 4,
+                  (apple9_get_u32(group + 4) & 0xffff) | (cf_count << 16));
+   apple9_put_u32(group + 0x14, draw->launch[1] / 0x40);
+   apple9_put_u32(group + 0x5c, tile_bytes ? 0x1ffff : 0);
+   /* Discards and explicit per-sample stores preserve omitted samples and
+    * require ordered tile access, just like blending. Otherwise opaque tag
+    * visibility can lose the background clear when alpha-to-coverage kills
+    * a single-sample fragment, or lose mixed stencil coverage after a flush. */
+   if (draw->reads_tile || draw->uses_discard || samples > 1)
+      apple9_put_u32(group + 0x50, apple9_get_u32(group + 0x50) | (1u << 29));
+   /* Authored Metal discard traces: select punch-through and disable
+    * triangle merging so shader coverage controls late tests. */
+   if (draw->uses_discard)
+      apple9_put_u32(group + 0x50, apple9_get_u32(group + 0x50) | 0x44000000u);
+   /* Keep derivative helper quads within one primitive. Merging fragments
+    * with different interpolation planes corrupts implicit texture LOD. */
+   bool unfilled = draw->object_type == AGX_OBJECT_TYPE_TRIANGLE &&
+                   ((draw->depth_face[0] | draw->depth_face[1]) & (3u << 18));
+   if (draw->disable_tri_merging || unfilled ||
+       draw->object_type != AGX_OBJECT_TYPE_TRIANGLE)
+      apple9_put_u32(group + 0x50, apple9_get_u32(group + 0x50) | (1u << 26));
+   /* Pixel interlock: the ordered pixel acquire orders fragments per covered
+    * sample, so under MSAA two fragments covering disjoint samples of one
+    * pixel would race. "Pixel order" (bit 23) orders them per pixel. At 1x
+    * the two orderings coincide, and the bit is costly: it orders whole
+    * submitted microtiles (32x16 at 4x), so dense small primitives serialise
+    * (2-pixel grids ~8x slower); set it only when it matters. */
+   if (draw->pixel_interlock && samples > 1)
+      apple9_put_u32(group + 0x50, apple9_get_u32(group + 0x50) | (1u << 23));
+   /* Native raster packet: cull front/back bits 0/1, provoking vertex
+    * bits 7/8, clipping/clamping bits 10/11, primitive MSAA bit 15, front
+    * winding bit 16. */
+   apple9_put_u32(group + 0x70, (apple9_get_u32(group + 0x70) & ~0x38d83u) |
+                                   ((draw->provoking_vertex + 1u) << 7) |
+                                   draw->raster_control);
+   apple9_put_u32(group + 0x50, apple9_get_u32(group + 0x50) |
+                                   (draw->visibility_mode << 14) |
+                                   (draw->depth_control & (1u << 21)));
+   apple9_put_u32(group + 0x48, (uint32_t)draw->occlusion_index << 17);
+   apple9_put_u32(group + 0x34,
+                  draw->depth_control | (unfilled ? 1u << 26 : 0));
+   apple9_put_u32(group + 0x38, draw->depth_face[0]);
+   apple9_put_u32(group + 0x3c, draw->stencil[0]);
+   apple9_put_u32(group + 0x40, draw->depth_face[1]);
+   apple9_put_u32(group + 0x44, draw->stencil[1]);
+   for (unsigned face = 0; face < 2; ++face) {
+      uint8_t *face2 = group + 0x54 + face * 4;
+      unsigned polygon_mode = (draw->depth_face[face] >> 18) & 3;
+      unsigned object_type = draw->object_type;
+      if (object_type == AGX_OBJECT_TYPE_TRIANGLE) {
+         if (polygon_mode == AGX_POLYGON_MODE_LINE)
+            object_type = AGX_OBJECT_TYPE_LINE_FILLED_TRIANGLE;
+         else if (polygon_mode == AGX_POLYGON_MODE_POINT)
+            object_type = AGX_OBJECT_TYPE_POINT_FILLED_TRIANGLE;
+      }
+      apple9_put_u32(face2, (apple9_get_u32(face2) & 0x0f33ffffu) |
+                               (polygon_mode << 18) |
+                               ((draw->writes_depth ? 0u : 3u) << 22) |
+                               (object_type << 28));
+   }
+   /* Viewport block: a count word, one region clip pair per viewport, a
+    * word set when there are several viewports, then {translate, scale} for
+    * each axis per viewport. A single viewport keeps its block at 0xc0;
+    * several are appended after the fixed state. The preceding PPP update
+    * carries the block length in words.
+    */
+   unsigned viewports = MAX2(draw->viewport_count, 1);
+   assert(viewports <= AGX_APPLE9_MAX_VIEWPORTS);
+   uint8_t *vp = ppp + (viewports > 1 ? 0x100 : 0xc0);
+   draw->ppp_viewport_offset = vp - ppp;
+   draw->ppp_viewport_words = 8 * viewports + 2;
+   draw->ppp_size = viewports > 1
+                       ? ALIGN_POT(0x100 + draw->ppp_viewport_words * 4, 64)
+                       : 0x100;
+   apple9_put_u32(vp, ((viewports - 1) << 12) | 0xc00);
+   /* Region clip is tile-granular. The scissor array supplies exact pixel
+    * bounds, including empty rectangles and partial edge tiles. */
+   for (unsigned v = 0; v < viewports; ++v) {
+      for (unsigned axis = 0; axis < 2; ++axis) {
+         uint32_t lo = draw->scissor_min[axis] / 32;
+         uint32_t hi = DIV_ROUND_UP(MAX2(draw->scissor_max[axis], 1), 32) - 1;
+         apple9_put_u32(vp + 4 + v * 8 + axis * 4,
+                        (axis ? 0 : 0x80000000u) | (lo << 16) | hi);
+      }
+   }
+   apple9_put_u32(vp + 4 + viewports * 8, viewports > 1);
+   uint8_t *transforms = vp + 8 + viewports * 8;
+   for (unsigned axis = 0; axis < 3; ++axis) {
+      apple9_put_f32(transforms + axis * 8, draw->viewport_translate[axis]);
+      apple9_put_f32(transforms + axis * 8 + 4, draw->viewport_scale[axis]);
+   }
+   for (unsigned v = 1; v < viewports; ++v) {
+      for (unsigned i = 0; i < 6; ++i)
+         apple9_put_f32(transforms + v * 0x18 + i * 4,
+                        draw->viewports[v - 1][i]);
+   }
+   /* PPP depth-bias/scissor record: header followed by two 16-bit indices. */
+   apple9_put_u32(ppp + 0xf0, 0x100);
+   apple9_put_u32(ppp + 0xf4, draw->scissor_index |
+                                 ((uint32_t)draw->depth_bias_index << 16));
+   /* Compare only this canonical 256-byte record, in CPU storage. This
+    * bounded check reuses an immutable allocation; it neither scans an arena
+    * nor derives byte-range patches. A new batch has no predecessor. */
+   if (previous && previous->ppp_size == draw->ppp_size &&
+       !memcmp(previous->ppp_record, ppp, draw->ppp_size)) {
+      draw->ppp = previous->ppp;
+   } else {
+      struct agx_ptr record =
+         context_alloc(context_allocator, draw->ppp_size, 64);
+      if (!record.cpu || record.gpu < AGX_APPLE9_RENDER_CONTEXT_BASE ||
+          record.gpu - AGX_APPLE9_RENDER_CONTEXT_BASE >
+             UINT32_MAX - draw->ppp_size + 1)
+         return false;
+      memcpy(record.cpu, ppp, draw->ppp_size);
+      draw->ppp = record.gpu - AGX_APPLE9_RENDER_CONTEXT_BASE;
+   }
+   return true;
+}
+
+bool
+agx_apple9_update_draw_tables_alloc(
+   struct agx_device *dev, void *usc_allocator,
+   struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
+   struct agx_ptr (*context_alloc)(void *, size_t, size_t),
+   const struct agx_apple9_render_pipeline *pipeline,
+   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2],
+   const uint64_t push[2])
+{
+   const struct agx_apple9_render_stage *stages[] = {pipeline->vertex,
+                                                     pipeline->fragment};
+   const uint64_t old_tables[] = {draw->vertex_table, draw->fragment_table};
+   const uint64_t new_push[] = {push ? push[0] : draw->push[0],
+                                push ? push[1] : draw->push[1]};
+   uint32_t launch[] = {draw->launch[0], draw->launch[1]};
+   for (unsigned stage = 0; stage < 2; ++stage) {
+      assert(draw->program_id[stage] == stages[stage]->program_id);
+      assert(draw->code[stage] == apple9_stage_body(stages[stage])->addr);
+      if (tables[stage] == old_tables[stage] &&
+          new_push[stage] == draw->push[stage])
+         continue;
+      if (!agx_apple9_prepare_graphics_stage(
+             dev, usc_allocator, usc_alloc, stages[stage], stage != 0,
+             tables[stage], draw->texture_table[stage],
+             draw->sampler_table[stage], new_push[stage],
+             agx_apple9_tile_sample_bytes(draw->tile_bytes, draw->samples),
+             draw->samples, &launch[stage]))
+         return false;
+   }
+
+   uint32_t ppp = draw->ppp;
+   if (launch[1] != draw->launch[1]) {
+      struct agx_ptr record =
+         context_alloc(context_allocator, draw->ppp_size, 64);
+      if (!record.cpu || record.gpu < AGX_APPLE9_RENDER_CONTEXT_BASE ||
+          record.gpu - AGX_APPLE9_RENDER_CONTEXT_BASE >
+             UINT32_MAX - draw->ppp_size + 1)
+         return false;
+      memcpy(record.cpu, draw->ppp_record, draw->ppp_size);
+      apple9_put_u32((uint8_t *)record.cpu + 0x54, launch[1] / 0x40);
+      ppp = record.gpu - AGX_APPLE9_RENDER_CONTEXT_BASE;
+   }
+
+   /* Commit only after all allocations succeeded. Previously emitted draws
+    * still refer to their immutable launch and raster allocations.
+    */
+   draw->vertex_table = tables[0];
+   draw->fragment_table = tables[1];
+   memcpy(draw->push, new_push, sizeof(new_push));
+   memcpy(draw->launch, launch, sizeof(launch));
+   apple9_put_u32(draw->ppp_record + 0x54, launch[1] / 0x40);
+   draw->ppp = ppp;
+   return true;
+}
+
+bool
+agx_apple9_prepare_draw(struct agx_device *dev, struct agx_pool *usc_pool,
+                        struct agx_pool *context_pool,
+                        const struct agx_apple9_render_pipeline *pipeline,
+                        struct agx_apple9_uniform_draw *draw,
+                        const struct agx_apple9_uniform_draw *previous)
+{
+   return agx_apple9_prepare_draw_alloc(dev, usc_pool, apple9_pool_alloc,
+                                        context_pool, apple9_pool_alloc,
+                                        pipeline, draw, previous);
+}
+
+/*
+ * These payload objects describe fixed-function state, not shaders or
+ * scheduler state.  Their contents live in the client context and are built
+ * by the same source serializers as the T8140 path.  Packetizing their
+ * addresses here makes the command stream itself Mesa-owned.
+ */
+static_assert(AGX_APPLE9_PPP_RECORD_MAX >=
+                 ALIGN_POT(0x100 + (8 * AGX_APPLE9_MAX_VIEWPORTS + 2) * 4, 64),
+              "PPP record holds the largest viewport block");
+
+/* The PPP record's blocks, in the order a draw updates them */
+static const struct {
+   uint16_t offset, words;
+} apple9_ppp_blocks[] = {
+   {0x00, 5}, {0x40, 7}, {0x5c, 5}, {0x70, 7}, {0x8c, 5},
+   {0xc0, 10}, /* viewports */
+   {0xa0, 3}, {0xac, 2}, {0xf0, 2},
+};
+
+bool
+agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
+                                const struct agx_apple9_render_stage *vertex,
+                                const struct agx_apple9_render_stage *fragment)
+{
+   if (!pipeline || !vertex || !fragment || !vertex->binary ||
+       !vertex->binary_size || !fragment->binary || !fragment->binary_size ||
+       vertex->binary_size > UINT32_MAX || fragment->binary_size > UINT32_MAX)
+      return false;
+
+   /*
+    * Apple9 compacts the cross-stage interface to scalar UVS slots.  Position
+    * occupies slots 0..3; compacted user scalars follow in semantic order.
+    */
+   if (vertex->position_components != 4 ||
+       vertex->varying_components > AGX_APPLE9_MAX_VARYING_COMPONENTS ||
+       vertex->clip_distance_count > 8 || fragment->position_components != 0 ||
+       fragment->varying_components != vertex->varying_components ||
+       memcmp(&vertex->varyings, &fragment->varyings,
+              sizeof(vertex->varyings)) ||
+       fragment->render_targets > 8)
+      return false;
+
+   const unsigned scalar_outputs =
+      4 + vertex->varying_components + vertex->writes_point_size +
+      vertex->clip_distance_count + vertex->writes_layer_viewport;
+   *pipeline = (struct agx_apple9_render_pipeline){
+      .vertex = vertex,
+      .fragment = fragment,
+      /* Filled from the installed entry BO before VDM emission. */
+      .pipeline_word = 0,
+      /* Launch and PPP offsets are filled from batch-owned allocations. */
+      .output_count = scalar_outputs,
+      .primitive = AGX_PRIMITIVE_TRIANGLES,
+   };
+   return true;
+}
+
+size_t
+agx_apple9_direct_draw_size(const struct agx_apple9_render_pipeline *pipeline)
+{
+   assert(pipeline && pipeline->vertex->binary && pipeline->fragment->binary);
+   return 0x78 + (pipeline->index_size ? 20 : 0);
+}
+
+static uint8_t *
+agx_apple9_emit_draw_state(uint8_t *out,
+                           const struct agx_apple9_render_pipeline *pipeline)
+{
+   assert(pipeline && pipeline->vertex->binary && pipeline->fragment->binary);
+   assert(pipeline->ppp && !(pipeline->ppp & 0x3f));
+
+   agx_push(out, VDM_STATE, cfg) {
+      cfg.vertex_shader_word_0_present = true;
+      cfg.vertex_shader_word_1_present = true;
+      cfg.vertex_outputs_present = true;
+      cfg.vertex_unknown_present = true;
+   }
+
+   uint32_t word0 = 0;
+   memcpy(out, &word0, sizeof(word0));
+   out += sizeof(word0);
+
+   agx_push(out, VDM_STATE_VERTEX_SHADER_WORD_1_G16, cfg) {
+      cfg.unknown = pipeline->pipeline_word;
+      cfg.launch = pipeline->vertex_launch;
+   }
+
+   agx_push(out, VDM_STATE_VERTEX_OUTPUTS, cfg) {
+      cfg.output_count_1 = pipeline->output_count;
+      cfg.output_count_2 = pipeline->output_count;
+   }
+
+   agx_push(out, VDM_STATE_VERTEX_UNKNOWN, cfg) {
+      cfg.flat_shading_control =
+         apple9_provoking_vertex(pipeline->primitive, pipeline->flatshade_first);
+      cfg.generate_primitive_id = pipeline->fragment->reads_primitive_id;
+   }
+
+   /* Padding */
+   memcpy(out, &word0, sizeof(word0));
+   out += sizeof(word0);
+
+   for (unsigned i = 0; i < ARRAY_SIZE(apple9_ppp_blocks); ++i) {
+      unsigned offset = apple9_ppp_blocks[i].offset;
+      unsigned words = apple9_ppp_blocks[i].words;
+
+      if (offset == 0xc0) {
+         if (pipeline->ppp_viewport_offset)
+            offset = pipeline->ppp_viewport_offset;
+         if (pipeline->ppp_viewport_words)
+            words = pipeline->ppp_viewport_words;
+      }
+
+      agx_push(out, PPP_STATE, cfg) {
+         cfg.size_words = words;
+         cfg.pointer_lo = pipeline->ppp + offset;
+      }
+   }
+
+   return out;
+}
+
+/* Index fetch is relative to the USC aperture. The range is measured from
+ * the word holding the first index, which preserves byte and halfword starts
+ * without copies.
+ */
+static uint8_t *
+apple9_emit_index_list(uint8_t *out,
+                       const struct agx_apple9_render_pipeline *pipeline,
+                       bool indirect)
+{
+   assert(pipeline->index_size == 1 || pipeline->index_size == 2 ||
+          pipeline->index_size == 4);
+   assert(pipeline->index_buffer >= (1ull << 40) &&
+          pipeline->index_buffer < (1ull << 40) + (1ull << 32));
+   assert(pipeline->index_extent);
+
+   agx_push(out, VDM_STATE, cfg) {
+      cfg.restart_index_present = true;
+   }
+
+   agx_push(out, VDM_STATE_RESTART_INDEX, cfg) {
+      cfg.value = pipeline->restart_index;
+   }
+
+   agx_push(out, INDEX_LIST, cfg) {
+      cfg.primitive = pipeline->primitive;
+      cfg.restart_enable = pipeline->primitive_restart;
+      cfg.index_size = agx_translate_index_size(pipeline->index_size);
+      cfg.index_buffer_size_present = true;
+      cfg.index_buffer_present = true;
+      cfg.index_count_present = !indirect;
+      cfg.instance_count_present = !indirect;
+      cfg.start_present = !indirect;
+      cfg.indirect_buffer_present = indirect;
+   }
+
+   agx_push(out, INDEX_LIST_BUFFER_LO, cfg) {
+      cfg.buffer_lo = pipeline->index_buffer;
+   }
+
+   return out;
+}
+
+static uint8_t *
+apple9_emit_index_list_end(uint8_t *out,
+                           const struct agx_apple9_render_pipeline *pipeline)
+{
+   agx_push(out, INDEX_LIST_BUFFER_SIZE_G16, cfg) {
+      cfg.size =
+         DIV_ROUND_UP(pipeline->index_extent + (pipeline->index_buffer & 3), 4);
+   }
+
+   agx_push(out, INDEX_LIST_UNKNOWN_G16, cfg) {
+      cfg.unknown = 1;
+   }
+
+   return out;
+}
+
+/* The caller overwrites the terminator with its next command */
+static uint8_t *
+apple9_emit_end(uint8_t *out)
+{
+   uint32_t end = AGX_VDM_BLOCK_TYPE_STREAM_TERMINATE << 29;
+   memcpy(out, &end, sizeof(end));
+   return out + sizeof(end);
+}
+
+uint8_t *
+agx_apple9_emit_direct_draw(uint8_t *out,
+                            const struct agx_apple9_render_pipeline *pipeline,
+                            unsigned vertex_count, unsigned instance_count,
+                            unsigned vertex_start)
+{
+   assert(vertex_count > 0 && instance_count > 0);
+   out = agx_apple9_emit_draw_state(out, pipeline);
+
+   if (pipeline->index_size) {
+      out = apple9_emit_index_list(out, pipeline, false);
+   } else {
+      agx_push(out, INDEX_LIST, cfg) {
+         cfg.primitive = pipeline->primitive;
+         cfg.index_size = AGX_INDEX_SIZE_U32;
+         cfg.index_count_present = true;
+         cfg.instance_count_present = true;
+         cfg.start_present = true;
+      }
+   }
+
+   agx_push(out, INDEX_LIST_COUNT, cfg) {
+      cfg.count = vertex_count;
+   }
+
+   agx_push(out, INDEX_LIST_INSTANCES, cfg) {
+      cfg.count = instance_count;
+   }
+
+   /* Signed base vertex of indexed draws, in two's complement */
+   agx_push(out, INDEX_LIST_START, cfg) {
+      cfg.start = vertex_start;
+   }
+
+   if (pipeline->index_size)
+      out = apple9_emit_index_list_end(out, pipeline);
+
+   return apple9_emit_end(out);
+}
+
+uint8_t *
+agx_apple9_emit_indirect_draw(uint8_t *out,
+                              const struct agx_apple9_render_pipeline *pipeline,
+                              uint64_t indirect)
+{
+   assert(indirect && !(indirect & 3));
+   out = agx_apple9_emit_draw_state(out, pipeline);
+
+   if (pipeline->index_size) {
+      out = apple9_emit_index_list(out, pipeline, true);
+   } else {
+      agx_push(out, INDEX_LIST, cfg) {
+         cfg.primitive = pipeline->primitive;
+         cfg.index_size = AGX_INDEX_SIZE_U32;
+         cfg.indirect_buffer_present = true;
+      }
+   }
+
+   agx_push(out, INDIRECT_G16, cfg) {
+      cfg.address_hi = indirect >> 32;
+      cfg.address_lo = indirect;
+   }
+
+   if (pipeline->index_size)
+      out = apple9_emit_index_list_end(out, pipeline);
+
+   return apple9_emit_end(out);
+}
