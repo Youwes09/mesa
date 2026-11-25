@@ -29,7 +29,7 @@ struct ctx {
    nir_def *write_samples;
 };
 
-/* Apple9 tile access sample mask, the iteration's sample in a sample loop */
+/* Raw tile access sample mask, the iteration's sample in a sample loop */
 static nir_def *
 raw_tile_samples(nir_builder *b, struct agx_tilebuffer_layout *tib)
 {

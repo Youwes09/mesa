@@ -264,7 +264,7 @@ struct agx_precompiled_kernel_info {
    bool uses_txf;
 };
 
-/* Launch profile ahead of a precompiled Apple9 binary. Padding must be zero */
+/* Launch profile ahead of a precompiled binary. Padding must be zero */
 struct agx_precompiled_launch_info {
    uint32_t binary_size;
    struct agx_compute_profile profile;

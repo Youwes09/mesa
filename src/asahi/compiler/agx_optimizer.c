@@ -566,7 +566,7 @@ agx_optimizer_ballot(agx_context *ctx, agx_instr **defs, agx_instr *I)
    bool quad = I->op == AGX_OPCODE_QUAD_BALLOT;
    assert(quad || I->op == AGX_OPCODE_BALLOT);
 
-   /* Apple9 has no compare-and-ballot */
+   /* Not every ISA has compare-and-ballot */
    if (!agx_opcode_on_isa(AGX_OPCODE_ICMP_BALLOT, ctx->target.isa))
       return;
 

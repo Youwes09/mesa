@@ -438,7 +438,7 @@ typedef struct agx_instr {
 
    };
 
-   /* For local access, and F16 for Apple9 FP16 special functions */
+   /* For local access, and F16 for FP16 special functions on word registers */
    enum agx_format format;
 
    /* Number of nested control flow layers to jump by. TODO: Optimize */
@@ -467,7 +467,7 @@ typedef struct agx_instr {
    /* Final st_vary op */
    bool last : 1;
 
-   /* Apple9 image write of integer data */
+   /* Image write of integer data, for texture exports */
    bool integer : 1;
 
    /* Shift for a bitwise or memory op (conflicts with format for memory ops) */
@@ -643,7 +643,7 @@ typedef struct agx_context {
     */
    unsigned spill_base_B;
 
-   /* Bytes at the start of the Apple9 frame for returning device atomics */
+   /* Bytes at the start of the frame for returning device atomics */
    unsigned atomic_frame_B;
 
    /* Beginning of stack allocation used for parallel copy lowering */
@@ -1211,7 +1211,7 @@ unsigned agx3_pack_instr(const agx_instr *I, bool load_follows,
 bool agx3_float_immediate_ok(agx_index idx, bool wide);
 bool agx3_sr_supported(enum agx_sr sr);
 
-/* Export words an Apple9 texture operation reads, and whether it encodes */
+/* Export words an AGX3 texture operation reads, and whether it encodes */
 unsigned agx3_texture_params(const agx_instr *I);
 bool agx3_texture_encodable(const agx_instr *I);
 

@@ -40,7 +40,7 @@ enum agx_bo_flags {
     */
    AGX_BO_READONLY = 1 << 5,
 
-   /* Apple9 PPP/VDM records use 32-bit offsets from the render context. */
+   /* PPP/VDM records use 32-bit offsets from the render context. */
    AGX_BO_CONTEXT = 1 << 6,
 };
 
@@ -51,7 +51,7 @@ enum agx_va_flags {
    /* VA must be fixed, otherwise allocated by the driver. */
    AGX_VA_FIXED = (1 << 1),
 
-   /* Within the Apple9 render-context aperture, outside kernel storage. */
+   /* Within the render-context aperture, outside kernel storage. */
    AGX_VA_CONTEXT = (1 << 2),
 
    /* Capture-replay range: the top of the main or USC heap, which no other
@@ -112,7 +112,7 @@ struct agx_bo {
    /* Current writer, if any (queue in upper 32 bits, syncobj in lower 32 bits) */
    uint64_t writer;
 
-   /* Entry identity for callers that store one Apple9 body in this BO. */
+   /* Entry identity for callers that store one shader body in this BO. */
    struct agx_shader_body shader_body;
 
    /* Update atomically */

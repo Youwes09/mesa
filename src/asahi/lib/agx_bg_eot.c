@@ -46,7 +46,7 @@ agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
       NIR_PASS(_, shader, agx_nir_lower_monolithic_msaa, tib->nr_samples);
       NIR_PASS(_, shader, agx_nir_lower_multisampled_image_store);
 
-      /* Spilled render targets. Apple9 does not spill, lowers textures once */
+      /* Spilled render targets. Raw tiles do not spill, lower textures once */
       if (!tib->raw_tiles)
          NIR_PASS(_, shader, agx_nir_lower_texture);
       NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_tex_handle_to_u0,
@@ -157,7 +157,7 @@ agx_build_background_shader(const struct agx_bg_eot_key *key,
    return b.shader;
 }
 
-/* Apple9 block image stores each render target's tile at the tile origin */
+/* Block image stores write each render target's tile at the tile origin */
 static nir_shader *
 agx_build_raw_end_of_tile_shader(const struct agx_bg_eot_key *key)
 {
@@ -167,7 +167,7 @@ agx_build_raw_end_of_tile_shader(const struct agx_bg_eot_key *key)
    enum glsl_sampler_dim dim =
       (key->tib.nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;
 
-   assert(key->tib.raw_tiles && "Apple9 tile layout");
+   assert(key->tib.raw_tiles && "raw tile layout");
    unsigned height = key->tib.tile_size == 32 * 16 ? 16 : 32;
    nir_def *tile = nir_load_tile_id_agx(&b);
    nir_def *xy = nir_vec2(&b, nir_imul_imm(&b, nir_channel(&b, tile, 0), 32),
@@ -318,7 +318,7 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
    cache->dev = NULL;
 }
 
-/* Apple9 programs get their own BO. False if the USC aperture is full */
+/* Launched programs get their own BO. False if the USC aperture is full */
 static bool
 agx_upload_launched_precompiled(struct agx_bg_eot_cache *cache,
                                 struct agx_precompiled_shader *p,

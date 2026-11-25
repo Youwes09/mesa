@@ -8,7 +8,7 @@
 #include "agx_compiler.h"
 #include "agx_opcodes.h"
 
-/* Apple9 (G16/G17) instruction packing: the instructions of AGX3.xml that
+/* AGX3 instruction packing: the instructions of AGX3.xml that
  * encode an IR instruction, and their fields. A released source register
  * loses its value, so only last uses (the discard flag) set the release bit.
  */
@@ -37,7 +37,7 @@ static void
 pack_assert_internal(const agx_instr *I, bool condition, const char *msg)
 {
    if (!condition) {
-      fprintf(stderr, "Apple9 packing assertion failed for instruction:\n\n");
+      fprintf(stderr, "AGX3 packing assertion failed for instruction:\n\n");
       agx_print_instr(I, stderr);
       fprintf(stderr, "\n%s\n", msg);
       abort();
@@ -2882,7 +2882,7 @@ agx3_pack_instr(const agx_instr *I, bool load_follows,
    struct a9_packed p = {.form = AGX3_ENC_PSEUDO};
 
    pack_body(I, &st, &p);
-   pack_assert(I, p.form != AGX3_ENC_PSEUDO && "no Apple9 encoding");
+   pack_assert(I, p.form != AGX3_ENC_PSEUDO && "no AGX3 encoding");
    memcpy(bytes, p.bytes, p.length);
    return p.length;
 }

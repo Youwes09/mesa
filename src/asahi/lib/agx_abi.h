@@ -21,14 +21,14 @@
 #define AGX_ABI_FOUT_WRITE_SAMPLES (7)
 #define AGX_ABI_FOUT_COLOUR(rt)    (2 * (4 + (4 * rt)))
 
-/* Apple9 samples killed by earlier fragment parts (Apple8: nesting counter) */
+/* Samples killed by earlier fragment parts, or the nesting counter */
 #define AGX_ABI_FOUT_KILLED_SAMPLES (0)
 
 #define AGX_ABI_VUNI_VBO_BASE(vbo) (4 * (vbo))
 #define AGX_ABI_VUNI_VBO_CLAMP(nr_vbos, vbo)                                   \
    (AGX_ABI_VUNI_VBO_BASE(nr_vbos) + 2 * (vbo))
 
-/* First vertex (or index bias) and base instance. Apple9 push words are copied
+/* First vertex (or index bias) and base instance. Root push words are copied
  * before indirect draws write these, so they hold the address of the pair.
  */
 #define AGX_ABI_VUNI_FIRST_VERTEX(nr_vbos)                                     \

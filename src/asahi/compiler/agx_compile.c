@@ -3235,7 +3235,7 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
 
    case nir_op_vec8:
    case nir_op_vec16: {
-      /* Apple9 texture parameter bundles */
+      /* Texture parameter bundles in export registers */
       agx_index idx[16];
       for (unsigned i = 0; i < srcs; ++i)
          idx[i] = agx_alu_src_index(b, instr->src[i]);

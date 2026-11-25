@@ -56,7 +56,6 @@ struct agx_tilebuffer_layout {
    /* Selected tile size in pixels. Either 32*32, 32*16, or 16*16. */
    uint16_t tile_size;
 
-   /* Apple9 tile: render targets in shader-packed words of their tile format */
    /* Render targets are whole tile-format words, accessed raw */
    bool raw_tiles;
 

@@ -172,7 +172,7 @@ agx_write_registers(const agx_instr *I, unsigned d)
    case AGX_OPCODE_IMAGE_LOAD:
    case AGX_OPCODE_TEXTURE_LOAD:
    case AGX_OPCODE_TEXTURE_SAMPLE:
-      /* Apple9 parameters are in export registers, gathers write all four */
+      /* Exported parameters: gathers write all four */
       if (I->src[0].reg_class == RA_EXPORT)
          return (I->gather ? 4 : util_bitcount(I->mask)) * size;
 
@@ -323,7 +323,7 @@ agx_read_registers(const agx_instr *I, unsigned s)
    case AGX_OPCODE_TEXTURE_LOAD:
    case AGX_OPCODE_TEXTURE_SAMPLE:
       if (I->src[0].reg_class == RA_EXPORT) {
-         /* Apple9: a parameter bundle, table indices and an offset */
+         /* A parameter bundle, table indices and an offset */
          return s == 0 ? agx3_texture_params(I) * 2 : size;
       } else if (s == 0) {
          return agx_coordinate_registers(I, I->src[0].size);
@@ -366,7 +366,7 @@ agx_read_registers(const agx_instr *I, unsigned s)
       }
 
    case AGX_OPCODE_BLOCK_IMAGE_STORE:
-      /* Apple9 parameters are in export registers */
+      /* Parameters in export registers */
       if (I->src[0].reg_class == RA_EXPORT)
          return agx_index_size_16(I->src[s]);
       else if (s == 3 && I->explicit_coords)

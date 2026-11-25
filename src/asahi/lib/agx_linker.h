@@ -12,7 +12,7 @@
 #include "nir_lower_blend.h"
 #include "util/macros.h"
 
-/* Apple9 program linked from no_stop parts that share the agx_abi.h registers
+/* Program linked from no_stop parts that share the agx_abi.h registers
  * and load push words at uniform 24 + w, see agx_link_program.
  */
 struct agx_linked_program {
@@ -51,7 +51,7 @@ struct agx_linked_shader {
    /* Coefficient register bindings */
    struct agx_varyings_fs cf;
 
-   /* Apple9 program, at the start of bo */
+   /* Linked program for launch programs, at the start of bo */
    struct agx_linked_program program;
 
    /* Data structures packed for the linked program */
@@ -266,7 +266,7 @@ struct agx_fs_epilog_link_info {
    bool sample_mask_after_force_early : 1;
 
    /* A part before the epilog may kill samples. Drivers set it for prolog
-    * discards, and Apple9 epilogs mask their stores only if it is set.
+    * discards, and tile domain epilogs mask their stores only if it is set.
     */
    bool kills : 1;
 };

@@ -110,7 +110,7 @@ agx_build_tilebuffer_layout(const enum pipe_format *formats, uint8_t nr_cbufs,
    return tib;
 }
 
-/* Apple9 render targets are whole tile-format words, at most 128 B a sample */
+/* Raw render targets are whole tile-format words, at most 128 B a sample */
 #define RAW_TILE_MAX_SAMPLE_BYTES (128)
 
 struct agx_tilebuffer_layout
@@ -186,7 +186,7 @@ agx_tilebuffer_supports_mask(struct agx_tilebuffer_layout *tib, unsigned rt)
    if (tib->spilled[rt])
       return false;
 
-   /* Apple9 masks whole words, so only formats with a word per channel */
+   /* Raw tiles mask whole words, so only formats with a word per channel */
    if (tib->raw_tiles)
       return agx_raw_tile_words(tib->logical_format[rt]) ==
              util_format_get_nr_components(tib->logical_format[rt]);

@@ -813,7 +813,7 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups,
        * that do not use atomics and are therefore portable across devices.
        */
       assert(needs_g13x_coherency != U_TRISTATE_UNSET);
-      assert(I->atomic_opc != AGX_ATOMIC_OPC_FADD && "Apple9 only");
+      assert(I->atomic_opc != AGX_ATOMIC_OPC_FADD && "AGX3 only");
 
       uint64_t raw =
          agx_opcodes_info[I->op].encoding.exact |
@@ -950,7 +950,7 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups,
    }
 
    case AGX_OPCODE_IMAGE_WRITE: {
-      assert(!I->integer && "Apple9 only");
+      assert(!I->integer && "AGX3 only");
       bool Ct, Dt, Rt, Cs;
       unsigned Tt;
       unsigned U;
