@@ -1450,16 +1450,9 @@ void agx_fill_velem_keys(const struct vk_vertex_input_state *vi,
 
 struct agx_robustness hk_prolog_robustness(struct hk_device *dev);
 
-struct agx_bg_eot_key;
-struct hk_bg_eot hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd,
-                                         const VkRenderingInfo *info,
-                                         struct agx_bg_eot_key *key);
-
 bool hk_apple9_pin_entry(void *allocator, struct agx_shader_body *body);
 void hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd);
-/* reads_buffers: the draw's tiling reads buffer memory itself (indices or
- * indirect arguments). */
-bool hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers);
+
 /* Software-stage outputs, queries and multiview have additional per-draw
  * state. Keep their existing preparation path. A null/out-of-range index
  * binding allocates a fresh zero range, so it must also use that path. */
@@ -1501,7 +1494,6 @@ hk_apple9_draw_state_reusable(const struct hk_cmd_buffer *cmd,
           draw.start_instance == cmd->apple9_draw_state.base_instance;
 }
 
-bool hk_apple9_reads_draw_id(const struct hk_graphics_state *gfx);
 void hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     struct agx_draw draw);
 void hk_apple9_compute_sysvals(struct hk_device *dev, void *out);

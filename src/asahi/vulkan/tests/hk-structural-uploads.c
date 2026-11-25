@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MIT
  * Exercise actual render/view ownership with host-backed command BOs. */
-#include "../hk_cmd_apple9.c"
+#include "asahi/lib/agx_apple9.h"
+#include "../hk_cmd_buffer.h"
+#include "../hk_device.h"
+#include "../hk_image.h"
+#include "../hk_image_view.h"
 #include "hk_entrypoints.h"
 #include "hk_physical_device.h"
 #include "vk_alloc.h"
