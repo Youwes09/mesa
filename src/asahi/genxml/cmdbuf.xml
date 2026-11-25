@@ -1153,4 +1153,93 @@
     <field name="Default point size" start="8" size="1" type="bool"/>
     <field name="Fixed point format" start="9" size="1" type="uint"/>
   </struct>
+
+  <!-- G16 descriptors fill 32-byte table slots. The format and size fields
+       keep their Apple8 positions; the address starts at bit 64. -->
+  <struct name="PBE G16" size="32">
+    <field name="Dimension" size="4" start="0" type="Texture dimension"/>
+    <field name="Layout" size="2" start="4" type="Layout"/>
+    <field name="Channels" size="7" start="6" type="Channels"/>
+    <field name="Type" size="3" start="13" type="Texture Type"/>
+    <field name="Swizzle R" size="2" start="16" type="Channel"/>
+    <field name="Swizzle G" size="2" start="18" type="Channel"/>
+    <field name="Swizzle B" size="2" start="20" type="Channel"/>
+    <field name="Swizzle A" size="2" start="22" type="Channel"/>
+    <field name="Width" size="14" start="24" type="uint" modifier="minus(1)"/>
+    <field name="Height" size="14" start="38" type="uint" modifier="minus(1)"/>
+    <field name="Samples" size="1" start="56" type="Sample Count"/>
+    <field name="Unk mipmapped" size="1" start="58" type="bool"/>
+    <field name="Compressed" size="1" start="59" type="bool"/>
+    <field name="Buffer" size="44" start="64" type="address" modifier="shr(4)"/>
+
+    <!-- If layout is linear, in units of 16 bytes -->
+    <field name="Stride" size="16" start="108" type="uint" modifier="minus(1)"/>
+
+    <!-- If layout is not linear and the target is layered -->
+    <field name="Layers" size="16" start="108" type="uint" modifier="minus(1)"/>
+    <field name="Page-aligned layers" size="1" start="124" type="bool"/>
+
+    <!-- Read the next word (set for compression or mipmapping) -->
+    <field name="Extended" size="1" start="127" type="bool"/>
+
+    <!-- If compressed -->
+    <field name="Acceleration buffer" size="44" start="128" type="address" modifier="shr(4)"/>
+
+    <field name="Level" size="4" start="172" type="uint"/>
+    <field name="Levels" size="4" start="176" type="uint" modifier="minus(1)"/>
+  </struct>
+
+  <struct name="Texture G16" size="32">
+    <field name="Dimension" size="4" start="0" type="Texture dimension"/>
+    <field name="Layout" size="2" start="4" type="Layout"/>
+    <field name="Channels" size="7" start="6" type="Channels"/>
+    <field name="Type" size="3" start="13" type="Texture Type"/>
+    <field name="Swizzle R" size="3" start="16" type="Channel"/>
+    <field name="Swizzle G" size="3" start="19" type="Channel"/>
+    <field name="Swizzle B" size="3" start="22" type="Channel"/>
+    <field name="Swizzle A" size="3" start="25" type="Channel"/>
+    <field name="Width" size="14" start="28" type="uint" modifier="minus(1)"/>
+    <field name="Height" size="14" start="42" type="uint" modifier="minus(1)"/>
+    <field name="Samples" size="1" start="56" type="Sample Count"/>
+    <field name="Unk mipmapped" size="1" start="58" type="bool"/>
+    <field name="Compressed" size="1" start="59" type="bool"/>
+    <field name="Address" size="44" start="64" type="address" modifier="shr(4)"/>
+    <field name="sRGB" size="1" start="108" type="bool"/>
+    <field name="sRGB 2-channel" size="1" start="109" type="bool"/>
+
+    <!-- If layout is linear -->
+    <field name="Stride" size="18" start="110" type="hex" modifier="shr(4)"/>
+
+    <!-- If layout is not linear, for arrays and 3D -->
+    <field name="Depth" size="14" start="110" type="uint" modifier="minus(1)"/>
+    <field name="Page-aligned layers" size="1" start="126" type="bool"/>
+
+    <!-- Read the next word (set for compression or mipmapping) -->
+    <field name="Extended" size="1" start="127" type="bool"/>
+
+    <!-- If compressed -->
+    <field name="Acceleration buffer" size="44" start="128" type="address" modifier="shr(4)"/>
+
+    <field name="First level" size="4" start="172" type="uint"/>
+    <field name="Last level" size="4" start="176" type="uint"/>
+  </struct>
+
+  <!-- As the Apple8 sampler, with the border colour and seamful cube maps
+       moved to the top -->
+  <struct name="Sampler G16" size="8">
+    <field name="Minimum LOD" size="10" start="0" type="lod"/>
+    <field name="Maximum LOD" size="10" start="10" type="lod"/>
+    <field name="Maximum anisotropy" size="3" start="20" type="uint" modifier="log2"/>
+    <field name="Magnify" size="2" start="23" type="Filter"/>
+    <field name="Minify" size="2" start="25" type="Filter"/>
+    <field name="Mip filter" size="2" start="27" type="Mip filter"/>
+    <field name="Wrap S" size="3" start="29" type="Wrap"/>
+    <field name="Wrap T" size="3" start="32" type="Wrap"/>
+    <field name="Wrap R" size="3" start="35" type="Wrap"/>
+    <field name="Compare func" size="3" start="39" type="Compare func"/>
+    <!-- Set in every sampler, with or without comparison -->
+    <field name="Unk 42" size="1" start="42" type="bool"/>
+    <field name="Border colour" size="2" start="61" type="Border colour"/>
+    <field name="Seamful cube maps" size="1" start="63" type="bool"/>
+  </struct>
 </genxml>

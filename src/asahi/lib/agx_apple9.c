@@ -46,48 +46,55 @@ agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
                    layout->level_offsets_B[0];
    if ((base & 15) || (base >> 44))
       return false;
-   uint64_t address = base >> 4;
    uint32_t stride = linear ? ail_get_linear_stride_B(layout, level) : 0;
    if (linear &&
        (!stride || (stride & 15) || stride > AGX_APPLE9_MAX_LINEAR_STRIDE))
       return false;
 
-   uint8_t descriptor[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
-   if (layout->compressed) {
-      agx_unpack(stderr, state, PBE, pbe);
-      if (!pbe.compressed || !pbe.extended || !pbe.acceleration_buffer ||
-          (pbe.acceleration_buffer & 15) || (pbe.acceleration_buffer >> 48))
-         return false;
-      uint64_t metadata = pbe.acceleration_buffer >> 4;
-      memcpy(descriptor + 16, &metadata, sizeof(metadata));
-      address |= UINT64_C(1) << 63;
-   }
-   uint32_t header[2];
-   memcpy(header, state, sizeof(header));
-   unsigned width = u_minify(layout->width_px, descriptor_level);
-   unsigned height = u_minify(layout->height_px, descriptor_level);
-   header[0] = (header[0] & 0x00fffff0) | dimension | ((width - 1) << 24);
-   header[1] = ((width - 1) >> 8) | ((height - 1) << 6) |
-               (header[1] & 0x01000000) | ((uint32_t)layout->compressed << 27);
+   agx_unpack(stderr, state, PBE, pbe);
+   if (layout->compressed &&
+       (!pbe.compressed || !pbe.extended || !pbe.acceleration_buffer ||
+        (pbe.acceleration_buffer & 15) || (pbe.acceleration_buffer >> 48)))
+      return false;
+
    /* Packed tile words already have memory channel order. */
-   if (agx_apple9_color_is_packed(agx_apple9_color_tile_format(format)))
-      header[0] = (header[0] & ~0x00ff0000u) | 0x00e40000;
-   if (!linear && layout->levels > 1) {
-      header[1] |= 1u << 26;
-      address |= UINT64_C(1) << 63;
-      descriptor[21] |= level << 4;
-      descriptor[22] = layout->levels - 1;
+   bool packed = agx_apple9_color_is_packed(agx_apple9_color_tile_format(format));
+
+   agx_pack(out, PBE_G16, cfg) {
+      cfg.dimension = dimension;
+      cfg.layout = pbe.layout;
+      cfg.channels = pbe.channels;
+      cfg.type = pbe.type;
+      cfg.swizzle_r = packed ? AGX_CHANNEL_R : pbe.swizzle_r;
+      cfg.swizzle_g = packed ? AGX_CHANNEL_G : pbe.swizzle_g;
+      cfg.swizzle_b = packed ? AGX_CHANNEL_B : pbe.swizzle_b;
+      cfg.swizzle_a = packed ? AGX_CHANNEL_A : pbe.swizzle_a;
+      cfg.width = u_minify(layout->width_px, descriptor_level);
+      cfg.height = u_minify(layout->height_px, descriptor_level);
+      cfg.samples = pbe.samples;
+      cfg.compressed = layout->compressed;
+      cfg.buffer = base;
+
+      if (layout->compressed) {
+         cfg.extended = true;
+         cfg.acceleration_buffer = pbe.acceleration_buffer;
+      }
+
+      if (!linear && layout->levels > 1) {
+         cfg.unk_mipmapped = true;
+         cfg.extended = true;
+         cfg.level = level;
+         cfg.levels = layout->levels;
+      }
+
+      if (linear) {
+         cfg.stride = stride / 16;
+      } else if (layered) {
+         cfg.layers = layer_count;
+         cfg.page_aligned_layers = layout->page_aligned_layers;
+      }
    }
-   if (linear) {
-      address |= ((uint64_t)(stride >> 4) - 1) << 44;
-   } else if (layered) {
-      address |= (uint64_t)(layer_count - 1) << 44;
-      if (layout->page_aligned_layers)
-         address |= UINT64_C(1) << 60;
-   }
-   memcpy(descriptor, header, sizeof(header));
-   memcpy(descriptor + 8, &address, sizeof(address));
-   memcpy(out, descriptor, sizeof(descriptor));
+
    return true;
 }
 
@@ -789,27 +796,43 @@ apple9_sampler_address(unsigned wrap)
    }
 }
 
+static struct AGX_SAMPLER_G16
+apple9_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
+               float min_lod, float max_lod, unsigned wrap_s, unsigned wrap_t,
+               unsigned max_anisotropy)
+{
+   assert(mip_filter <= 2);
+   max_lod = CLAMP(max_lod, 0.0f, 14.0f);
+   min_lod = CLAMP(min_lod, 0.0f, max_lod);
+
+   /* Round the LODs to the nearest 1/64. Fractional maximum LODs blend into
+    * the next level, as a biased trilinear sample clamped to 2.1 shows. */
+   return (struct AGX_SAMPLER_G16){
+      AGX_SAMPLER_G16_header,
+      .minimum_lod = roundf(min_lod * 64) / 64,
+      .maximum_lod = roundf(max_lod * 64) / 64,
+      .maximum_anisotropy =
+         util_next_power_of_two(CLAMP(max_anisotropy, 1, 16)),
+      .magnify = mag_linear ? AGX_FILTER_LINEAR : AGX_FILTER_NEAREST,
+      .minify = min_linear ? AGX_FILTER_LINEAR : AGX_FILTER_NEAREST,
+      .mip_filter = mip_filter,
+      .wrap_s = apple9_sampler_address(wrap_s),
+      .wrap_t = apple9_sampler_address(wrap_t),
+      .compare_func = AGX_COMPARE_FUNC_NEVER,
+      .unk_42 = true,
+   };
+}
+
 void
 agx_apple9_pack_sampler(void *out, bool min_linear, bool mag_linear,
                         unsigned mip_filter, float min_lod, float max_lod,
                         unsigned wrap_s, unsigned wrap_t,
                         unsigned max_anisotropy)
 {
-   assert(mip_filter <= 2);
-   unsigned anisotropy =
-      util_logbase2(util_next_power_of_two(CLAMP(max_anisotropy, 1, 16)));
-   max_lod = CLAMP(max_lod, 0.0f, 14.0f);
-   min_lod = CLAMP(min_lod, 0.0f, max_lod);
-   /* Minimum and maximum LOD are unsigned Q6 fields at bits 0-9 and 10-19.
-    * Fractional maximum LODs blend into the next level, as a biased
-    * trilinear sample clamped to 2.1 shows. */
-   const uint32_t words[2] = {
-      (uint32_t)roundf(min_lod * 64) | ((uint32_t)roundf(max_lod * 64) << 10) |
-         (anisotropy << 20) | (mag_linear << 23) | (min_linear << 25) |
-         (mip_filter << 27) | (apple9_sampler_address(wrap_s) << 29),
-      apple9_sampler_address(wrap_t) | (1u << 7) | (7u << 8),
-   };
-   memcpy(out, words, sizeof(words));
+   struct AGX_SAMPLER_G16 sampler =
+      apple9_sampler(min_linear, mag_linear, mip_filter, min_lod, max_lod,
+                     wrap_s, wrap_t, max_anisotropy);
+   AGX_SAMPLER_G16_pack(out, &sampler);
 }
 
 bool
@@ -822,16 +845,17 @@ agx_apple9_translate_texture(void *out, const struct agx_texture_packed *state)
 void
 agx_apple9_set_null_texture(void *out)
 {
-   /* A null texture is a one-texel, zero-swizzled view of the zero page.
-    * Its format/dimension prefix is shared with Apple8, but the native
-    * address starts two bits earlier. Construct that native record directly
-    * instead of unpacking and translating a complete legacy descriptor. */
-   struct agx_texture_packed prefix;
-   agx_set_null_texture(&prefix);
-   memset(out, 0, AGX_APPLE9_TEXTURE_TABLE_STRIDE);
-   memcpy(out, &prefix, 8);
-   uint64_t address = AGX_ZERO_PAGE_ADDRESS >> 4;
-   memcpy((uint8_t *)out + 8, &address, sizeof(address));
+   /* A one-texel, zero-swizzled view of the zero page, as agx_set_null_texture */
+   agx_pack(out, TEXTURE_G16, cfg) {
+      cfg.layout = AGX_LAYOUT_TWIDDLED;
+      cfg.channels = AGX_CHANNELS_R8;
+      cfg.type = AGX_TEXTURE_TYPE_UNORM /* don't care */;
+      cfg.swizzle_r = AGX_CHANNEL_0;
+      cfg.swizzle_g = AGX_CHANNEL_0;
+      cfg.swizzle_b = AGX_CHANNEL_0;
+      cfg.swizzle_a = AGX_CHANNEL_0;
+      cfg.address = AGX_ZERO_PAGE_ADDRESS;
+   }
 }
 
 bool
@@ -879,13 +903,7 @@ agx_apple9_pack_texture(void *out, const struct AGX_TEXTURE *state)
       tex.stride &= BITFIELD_MASK(21);
       tex.depth = 1;
    }
-   uint8_t *descriptor = out;
-   memset(descriptor, 0, AGX_APPLE9_TEXTURE_TABLE_STRIDE);
-   /* Only the format and dimensions use the legacy layout. In particular,
-    * never route the native 48-bit byte address through its 40-bit field.
-    */
-   struct agx_texture_packed prefix;
-   agx_pack(&prefix, TEXTURE, cfg) {
+   agx_pack(out, TEXTURE_G16, cfg) {
       cfg.dimension = tex.dimension;
       cfg.layout = tex.layout;
       cfg.channels = tex.channels;
@@ -896,35 +914,30 @@ agx_apple9_pack_texture(void *out, const struct AGX_TEXTURE *state)
       cfg.swizzle_a = tex.swizzle_a;
       cfg.width = tex.width;
       cfg.height = tex.height;
-   }
-   memcpy(descriptor, &prefix, 8);
-   uint32_t dimensions;
-   memcpy(&dimensions, descriptor + 4, 4);
-   dimensions = (dimensions & 0x00ffffff) |
-                ((ms && tex.samples == AGX_SAMPLE_COUNT_4) << 24) |
-                (tex.unk_mipmapped << 26) | (tex.compressed << 27);
-   memcpy(descriptor + 4, &dimensions, 4);
+      cfg.samples = ms ? tex.samples : AGX_SAMPLE_COUNT_2;
+      cfg.unk_mipmapped = tex.unk_mipmapped;
+      cfg.compressed = tex.compressed;
+      cfg.address = tex.address;
+      cfg.srgb = tex.srgb;
+      cfg.srgb_2_channel = tex.srgb_2_channel;
 
-   /* The address starts two bits earlier than Apple8. Depth/linear stride,
-    * sRGB and tiled layer alignment retain their positions. */
-   uint64_t address = tex.address >> 4;
-   if (tex.layout == AGX_LAYOUT_LINEAR)
-      address |= (uint64_t)(tex.stride >> 4) << 46;
-   else {
-      if (array || tex.dimension == AGX_TEXTURE_DIMENSION_3D)
-         address |= (uint64_t)(tex.depth - 1) << 46;
-      address |= (uint64_t)tex.page_aligned_layers << 62;
+      if (tex.layout == AGX_LAYOUT_LINEAR) {
+         cfg.stride = tex.stride;
+      } else {
+         if (array || tex.dimension == AGX_TEXTURE_DIMENSION_3D)
+            cfg.depth = tex.depth;
+
+         cfg.page_aligned_layers = tex.page_aligned_layers;
+      }
+
+      cfg.extended = tex.unk_mipmapped || tex.compressed;
+      if (tex.compressed)
+         cfg.acceleration_buffer = tex.acceleration_buffer;
+
+      cfg.first_level = tex.first_level;
+      cfg.last_level = tex.last_level;
    }
-   address |= (uint64_t)(tex.unk_mipmapped || tex.compressed) << 63;
-   address |= (uint64_t)tex.srgb << 44;
-   address |= (uint64_t)tex.srgb_2_channel << 45;
-   memcpy(descriptor + 8, &address, sizeof(address));
-   if (tex.compressed) {
-      uint64_t metadata = tex.acceleration_buffer >> 4;
-      memcpy(descriptor + 16, &metadata, sizeof(metadata));
-   }
-   descriptor[21] |= tex.first_level << 4;
-   descriptor[22] = tex.last_level;
+
    return true;
 }
 
@@ -947,31 +960,18 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
       PIPE_TEX_WRAP_MIRROR_REPEAT, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
       PIPE_TEX_WRAP_CLAMP,         PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE,
    };
+   struct AGX_SAMPLER_G16 g16 = apple9_sampler(
+      sampler.minify == AGX_FILTER_LINEAR, sampler.magnify == AGX_FILTER_LINEAR,
+      sampler.mip_filter, sampler.minimum_lod, sampler.maximum_lod,
+      wrap[sampler.wrap_s], wrap[sampler.wrap_t], sampler.maximum_anisotropy);
+   g16.wrap_r = sampler.wrap_r;
+   g16.border_colour = sampler.border_colour;
+   g16.seamful_cube_maps = sampler.seamful_cube_maps;
+   if (sampler.compare_enable)
+      g16.compare_func = sampler.compare_func;
+
    memset(out, 0, AGX_APPLE9_SAMPLER_TABLE_STRIDE);
-   agx_apple9_pack_sampler(out, sampler.minify == AGX_FILTER_LINEAR,
-                           sampler.magnify == AGX_FILTER_LINEAR,
-                           sampler.mip_filter, sampler.minimum_lod,
-                           sampler.maximum_lod, wrap[sampler.wrap_s],
-                           wrap[sampler.wrap_t], sampler.maximum_anisotropy);
-   uint32_t modes;
-   memcpy(&modes, (uint8_t *)out + 4, 4);
-   modes |= sampler.wrap_r << 3;
-   modes |= sampler.border_colour << 29;
-   modes |= (uint32_t)sampler.seamful_cube_maps << 31;
-   if (sampler.compare_enable) {
-      static const uint16_t comparisons[] = {
-         [AGX_COMPARE_FUNC_LEQUAL] = 0x400,
-         [AGX_COMPARE_FUNC_GEQUAL] = 0x480,
-         [AGX_COMPARE_FUNC_LESS] = 0x500,
-         [AGX_COMPARE_FUNC_GREATER] = 0x580,
-         [AGX_COMPARE_FUNC_EQUAL] = 0x600,
-         [AGX_COMPARE_FUNC_NOT_EQUAL] = 0x680,
-         [AGX_COMPARE_FUNC_ALWAYS] = 0x700,
-         [AGX_COMPARE_FUNC_NEVER] = 0x780,
-      };
-      modes = (modes & ~0x780u) | comparisons[sampler.compare_func];
-   }
-   memcpy((uint8_t *)out + 4, &modes, 4);
+   AGX_SAMPLER_G16_pack(out, &g16);
    return true;
 }
 
@@ -981,13 +981,11 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
 void
 agx_apple9_pack_fetch_sampler(void *out)
 {
-   agx_apple9_pack_sampler(out, false, false, 1, 0, 14,
-                           PIPE_TEX_WRAP_CLAMP_TO_BORDER,
-                           PIPE_TEX_WRAP_CLAMP_TO_BORDER, 1);
-   uint32_t modes;
-   memcpy(&modes, (uint8_t *)out + 4, 4);
-   modes |= apple9_sampler_address(PIPE_TEX_WRAP_CLAMP_TO_BORDER) << 3;
-   memcpy((uint8_t *)out + 4, &modes, 4);
+   struct AGX_SAMPLER_G16 sampler =
+      apple9_sampler(false, false, 1, 0, 14, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
+                     PIPE_TEX_WRAP_CLAMP_TO_BORDER, 1);
+   sampler.wrap_r = AGX_WRAP_CLAMP_TO_BORDER;
+   AGX_SAMPLER_G16_pack(out, &sampler);
 }
 
 /* The default coefficient table occupies the end of the graphics resource
