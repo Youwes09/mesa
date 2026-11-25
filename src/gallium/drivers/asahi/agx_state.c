@@ -3470,7 +3470,7 @@ agx_usc_texture_view_supported(const struct agx_sampler_view *view)
            agx_usc_linear_texture(resource));
 }
 
-/* Runtime sampler record (AGX_APPLE9_SAMP_*) for state applied in software */
+/* Runtime sampler record (AGX_SAMP_*) for state applied in software */
 static void
 agx_runtime_sampler(uint32_t *record, const struct pipe_sampler_state *state)
 {

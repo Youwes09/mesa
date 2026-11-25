@@ -261,12 +261,12 @@ struct agx_precompiled_kernel_info {
 };
 
 /* Launch profile ahead of a precompiled Apple9 binary. Padding must be zero */
-struct agx_precompiled_apple9_kernel_info {
+struct agx_precompiled_launch_info {
    uint32_t binary_size;
    struct agx_compute_profile profile;
 };
 
-static_assert(sizeof(struct agx_precompiled_apple9_kernel_info) % 4 == 0,
+static_assert(sizeof(struct agx_precompiled_launch_info) % 4 == 0,
               "followed by the binary in 32-bit words");
 
 /* Fills *out in place, as a returned struct would leave padding undefined */

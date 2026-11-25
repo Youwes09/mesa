@@ -328,7 +328,7 @@ agx_upload_launched_precompiled(struct agx_bg_eot_cache *cache,
    const uint32_t *bin = cache->dev->libagx_programs[program];
    assert(bin != NULL && "the program never runs on Apple9");
 
-   const struct agx_precompiled_apple9_kernel_info *info = (const void *)bin;
+   const struct agx_precompiled_launch_info *info = (const void *)bin;
    const uint32_t *local = info->profile.local_size;
 
    p->launched = true;

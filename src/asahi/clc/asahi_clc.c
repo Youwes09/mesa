@@ -209,10 +209,10 @@ print_shader(FILE *fp, const char *name, const char *suffix, uint32_t variant,
 }
 
 static void
-print_apple9_shader(FILE *fp, const char *name, uint32_t variant,
-                    struct agx_shader_part *p)
+print_g16_shader(FILE *fp, const char *name, uint32_t variant,
+                 struct agx_shader_part *p)
 {
-   struct agx_precompiled_apple9_kernel_info info;
+   struct agx_precompiled_launch_info info;
    memset(&info, 0, sizeof(info));
    info.binary_size = p->info.binary_size;
    info.profile = p->info.compute_profile;
@@ -228,14 +228,14 @@ print_apple9_shader(FILE *fp, const char *name, uint32_t variant,
 
 /* Programs not on Apple9: G13 metadata decompression and the scratch helper */
 static bool
-unreachable_on_apple9(nir_function *func)
+g13_only(nir_function *func)
 {
    return !strcmp(func->name, "libagx_decompress") ||
           !strcmp(func->name, "libagx_helper");
 }
 
 static void
-print_apple9_binary_map(FILE *fp_c, FILE *fp_h, const nir_shader *nir)
+print_g16_binary_map(FILE *fp_c, FILE *fp_h, const nir_shader *nir)
 {
    nir_precomp_print_extern_binary_map(fp_h, "libagx", "g16");
 
@@ -246,7 +246,7 @@ print_apple9_binary_map(FILE *fp_c, FILE *fp_h, const nir_shader *nir)
          fprintf(fp_c, "    [");
          nir_precomp_print_enum_variant_value(fp_c, func, v);
 
-         if (unreachable_on_apple9(func))
+         if (g13_only(func))
             fprintf(fp_c, "] = NULL,\n");
          else
             fprintf(fp_c, "] = %s_%u_g16,\n", func->name, v);
@@ -438,7 +438,7 @@ main(int argc, char **argv)
          ralloc_free(s);
 
          /* Apple9 kernels load their inputs from memory, at the same offsets */
-         if (!unreachable_on_apple9(libfunc)) {
+         if (!g13_only(libfunc)) {
             nir_shader *s9 =
                build_variant(libfunc, v, &agx_nir_options_apple9, nir, &opt);
             agx_preprocess_nir(s9);
@@ -450,7 +450,7 @@ main(int argc, char **argv)
             };
 
             agx_compile_shader_nir(s9, &key, &compiled);
-            print_apple9_shader(fp_c, libfunc->name, v, &compiled);
+            print_g16_shader(fp_c, libfunc->name, v, &compiled);
             free(compiled.binary);
             ralloc_free(s9);
          }
@@ -467,7 +467,7 @@ main(int argc, char **argv)
       nir_precomp_print_binary_map(fp_c, nir, "libagx", *target, remap_variant);
    }
 
-   print_apple9_binary_map(fp_c, fp_h, nir);
+   print_g16_binary_map(fp_c, fp_h, nir);
 
    glsl_type_singleton_decref();
    fclose(fp_c);

@@ -32,8 +32,8 @@ TEST_P(LibagxBinary, Compiled)
    }
 
    ASSERT_NE(bin, nullptr);
-   const agx_precompiled_apple9_kernel_info *info =
-      (const agx_precompiled_apple9_kernel_info *)bin;
+   const agx_precompiled_launch_info *info =
+      (const agx_precompiled_launch_info *)bin;
    const agx_compute_profile *p = &info->profile;
 
    EXPECT_GT(info->binary_size, 0u);
