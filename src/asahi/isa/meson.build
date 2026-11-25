@@ -93,13 +93,13 @@ if with_tests
       link_with : [libagx3_disasm],
     ),
     suite : ['asahi'],
-    args : files('test/apple9-cases.txt'),
+    args : files('test/agx3-cases.txt'),
   )
 
   test(
     'agx3_python_disasm',
     prog_python,
-    args : [files('test-disasm.py', 'test/apple9-cases.txt'), '--isa',
+    args : [files('test-disasm.py', 'test/agx3-cases.txt'), '--isa',
             files('AGX3.xml')],
     suite : ['asahi']
   )
@@ -107,14 +107,14 @@ if with_tests
   test(
     'agx3_forms',
     prog_python,
-    args : [files('test-forms.py', 'AGX3.xml'),
+    args : [files('test-agx3-forms.py', 'AGX3.xml'),
             executable(
               'agx3_forms_dump',
-              [files('test/forms-dump.c'), agx3_forms_c],
+              [files('test/agx3-forms-dump.c'), agx3_forms_c],
               include_directories : [inc_include, inc_src, inc_asahi],
               gnu_symbol_visibility : 'hidden',
             ),
-            files('test/forms.txt')],
+            files('test/agx3-forms.txt')],
     suite : ['asahi']
   )
 endif

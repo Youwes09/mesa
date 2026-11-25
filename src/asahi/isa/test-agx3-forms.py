@@ -5,7 +5,7 @@
 # that the compiler's table generated from them matches, and, with FORMS, that
 # the packer's instructions decode to instructions of their forms.
 #
-# usage: test-forms.py AGX3.xml forms-dump [FORMS]
+# usage: test-agx3-forms.py AGX3.xml agx3-forms-dump [FORMS]
 
 import os
 import subprocess

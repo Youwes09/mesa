@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* Apple9 packing of allocated agx_instr. Tests named Unverified* expect
- * bytes that are unverified on hardware.
+/* Packing of allocated agx_instr as AGX3 instructions. Tests named
+ * Unverified* expect bytes that are unverified on hardware.
  */
 
 #include <vector>
@@ -75,16 +75,16 @@ f(float x)
 
 } // namespace
 
-class Apple9Pack : public testing::Test {
+class Agx3Pack : public testing::Test {
  protected:
-   Apple9Pack()
+   Agx3Pack()
    {
       mem_ctx = ralloc_context(NULL);
       b = agx_test_builder(mem_ctx);
       b->shader->target = *agx_get_isa_target(AGX_SHADER_ISA_APPLE9);
    }
 
-   ~Apple9Pack()
+   ~Agx3Pack()
    {
       ralloc_free(mem_ctx);
    }
@@ -131,7 +131,7 @@ class Apple9Pack : public testing::Test {
    agx_builder *b;
 };
 
-TEST_F(Apple9Pack, PerspectiveMultiplyNamesCoefficient)
+TEST_F(Agx3Pack, PerspectiveMultiplyNamesCoefficient)
 {
    agx_instr *I = agx_fmul_perspective_to(b, r(15), k(r(10)), r(6), 2);
    check(I, {0xf9, 0x15, 0x2f, 0x8d, 0x00, 0x02, 0x00, 0x00});
@@ -142,7 +142,7 @@ TEST_F(Apple9Pack, PerspectiveMultiplyNamesCoefficient)
    }
 }
 
-TEST_F(Apple9Pack, ReciprocalHintsItsReaderAndReleasesItsSource)
+TEST_F(Agx3Pack, ReciprocalHintsItsReaderAndReleasesItsSource)
 {
    agx_instr *I = agx_rcp_to(b, r(18), k(r(7)));
 
@@ -163,7 +163,7 @@ TEST_F(Apple9Pack, ReciprocalHintsItsReaderAndReleasesItsSource)
    }
 }
 
-TEST_F(Apple9Pack, ScalarConversionsAndArithmeticShift)
+TEST_F(Agx3Pack, ScalarConversionsAndArithmeticShift)
 {
    agx_instr *I = agx_convert_to(b, r(16), agx_immediate(AGX_CONVERT_S32_TO_F),
                                  k(r(17)), AGX_ROUND_RTE);
@@ -195,7 +195,7 @@ TEST_F(Apple9Pack, ScalarConversionsAndArithmeticShift)
 }
 
 /* 8-bit integer constants. Every register source is a last use. */
-TEST_F(Apple9Pack, IntegerImmediates)
+TEST_F(Agx3Pack, IntegerImmediates)
 {
    std::vector<uint8_t> dep = {0x00, 0xf0, 0x03};
    std::vector<uint8_t> logic_dep = {0, 0, 0, 0, 0, 0xe0, 0, 0xe0};
@@ -259,7 +259,7 @@ TEST_F(Apple9Pack, IntegerImmediates)
 }
 
 /* Minifloat constants, with dependency fields and bit 21 masked */
-TEST_F(Apple9Pack, FloatImmediates)
+TEST_F(Agx3Pack, FloatImmediates)
 {
    std::vector<uint8_t> m6 = {0, 0, 0x20, 0, 0, 0xe0};
    std::vector<uint8_t> m8 = {0, 0, 0x20, 0, 0, 0, 0, 0xe0};
@@ -293,7 +293,7 @@ TEST_F(Apple9Pack, FloatImmediates)
          {0x09, 0x01, 0x1e, 0x05, 0x21, 0xb0, 0x02, 0xc0}, m8);
 }
 
-TEST_F(Apple9Pack, ImmediateFloatCarriesWait)
+TEST_F(Agx3Pack, ImmediateFloatCarriesWait)
 {
    agx_instr *I = agx_fadd_to(b, r(2), k(r(2)), f(2.0));
 
@@ -304,7 +304,7 @@ TEST_F(Apple9Pack, ImmediateFloatCarriesWait)
 }
 
 /* Compare operand B constants of selects and predicate compares */
-TEST_F(Apple9Pack, CompareLiterals)
+TEST_F(Agx3Pack, CompareLiterals)
 {
    std::vector<uint8_t> select_dep = {0, 0, 0, 0, 0, 0, 0, 0xe0, 0, 0};
    std::vector<uint8_t> pred_dep = {0, 0, 0, 0, 0, 0xe0};
@@ -366,7 +366,7 @@ TEST_F(Apple9Pack, CompareLiterals)
          pred_ext_dep);
 }
 
-TEST_F(Apple9Pack, UniformMoves)
+TEST_F(Agx3Pack, UniformMoves)
 {
    static const struct {
       uint8_t dst;
@@ -391,7 +391,7 @@ TEST_F(Apple9Pack, UniformMoves)
 }
 
 /* 16-bit sources of integer add and multiply-add sign-extend without abs */
-TEST_F(Apple9Pack, IntegerHalfSources)
+TEST_F(Agx3Pack, IntegerHalfSources)
 {
    std::vector<uint8_t> dep = {0x00, 0xf0, 0x03};
 
@@ -427,7 +427,7 @@ TEST_F(Apple9Pack, IntegerHalfSources)
    EXPECT_EQ((pack(I)[10] >> 2) & 1, 1);
 }
 
-TEST_F(Apple9Pack, PackFormat)
+TEST_F(Agx3Pack, PackFormat)
 {
    check(agx_pack_format_to(b, r(0), k(r(0)), k(r(1)), k(r(2)), agx_null(),
                             AGX_FORMAT_RG11B10F),
@@ -444,7 +444,7 @@ TEST_F(Apple9Pack, PackFormat)
 }
 
 /* FP16 sources converted on read. Retained here, as in Metal's kernels. */
-TEST_F(Apple9Pack, Fp16Sources)
+TEST_F(Agx3Pack, Fp16Sources)
 {
    std::vector<uint8_t> m6 = {0, 0, 0x20, 0, 0, 0xe0};
    std::vector<uint8_t> m8 = {0, 0, 0x20, 0, 0, 0, 0, 0xe0};
@@ -474,7 +474,7 @@ TEST_F(Apple9Pack, Fp16Sources)
          {0x09, 0x01, 0x1e, 0x08, 0x81, 0x04, 0x02, 0xc0}, m8);
 }
 
-TEST_F(Apple9Pack, RegisterForms)
+TEST_F(Agx3Pack, RegisterForms)
 {
    /* All sources dead */
    uint8_t add[] = {0x9f, 0x01, 0x54, 0x00, 0x02, 0x00, 0x00, 0xa8, 0x17, 0x05};
@@ -493,7 +493,7 @@ TEST_F(Apple9Pack, RegisterForms)
    check(I, {0xf2, 0x3f, 0x1f, 0x01, 0x82, 0x7e, 0x05, 0xc5, 0xc0, 0x3c});
 }
 
-TEST_F(Apple9Pack, MoveImmediate)
+TEST_F(Agx3Pack, MoveImmediate)
 {
    agx_instr *I = agx_mov_imm_to(b, r(15), 0x7f);
    check(I, {0xfc, 0x7f});
@@ -519,7 +519,7 @@ TEST_F(Apple9Pack, MoveImmediate)
    }
 }
 
-TEST_F(Apple9Pack, LogicSourceLifetime)
+TEST_F(Agx3Pack, LogicSourceLifetime)
 {
    static const struct {
       bool keep_a, keep_b;
@@ -539,7 +539,7 @@ TEST_F(Apple9Pack, LogicSourceLifetime)
    }
 }
 
-TEST_F(Apple9Pack, LogicWaitIsOneHot)
+TEST_F(Agx3Pack, LogicWaitIsOneHot)
 {
    for (unsigned table : {0x8, 0xe, 0x6}) {
       agx_instr *I = agx_bitop_to(b, r(4), k(r(2)), k(r(3)), table);
@@ -554,7 +554,7 @@ TEST_F(Apple9Pack, LogicWaitIsOneHot)
    }
 }
 
-TEST_F(Apple9Pack, IntegerFamilyWaitIsOneHotAt12)
+TEST_F(Agx3Pack, IntegerFamilyWaitIsOneHotAt12)
 {
    agx_instr *instrs[] = {
       agx_iadd_to(b, r(4), k(r(2)), k(r(3)), 0),
@@ -579,7 +579,7 @@ TEST_F(Apple9Pack, IntegerFamilyWaitIsOneHotAt12)
    }
 }
 
-TEST_F(Apple9Pack, IntegerMinMax)
+TEST_F(Agx3Pack, IntegerMinMax)
 {
    static const struct {
       bool keep_a, keep_b;
@@ -606,7 +606,7 @@ TEST_F(Apple9Pack, IntegerMinMax)
 }
 
 /* Waits need the six-byte add; without one it shortens to four bytes */
-TEST_F(Apple9Pack, CompactFloatStateAndRelease)
+TEST_F(Agx3Pack, CompactFloatStateAndRelease)
 {
    static const struct {
       bool keep_a, keep_b;
@@ -659,7 +659,7 @@ TEST_F(Apple9Pack, CompactFloatStateAndRelease)
    check(minimum, {0x42, 0x85, 0x26, 0x87, 0x01, 0xc0});
 }
 
-TEST_F(Apple9Pack, CompactBinaryScatteredRegisterBits)
+TEST_F(Agx3Pack, CompactBinaryScatteredRegisterBits)
 {
    check(agx_fadd_to(b, r(95), k(r(64)), k(r(79))),
          {0xf9, 0x01, 0x7c, 0x1f, 0x00, 0x15});
@@ -669,7 +669,7 @@ TEST_F(Apple9Pack, CompactBinaryScatteredRegisterBits)
 }
 
 /* Without a wait, registers below r64 take the six-byte FMA */
-TEST_F(Apple9Pack, FmaStateAndRelease)
+TEST_F(Agx3Pack, FmaStateAndRelease)
 {
    static const struct {
       bool keep_a, keep_b, keep_c;
@@ -695,7 +695,7 @@ TEST_F(Apple9Pack, FmaStateAndRelease)
    }
 }
 
-TEST_F(Apple9Pack, FmaUniformBanks)
+TEST_F(Agx3Pack, FmaUniformBanks)
 {
    /* Operand B r255, addend u128, operand A r64 */
    agx_instr *I = agx_ffma_to(b, r(95), r(64), u(255), r(65));
@@ -718,7 +718,7 @@ TEST_F(Apple9Pack, FmaUniformBanks)
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT3_EXTENDED);
 }
 
-TEST_F(Apple9Pack, LowRegisterSelect)
+TEST_F(Agx3Pack, LowRegisterSelect)
 {
    agx_instr *I = agx_icmpsel_to(b, r(0), k(r(0)), k(r(2)), k(r(4)), k(r(3)),
                                  AGX_ICOND_ULT);
@@ -738,7 +738,7 @@ TEST_F(Apple9Pack, LowRegisterSelect)
    }
 }
 
-TEST_F(Apple9Pack, SelectConditions)
+TEST_F(Agx3Pack, SelectConditions)
 {
    static const struct {
       bool floating;
@@ -772,7 +772,7 @@ TEST_F(Apple9Pack, SelectConditions)
    EXPECT_EQ(pack(le), pack(ge));
 }
 
-TEST_F(Apple9Pack, PredicatePolarityAndLifetime)
+TEST_F(Agx3Pack, PredicatePolarityAndLifetime)
 {
    agx_instr *I = agx_icmp_pred(b, k(r(1)), k(r(2)), AGX_ICOND_SLT, false, 0);
    check(I, {0x0a, 0x03, 0x3a, 0x05, 0x07, 0x00});
@@ -818,7 +818,7 @@ TEST_F(Apple9Pack, PredicatePolarityAndLifetime)
    check(L, {0x4a, 0x03, 0x23, 0x05, 0x06, 0x00, 0x07, 0x00, 0x00, 0x00});
 }
 
-TEST_F(Apple9Pack, ExecutionMaskScope)
+TEST_F(Agx3Pack, ExecutionMaskScope)
 {
    check(agx_if_pred(b, 0, false), {0x0f, 0x05, 0x54, 0x01});
    check(agx_else_exec(b), {0x0f, 0x04, 0x04, 0x19});
@@ -826,7 +826,7 @@ TEST_F(Apple9Pack, ExecutionMaskScope)
    check(agx_if_pred(b, 0, true), {0x0f, 0x05, 0x54, 0x21});
 }
 
-TEST_F(Apple9Pack, LoopControl)
+TEST_F(Agx3Pack, LoopControl)
 {
    check(agx_begin_loop(b), {0x0f, 0x05, 0x54, 0x1a});
    check(agx_while_pred(b, 0, false), {0x8f, 0x04, 0x54, 0x22});
@@ -836,7 +836,7 @@ TEST_F(Apple9Pack, LoopControl)
 }
 
 /* Branches are relative to their own start, 48-bit signed in bytes 3-8 */
-TEST_F(Apple9Pack, Branches)
+TEST_F(Agx3Pack, Branches)
 {
    agx_context *ctx = b->shader;
    agx_block *first = agx_start_block(ctx);
@@ -870,7 +870,7 @@ TEST_F(Apple9Pack, Branches)
    EXPECT_EQ(memcmp(code + 24, halt, sizeof(halt)), 0);
 }
 
-TEST_F(Apple9Pack, SubgroupMaxHalves)
+TEST_F(Agx3Pack, SubgroupMaxHalves)
 {
    agx_index dst = rh(3), src = k(rh(3));
    dst.cache = true;
@@ -883,7 +883,7 @@ TEST_F(Apple9Pack, SubgroupMaxHalves)
          {0xbf, 3, 0x54, 10, 2, 12, 0x14, 1});
 }
 
-TEST_F(Apple9Pack, FloatExport)
+TEST_F(Agx3Pack, FloatExport)
 {
    agx_instr *I = agx_fmul_to(b, e(7), k(r(16)), k(r(17)));
    check(I, {0x79, 0x21, 0x3d, 0x23, 0x41, 0, 0, 0});
@@ -899,14 +899,14 @@ TEST_F(Apple9Pack, FloatExport)
    }
 }
 
-TEST_F(Apple9Pack, LogicExportBounds)
+TEST_F(Agx3Pack, LogicExportBounds)
 {
    agx_instr *I = agx_xor_to(b, e(127), k(r(95)), k(r(95)));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_LOGIC_EXPORT);
    EXPECT_EQ(pack(I)[4] & 0x40, 0x40);
 }
 
-TEST_F(Apple9Pack, TileReadWithMaskRegister)
+TEST_F(Agx3Pack, TileReadWithMaskRegister)
 {
    static const uint8_t tags[][2] = {
       {0x4e, 0}, {0xce, 0}, {0x4e, 1}, {0xce, 1}, {0x4e, 2}, {0xce, 2},
@@ -923,7 +923,7 @@ TEST_F(Apple9Pack, TileReadWithMaskRegister)
    }
 }
 
-TEST_F(Apple9Pack, TileReadSlot)
+TEST_F(Agx3Pack, TileReadSlot)
 {
    agx_instr *I = agx_ld_tile_to(b, r(0), agx_immediate(1), agx_null(),
                                  AGX_FORMAT_I32, 1, 0, false);
@@ -938,7 +938,7 @@ TEST_F(Apple9Pack, TileReadSlot)
    EXPECT_EQ(p[8], 0);
 }
 
-TEST_F(Apple9Pack, TileReadAtCoordinates)
+TEST_F(Agx3Pack, TileReadAtCoordinates)
 {
    for (unsigned sample = 0; sample < 4; ++sample) {
       agx_instr *I = agx_ld_tile_to(b, r(25), agx_immediate(1 << sample),
@@ -953,7 +953,7 @@ TEST_F(Apple9Pack, TileReadAtCoordinates)
    }
 }
 
-TEST_F(Apple9Pack, DerivativeAxis)
+TEST_F(Agx3Pack, DerivativeAxis)
 {
    for (bool y : {false, true}) {
       for (bool keep : {false, true}) {
@@ -975,7 +975,7 @@ TEST_F(Apple9Pack, DerivativeAxis)
    }
 }
 
-TEST_F(Apple9Pack, SpillsSplitOperandsAndSlots)
+TEST_F(Agx3Pack, SpillsSplitOperandsAndSlots)
 {
    agx_instr *save =
       agx_stack_store(b, k(r(82)), agx_immediate(71 * 4), AGX_FORMAT_I32, 1);
@@ -990,12 +990,12 @@ TEST_F(Apple9Pack, SpillsSplitOperandsAndSlots)
    check(fill, {0x2c, 0x8e, 0x41, 0x01, 0x02, 0, 0, 0x80});
 }
 
-TEST_F(Apple9Pack, AcquireFenceIsTheDeviceFence)
+TEST_F(Agx3Pack, AcquireFenceIsTheDeviceFence)
 {
    EXPECT_EQ(pack(agx_memory_barrier(b)), pack(agx_memory_barrier_acquire(b)));
 }
 
-TEST_F(Apple9Pack, SystemRegisters)
+TEST_F(Agx3Pack, SystemRegisters)
 {
    for (unsigned c = 0; c < 3; ++c) {
       check(agx_get_sr_to(b, r(0),
@@ -1021,14 +1021,14 @@ TEST_F(Apple9Pack, SystemRegisters)
    }
 }
 
-TEST_F(Apple9Pack, UniformStore)
+TEST_F(Agx3Pack, UniformStore)
 {
    check(agx_uniform_store(b, k(r(95)), agx_immediate(2 * 255), 1),
          {0x9f, 0x01, 0x54, 0xfe, 0x01, 0x7c, 0x01, 0xa8, 0x13, 0x01});
 }
 
 /* Bytes 8-9 of a device load name its completion slot */
-TEST_F(Apple9Pack, DeviceLoadSlotTokens)
+TEST_F(Agx3Pack, DeviceLoadSlotTokens)
 {
    static const uint8_t tokens[6][2] = {
       {0x11, 0x00}, {0x51, 0x00}, {0x91, 0x00},
@@ -1056,7 +1056,7 @@ TEST_F(Apple9Pack, DeviceLoadSlotTokens)
 }
 
 /* Vector loads and stores: the index shift holds the vector size */
-TEST_F(Apple9Pack, VectorMemory)
+TEST_F(Agx3Pack, VectorMemory)
 {
    static const struct {
       unsigned components, dst, index, shift;
@@ -1127,7 +1127,7 @@ TEST_F(Apple9Pack, VectorMemory)
    }
 }
 
-TEST_F(Apple9Pack, NarrowScalarMemory)
+TEST_F(Agx3Pack, NarrowScalarMemory)
 {
    agx_instr *I =
       agx_device_load_to(b, r(1), u64(1), r(0), AGX_FORMAT_I8, 1, 0, false, 0);
@@ -1167,7 +1167,7 @@ TEST_F(Apple9Pack, NarrowScalarMemory)
 }
 
 /* Register-pair loads with a constant index: byte offset from bit 77 */
-TEST_F(Apple9Pack, PointerLoads)
+TEST_F(Agx3Pack, PointerLoads)
 {
    static const struct {
       unsigned index, components;
@@ -1234,7 +1234,7 @@ TEST_F(Apple9Pack, PointerLoads)
    }
 }
 
-TEST_F(Apple9Pack, DeviceAtomics)
+TEST_F(Agx3Pack, DeviceAtomics)
 {
    agx_instr *I =
       agx_atomic_to(b, r(30), r(22), u64(5), r(23), AGX_ATOMIC_OPC_ADD);
@@ -1265,7 +1265,7 @@ TEST_F(Apple9Pack, DeviceAtomics)
 }
 
 /* Result record after a returning atomic: destination and completion slot */
-TEST_F(Apple9Pack, DeviceAtomicResult)
+TEST_F(Agx3Pack, DeviceAtomicResult)
 {
    for (unsigned dst = 0; dst < 96; ++dst) {
       for (unsigned slot = 1; slot <= 6; ++slot) {
@@ -1292,7 +1292,7 @@ TEST_F(Apple9Pack, DeviceAtomicResult)
 }
 
 /* Unverified: threadgroup memory */
-TEST_F(Apple9Pack, UnverifiedThreadgroupMemory)
+TEST_F(Agx3Pack, UnverifiedThreadgroupMemory)
 {
    agx_instr *I =
       agx_local_load_to(b, r(5), agx_immediate(3), k(rl(7)), AGX_FORMAT_I32, 1);
@@ -1310,7 +1310,7 @@ TEST_F(Apple9Pack, UnverifiedThreadgroupMemory)
 }
 
 /* Unverified: subgroup scan, broadcast and ballot */
-TEST_F(Apple9Pack, UnverifiedSubgroups)
+TEST_F(Agx3Pack, UnverifiedSubgroups)
 {
    check(agx_simd_prefix_to(b, r(3), r(4), AGX_SIMD_OP_IADD),
          {0xbf, 0x01, 0x54, 0x06, 0x03, 0x10, 0x16, 0x09});
@@ -1321,7 +1321,7 @@ TEST_F(Apple9Pack, UnverifiedSubgroups)
 }
 
 /* Unverified: barriers, halt and the wait instruction */
-TEST_F(Apple9Pack, UnverifiedSynchronization)
+TEST_F(Agx3Pack, UnverifiedSynchronization)
 {
    check(agx_threadgroup_barrier(b), {0x07, 0x04, 0x54, 0x61, 0x09, 0});
    check(agx_memory_barrier(b), {0x07, 0x04, 0x54, 0x84, 0x0a, 0});
@@ -1333,7 +1333,7 @@ TEST_F(Apple9Pack, UnverifiedSynchronization)
 }
 
 /* Depth/stencil export pair: two moves, or one move by lane half */
-TEST_F(Apple9Pack, PublicationPair)
+TEST_F(Agx3Pack, PublicationPair)
 {
    agx_index pair = e(6);
    pair.channels_m1 = 1;
@@ -1349,7 +1349,7 @@ TEST_F(Apple9Pack, PublicationPair)
 }
 
 /* Unverified: fragment outputs and tile access */
-TEST_F(Apple9Pack, UnverifiedFragmentOutputs)
+TEST_F(Agx3Pack, UnverifiedFragmentOutputs)
 {
    check(agx_write_coverage(b, e(5)), {0x57, 0x04, 0x54, 0x0a, 0, 1});
 
@@ -1371,7 +1371,7 @@ TEST_F(Apple9Pack, UnverifiedFragmentOutputs)
 }
 
 /* Unverified: varyings and interpolation */
-TEST_F(Apple9Pack, UnverifiedVaryings)
+TEST_F(Agx3Pack, UnverifiedVaryings)
 {
    check(agx_st_vary(b, agx_immediate(9), e(12)),
          {0x57, 0x06, 0x54, 0x18, 0x20, 0x41, 0, 0});
@@ -1398,7 +1398,7 @@ TEST_F(Apple9Pack, UnverifiedVaryings)
 }
 
 /* Unverified: FP32 to FP16 into one half, FP16 to FP32 from either half */
-TEST_F(Apple9Pack, UnverifiedHalfConversions)
+TEST_F(Agx3Pack, UnverifiedHalfConversions)
 {
    check(agx_fadd_to(b, rh(4), k(r(70)), agx_negzero()),
          {0x41, 0x0d, 0x1c, 0x81, 0x04, 0x03});
@@ -1407,7 +1407,7 @@ TEST_F(Apple9Pack, UnverifiedHalfConversions)
 }
 
 /* Unverified: register-pointer stores and atomics */
-TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
+TEST_F(Agx3Pack, UnverifiedPointerStoreAndAtomic)
 {
    agx_instr *I = agx_device_store(b, r(3), r64(10), k(r(4)), AGX_FORMAT_I32, 1,
                                    0, false, 0);
@@ -1426,7 +1426,7 @@ TEST_F(Apple9Pack, UnverifiedPointerStoreAndAtomic)
 }
 
 /* FP16 special functions on the low halves of registers */
-TEST_F(Apple9Pack, HalfSpecial)
+TEST_F(Agx3Pack, HalfSpecial)
 {
    agx_instr *I = agx_rcp_to(b, r(18), k(r(7)));
    I->format = AGX_FORMAT_F16;
@@ -1448,7 +1448,7 @@ TEST_F(Apple9Pack, HalfSpecial)
 }
 
 /* FP16 arithmetic on the low halves of registers */
-TEST_F(Apple9Pack, HalfArithmetic)
+TEST_F(Agx3Pack, HalfArithmetic)
 {
    agx_instr *I = agx_hmul_to(b, r(6), r(4), r(3));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF2);
@@ -1463,7 +1463,7 @@ TEST_F(Apple9Pack, HalfArithmetic)
 }
 
 /* FP16 to FP32 from the low half of a register, and back */
-TEST_F(Apple9Pack, HalfConversionsOfRegisters)
+TEST_F(Agx3Pack, HalfConversionsOfRegisters)
 {
    agx_instr *I = agx_f16_to_f32_to(b, r(10), k(r(5)));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_TO_FLOAT);
@@ -1475,7 +1475,7 @@ TEST_F(Apple9Pack, HalfConversionsOfRegisters)
 }
 
 /* PACK_HALF_2X16 narrows into both halves, the high one with bit 34 */
-TEST_F(Apple9Pack, PackHalf)
+TEST_F(Agx3Pack, PackHalf)
 {
    agx_instr *I = agx_pack_half_to(b, r(4), k(r(70)), r(5));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_PACK_HALF_2X16);
@@ -1488,7 +1488,7 @@ TEST_F(Apple9Pack, PackHalf)
 }
 
 /* Private memory at a word index in a register */
-TEST_F(Apple9Pack, IndexedPrivateMemory)
+TEST_F(Agx3Pack, IndexedPrivateMemory)
 {
    agx_instr *I = agx_stack_load_to(b, r(3), r(3), AGX_FORMAT_I32, 1);
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_PRIVATE_LOAD);
@@ -1501,7 +1501,7 @@ TEST_F(Apple9Pack, IndexedPrivateMemory)
 }
 
 /* A 32-bit threadgroup index names the register holding the word index */
-TEST_F(Apple9Pack, ThreadgroupIndexRegister)
+TEST_F(Agx3Pack, ThreadgroupIndexRegister)
 {
    check(
       agx_local_load_to(b, r(5), agx_immediate(3), k(r(7)), AGX_FORMAT_I32, 1),
@@ -1522,7 +1522,7 @@ struct texture_case {
    std::vector<uint8_t> bytes;
 };
 
-TEST_F(Apple9Pack, Texture)
+TEST_F(Agx3Pack, Texture)
 {
    const enum agx_opcode S = AGX_OPCODE_TEXTURE_SAMPLE;
    const enum agx_opcode L = AGX_OPCODE_TEXTURE_LOAD;
@@ -1610,7 +1610,7 @@ TEST_F(Apple9Pack, Texture)
 }
 
 /* A register texture selects the 20-byte forms, for samples and gradients */
-TEST_F(Apple9Pack, RegisterTextureForms)
+TEST_F(Agx3Pack, RegisterTextureForms)
 {
    agx_index dst = r(70);
    dst.channels_m1 = 3;
@@ -1637,7 +1637,7 @@ TEST_F(Apple9Pack, RegisterTextureForms)
 }
 
 /* Forms without a measured mode are not encodable */
-TEST_F(Apple9Pack, TextureForms)
+TEST_F(Agx3Pack, TextureForms)
 {
    agx_instr *I = agx_texture_sample_to(
       b, r(0), e(0), agx_null(), agx_null(), agx_immediate(0), agx_immediate(0),
@@ -1660,7 +1660,7 @@ TEST_F(Apple9Pack, TextureForms)
 }
 
 /* Cube face selection of r5, r70 and r33: kept sources, then released ones */
-TEST_F(Apple9Pack, Cube)
+TEST_F(Agx3Pack, Cube)
 {
    agx_index major = r(40);
    major.channels_m1 = 1;
@@ -1680,7 +1680,7 @@ TEST_F(Apple9Pack, Cube)
 }
 
 /* PBE image writes of float and integer data, with their export join */
-TEST_F(Apple9Pack, ImageWrite)
+TEST_F(Agx3Pack, ImageWrite)
 {
    agx_index params = e(0);
    params.channels_m1 = 7;
@@ -1704,7 +1704,7 @@ TEST_F(Apple9Pack, ImageWrite)
 }
 
 /* Block image stores of 2D, array and multisampled images */
-TEST_F(Apple9Pack, BlockImageStore)
+TEST_F(Agx3Pack, BlockImageStore)
 {
    struct {
       unsigned base, image, format;
@@ -1757,7 +1757,7 @@ TEST_F(Apple9Pack, BlockImageStore)
 }
 
 /* Vertex and instance IDs are asynchronous; the layer is a system register */
-TEST_F(Apple9Pack, GraphicsSystemRegisters)
+TEST_F(Agx3Pack, GraphicsSystemRegisters)
 {
    agx_instr *I = agx_get_sr_to(b, r(5), AGX_SR_VERTEX_ID);
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_GET_DRAW_ID);
@@ -1773,7 +1773,7 @@ TEST_F(Apple9Pack, GraphicsSystemRegisters)
 }
 
 /* Source modifiers and saturation select the longer ALU forms */
-TEST_F(Apple9Pack, ModifierForms)
+TEST_F(Agx3Pack, ModifierForms)
 {
    agx_instr *I = agx_fadd_to(b, r(4), agx_abs(k(r(2))), r(3));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_FLOAT2_ABS_EXTENDED);
@@ -1823,7 +1823,7 @@ TEST_F(Apple9Pack, ModifierForms)
 }
 
 /* Normalized unpacking and packing */
-TEST_F(Apple9Pack, NormalizedPacking)
+TEST_F(Agx3Pack, NormalizedPacking)
 {
    agx_index pair = r(2);
    pair.channels_m1 = 1;
@@ -1855,7 +1855,7 @@ TEST_F(Apple9Pack, NormalizedPacking)
 }
 
 /* FP16 minimum, maximum and compare-select */
-TEST_F(Apple9Pack, HalfMinMaxSelect)
+TEST_F(Agx3Pack, HalfMinMaxSelect)
 {
    agx_instr *I = agx_hmax_to(b, r(3), k(r(4)), k(r(3)));
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_MINMAX);
@@ -1870,7 +1870,7 @@ TEST_F(Apple9Pack, HalfMinMaxSelect)
 }
 
 /* FP16 compares into predicates of r2 and r70, kept then released */
-TEST_F(Apple9Pack, HalfPredicates)
+TEST_F(Agx3Pack, HalfPredicates)
 {
    agx_instr *I = agx_hcmp_pred(b, r(2), r(70), AGX_FCOND_LT, false, 1);
    EXPECT_EQ(form(I), AGX_APPLE9_ENC_HALF_PREDICATE_SHORT);
@@ -1882,7 +1882,7 @@ TEST_F(Apple9Pack, HalfPredicates)
 }
 
 /* Integer arithmetic into the uniform file, the STORE_UNIFORM_* forms */
-TEST_F(Apple9Pack, UniformDestinations)
+TEST_F(Agx3Pack, UniformDestinations)
 {
    agx_instr *I =
       agx_iadd_to(b, agx_uniform(400, AGX_SIZE_32), r(3), k(r(70)), 0);
