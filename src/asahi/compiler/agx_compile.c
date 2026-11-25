@@ -1587,7 +1587,7 @@ agx_local_base(agx_builder *b, nir_src src)
 
 /* Threadgroup word index. Narrow byte offsets have undefined high bits */
 static agx_index
-agx_local_word_apple9(agx_builder *b, nir_src offset, unsigned base)
+agx_local_word(agx_builder *b, nir_src offset, unsigned base)
 {
    agx_index bytes = agx_src_index(b->shader, &offset);
 
@@ -1598,7 +1598,7 @@ agx_local_word_apple9(agx_builder *b, nir_src offset, unsigned base)
 }
 
 static agx_index
-agx_local_root_apple9(agx_builder *b)
+agx_local_root(agx_builder *b)
 {
    return agx_immediate(
       agx_apple9_shared_root(&b->shader->out->apple9_compute));
@@ -1622,13 +1622,13 @@ agx_emit_atomic(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr,
       value = agx_vec2(b, value2, value);
    }
 
-   if (local && agx_is_apple9(b->shader)) {
+   if (local && b->shader->target.word_memory) {
       /* Threadgroup atomics always return the old value */
       if (agx_is_null(dst))
          dst = agx_temp(b->shader, AGX_SIZE_32);
 
-      agx_local_atomic_to(b, dst, value, agx_local_root_apple9(b),
-                          agx_local_word_apple9(b, instr->src[0], 0), op);
+      agx_local_atomic_to(b, dst, value, agx_local_root(b),
+                          agx_local_word(b, instr->src[0], 0), op);
    } else if (local) {
       assert(base.size == AGX_SIZE_16);
       agx_local_atomic_to(b, dst, value, base, index, op);
@@ -1656,11 +1656,11 @@ format_for_bitsize(unsigned bitsize)
 static void
 agx_emit_local_load(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.word_memory) {
       assert(instr->def.num_components == 1 && instr->def.bit_size == 32);
       agx_local_load_to(
-         b, dst, agx_local_root_apple9(b),
-         agx_local_word_apple9(b, instr->src[0], nir_intrinsic_base(instr)),
+         b, dst, agx_local_root(b),
+         agx_local_word(b, instr->src[0], nir_intrinsic_base(instr)),
          AGX_FORMAT_I32, 1);
       return;
    }
@@ -1682,12 +1682,12 @@ agx_emit_local_store(agx_builder *b, nir_intrinsic_instr *instr)
 {
    agx_index value = agx_src_index(b->shader, &instr->src[0]);
 
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.word_memory) {
       assert(nir_src_num_components(instr->src[0]) == 1 &&
              nir_src_bit_size(instr->src[0]) == 32);
       agx_local_store(
-         b, value, agx_local_root_apple9(b),
-         agx_local_word_apple9(b, instr->src[1], nir_intrinsic_base(instr)),
+         b, value, agx_local_root(b),
+         agx_local_word(b, instr->src[1], nir_intrinsic_base(instr)),
          AGX_FORMAT_I32, 1);
       return;
    }
@@ -1705,7 +1705,7 @@ agx_emit_local_store(agx_builder *b, nir_intrinsic_instr *instr)
 
 /* Frame word index, or an immediate byte offset in the first 1024/2048 words */
 static agx_index
-agx_scratch_word_apple9(agx_builder *b, nir_src offset, bool load)
+agx_scratch_word(agx_builder *b, nir_src offset, bool load)
 {
    if (nir_src_is_const(offset)) {
       unsigned offset_B = nir_src_as_uint(offset) + b->shader->atomic_frame_B;
@@ -1731,10 +1731,9 @@ agx_scratch_word_apple9(agx_builder *b, nir_src offset, bool load)
 static void
 agx_emit_load_scratch(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 {
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.word_memory) {
       assert(instr->def.num_components == 1 && instr->def.bit_size == 32);
-      agx_stack_load_to(b, dst,
-                        agx_scratch_word_apple9(b, instr->src[0], true),
+      agx_stack_load_to(b, dst, agx_scratch_word(b, instr->src[0], true),
                         AGX_FORMAT_I32, 1);
       b->shader->any_scratch = true;
       return;
@@ -1753,12 +1752,12 @@ agx_emit_load_scratch(agx_builder *b, agx_index dst, nir_intrinsic_instr *instr)
 static void
 agx_emit_store_scratch(agx_builder *b, nir_intrinsic_instr *instr)
 {
-   if (agx_is_apple9(b->shader)) {
+   if (b->shader->target.word_memory) {
       assert(nir_src_num_components(instr->src[0]) == 1 &&
              nir_src_bit_size(instr->src[0]) == 32);
       agx_stack_store(b, agx_src_index(b->shader, &instr->src[0]),
-                      agx_scratch_word_apple9(b, instr->src[1], false),
-                      AGX_FORMAT_I32, 1);
+                      agx_scratch_word(b, instr->src[1], false), AGX_FORMAT_I32,
+                      1);
       b->shader->any_scratch = true;
       return;
    }
@@ -4190,10 +4189,10 @@ agx_mem_vectorize_cb(unsigned align_mul, unsigned align_offset,
 
 /* Vectors of 32-bit elements only, and single words of private memory */
 static bool
-mem_vectorize_apple9_cb(unsigned align_mul, unsigned align_offset,
-                        unsigned bit_size, unsigned num_components,
-                        int64_t hole_size, nir_intrinsic_instr *low,
-                        nir_intrinsic_instr *high, void *data)
+mem_vectorize_words_cb(unsigned align_mul, unsigned align_offset,
+                       unsigned bit_size, unsigned num_components,
+                       int64_t hole_size, nir_intrinsic_instr *low,
+                       nir_intrinsic_instr *high, void *data)
 {
    if (low->intrinsic == nir_intrinsic_load_scratch ||
        low->intrinsic == nir_intrinsic_store_scratch)
@@ -4251,14 +4250,14 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    };
    NIR_PASS(_, nir, nir_opt_peephole_select, &peephole_select_options);
 
-   NIR_PASS(_, nir, nir_opt_load_store_vectorize,
-            &(const nir_load_store_vectorize_options){
-               .modes = nir_var_mem_global | nir_var_mem_constant |
-                        nir_var_shader_temp,
-               .callback = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9
-                              ? mem_vectorize_apple9_cb
-                              : agx_mem_vectorize_cb,
-            });
+   NIR_PASS(
+      _, nir, nir_opt_load_store_vectorize,
+      &(const nir_load_store_vectorize_options){
+         .modes =
+            nir_var_mem_global | nir_var_mem_constant | nir_var_shader_temp,
+         .callback = agx_nir_target(nir)->word_memory ? mem_vectorize_words_cb
+                                                      : agx_mem_vectorize_cb,
+      });
    NIR_PASS(_, nir, nir_lower_pack);
    NIR_PASS(_, nir, nir_opt_algebraic);
 
@@ -4518,11 +4517,11 @@ mem_access_size_align_cb(nir_intrinsic_op intrin, uint8_t bytes,
 
 /* Only device memory is accessed in vectors, of up to four words */
 static nir_mem_access_size_align
-mem_access_size_align_apple9_cb(nir_intrinsic_op intrin, uint8_t bytes,
-                                uint8_t bit_size, uint32_t align,
-                                uint32_t align_offset, bool offset_is_const,
-                                enum gl_access_qualifier access,
-                                const void *cb_data)
+mem_access_size_align_words_cb(nir_intrinsic_op intrin, uint8_t bytes,
+                               uint8_t bit_size, uint32_t align,
+                               uint32_t align_offset, bool offset_is_const,
+                               enum gl_access_qualifier access,
+                               const void *cb_data)
 {
    align = nir_combined_align(align, align_offset);
    assert(util_is_power_of_two_nonzero(align));
@@ -5579,8 +5578,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       .modes = nir_var_mem_ssbo | nir_var_mem_constant |
                nir_var_mem_task_payload | nir_var_shader_temp |
                nir_var_function_temp | nir_var_mem_global | nir_var_mem_shared,
-      .callback =
-         apple9 ? mem_access_size_align_apple9_cb : mem_access_size_align_cb,
+      .callback = target->word_memory ? mem_access_size_align_words_cb
+                                      : mem_access_size_align_cb,
    };
    NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes, &lower_mem_access_options);
 
@@ -5598,8 +5597,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       NIR_PASS(_, nir, nir_lower_vars_to_ssa);
    }
 
-   /* Apple9 accesses threadgroup and private memory in words */
-   if (apple9) {
+   /* Threadgroup and private memory are accessed in words */
+   if (target->word_memory) {
       NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
                &lower_mem_access_options);
       NIR_PASS(_, nir, agx_nir_legalize_apple9_memory);

@@ -61,6 +61,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .spill_swap_regs = {6, 8},
    .spill_index_reg = 4,
    .word_registers = true,
+   .word_memory = true,
    .scoreboard_slots = 6,
    .shader_sized_frame = true,
    .occupancy_table = false,

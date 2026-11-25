@@ -77,7 +77,7 @@ spill_fill(agx_builder *b, agx_instr *I, enum agx_size size, unsigned channels,
           "RA allocates enough scratch");
 
    /* Emit the spill/fill */
-   if (b->shader->target.word_registers) {
+   if (b->shader->target.word_memory) {
       assert(size_B >= 4 && "no 16-bit registers");
       reg.size = AGX_SIZE_32;
       reg.channels_m1 = 0;
