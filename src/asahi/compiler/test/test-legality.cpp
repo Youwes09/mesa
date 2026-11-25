@@ -9,17 +9,17 @@
 
 #include <gtest/gtest.h>
 
-/* Operand legality and register constraints on Apple9 */
-class Apple9Legality : public testing::Test {
+/* Operand legality and register constraints on AGX3 */
+class Agx3Legality : public testing::Test {
  protected:
-   Apple9Legality()
+   Agx3Legality()
    {
       mem_ctx = ralloc_context(NULL);
       b = builder(AGX_SHADER_ISA_APPLE9);
       ctx = b->shader;
    }
 
-   ~Apple9Legality()
+   ~Agx3Legality()
    {
       ralloc_free(mem_ctx);
    }
@@ -46,7 +46,7 @@ class Apple9Legality : public testing::Test {
    agx_context *ctx;
 };
 
-TEST_F(Apple9Legality, IntegerConstantsAreEightBits)
+TEST_F(Agx3Legality, IntegerConstantsAreEightBits)
 {
    agx_instr *I = agx_iadd_to(b, temp(), temp(), temp(), 0);
    EXPECT_TRUE(src_ok(I, 1, agx_immediate(255)));
@@ -60,7 +60,7 @@ TEST_F(Apple9Legality, IntegerConstantsAreEightBits)
    EXPECT_FALSE(agx_instr_is_legal(ctx, I));
 }
 
-TEST_F(Apple9Legality, MultiplyAddConstants)
+TEST_F(Agx3Legality, MultiplyAddConstants)
 {
    agx_instr *I = agx_imad_to(b, temp(), temp(), temp(), temp(), 0);
    EXPECT_TRUE(src_ok(I, 2, agx_immediate(2)));
@@ -81,7 +81,7 @@ TEST_F(Apple9Legality, MultiplyAddConstants)
    EXPECT_TRUE(src_ok(I, 1, agx_abs(temp(AGX_SIZE_16))));
 }
 
-TEST_F(Apple9Legality, Minifloats)
+TEST_F(Agx3Legality, Minifloats)
 {
    /* 17 needs the fourth mantissa bit, which the FMA multiplier lacks */
    agx_instr *I = agx_ffma_to(b, temp(), temp(), temp(), temp());
@@ -97,7 +97,7 @@ TEST_F(Apple9Legality, Minifloats)
    EXPECT_FALSE(src_ok(add, 1, agx_immediate_f(1.0 / 64)));
 }
 
-TEST_F(Apple9Legality, Uniforms)
+TEST_F(Agx3Legality, Uniforms)
 {
    agx_instr *add = agx_fadd_to(b, temp(), temp(), temp());
    EXPECT_TRUE(src_ok(add, 0, agx_uniform(8, AGX_SIZE_32)));
@@ -121,7 +121,7 @@ TEST_F(Apple9Legality, Uniforms)
    EXPECT_FALSE(src_ok(load, 0, agx_uniform(10, AGX_SIZE_64)));
 }
 
-TEST_F(Apple9Legality, Logic)
+TEST_F(Agx3Legality, Logic)
 {
    agx_instr *I = agx_xor_to(b, temp(), temp(), temp());
    EXPECT_TRUE(agx_instr_is_legal(ctx, I));
@@ -131,7 +131,7 @@ TEST_F(Apple9Legality, Logic)
    EXPECT_FALSE(agx_instr_is_legal(ctx, I));
 }
 
-TEST_F(Apple9Legality, Selects)
+TEST_F(Agx3Legality, Selects)
 {
    agx_index x = temp(), y = temp();
 
@@ -159,7 +159,7 @@ TEST_F(Apple9Legality, Selects)
                           temp(AGX_SIZE_16), AGX_ICOND_ULT)));
 }
 
-TEST_F(Apple9Legality, Conversions)
+TEST_F(Agx3Legality, Conversions)
 {
    agx_instr *I = agx_convert_to(b, temp(), agx_immediate(AGX_CONVERT_S32_TO_F),
                                  temp(), AGX_ROUND_RTE);
@@ -177,7 +177,7 @@ TEST_F(Apple9Legality, Conversions)
       ctx, agx_fadd_to(b, temp(), temp(AGX_SIZE_16), agx_negzero())));
 }
 
-TEST_F(Apple9Legality, Apple8IsUnrestrictedHere)
+TEST_F(Agx3Legality, Agx2IsUnrestrictedHere)
 {
    agx_builder *b8 = builder(AGX_SHADER_ISA_APPLE8);
    agx_instr *I = agx_bitop_to(b8, agx_temp(b8->shader, AGX_SIZE_32),
@@ -191,7 +191,7 @@ TEST_F(Apple9Legality, Apple8IsUnrestrictedHere)
    }
 }
 
-TEST_F(Apple9Legality, RegisterConstraints)
+TEST_F(Agx3Legality, RegisterConstraints)
 {
    agx_instr *sr = agx_get_sr_to(b, temp(), AGX_SR_THREAD_POSITION_IN_GRID_X);
    agx_instr *store = agx_local_store(b, temp(), agx_immediate(0),
@@ -229,8 +229,8 @@ optimize(agx_context *ctx)
    agx_dce(ctx, true);
 }
 
-/* The optimizer only creates operands Apple9 can encode */
-TEST_F(Apple9Legality, OptimizerRespectsLegality)
+/* The optimizer only creates operands AGX3 can encode */
+TEST_F(Agx3Legality, OptimizerRespectsLegality)
 {
    agx_index x = temp(), out = temp();
 
@@ -252,7 +252,7 @@ TEST_F(Apple9Legality, OptimizerRespectsLegality)
    }
    EXPECT_EQ(movs, 1u);
 
-   /* xor(not x, y) would be xnor, which Apple9 lacks */
+   /* xor(not x, y) would be xnor, which AGX3 lacks */
    agx_builder *b2 = builder(AGX_SHADER_ISA_APPLE9);
    agx_context *ctx2 = b2->shader;
    agx_index a = agx_temp(ctx2, AGX_SIZE_32), c = agx_temp(ctx2, AGX_SIZE_32);

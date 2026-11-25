@@ -114,7 +114,8 @@ alu_width(const nir_instr *instr, UNUSED void *data)
    return 0;
 }
 
-/* Spread the low 16 bits into alternate bits, as word registers have no interleave */
+/* Spread the low 16 bits into alternate bits, as word registers have no
+ * interleave */
 static nir_def *
 spread_bits(nir_builder *b, nir_def *x)
 {

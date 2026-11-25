@@ -72,7 +72,7 @@ class InsertWaits : public testing::Test {
    void *mem_ctx;
 };
 
-TEST_F(InsertWaits, Apple8WaitsBeforeTheUse)
+TEST_F(InsertWaits, Agx2WaitsBeforeTheUse)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE8);
    load(b, r(0), r(1));
@@ -84,7 +84,7 @@ TEST_F(InsertWaits, Apple8WaitsBeforeTheUse)
 }
 
 /* A retaining form waits in its dependency field, as a six-byte float add */
-TEST_F(InsertWaits, Apple9FoldsIntoTheConsumer)
+TEST_F(InsertWaits, Agx3FoldsIntoTheConsumer)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_instr *ld = load(b, r(0), r(1));
@@ -99,7 +99,7 @@ TEST_F(InsertWaits, Apple9FoldsIntoTheConsumer)
 }
 
 /* Non-retaining forms release the operand, so only fold at its last use */
-TEST_F(InsertWaits, Apple9FoldsIntoNonRetainingFormsAtLastUse)
+TEST_F(InsertWaits, Agx3FoldsIntoNonRetainingFormsAtLastUse)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    load(b, r(0), r(1));
@@ -122,7 +122,7 @@ TEST_F(InsertWaits, Apple9FoldsIntoNonRetainingFormsAtLastUse)
 }
 
 /* Forms without a dependency field wait separately */
-TEST_F(InsertWaits, Apple9WaitsSeparatelyWithoutDependencyField)
+TEST_F(InsertWaits, Agx3WaitsSeparatelyWithoutDependencyField)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_instr *ld = load(b, r(0), r(1));
@@ -133,7 +133,7 @@ TEST_F(InsertWaits, Apple9WaitsSeparatelyWithoutDependencyField)
    EXPECT_FALSE(mov->wait);
 }
 
-TEST_F(InsertWaits, Apple9UsesSixSlots)
+TEST_F(InsertWaits, Agx3UsesSixSlots)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_instr *loads[6];
@@ -148,7 +148,7 @@ TEST_F(InsertWaits, Apple9UsesSixSlots)
 }
 
 /* An instruction names one slot, so a second pending operand waits apart */
-TEST_F(InsertWaits, Apple9FoldsOneOfTwoWaits)
+TEST_F(InsertWaits, Agx3FoldsOneOfTwoWaits)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    load(b, r(0), r(5));
@@ -161,7 +161,7 @@ TEST_F(InsertWaits, Apple9FoldsOneOfTwoWaits)
    EXPECT_NE(waits(b->shader)[0], add->wait_slot);
 }
 
-TEST_F(InsertWaits, Apple9FixedSlots)
+TEST_F(InsertWaits, Agx3FixedSlots)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_instr *shared =
@@ -179,7 +179,7 @@ TEST_F(InsertWaits, Apple9FixedSlots)
 }
 
 /* Barriers wait for pending results except the classes they exempt */
-TEST_F(InsertWaits, Apple9PriorCompletion)
+TEST_F(InsertWaits, Agx3PriorCompletion)
 {
    /* The workgroup barrier leaves memory results pending */
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
@@ -217,7 +217,7 @@ TEST_F(InsertWaits, Apple9PriorCompletion)
 }
 
 /* A spill save reads its source after issue */
-TEST_F(InsertWaits, Apple9WaitsBeforeOverwritingASpilledRegister)
+TEST_F(InsertWaits, Agx3WaitsBeforeOverwritingASpilledRegister)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_instr *save =
@@ -229,7 +229,7 @@ TEST_F(InsertWaits, Apple9WaitsBeforeOverwritingASpilledRegister)
 }
 
 /* Export registers are a separate file with their own hazards */
-TEST_F(InsertWaits, Apple9Exports)
+TEST_F(InsertWaits, Agx3Exports)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_index e0 = agx_export_register(0, AGX_SIZE_32);
@@ -246,7 +246,7 @@ TEST_F(InsertWaits, Apple9Exports)
 }
 
 /* An export committed to two varying slots is waited for separately */
-TEST_F(InsertWaits, Apple9ExportCommittedTwice)
+TEST_F(InsertWaits, Agx3ExportCommittedTwice)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_index e0 = agx_export_register(0, AGX_SIZE_32);
@@ -259,7 +259,7 @@ TEST_F(InsertWaits, Apple9ExportCommittedTwice)
    EXPECT_EQ(waits(b->shader), std::vector<unsigned>{mul->scoreboard});
 }
 
-TEST_F(InsertWaits, Apple9WaitsAtTheEndOfABlock)
+TEST_F(InsertWaits, Agx3WaitsAtTheEndOfABlock)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_block *first = agx_start_block(b->shader);
@@ -273,7 +273,7 @@ TEST_F(InsertWaits, Apple9WaitsAtTheEndOfABlock)
 }
 
 /* Texture parameters stay in use until the result, so the next bundle waits */
-TEST_F(InsertWaits, Apple9TextureParameters)
+TEST_F(InsertWaits, Agx3TextureParameters)
 {
    agx_builder *b = builder(AGX_SHADER_ISA_APPLE9);
    agx_index params = agx_export_register(0, AGX_SIZE_32);
