@@ -437,8 +437,8 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
       return lower_sysval_to_root_table(b, intrin, draw.ppp_multisamplectl);
 
    case nir_intrinsic_load_samples_log2_agx:
-      /* Apple8 reads it from a system register */
-      if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+      /* Without root uniforms, it is read from a system register */
+      if (!agx_nir_target(b->shader)->root_uniforms)
          return false;
 
       return lower_sysval_to_root_table(b, intrin, draw.samples_log2);
@@ -509,7 +509,7 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
       }
 
       nir_def *val;
-      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9 &&
+      if (agx_nir_target(b->shader)->root_uniforms &&
           intrin->intrinsic != nir_intrinsic_load_draw_id) {
          val = agx_nir_load_vs_draw_param(
             b, AGX_ABI_VUNI_FIRST_VERTEX(args->nr_vbos),

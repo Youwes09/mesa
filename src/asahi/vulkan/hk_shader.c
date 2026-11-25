@@ -241,9 +241,7 @@ hk_preprocess_nir_internal(struct vk_physical_device *vk_pdev, nir_shader *nir)
    NIR_PASS(_, nir, nir_opt_constant_folding);
    NIR_PASS(_, nir, nir_opt_large_constants, NULL, 32);
 
-   struct hk_physical_device *pdev =
-      container_of(vk_pdev, struct hk_physical_device, vk);
-   if (agx_is_apple9(&pdev->dev))
+   if (agx_nir_target(nir)->word_registers)
       NIR_PASS(_, nir, agx_nir_lower_word_math);
    agx_preprocess_nir(nir);
 
@@ -1284,6 +1282,8 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
              struct vk_descriptor_set_layout *const *set_layouts,
              enum hk_feature_key features)
 {
+   const struct agx_isa_target *target = agx_nir_target(nir);
+
    if (HK_PERF(dev, NOROBUST)) {
       rs = &vk_robustness_disabled;
    }
@@ -1334,10 +1334,10 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    /* We must do early lowering before hk_nir_lower_descriptors, since this will
     * create lod_bias instructions.
     */
-   /* Apple9 bounds-checks buffer images in software against their element
-    * count (hk_lower_storage_image). */
+   /* Texture exports bounds-check buffer images in software against their
+    * element count (hk_lower_storage_image). */
    NIR_PASS(_, nir, agx_nir_lower_texture_early, true /* support_lod_bias */,
-            agx_is_apple9(&dev->dev));
+            target->texture_exports);
    if (hk_device_physical(dev)->d3d_mip_rounding)
       NIR_PASS(_, nir, nir_shader_tex_pass, hk_lower_d3d_txl_rounding,
                nir_metadata_control_flow, NULL);
@@ -1353,12 +1353,12 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    if (agx_is_apple9(&dev->dev) ? dev->vk.enabled_features.minLod
                                 : instance->drirc.misc.image_view_min_lod) {
       NIR_PASS(_, nir, agx_nir_lower_image_view_min_lod,
-               agx_is_apple9(&dev->dev));
+               target->texture_exports);
    }
 
-   /* Apple9 exposes no custom border colors. */
+   /* Native custom border colours need no lowering */
    if ((features & HK_FEAT_CUSTOM_BORDER) && !HK_PERF(dev, NOBORDER) &&
-       !agx_is_apple9(&dev->dev)) {
+       !agx_has_native_border_colors(&dev->dev)) {
       NIR_PASS(_, nir, agx_nir_lower_custom_border);
    }
 
@@ -1384,12 +1384,13 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       NIR_PASS(progress, nir, nir_opt_dce);
    } while (progress);
 
-   /* Apple9 vectorizes before the buffer base and offset become one 64-bit
+   /* With coherent memory, device accesses add an offset to an index, so
+    * vectorize before the buffer base and offset become one 64-bit
     * address. Afterwards the offset is hidden inside u2u64, where adjacent
     * fields at x + c are no longer provably adjacent, and every field of a
     * dynamically indexed struct becomes a separate scalar load.
     */
-   if (agx_is_apple9(&dev->dev)) {
+   if (target->coherent_memory) {
       /* Explicit I/O builds each access's base and offset afresh. The
        * vectorizer only merges accesses sharing those definitions. */
       NIR_PASS(_, nir, nir_opt_cse);
@@ -1405,8 +1406,9 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    NIR_PASS(progress, nir, nir_opt_sink, opts);
    NIR_PASS(progress, nir, nir_opt_move, opts);
 
+   /* Loads merged above check each component against its own end */
    NIR_PASS(_, nir, hk_lower_bounded_global_loads,
-            agx_has_soft_fault(&dev->dev), agx_is_apple9(&dev->dev));
+            agx_has_soft_fault(&dev->dev), target->coherent_memory);
 
    assert(nir->info.shared_size == 0);
 
@@ -1465,7 +1467,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
             glsl_type_size,
             nir_lower_io_lower_64bit_to_32 |
                nir_lower_io_use_interpolated_input_intrinsics);
-   if (agx_is_apple9(&dev->dev))
+   if (target->varying_exports)
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_lower_io_16bit_to_32bit,
                nir_metadata_control_flow, NULL);
 
@@ -1475,7 +1477,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      if (agx_is_apple9(&dev->dev)) {
+      if (target->varying_exports) {
          NIR_PASS(_, nir, nir_shader_intrinsics_pass,
                   hk_lower_layer_viewport_fs, nir_metadata_control_flow, NULL);
       }
@@ -1484,7 +1486,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
                nir_metadata_control_flow, NULL);
    }
 
-   if (agx_is_apple9(&dev->dev)) {
+   if (target->texture_exports) {
       NIR_PASS(_, nir, agx_nir_lower_storage, false, false);
       NIR_PASS(_, nir, agx_nir_lower_images);
       /* Storage-image queries read the descriptor, sampled ones metadata */
@@ -1496,12 +1498,12 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    }
    NIR_PASS(_, nir, agx_nir_lower_multisampled_image_store);
 
-   /* Keep radians until Apple9 range reduction. The common preprocessor
+   /* Keep radians until word math range reduction. The common preprocessor
     * otherwise replaces sine/cosine with the older fsin_agx operation. */
-   if (agx_is_apple9(&dev->dev))
+   if (target->word_registers)
       NIR_PASS(_, nir, agx_nir_lower_word_math);
    agx_preprocess_nir(nir);
-   if (agx_is_apple9(&dev->dev))
+   if (target->texture_exports)
       NIR_PASS(_, nir, agx_nir_lower_image_barriers);
 
    nir_opt_peephole_select_options peephole_select_options = {
@@ -1534,8 +1536,8 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
 static VkResult
 hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
 {
-   /* Apple9 preambles are in the linked program; upload constant data only */
-   if (agx_is_apple9(&dev->dev)) {
+   /* Preambles are in the linked program; upload constant data only */
+   if (agx_has_launch_programs(&dev->dev)) {
       assert(!shader->b.info.rodata.size_16 && "no uniform preloads");
 
       if (shader->data_size) {
@@ -2186,7 +2188,7 @@ hk_copy_shader_constant_data(struct hk_device *dev, struct hk_shader *shader,
 static void
 hk_lower_to_compute(struct hk_device *dev, nir_shader *nir, unsigned local_size)
 {
-   if (agx_is_apple9(&dev->dev)) {
+   if (agx_has_launch_programs(&dev->dev)) {
       nir->info.workgroup_size_variable = false;
       nir->info.workgroup_size[0] = local_size;
       nir->info.workgroup_size[1] = nir->info.workgroup_size[2] = 1;
@@ -2230,7 +2232,8 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
 
       /* Export depth for draw-time Z/S feedback loops, see hk_late_zs */
       if (key && key->fs.dynamic_zs_self_dep && !key->fs.zs_self_dep &&
-          agx_is_apple9(&dev->dev) && !nir->info.fs.early_fragment_tests &&
+          agx_nir_target(nir)->tile_domains &&
+          !nir->info.fs.early_fragment_tests &&
           !shader->info.fs.epilog_key.write_z) {
          nir_builder b =
             nir_builder_at(nir_after_impl(nir_shader_get_entrypoint(nir)));
@@ -2312,7 +2315,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
 
    /* XXX: rename */
    NIR_PASS(_, nir, hk_lower_uvs_index, sw_stage, nr_vbos);
-   if (agx_is_apple9(&dev->dev))
+   if (agx_nir_target(nir)->root_uniforms)
       hk_assert_final_push_mask(nir, shader);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_uniforms,
             nir_metadata_control_flow, &root);
@@ -2330,10 +2333,10 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       .reserved_preamble = root + (4 * (1 + set_count)),
       .dev = agx_gather_device_key(&dev->dev),
 
-      /* Fast linking adds the stop, for FS and Apple9 VS */
-      .no_stop =
-         nir->info.stage == MESA_SHADER_FRAGMENT ||
-         (agx_is_apple9(&dev->dev) && nir->info.stage == MESA_SHADER_VERTEX),
+      /* Fast linking adds the stop, for FS and launched VS */
+      .no_stop = nir->info.stage == MESA_SHADER_FRAGMENT ||
+                 (agx_has_launch_programs(&dev->dev) &&
+                  nir->info.stage == MESA_SHADER_VERTEX),
       .has_scratch = !nir->info.internal,
       .promote_constants = true,
       .promote_textures = true,
@@ -2397,7 +2400,7 @@ static const struct vk_shader_ops hk_shader_ops;
 static void
 hk_destroy_linked_shader(struct hk_device *dev, struct hk_linked_shader *linked)
 {
-   if (agx_is_apple9(&dev->dev))
+   if (agx_has_launch_programs(&dev->dev))
       agx_stage_launch_cache_finish(&linked->stage_launch_cache);
 
    agx_bo_unreference(&dev->dev, linked->b.bo);
@@ -2482,7 +2485,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 {
    VkResult result;
    enum hk_feature_key features = hk_make_feature_key(vk_features);
-   bool apple9 = agx_is_apple9(&dev->dev);
+   bool launch_programs = agx_has_launch_programs(&dev->dev);
 
    /* We consume the NIR, regardless of success or failure */
    nir_shader *nir = info->nir;
@@ -2509,8 +2512,8 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                    info->set_layouts, features);
    }
 
-   /* Apple9 renders track what their stages read and write, see hk_queue */
-   if (apple9) {
+   /* Launched renders track what their stages read and write, see hk_queue */
+   if (launch_programs) {
       obj->writes_memory = nir->info.writes_memory;
       obj->pre_raster_reads = hk_nir_pre_raster_reads(nir);
    }
@@ -2524,8 +2527,8 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       nir->info.fs.uses_sample_shading |= key->fs.force_sample_shading;
 
-      /* Force late-Z for Z/S self-deps; Apple9 exports depth for that */
-      if (key->fs.zs_self_dep && apple9) {
+      /* Force late-Z for Z/S self-deps; tile domains export depth for that */
+      if (key->fs.zs_self_dep && agx_nir_target(nir)->tile_domains) {
          hk_late_zs(nir);
       } else if (key->fs.zs_self_dep) {
          /* TODO: There's probably a less silly way to do this. */
@@ -2535,7 +2538,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          nir->info.fs.uses_discard = true;
       }
 
-      if (apple9)
+      if (launch_programs)
          hk_lower_launch_fs(nir, hk_only_variant(obj));
 
       NIR_PASS(_, nir, agx_nir_lower_sample_intrinsics, false);
@@ -2633,8 +2636,8 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
-      /* Apple9 API shaders may need it for these features at draw time */
-      if (apple9 && vk_features &&
+      /* Launched API shaders may need it for these features at draw time */
+      if (launch_programs && vk_features &&
           dev->vk.enabled_features.primitivesGeneratedQuery) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
@@ -2674,9 +2677,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
                   shader->info.vs.attrib_components_read);
 
          if (sw_stage == MESA_SHADER_VERTEX) {
-            /* Apple9 VS read vertex and instance IDs from the prolog */
+            /* Launched VS read vertex and instance IDs from the prolog */
             shader->info.vs.use_prolog =
-               apple9 || !(key && key->vs.skip_prolog);
+               launch_programs || !(key && key->vs.skip_prolog);
             shader->info.vs.attribs_read =
                nir->info.inputs_read >> VERT_ATTRIB_GENERIC0;
 
@@ -3171,7 +3174,7 @@ hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
 
    /* Launch programs start the linked program from its profile, see
     * hk_cmd_draw.c */
-   if (agx_is_apple9(&dev->dev)) {
+   if (agx_has_launch_programs(&dev->dev)) {
       hk_init_launch_linked(dev, s, fragment, main, prolog, epilog);
       return s;
    }
