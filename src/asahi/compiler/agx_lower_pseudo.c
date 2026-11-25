@@ -97,9 +97,9 @@ lower(agx_builder *b, agx_instr *I)
                             agx_immediate(I->invert_cond ? 0 : 1),
                             agx_immediate(I->invert_cond ? 1 : 0), I->fcond);
 
-   /* Apple9 has a ballot instruction */
+   /* Without compare-and-ballot, there is a ballot instruction */
    case AGX_OPCODE_BALLOT:
-      if (b->shader->target.isa == AGX_SHADER_ISA_APPLE9)
+      if (!agx_opcode_on_isa(AGX_OPCODE_ICMP_BALLOT, b->shader->target.isa))
          return NULL;
 
       return agx_icmp_ballot_to(b, I->dest[0], I->src[0], agx_zero(),

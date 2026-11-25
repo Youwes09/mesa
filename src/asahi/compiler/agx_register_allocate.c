@@ -264,7 +264,7 @@ struct ra_ctx {
     */
    unsigned *count[RA_CLASSES];
 
-   /* Apple9: GPRs exported at the end of the part, which other values avoid */
+   /* GPRs exported at the end of the part, which other values avoid */
    BITSET_WORD *export_targets;
 
    /* GPRs that preloaded values arrive in */
@@ -333,8 +333,8 @@ reserved_size(agx_context *ctx)
       size = ctx->target.spill_reserved_halves;
    else if (ctx->any_quad_divergent_shuffle)
       size = 2;
-   else if (ctx->any_cf && ctx->target.isa != AGX_SHADER_ISA_APPLE9)
-      size = 1; /* Apple8 nesting counter in r0l */
+   else if (ctx->any_cf && !ctx->target.mask_stack)
+      size = 1; /* Nesting counter in r0l */
    else
       size = 0;
 
@@ -2619,7 +2619,7 @@ agx_ra(agx_context *ctx)
    BITSET_WORD *vary_exports = BITSET_CALLOC(ctx->alloc);
    unsigned next_vary_export = 0;
 
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
+   if (ctx->target.avoid_export_targets) {
       agx_foreach_instr_in_block(agx_exit_block(ctx), I) {
          if (I->op != AGX_OPCODE_EXPORT || I->src[0].reg_class != RA_GPR)
             continue;

@@ -152,7 +152,7 @@ run_tests_after_last_discard(nir_builder *b)
 
             nir_def *testing = nir_load_shader_part_tests_zs_agx(b);
 
-            if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+            if (agx_nir_target(b->shader)->tile_domains) {
                /* A test ends ZS testing, so only kill if a later part tests */
                nir_push_if(b, nir_ine_imm(b, testing, 0));
                nir_sample_mask_agx(b, all_samples, live);
@@ -182,8 +182,8 @@ run_tests_after_last_discard(nir_builder *b)
          nir_def *testing = nir_load_shader_part_tests_zs_agx(b);
          nir_def *all_samples = nir_imm_intN_t(b, ALL_SAMPLES, 16);
 
-         /* As above, Apple9 only tests here if no later part does */
-         if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+         /* As above, only test here if no later part does */
+         if (agx_nir_target(b->shader)->tile_domains) {
             nir_push_if(b, nir_ine_imm(b, testing, 0));
             nir_sample_mask_agx(b, all_samples, all_samples);
             nir_pop_if(b, NULL);
@@ -236,9 +236,9 @@ agx_nir_lower_sample_mask(nir_shader *shader)
       return nir_no_progress(impl);
    }
 
-   /* Apple9 tests may be placed in new control flow */
+   /* Tile domain tests may be placed in new control flow */
    nir_progress(true, impl,
-                agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9
+                agx_nir_target(shader)->tile_domains
                    ? nir_metadata_none
                    : nir_metadata_control_flow);
 

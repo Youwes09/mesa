@@ -650,6 +650,11 @@ struct agx_isa_target {
    /* Operations restrict their operands and registers, see agx_legality.c */
    bool operand_limits;
 
+   /* Register allocation keeps other values out of the GPRs a shader part
+    * exports at its end.
+    */
+   bool avoid_export_targets;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
