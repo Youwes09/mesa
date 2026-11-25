@@ -1864,7 +1864,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
     * raw-result operations for explicit FTZ, including min/max, sign-bit
     * operations, subgroup reductions and floating atomic return values.
     * DenormPreserve shaders take guarded software paths around the
-    * flushing arithmetic (agx_nir_lower_apple9_denorm_preserve). */
+    * flushing arithmetic (agx_nir_lower_denorm_preserve). */
    props->shaderDenormFlushToZeroFloat32 = true;
    props->shaderDenormPreserveFloat32 = true;
    /* Position uses four entries of the 128-entry publication bank. Keep two

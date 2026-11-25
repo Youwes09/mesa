@@ -45,7 +45,7 @@ bool agx_nir_lower_compute_derivatives(struct nir_shader *shader);
 /* FP32 subnormal flushing and preservation, for flushes_denorms */
 bool agx_nir_flush_denorms(struct nir_shader *shader);
 bool agx_nir_flush_subgroup_denorms(struct nir_shader *shader);
-bool agx_nir_lower_apple9_denorm_preserve(struct nir_shader *shader);
+bool agx_nir_lower_denorm_preserve(struct nir_shader *shader);
 
 /* Word registers and memory: conversions, sine, narrow arithmetic and access */
 bool agx_nir_lower_word_math(struct nir_shader *shader);

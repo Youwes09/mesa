@@ -5664,7 +5664,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    /* Flush FP32 subnormals after the algebraic passes, which could undo it */
    if (target->flushes_denorms) {
       NIR_PASS(_, nir, agx_nir_flush_denorms);
-      NIR_PASS(_, nir, agx_nir_lower_apple9_denorm_preserve);
+      NIR_PASS(_, nir, agx_nir_lower_denorm_preserve);
       NIR_PASS(_, nir, nir_opt_dce);
    }
 

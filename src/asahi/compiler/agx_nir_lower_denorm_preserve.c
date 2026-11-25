@@ -4,9 +4,9 @@
  */
 
 /*
- * FP32 DenormPreserve for Apple9.
+ * FP32 DenormPreserve on targets that flush denorms.
  *
- * Apple9 FP32 arithmetic treats subnormal inputs as signed zero and flushes
+ * There, FP32 arithmetic treats subnormal inputs as signed zero and flushes
  * subnormal results; bit operations (moves, negate, absolute value, selects,
  * loads and stores) keep subnormal bits. For shaders that declare
  * DenormPreserve for 32-bit floats, each affected operation keeps its native
@@ -22,10 +22,10 @@
  * Shaders without the execution mode are not modified.
  */
 
+#include "asahi/lib/agx_apple9_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
 #define F32_SIGN     0x80000000u
 #define F32_EXP_MASK 0x7f800000u
@@ -523,7 +523,7 @@ lower(nir_builder *b, nir_alu_instr *alu)
 }
 
 bool
-agx_nir_lower_apple9_denorm_preserve(nir_shader *shader)
+agx_nir_lower_denorm_preserve(nir_shader *shader)
 {
    if (!nir_is_denorm_preserve(shader->info.float_controls_execution_mode, 32))
       return false;
