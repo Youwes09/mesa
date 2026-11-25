@@ -2027,9 +2027,9 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
          .callback = agx_mem_vectorize_cb,
       });
 
-   /* Apple9 storage images go through storage descriptors, queries included */
-   bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
-   if (apple9) {
+   /* Storage images go through storage descriptors, queries included */
+   bool texture_exports = agx_nir_target(nir)->texture_exports;
+   if (texture_exports) {
       NIR_PASS(_, nir, agx_nir_lower_storage, true, true);
       NIR_PASS(_, nir, agx_nir_lower_images);
       NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
@@ -2046,7 +2046,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
 
    agx_preprocess_nir(nir);
 
-   if (apple9)
+   if (texture_exports)
       NIR_PASS(_, nir, agx_nir_lower_image_barriers);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT &&

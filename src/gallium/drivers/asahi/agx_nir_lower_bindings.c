@@ -42,10 +42,10 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 {
    bool *uses_bindless_samplers = data;
    bool progress = false;
-   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+   bool exports = agx_nir_target(b->shader)->texture_exports;
 
-   /* Apple9 reads texture dimensions from memory, not the descriptor */
-   bool force_bindless = !apple9 && agx_nir_needs_texture_crawl(instr);
+   /* Texture exports read dimensions from memory, not the descriptor */
+   bool force_bindless = !exports && agx_nir_needs_texture_crawl(instr);
    b->cursor = nir_before_instr(instr);
 
    if (instr->type == nir_instr_type_intrinsic) {
@@ -66,8 +66,8 @@ lower(nir_builder *b, nir_instr *instr, void *data)
       nir_def *index = intr->src[0].ssa;
       nir_scalar index_scalar = nir_scalar_resolved(index, 0);
 
-      /* Apple9 images are storage descriptors, writes and atomics use PBEs */
-      if (apple9) {
+      /* Images are then storage descriptors, writes and atomics use PBEs */
+      if (exports) {
          index = nir_umin(b, nir_u2u32(b, index),
                           nir_imm_int(b, b->shader->info.num_images - 1));
 
@@ -129,7 +129,7 @@ lower(nir_builder *b, nir_instr *instr, void *data)
    } else if (instr->type == nir_instr_type_tex) {
       nir_tex_instr *tex = nir_instr_as_tex(instr);
 
-      if (!apple9 &&
+      if (!exports &&
           ((BITSET_COUNT(b->shader->info.samplers_used) > 16) &&
            (nir_tex_instr_src_index(tex, nir_tex_src_sampler_offset) >= 0 ||
             tex->sampler_index >= 16)) &&
@@ -142,8 +142,8 @@ lower(nir_builder *b, nir_instr *instr, void *data)
       if (nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0)
          return progress;
 
-      /* Apple9 texture instructions index the whole texture table */
-      if (apple9 &&
+      /* Texture exports index the whole texture table */
+      if (exports &&
           nir_tex_instr_src_index(tex, nir_tex_src_texture_offset) == -1)
          return progress;
 
@@ -259,7 +259,7 @@ agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers)
     */
    progress |= nir_opt_constant_folding(shader);
 
-   if (agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9)
+   if (agx_nir_target(shader)->texture_exports)
       progress |= lower_dynamic_texture_index(shader);
 
    progress |= nir_shader_instructions_pass(

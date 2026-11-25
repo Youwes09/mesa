@@ -44,7 +44,7 @@ struct table_state {
 
 struct state {
    mesa_shader_stage stage, hw_stage;
-   bool apple9;
+   bool root_uniforms;
 
    /* Array of nir_intrinsic_instr's to fix up at the end */
    struct util_dynarray loads;
@@ -128,11 +128,11 @@ load_texture_handle(nir_builder *b, nir_intrinsic_instr *intr, void *base)
    return nir_bindless_image_agx(b, offs_B);
 }
 
-/* Apple9 reads draw parameters by address, as indirect draws write them */
+/* Root uniforms read draw parameters by address, as indirect draws write them */
 static nir_def *
 lower_draw_param(nir_builder *b, unsigned offset)
 {
-   if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+   if (!agx_nir_target(b->shader)->root_uniforms)
       return load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, offset);
 
    struct agx_draw_uniforms *u = NULL;
@@ -159,10 +159,10 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ubo:
-      /* Apple9 texture state is a buffer the compiler binds itself */
+      /* Texture state is then a buffer the compiler binds itself */
       if (nir_src_is_const(intr->src[0]) &&
           nir_src_as_uint(intr->src[0]) == AGX_GRAPHICS_SYSVAL_BINDING &&
-          agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+          agx_nir_target(b->shader)->root_uniforms)
          return NULL;
 
       return load_ubo(b, intr, s->ubo_base);
@@ -190,8 +190,8 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
    case nir_intrinsic_load_sample_positions_agx:
       return load_sysval_root(b, 1, 32, &u->ppp_multisamplectl);
    case nir_intrinsic_load_samples_log2_agx:
-      /* Apple8 reads the sample count from a special register */
-      if (agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9)
+      /* Without root uniforms, the sample count is a special register */
+      if (!agx_nir_target(b->shader)->root_uniforms)
          return NULL;
 
       return load_sysval_root(b, 1, 16, &u->samples_log2);
@@ -245,8 +245,8 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_num_workgroups:
-      /* Apple9 compute launches pass the workgroup counts themselves */
-      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+      /* Compute roots pass the workgroup counts themselves */
+      if (agx_nir_target(b->shader)->root_uniforms)
          return NULL;
 
       return load_sysval(b, 3, 32, AGX_SYSVAL_TABLE_GRID, 0);
@@ -435,8 +435,8 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
          };
       }
 
-      /* Apple9 pushes the draw parameters' address, see lower_draw_param */
-      if (state->apple9) {
+      /* Root uniforms push the draw parameters' address, see lower_draw_param */
+      if (state->root_uniforms) {
          shader->push[shader->push_range_count++] = (struct agx_push_range){
             .uniform = AGX_ABI_VUNI_FIRST_VERTEX(count),
             .table = AGX_SYSVAL_TABLE_ROOT,
@@ -612,7 +612,7 @@ agx_nir_layout_uniforms(nir_shader *shader,
    struct state state = {
       .stage = compiled->stage,
       .hw_stage = shader->info.stage,
-      .apple9 = agx_nir_shader_isa(shader) == AGX_SHADER_ISA_APPLE9,
+      .root_uniforms = agx_nir_target(shader)->root_uniforms,
    };
 
    nir_shader_intrinsics_pass(shader, record_loads, nir_metadata_control_flow,
@@ -622,8 +622,8 @@ agx_nir_layout_uniforms(nir_shader *shader,
 
    util_dynarray_fini(&state.loads);
 
-   /* Apple9 image handles read the image table address from a uniform */
-   if (state.apple9) {
+   /* Root uniform image handles read the image table address from a uniform */
+   if (state.root_uniforms) {
       struct image_table table = {.uniform = ~0};
 
       nir_shader_intrinsics_pass(shader, find_image_table, nir_metadata_all,
