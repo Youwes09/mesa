@@ -41,23 +41,22 @@ bool agx_pack_usc_texture(void *out, const struct AGX_TEXTURE *state);
 void agx_set_null_usc_texture(void *out);
 bool agx_pack_usc_sampler(void *out, const struct AGX_SAMPLER *state);
 bool agx_translate_usc_texture(void *out,
-                                  const struct agx_texture_packed *state);
+                               const struct agx_texture_packed *state);
 struct agx_pbe_packed;
 struct ail_layout;
 /* layer_base is the selected first layer's level-zero address. The native
  * descriptor retains the allocation's mip tree and selects level separately.
  */
 bool agx_translate_usc_pbe(void *out, const struct agx_pbe_packed *state,
-                              enum pipe_format format,
-                              const struct ail_layout *layout,
-                              uint64_t layer_base, unsigned level,
-                              unsigned layer_count, bool layered,
-                              unsigned dimension);
+                           enum pipe_format format,
+                           const struct ail_layout *layout, uint64_t layer_base,
+                           unsigned level, unsigned layer_count, bool layered,
+                           unsigned dimension);
 
 void agx_pack_basic_usc_sampler(void *out, bool min_linear, bool mag_linear,
-                             unsigned mip_filter, float min_lod, float max_lod,
-                             unsigned wrap_s, unsigned wrap_t,
-                             unsigned max_anisotropy);
+                                unsigned mip_filter, float min_lod,
+                                float max_lod, unsigned wrap_s, unsigned wrap_t,
+                                unsigned max_anisotropy);
 void agx_pack_usc_fetch_sampler(void *out);
 
 /* RGB32 buffer views are three scalar texels in the physical descriptor */

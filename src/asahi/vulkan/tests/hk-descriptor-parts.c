@@ -144,8 +144,7 @@ check(void)
              sizeof(view.planes[p].usc_input));
    }
    for (unsigned p = 0; p < 2; ++p)
-      memset(&sampler.planes[p].usc, 0x51 + p,
-             sizeof(sampler.planes[p].usc));
+      memset(&sampler.planes[p].usc, 0x51 + p, sizeof(sampler.planes[p].usc));
    VkDescriptorImageInfo info = {.imageView = hk_image_view_to_handle(&view),
                                  .sampler = hk_sampler_to_handle(&sampler)};
    struct hk_image_view saved = view;
@@ -161,9 +160,9 @@ check(void)
          uint8_t expected[HK_MAX_SAMPLED_DESCRIPTOR_SIZE];
          size_t size = 0;
          for (unsigned p = 0; p < 3; ++p) {
-            struct hk_usc_image_part part =
-               kind == 2 ? view.planes[p].usc_input
-                         : view.planes[p].usc_sampled;
+            struct hk_usc_image_part part = kind == 2
+                                               ? view.planes[p].usc_input
+                                               : view.planes[p].usc_sampled;
             uint64_t addr = pass && !p ? va[0].addr : va[3 - p].addr;
             part.residency_lo = addr;
             part.residency_hi = addr >> 32;
@@ -179,7 +178,7 @@ check(void)
       }
    }
    struct hk_usc_sampler_part samplers[2] = {sampler.planes[0].usc,
-                                                sampler.planes[1].usc};
+                                             sampler.planes[1].usc};
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_SAMPLER, info, samplers,
                        sizeof(samplers)));
 
@@ -191,15 +190,15 @@ check(void)
    view.storage_pbe_index = 0x1234;
    struct agx_apple9_storage_descriptor storage = view.usc_storage;
    storage.metadata.base = va[0].addr;
-   storage.native_ok |= view.storage_flags |
-                        view.storage_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT;
+   storage.native_ok |= view.storage_flags | view.storage_pbe_index
+                                                << AGX_APPLE9_STORAGE_PBE_SHIFT;
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,
                        sizeof(storage)));
    CHECK(view.usc_storage.metadata.base == UINT64_C(0x6161616161616161));
 
    info.imageView = VK_NULL_HANDLE;
    struct hk_usc_image_part null = {.residency_lo = va[0].addr,
-                                       .residency_hi = va[0].addr >> 32};
+                                    .residency_hi = va[0].addr >> 32};
    struct agx_texture_packed tex;
    agx_set_null_texture(&tex);
    agx_translate_usc_texture(null.texture, &tex);

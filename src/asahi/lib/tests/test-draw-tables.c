@@ -2,12 +2,12 @@
  * Compare binding-only updates with complete preparation at fixed addresses.
  * The reference rebuilds all raster state; both arms emit real launch/VDM bytes.
  */
+#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"
+#include "agx_device.h"
 #include "agx_draw_table.h"
 #include "agx_launch_program.h"
-#include "asahi/lib/agx_tilebuffer.h"
-#include "asahi/lib/agx_apple9_layout.h"
-#include "agx_device.h"
 
 #define CHECK(c)                                                               \
    do {                                                                        \
@@ -54,8 +54,7 @@ compare(const struct agx_draw_pipeline *pipeline,
       p.ppp_viewport_words = draw[i].ppp_viewport_words;
       p.vertex_launch = draw[i].launch[0] / 64;
       p.pipeline_word = 0x01000000;
-      CHECK(agx_emit_direct_draw(commands[i], &p, 3, 1, 0) -
-               commands[i] ==
+      CHECK(agx_emit_direct_draw(commands[i], &p, 3, 1, 0) - commands[i] ==
             agx_direct_draw_size(&p));
    }
    CHECK(!memcmp(commands[0], commands[1], sizeof(commands[0])));
@@ -199,11 +198,10 @@ main(void)
                   if (fail == 3)
                      c.gpu = AGX_RENDER_CONTEXT_BASE - c.used - 64;
                   if (fail == 4)
-                     c.gpu =
-                        AGX_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
-                  CHECK(!agx_update_draw_tables_alloc(
-                     dev, &u, allocate, &c, allocate, &pipeline, &d, tables,
-                     NULL));
+                     c.gpu = AGX_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
+                  CHECK(!agx_update_draw_tables_alloc(dev, &u, allocate, &c,
+                                                      allocate, &pipeline, &d,
+                                                      tables, NULL));
                   CHECK(!memcmp(&d, &draw[1], sizeof(d)));
                   CHECK(!memcmp(u.bytes, usc[1].bytes, usc[1].used));
                   CHECK(!memcmp(c.bytes, context[1].bytes, context[1].used));

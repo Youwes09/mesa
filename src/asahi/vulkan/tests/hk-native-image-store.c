@@ -59,17 +59,13 @@ test_image_storage(void)
    /* Block-texel views of compressed images address blocks, not the layout's
     * texels; same-size reinterpretations of uncompressed images stay native. */
    struct ail_layout bc1 = {.format = PIPE_FORMAT_DXT1_RGB};
-   CHECK(!hk_pbe_store_view_layout(&bc1,
-                                             PIPE_FORMAT_R16G16B16A16_FLOAT));
+   CHECK(!hk_pbe_store_view_layout(&bc1, PIPE_FORMAT_R16G16B16A16_FLOAT));
    struct ail_layout astc = {.format = PIPE_FORMAT_ASTC_4x4};
-   CHECK(!hk_pbe_store_view_layout(&astc,
-                                             PIPE_FORMAT_R32G32B32A32_FLOAT));
+   CHECK(!hk_pbe_store_view_layout(&astc, PIPE_FORMAT_R32G32B32A32_FLOAT));
    struct ail_layout rgba8 = {.format = PIPE_FORMAT_R8G8B8A8_UNORM};
-   CHECK(
-      hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R8G8B8A8_UNORM));
+   CHECK(hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R8G8B8A8_UNORM));
    CHECK(hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R32_FLOAT));
-   CHECK(!hk_pbe_store_view_layout(&rgba8,
-                                             PIPE_FORMAT_R16G16B16A16_FLOAT));
+   CHECK(!hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R16G16B16A16_FLOAT));
    puts("native storage: sparse layouts and VA use software stores");
    return 0;
 }
@@ -107,8 +103,7 @@ main(void)
       CHECK(((packed >> AGX_APPLE9_STORAGE_PBE_SHIFT) &
              AGX_APPLE9_STORAGE_PBE_MASK) == indices[i]);
    }
-   CHECK(HK_DB_STORAGE_SIZE >=
-         sizeof(struct agx_apple9_storage_descriptor));
+   CHECK(HK_DB_STORAGE_SIZE >= sizeof(struct agx_apple9_storage_descriptor));
    CHECK(util_is_power_of_two_nonzero(HK_DB_STORAGE_SIZE));
    CHECK(!(AGX_APPLE9_STORAGE_READ_VALID & AGX_APPLE9_STORAGE_WRITE_VALID));
    CHECK(
@@ -134,7 +129,7 @@ main(void)
       uint64_t base =
          UINT64_C(0x2ffff00000) + ail_get_layer_offset_B(&layout, 3 + i);
       CHECK(hk_translate_storage_pbe(entries[i], &legacy, layout.format,
-                                            &layout, base, 0));
+                                     &layout, base, 0));
       CHECK((entries[i][0] & 0xf) == AGX_TEXTURE_DIMENSION_2D);
       uint64_t address;
       memcpy(&address, entries[i] + 8, sizeof(address));

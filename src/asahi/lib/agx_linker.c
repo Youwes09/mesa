@@ -173,9 +173,9 @@ static const uint8_t agx3_pop_loop[] = {
 /* See agx_linker.h */
 void
 agx_link_program(struct agx_linked_program *p, bool fragment,
-                struct agx_shader_part *main, struct agx_shader_part *prolog,
-                struct agx_shader_part *epilog, unsigned nr_samples_shaded,
-                const uint8_t *uvs_slots)
+                 struct agx_shader_part *main, struct agx_shader_part *prolog,
+                 struct agx_shader_part *epilog, unsigned nr_samples_shaded,
+                 const uint8_t *uvs_slots)
 {
    struct agx_shader_part *parts[] = {prolog, main, epilog};
    struct util_dynarray d;
@@ -343,7 +343,7 @@ agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
    if (main->info.apple9_compute.abi) {
       struct agx_linked_program *p = &linked->program;
       agx_link_program(p, fragment, main, prolog, epilog, nr_samples_shaded,
-                      uvs_slots);
+                       uvs_slots);
 
       linked->bo = agx_bo_create(dev, p->size, 0, AGX_BO_EXEC | AGX_BO_LOW_VA,
                                  "Linked executable");

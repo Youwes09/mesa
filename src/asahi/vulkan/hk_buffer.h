@@ -47,8 +47,7 @@ hk_buffer_residency(const struct hk_buffer *buffer)
    if (!buffer->residency_table)
       return 0;
 
-   return buffer->residency_table->va->addr -
-          (buffer->va->addr / AIL_PAGESIZE);
+   return buffer->residency_table->va->addr - (buffer->va->addr / AIL_PAGESIZE);
 }
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_buffer, vk.base, VkBuffer,

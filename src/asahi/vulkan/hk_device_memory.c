@@ -287,8 +287,8 @@ hk_memory_index_address(struct hk_device *dev, struct hk_device_memory *mem)
             simple_mtx_unlock(&mem->index_va_lock);
             return 0;
          }
-         uint64_t previous = p_atomic_cmpxchg(&dev->index_alias_bytes,
-                                              used, used + charge);
+         uint64_t previous =
+            p_atomic_cmpxchg(&dev->index_alias_bytes, used, used + charge);
          if (previous == used)
             break;
          used = previous;

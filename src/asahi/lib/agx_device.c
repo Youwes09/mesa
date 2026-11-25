@@ -631,8 +631,8 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * so this is a Mesa compatibility guard, not a hardware address limit.
     * Executable/AGX_BO_LOW_VA allocations still use usc_heap.
     */
-   uint64_t user_start = fixed_usc_base ? default_shader_base
-                                               : dev->shader_base + shader_size;
+   uint64_t user_start =
+      fixed_usc_base ? default_shader_base : dev->shader_base + shader_size;
 
    assert(dev->shader_base >= dev->params.vm_start);
    assert(dev->shader_base + shader_size < dev->params.vm_end);
@@ -681,8 +681,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * used throughout. The separate USC heap remains at 1 TiB and is not part
     * of this partition.
     */
-   uint64_t user_end =
-      fixed_usc_base ? (1ull << 39) : vm_create.kernel_start;
+   uint64_t user_end = fixed_usc_base ? (1ull << 39) : vm_create.kernel_start;
    assert(user_start < user_end);
    uint64_t user_size = user_end - user_start;
 
@@ -737,8 +736,8 @@ agx_open_device(void *memctx, struct agx_device *dev)
    uint64_t context_start =
       AGX_RENDER_CONTEXT_BASE +
       (dev->params.gpu_generation == 17 ? 0x8000000ull : 0x4000000ull);
-   uint64_t context_end = MIN2(vm_create.kernel_start,
-                               AGX_RENDER_CONTEXT_BASE + (1ull << 32));
+   uint64_t context_end =
+      MIN2(vm_create.kernel_start, AGX_RENDER_CONTEXT_BASE + (1ull << 32));
    util_vma_heap_init(&dev->context_heap, context_start,
                       fixed_usc_base ? context_end - context_start : 0);
    dev->context_heap.alloc_high = false;
@@ -770,9 +769,8 @@ agx_open_device(void *memctx, struct agx_device *dev)
    if (agx_has_launch_programs(dev)) {
       simple_mtx_init(&dev->entry_lock, mtx_plain);
       list_inithead(&dev->entry_lru);
-      util_vma_heap_init(
-         &dev->entry_heap, AGX_ENTRY_HEADER_SIZE,
-         AGX_ENTRY_ARENA_SIZE - AGX_ENTRY_HEADER_SIZE);
+      util_vma_heap_init(&dev->entry_heap, AGX_ENTRY_HEADER_SIZE,
+                         AGX_ENTRY_ARENA_SIZE - AGX_ENTRY_HEADER_SIZE);
       dev->entry_heap.alloc_high = false;
    }
 
@@ -781,9 +779,9 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * and back its first chunk, which holds the header; later chunks are backed
     * as entries reach them. */
    if (agx_has_launch_programs(dev) && !dev->probe_only) {
-      dev->entry_va = agx_va_alloc(
-         dev, AGX_ENTRY_ARENA_SIZE, AGX_ENTRY_ARENA_SIZE,
-         AGX_VA_USC | AGX_VA_FIXED, dev->shader_base);
+      dev->entry_va =
+         agx_va_alloc(dev, AGX_ENTRY_ARENA_SIZE, AGX_ENTRY_ARENA_SIZE,
+                      AGX_VA_USC | AGX_VA_FIXED, dev->shader_base);
       if (!dev->entry_va) {
          fprintf(stderr, "Failed to reserve compact Apple9 shader entries\n");
          return false;
@@ -859,8 +857,8 @@ agx_shader_entry_back(struct agx_device *dev, uint32_t end_B)
 
       /* The chunk's place in the arena, read-only for the GPU. */
       uint32_t offset = i * AGX_ENTRY_CHUNK_SIZE;
-      if (agx_bo_bind(dev, bo, dev->shader_base + offset,
-                      AGX_ENTRY_CHUNK_SIZE, 0, DRM_ASAHI_BIND_READ) ||
+      if (agx_bo_bind(dev, bo, dev->shader_base + offset, AGX_ENTRY_CHUNK_SIZE,
+                      0, DRM_ASAHI_BIND_READ) ||
           !agx_bo_map(bo)) {
          agx_bo_unreference(dev, bo);
          return false;
@@ -877,8 +875,7 @@ agx_shader_entry_write(struct agx_device *dev, uint32_t offset,
 {
    const uint8_t *src = data;
    while (size) {
-      struct agx_bo *bo =
-         dev->entry_chunks[offset / AGX_ENTRY_CHUNK_SIZE];
+      struct agx_bo *bo = dev->entry_chunks[offset / AGX_ENTRY_CHUNK_SIZE];
       uint32_t in_chunk = offset % AGX_ENTRY_CHUNK_SIZE;
       uint32_t n = MIN2(size, AGX_ENTRY_CHUNK_SIZE - in_chunk);
       memcpy((uint8_t *)agx_bo_map(bo) + in_chunk, src, n);

@@ -1276,7 +1276,8 @@ hk_get_sysmem_heap_available(struct hk_physical_device *pdev)
  */
 static void
 hk_restrict_launch_features(struct vk_device_extension_table *ext,
-                        struct vk_features *feat, struct vk_properties *props)
+                            struct vk_features *feat,
+                            struct vk_properties *props)
 {
    const struct vk_device_extension_table all = *ext;
    const struct vk_features all_feat = *feat;
@@ -1996,7 +1997,7 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
 
    if (agx_is_apple9(&pdev->dev)) {
       hk_restrict_launch_features(&supported_extensions, &supported_features,
-                              &properties);
+                                  &properties);
       /* Sample positions are per render and a change splits the render, so
        * they can vary within a subpass, but DXVK would centre samples for
        * every MultisampleEnable=FALSE draw: report it only where the

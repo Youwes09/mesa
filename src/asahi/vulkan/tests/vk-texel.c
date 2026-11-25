@@ -139,9 +139,8 @@ main(int argc, char **argv)
    if (argc == 5 && !index_buffer)
       return 1;
    setbuf(stdout, NULL);
-   printf("buffer usage: %s\n", index_buffer
-                                   ? "index + uniform texel (high VA)"
-                                   : "uniform texel");
+   printf("buffer usage: %s\n",
+          index_buffer ? "index + uniform texel (high VA)" : "uniform texel");
    VkApplicationInfo app = {
       .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
       .apiVersion = index_buffer ? VK_API_VERSION_1_2 : VK_API_VERSION_1_0};

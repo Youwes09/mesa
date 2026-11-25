@@ -727,15 +727,15 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
    if (tex->op == nir_texop_lod_bias) {
       const bool nudge = tex->backend_flags & HK_TEX_TXL_NUDGE;
       unsigned offs =
-         usc_descriptors ? sampler_part_B +
-                  (nudge
-                      ? offsetof(struct hk_usc_sampler_part, txl_nudge_fp16)
-                      : offsetof(struct hk_usc_sampler_part, lod_bias_fp16))
-             : plane_offset_B +
-                  (nudge ? offsetof(struct hk_sampled_image_descriptor,
-                                    txl_nudge_fp16)
-                         : offsetof(struct hk_sampled_image_descriptor,
-                                    lod_bias_fp16));
+         usc_descriptors
+            ? sampler_part_B +
+                 (nudge ? offsetof(struct hk_usc_sampler_part, txl_nudge_fp16)
+                        : offsetof(struct hk_usc_sampler_part, lod_bias_fp16))
+            : plane_offset_B +
+                 (nudge ? offsetof(struct hk_sampled_image_descriptor,
+                                   txl_nudge_fp16)
+                        : offsetof(struct hk_sampled_image_descriptor,
+                                   lod_bias_fp16));
 
       nir_def *bias = load_resource_deref_desc(
          b, 1, 16, nir_src_as_deref(nir_src_for_ssa(sampler)), offs, ctx);
@@ -799,8 +799,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       /* On G16 the handle is the image part's address. */
       unsigned offset_B =
          usc_descriptors ? plane_offset_B
-             : plane_offset_B +
-                  offsetof(struct hk_sampled_image_descriptor, tex);
+                         : plane_offset_B +
+                              offsetof(struct hk_sampled_image_descriptor, tex);
 
       nir_def *handle =
          load_image_handle(b, ctx, nir_src_for_ssa(texture), offset_B);

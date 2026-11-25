@@ -11,6 +11,8 @@
 #include <xf86drm.h>
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/layout/layout.h"
+#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/decode.h"
 #include "drm-uapi/asahi_drm.h"
 #include "drm-uapi/dma-buf.h"
@@ -47,9 +49,6 @@
 #include "util/u_screen.h"
 #include "util/u_upload_mgr.h"
 #include "util/xmlconfig.h"
-#include "agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "agx_bg_eot.h"
 #include "agx_bo.h"
 #include "agx_device.h"
@@ -60,6 +59,7 @@
 #include "agx_public.h"
 #include "agx_state.h"
 #include "agx_tilebuffer.h"
+#include "agx_usc_descriptor.h"
 #include "shader_enums.h"
 
 uint64_t agx_best_modifiers[] = {
@@ -2614,8 +2614,7 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
             format != PIPE_FORMAT_R16G16B16A16_FLOAT)))
          return false;
       if ((usage & PIPE_BIND_RENDER_TARGET) &&
-          agx_apple9_block_export_format(agx_raw_tile_format(format)) >
-             15)
+          agx_apple9_block_export_format(agx_raw_tile_format(format)) > 15)
          return false;
       if ((usage & PIPE_BIND_SAMPLER_VIEW) &&
           ((target != PIPE_BUFFER && target != PIPE_TEXTURE_2D &&

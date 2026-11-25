@@ -57,18 +57,18 @@
 #include "util/u_prim_restart.h"
 #include "util/u_transfer.h"
 #include "util/u_upload_mgr.h"
-#include "agx_cdm.h"
-#include "agx_draw_table.h"
-#include "agx_launch_program.h"
-#include "agx_usc_descriptor.h"
 #include "agx_bg_eot.h"
 #include "agx_bo.h"
+#include "agx_cdm.h"
 #include "agx_device.h"
 #include "agx_disk_cache.h"
+#include "agx_draw_table.h"
+#include "agx_launch_program.h"
 #include "agx_linker.h"
 #include "agx_nir.h"
 #include "agx_nir_lower_vbo.h"
 #include "agx_tilebuffer.h"
+#include "agx_usc_descriptor.h"
 #include "libagx.h"
 #include "libagx_dgc.h"
 #include "libagx_shaders.h"
@@ -3512,8 +3512,7 @@ agx_apple9_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
    /* Storage image fetches use the texel fetch sampler by aperture index */
    struct agx_device *dev = agx_device(batch->ctx->base.screen);
    struct agx_ptr fetch = agx_pool_alloc_aligned(
-      &batch->pipeline_pool, AGX_USC_SAMPLER_STRIDE,
-      AGX_USC_SAMPLER_STRIDE);
+      &batch->pipeline_pool, AGX_USC_SAMPLER_STRIDE, AGX_USC_SAMPLER_STRIDE);
    agx_pack_usc_fetch_sampler(fetch.cpu);
 
    uint32_t fetch_index =
@@ -3674,10 +3673,10 @@ agx_apple9_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
                       ail_get_layer_level_B(layout, view->u.tex.first_layer + i,
                                             0);
 
-      if (!agx_translate_usc_pbe(
-             entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE, &desc->common.pbe,
-             view->format, layout, base, view->u.tex.level, 1, false,
-             AGX_TEXTURE_DIMENSION_2D))
+      if (!agx_translate_usc_pbe(entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                                 &desc->common.pbe, view->format, layout, base,
+                                 view->u.tex.level, 1, false,
+                                 AGX_TEXTURE_DIMENSION_2D))
          return;
    }
 
@@ -3902,9 +3901,8 @@ agx_apple9_upload_tables(struct agx_batch *batch,
          modes |= (uint32_t)AGX_BORDER_COLOUR_CUSTOM << 29;
          memcpy(sampler + 4, &modes, 4);
 
-         static_assert(
-            8 + sizeof(so->border) <= AGX_USC_SAMPLER_STRIDE,
-            "border fits the record");
+         static_assert(8 + sizeof(so->border) <= AGX_USC_SAMPLER_STRIDE,
+                       "border fits the record");
          memcpy(sampler + 8, &so->border, sizeof(so->border));
       }
    }
@@ -3977,9 +3975,8 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
 {
    struct agx_device *dev = agx_device(batch->ctx->base.screen);
    struct agx_cdm_geometry geometry = {
-      .mode = grid.mode == AGX_CDM_MODE_DIRECT
-                 ? AGX_CDM_GEOMETRY_DIRECT
-                 : AGX_CDM_GEOMETRY_INDIRECT,
+      .mode = grid.mode == AGX_CDM_MODE_DIRECT ? AGX_CDM_GEOMETRY_DIRECT
+                                               : AGX_CDM_GEOMETRY_INDIRECT,
       .local = {wg.x, wg.y, wg.z},
    };
 
@@ -4004,19 +4001,18 @@ agx_apple9_launch_compute(struct agx_batch *batch, struct agx_grid grid,
       return false;
    }
 
-   unsigned size = indirect_local
-                      ? AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE
-                   : indirect ? AGX_CDM_INDIRECT_DISPATCH_SIZE
-                              : AGX_CDM_DISPATCH_SIZE;
+   unsigned size = indirect_local ? AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE
+                   : indirect     ? AGX_CDM_INDIRECT_DISPATCH_SIZE
+                                  : AGX_CDM_DISPATCH_SIZE;
    agx_ensure_cmdbuf_has_space(batch, &batch->cdm, size + 4);
 
    ASSERTED bool ok =
-      indirect ? agx_cdm_emit_indirect_dispatch(
-                    batch->cdm.current, launch, grid.ptr, geometry.local,
-                    indirect_local, profile, true)
+      indirect ? agx_cdm_emit_indirect_dispatch(batch->cdm.current, launch,
+                                                grid.ptr, geometry.local,
+                                                indirect_local, profile, true)
                : agx_cdm_emit_direct_dispatch(batch->cdm.current, launch,
-                                                 geometry.threads,
-                                                 geometry.local, profile, true);
+                                              geometry.threads, geometry.local,
+                                              profile, true);
    /* The grid and workgroup are valid by the API */
    assert(ok && "valid dispatch");
 
@@ -4229,8 +4225,8 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
 
    uint64_t sampler_table = 0;
    if (fetch) {
-      struct agx_ptr sampler = agx_pool_alloc_aligned(
-         &batch->pool, AGX_USC_SAMPLER_STRIDE, 64);
+      struct agx_ptr sampler =
+         agx_pool_alloc_aligned(&batch->pool, AGX_USC_SAMPLER_STRIDE, 64);
       agx_pack_usc_fetch_sampler(sampler.cpu);
       sampler_table = sampler.gpu;
    }
@@ -4257,8 +4253,8 @@ agx_build_bg_eot_apple9(struct agx_batch *batch, struct agx_bg_eot_key *key)
    if (!agx_prepare_stage_launch(
           dev, &batch->pipeline_pool, agx_apple9_pool_alloc, &stage, true, 0,
           texture_table, sampler_table, push_table,
-          agx_launch_tile_bytes(key->tib.sample_size_B, samples),
-          samples, &launch))
+          agx_launch_tile_bytes(key->tib.sample_size_B, samples), samples,
+          &launch))
       return (struct asahi_bg_eot){0};
 
    agx_batch_add_apple9_entries(batch, dev);
@@ -4566,11 +4562,11 @@ agx_batch_init_state(struct agx_batch *batch)
    }
 
    bool apple9 = agx_is_apple9(agx_device(batch->ctx->base.screen));
-   batch->tilebuffer_layout = (apple9 ? agx_build_raw_tilebuffer_layout
-                                      : agx_build_tilebuffer_layout)(
-      formats, batch->key.nr_cbufs,
-      util_framebuffer_get_num_samples(&batch->key),
-      util_framebuffer_get_num_layers(&batch->key) > 1);
+   batch->tilebuffer_layout =
+      (apple9 ? agx_build_raw_tilebuffer_layout : agx_build_tilebuffer_layout)(
+         formats, batch->key.nr_cbufs,
+         util_framebuffer_get_num_samples(&batch->key),
+         util_framebuffer_get_num_layers(&batch->key) > 1);
 
    /* Renders allocate whole double words per sample, Apple9 MSAA some always */
    if (apple9) {
@@ -6192,7 +6188,7 @@ agx_apple9_collect_color_targets(const struct agx_batch *batch,
 /* The launch state of a linked Apple9 program */
 static void
 agx_draw_stage(struct agx_draw_stage *stage,
-                        const struct agx_linked_shader *linked)
+               const struct agx_linked_shader *linked)
 {
    const struct agx_linked_program *p = &linked->program;
 
@@ -6216,8 +6212,7 @@ static void
 agx_apple9_render_stages(struct agx_batch *batch,
                          const struct agx_linked_shader *linked_vs,
                          const struct agx_compiled_shader *vs,
-                         enum mesa_prim prim,
-                         struct agx_draw_stage *vertex,
+                         enum mesa_prim prim, struct agx_draw_stage *vertex,
                          struct agx_draw_stage *fragment)
 {
    struct agx_context *ctx = batch->ctx;
@@ -6950,13 +6945,13 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
        * link replace it. A newly linked buffer starts at current directly.
        */
       out =
-         (indirect ? agx_emit_indirect_draw(
-                        batch->vdm.current, &pipeline,
-                        agx_indirect_buffer_ptr(batch, indirect))
-                   : agx_emit_direct_draw(
-                        batch->vdm.current, &pipeline, draws->count,
-                        info->instance_count,
-                        info->index_size ? draws->index_bias : draws->start)) -
+         (indirect
+             ? agx_emit_indirect_draw(batch->vdm.current, &pipeline,
+                                      agx_indirect_buffer_ptr(batch, indirect))
+             : agx_emit_direct_draw(
+                  batch->vdm.current, &pipeline, draws->count,
+                  info->instance_count,
+                  info->index_size ? draws->index_bias : draws->start)) -
          sizeof(uint32_t);
       agx_batch_add_apple9_entries(batch, dev);
       ++batch->apple9_vdm_draws;

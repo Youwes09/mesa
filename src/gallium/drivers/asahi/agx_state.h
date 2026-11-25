@@ -34,11 +34,11 @@
 #include "util/hash_table.h"
 #include "util/rwlock.h"
 #include "util/u_range.h"
+#include "agx_bg_eot.h"
 #include "agx_cdm.h"
 #include "agx_draw_table.h"
-#include "agx_launch_program.h"
-#include "agx_bg_eot.h"
 #include "agx_helpers.h"
+#include "agx_launch_program.h"
 #include "agx_nir_texture.h"
 
 #ifdef __GLIBC__

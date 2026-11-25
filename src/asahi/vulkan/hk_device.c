@@ -9,12 +9,12 @@
 #include "vk_util.h"
 #include "wsi_common_entrypoints.h"
 
-#include "agx_usc_descriptor.h"
-#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "agx_bg_eot.h"
 #include "agx_helpers.h"
 #include "agx_scratch.h"
+#include "agx_usc_descriptor.h"
 #include "hk_cmd_buffer.h"
 #include "hk_descriptor_table.h"
 #include "hk_entrypoints.h"
@@ -460,8 +460,8 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
 
    if (agx_has_launch_programs(&dev->dev)) {
       dev->fetch_sampler =
-         agx_bo_create(&dev->dev, 64 + AGX_USC_SAMPLER_STRIDE, 0,
-                       AGX_BO_LOW_VA, "Apple9 immutable samplers");
+         agx_bo_create(&dev->dev, 64 + AGX_USC_SAMPLER_STRIDE, 0, AGX_BO_LOW_VA,
+                       "Apple9 immutable samplers");
       if (!dev->fetch_sampler) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
@@ -470,8 +470,8 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
       memset(samplers, 0, 64 + AGX_USC_SAMPLER_STRIDE);
       agx_pack_usc_fetch_sampler(samplers);
       agx_pack_basic_usc_sampler(samplers + 64, false, false, 1, 0, 14,
-                              PIPE_TEX_WRAP_CLAMP_TO_EDGE,
-                              PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
+                                 PIPE_TEX_WRAP_CLAMP_TO_EDGE,
+                                 PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
 
       dev->compute_sysvals =
          agx_bo_create(&dev->dev, AGX_APPLE9_RUNTIME_SYSVAL_SIZE, 0, 0,

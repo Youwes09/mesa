@@ -4,6 +4,8 @@
  */
 
 #include <stdint.h>
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "compiler/glsl_types.h"
 #include "compiler/nir/nir_format_convert.h"
 #include "util/format/u_format.h"
@@ -13,8 +15,6 @@
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_builder_opcodes.h"
-#include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
 #define AGX_NUM_TEXTURE_STATE_REGS 16
 #define ALL_SAMPLES                0xFF
@@ -71,8 +71,7 @@ pack_raw_tile(nir_builder *b, enum pipe_format tile, nir_def *rgba)
 
    nir_def *zero = nir_imm_float(b, 0.0);
 
-   if (is_norm8(desc) &&
-       desc->channel[0].type == UTIL_FORMAT_TYPE_UNSIGNED) {
+   if (is_norm8(desc) && desc->channel[0].type == UTIL_FORMAT_TYPE_UNSIGNED) {
       nir_def *c[4];
       for (unsigned i = 0; i < 4; ++i) {
          bool present = i < desc->nr_channels &&
@@ -130,8 +129,8 @@ unpack_raw_tile(nir_builder *b, enum pipe_format tile, nir_def *raw)
 
 static void
 store_raw_tile(nir_builder *b, struct agx_tilebuffer_layout *tib,
-                        enum pipe_format logical_format, unsigned rt,
-                        nir_def *value, nir_def *samples, unsigned write_mask)
+               enum pipe_format logical_format, unsigned rt, nir_def *value,
+               nir_def *samples, unsigned write_mask)
 {
    enum pipe_format tile = agx_raw_tile_format(logical_format);
    unsigned words = agx_raw_tile_words(logical_format);
@@ -164,8 +163,8 @@ store_raw_tile(nir_builder *b, struct agx_tilebuffer_layout *tib,
 
 static nir_def *
 load_raw_tile(nir_builder *b, struct agx_tilebuffer_layout *tib,
-                       uint8_t load_comps, uint8_t bit_size, unsigned rt,
-                       enum pipe_format logical_format)
+              uint8_t load_comps, uint8_t bit_size, unsigned rt,
+              enum pipe_format logical_format)
 {
    enum pipe_format tile = agx_raw_tile_format(logical_format);
    unsigned words = agx_raw_tile_words(logical_format);
@@ -491,8 +490,8 @@ pass(nir_builder *b, nir_intrinsic_instr *intr, void *data)
                       rt, value, ctx->write_samples);
          ctx->any_memory_stores = true;
       } else if (tib->raw_tiles) {
-         store_raw_tile(b, tib, logical_format, rt, value,
-                                 ctx->write_samples, write_mask);
+         store_raw_tile(b, tib, logical_format, rt, value, ctx->write_samples,
+                        write_mask);
       } else {
          store_tilebuffer(b, tib, format, logical_format, rt, value,
                           ctx->write_samples, write_mask);
@@ -512,8 +511,8 @@ pass(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          def = load_memory(b, ctx->bindless_base, tib->nr_samples,
                            intr->num_components, bit_size, rt, logical_format);
       } else if (tib->raw_tiles) {
-         def = load_raw_tile(b, tib, intr->num_components, bit_size,
-                                      rt, logical_format);
+         def = load_raw_tile(b, tib, intr->num_components, bit_size, rt,
+                             logical_format);
       } else {
          def = load_tilebuffer(b, tib, intr->num_components, bit_size, rt,
                                format, logical_format);

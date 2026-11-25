@@ -55,14 +55,14 @@ bool agx_launch_threadgroup_memory_supported(uint32_t bytes);
 
 /* Offset of the encoded entry field, for diagnostics and frame inspection. */
 size_t agx_launch_call_offset(enum agx_launch_stage stage,
-                                     unsigned resource_count);
+                              unsigned resource_count);
 
 /* Build from stage parameters only; no executable input is read.
  * On invalid input leave the destination untouched; on success zero all unused
  * bytes through capacity. The fixed allocation sizes above include padding. */
 bool agx_launch_program_build(uint8_t *out, size_t capacity,
-                             enum agx_launch_stage stage,
-                             const struct agx_launch_parameters *params);
+                              enum agx_launch_stage stage,
+                              const struct agx_launch_parameters *params);
 
 /* A launch program built once, at pipeline creation, for repeated emission.
  * Only the resource table address, the entry offset and the program's own
@@ -91,30 +91,29 @@ struct agx_launch_template {
  * launch_address are per-launch and ignored. Returns false (and leaves the
  * template invalid) when agx_launch_program_build would reject the stage
  * parameters. */
-bool agx_launch_template_init(
-   struct agx_launch_template *tmpl, size_t capacity,
-   enum agx_launch_stage stage,
-   const struct agx_launch_parameters *params);
+bool agx_launch_template_init(struct agx_launch_template *tmpl, size_t capacity,
+                              enum agx_launch_stage stage,
+                              const struct agx_launch_parameters *params);
 
 /* Emit the program for one launch: the same bytes agx_launch_program_build
  * produces with the template's parameters and these per-launch fields. */
-bool agx_launch_template_emit(
-   uint8_t *out, const struct agx_launch_template *tmpl,
-   uint64_t resource_table, uint32_t entry_offset, uint64_t launch_address);
+bool agx_launch_template_emit(uint8_t *out,
+                              const struct agx_launch_template *tmpl,
+                              uint64_t resource_table, uint32_t entry_offset,
+                              uint64_t launch_address);
 
 /* Write a compute launch's root words into the literal slots of a program
  * emitted from tmpl. The words are frozen when the launch is built, where a
  * load would read them at launch: the resource record is CPU-written once per
  * dispatch, no GPU pass writes it, and the roots are addresses, so
  * update-after-bind descriptor contents are unaffected. */
-bool agx_launch_template_set_roots(
-   uint8_t *out, const struct agx_launch_template *tmpl,
-   const uint32_t *root_words);
+bool agx_launch_template_set_roots(uint8_t *out,
+                                   const struct agx_launch_template *tmpl,
+                                   const uint32_t *root_words);
 
 struct agx_draw_stage;
 struct agx_device;
 struct agx_ptr;
-
 
 /* Graphics launch programs of one compiled stage, built on first use for each
  * fragment tile allocation and sample count (vertex stages use 0/0) and then
@@ -131,10 +130,8 @@ struct agx_stage_launch_cache {
    } entry[AGX_STAGE_LAUNCH_TEMPLATES];
 };
 
-void
-agx_stage_launch_cache_init(struct agx_stage_launch_cache *c);
-void
-agx_stage_launch_cache_finish(struct agx_stage_launch_cache *c);
+void agx_stage_launch_cache_init(struct agx_stage_launch_cache *c);
+void agx_stage_launch_cache_finish(struct agx_stage_launch_cache *c);
 
 /* Per-sample tile allocation for a fragment-stage launch or render. As in
  * agx_build_tilebuffer_layout, multisampled renders keep a nonempty
@@ -151,12 +148,13 @@ agx_launch_tile_bytes(unsigned color_bytes, unsigned samples)
  * The caller retains the shader BO and immutable allocation until completion.
  * push is the address of the stage's push words (AGX_APPLE9_PUSH_ROOT).
  */
-bool agx_prepare_stage_launch(
-   struct agx_device *dev, void *allocator,
-   struct agx_ptr (*alloc)(void *, size_t, size_t),
-   const struct agx_draw_stage *shader, bool fragment, uint64_t table,
-   uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
-   unsigned samples, uint32_t *launch);
+bool agx_prepare_stage_launch(struct agx_device *dev, void *allocator,
+                              struct agx_ptr (*alloc)(void *, size_t, size_t),
+                              const struct agx_draw_stage *shader,
+                              bool fragment, uint64_t table, uint64_t textures,
+                              uint64_t samplers, uint64_t push,
+                              unsigned tile_bytes, unsigned samples,
+                              uint32_t *launch);
 
 #ifdef __cplusplus
 }

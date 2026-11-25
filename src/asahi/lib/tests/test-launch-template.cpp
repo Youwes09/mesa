@@ -21,11 +21,10 @@ TEST(LaunchTemplate, MatchesBuild)
    const uint64_t base = 1ull << 40;
    unsigned checked = 0;
    for (unsigned iter = 0; iter < 20000; ++iter) {
-      enum agx_launch_stage stage =
-         (enum agx_launch_stage)(rng() % 3);
+      enum agx_launch_stage stage = (enum agx_launch_stage)(rng() % 3);
       bool compute = stage == AGX_LAUNCH_COMPUTE;
-      size_t capacity = compute ? AGX_COMPUTE_LAUNCH_SIZE
-                                : AGX_GRAPHICS_LAUNCH_SIZE;
+      size_t capacity =
+         compute ? AGX_COMPUTE_LAUNCH_SIZE : AGX_GRAPHICS_LAUNCH_SIZE;
       struct agx_launch_parameters p = {};
       p.shader_base = base;
       p.publication_count = rng() % 64;
@@ -55,8 +54,7 @@ TEST(LaunchTemplate, MatchesBuild)
          for (auto &w : roots)
             w = rng();
          q.root_words = roots;
-         uint8_t a[AGX_COMPUTE_LAUNCH_SIZE],
-            b[AGX_COMPUTE_LAUNCH_SIZE];
+         uint8_t a[AGX_COMPUTE_LAUNCH_SIZE], b[AGX_COMPUTE_LAUNCH_SIZE];
          memset(a, 0xa5, sizeof(a));
          memset(b, 0xa5, sizeof(b));
          bool built = agx_launch_program_build(a, capacity, stage, &q);
@@ -93,11 +91,11 @@ TEST(LaunchTemplate, ComputeRootsAreLiterals)
          roots[i] = 0x01020304u * (i + 1);
       uint8_t out[AGX_COMPUTE_LAUNCH_SIZE];
       p.root_words = NULL;
-      EXPECT_FALSE(agx_launch_program_build(out, sizeof(out),
-                                           AGX_LAUNCH_COMPUTE, &p));
+      EXPECT_FALSE(
+         agx_launch_program_build(out, sizeof(out), AGX_LAUNCH_COMPUTE, &p));
       p.root_words = roots;
-      ASSERT_TRUE(agx_launch_program_build(out, sizeof(out),
-                                          AGX_LAUNCH_COMPUTE, &p));
+      ASSERT_TRUE(
+         agx_launch_program_build(out, sizeof(out), AGX_LAUNCH_COMPUTE, &p));
       const unsigned words = agx_apple9_compute_root_words(resources);
       for (unsigned i = 0; i < words; ++i) {
          uint8_t literal[8];

@@ -7,11 +7,11 @@
 
 #pragma once
 
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_primitive_count.h"
 
 #include "util/macros.h"
@@ -1480,8 +1480,7 @@ hk_launch_draw_cache_supported(const struct hk_cmd_buffer *cmd,
 }
 
 static inline bool
-hk_draw_record_reusable(const struct hk_cmd_buffer *cmd,
-                              struct agx_draw draw)
+hk_draw_record_reusable(const struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    const struct hk_graphics_state *gfx = &cmd->state.gfx;
    return cmd->draw_cache.valid && cmd->current_cs.gfx &&
@@ -1502,7 +1501,7 @@ void hk_launch_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     struct agx_draw draw);
 void hk_init_compute_sysvals(struct hk_device *dev, void *out);
 void hk_upload_texture_tables(struct hk_cmd_buffer *cmd, uint64_t *textures,
-                               uint64_t *samplers, uint64_t *sysvals);
+                              uint64_t *samplers, uint64_t *sysvals);
 
 /* Discard retained CPU storage of an initial command buffer. */
 void hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd);

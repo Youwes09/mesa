@@ -24,9 +24,8 @@ struct agx_draw_pipeline;
 #define AGX_PPP_RECORD_MAX 0x340
 
 #define AGX_PPP_STATIC_SIZE 0xc0
-void
-agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
-                            uint8_t out[AGX_PPP_STATIC_SIZE]);
+void agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
+                          uint8_t out[AGX_PPP_STATIC_SIZE]);
 
 #ifdef __cplusplus
 }

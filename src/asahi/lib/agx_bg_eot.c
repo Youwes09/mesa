@@ -4,6 +4,8 @@
  */
 
 #include "agx_bg_eot.h"
+#include "asahi/compiler/agx_nir_texture.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
 #include "agx_compile.h"
@@ -17,8 +19,6 @@
 #include "nir_builder.h"
 #include "nir_serialize.h"
 #include "pool.h"
-#include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
 static bool
 lower_tex_handle_to_u0(nir_builder *b, nir_intrinsic_instr *intr, void *data)
@@ -322,8 +322,8 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
 /* Apple9 programs get their own BO. False if the USC aperture is full */
 static bool
 agx_upload_launched_precompiled(struct agx_bg_eot_cache *cache,
-                              struct agx_precompiled_shader *p,
-                              unsigned program)
+                                struct agx_precompiled_shader *p,
+                                unsigned program)
 {
    const uint32_t *bin = cache->dev->libagx_programs[program];
    assert(bin != NULL && "the program never runs on Apple9");

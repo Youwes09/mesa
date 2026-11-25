@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: MIT
  * Compare object-owned interpolation state with draw-time packing using fixed
  * semantic allocation addresses. No shader compilation or GPU is involved. */
+#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"
+#include "agx_device.h"
 #include "agx_draw_table.h"
 #include "agx_launch_program.h"
-#include "asahi/lib/agx_tilebuffer.h"
-#include "asahi/lib/agx_apple9_layout.h"
-#include "agx_device.h"
 #define CHECK(c)                                                               \
    do {                                                                        \
       if (!(c)) {                                                              \
@@ -104,7 +104,7 @@ main(void)
                for (unsigned arm = 0; arm < 2; ++arm) {
                   struct agx_draw_pipeline pipeline;
                   CHECK(agx_link_draw_pipeline(&pipeline, &vs,
-                                                        arm ? &owned : &fs));
+                                               arm ? &owned : &fs));
                   pipeline.primitive = pv == 1 ? AGX_PRIMITIVE_TRIANGLE_FAN
                                                : AGX_PRIMITIVE_TRIANGLES;
                   pipeline.flatshade_first = pv != 2;
@@ -120,10 +120,9 @@ main(void)
                   pipeline.ppp = draw[arm].ppp;
                   pipeline.vertex_launch = draw[arm].launch[0] / 64;
                   pipeline.pipeline_word = 0x01000000;
-                  uint8_t *end = agx_emit_direct_draw(
-                     commands[arm], &pipeline, 3, 1, 0);
-                  CHECK(end - commands[arm] ==
-                        agx_direct_draw_size(&pipeline));
+                  uint8_t *end =
+                     agx_emit_direct_draw(commands[arm], &pipeline, 3, 1, 0);
+                  CHECK(end - commands[arm] == agx_direct_draw_size(&pipeline));
                }
                CHECK(usc[0].cf_uploads == 1 && usc[1].cf_uploads == 0);
                CHECK(!memcmp(usc[0].coefficients, immutable + offset,

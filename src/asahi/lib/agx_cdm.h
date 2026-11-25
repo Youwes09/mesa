@@ -27,21 +27,21 @@ struct agx_pool;
 struct agx_ptr;
 struct agx_shader_body;
 
-#define AGX_CDM_RESOURCE_STRIDE                0x20u
-#define AGX_CDM_SUPERSET_RESOURCE_STRIDE       0x100u
-#define AGX_CDM_GEOMETRY_GROUPS_OFFSET         0xc0u
+#define AGX_CDM_RESOURCE_STRIDE              0x20u
+#define AGX_CDM_SUPERSET_RESOURCE_STRIDE     0x100u
+#define AGX_CDM_GEOMETRY_GROUPS_OFFSET       0xc0u
 #define AGX_CDM_DISPATCH_SIZE                0x2cu
 #define AGX_CDM_INDIRECT_DISPATCH_SIZE       0x28u
 #define AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE 0x1cu
 
-size_t agx_cdm_launch_size(
-   const struct agx_apple9_compute_profile *profile);
+size_t agx_cdm_launch_size(const struct agx_apple9_compute_profile *profile);
 
 /* Map a package argument record to the caller's logical buffer namespace and
  * binding.  Compiler-generated profiles may mix UBO inputs with SSBO inputs
  * and outputs without changing native package argument order. */
-enum agx_apple9_compute_resource_kind agx_cdm_resource_kind(
-   const struct agx_apple9_compute_profile *profile, unsigned argument);
+enum agx_apple9_compute_resource_kind
+agx_cdm_resource_kind(const struct agx_apple9_compute_profile *profile,
+                      unsigned argument);
 
 enum agx_cdm_geometry_mode {
    AGX_CDM_GEOMETRY_DIRECT,
@@ -58,9 +58,9 @@ struct agx_cdm_geometry {
 };
 
 /* Populate the group-count pointer and inline counts in a resource record. */
-bool agx_cdm_build_geometry_fields(
-   void *record, size_t record_size, uint64_t record_address,
-   const struct agx_cdm_geometry *geometry);
+bool agx_cdm_build_geometry_fields(void *record, size_t record_size,
+                                   uint64_t record_address,
+                                   const struct agx_cdm_geometry *geometry);
 
 /* Build immutable resource and launch records in the batch's USC pool. */
 bool agx_cdm_prepare_dispatch_alloc(
@@ -69,8 +69,8 @@ bool agx_cdm_prepare_dispatch_alloc(
    struct agx_shader_body *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers,
-   const struct agx_cdm_geometry *geometry,
-   uint64_t preamble_address, uint64_t *launch_address);
+   const struct agx_cdm_geometry *geometry, uint64_t preamble_address,
+   uint64_t *launch_address);
 
 /* As agx_cdm_prepare_dispatch_alloc, emitting the launch program
  * from tmpl (agx_cdm_launch_template of the same profile and
@@ -83,22 +83,20 @@ bool agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_shader_body *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
-   const struct agx_cdm_geometry *geometry,
-   uint64_t preamble_address, const struct agx_launch_template *tmpl,
-   uint64_t *launch_address);
+   const struct agx_cdm_geometry *geometry, uint64_t preamble_address,
+   const struct agx_launch_template *tmpl, uint64_t *launch_address);
 
 /* Build a compute pipeline's launch template, once at pipeline creation. */
-bool agx_cdm_launch_template(
-   struct agx_launch_template *tmpl,
-   const struct agx_apple9_compute_profile *profile, uint64_t usc_exec_base,
-   uint64_t preamble_address);
+bool agx_cdm_launch_template(struct agx_launch_template *tmpl,
+                             const struct agx_apple9_compute_profile *profile,
+                             uint64_t usc_exec_base, uint64_t preamble_address);
 
 bool agx_cdm_prepare_dispatch(
    struct agx_device *dev, struct agx_pool *usc_pool, struct agx_bo *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
-   const struct agx_cdm_geometry *geometry,
-   uint64_t preamble_address, uint64_t *launch_address);
+   const struct agx_cdm_geometry *geometry, uint64_t preamble_address,
+   uint64_t *launch_address);
 
 /* Record-size constants include the optional trailing CDM barrier. Without
  * it, the emitted launch is one uint32_t shorter; the caller supplies the next
@@ -111,15 +109,17 @@ const char *agx_cdm_dispatch_reject_reason(
    const uint32_t global[3], const uint32_t local[3],
    const struct agx_apple9_compute_profile *profile);
 
-bool agx_cdm_emit_direct_dispatch(
-   void *out, uint64_t launch, const uint32_t global[3],
-   const uint32_t local[3], const struct agx_apple9_compute_profile *profile,
-   bool barrier);
+bool
+agx_cdm_emit_direct_dispatch(void *out, uint64_t launch,
+                             const uint32_t global[3], const uint32_t local[3],
+                             const struct agx_apple9_compute_profile *profile,
+                             bool barrier);
 
-bool agx_cdm_emit_indirect_dispatch(
-   void *out, uint64_t launch, uint64_t indirect, const uint32_t local[3],
-   bool indirect_local, const struct agx_apple9_compute_profile *profile,
-   bool barrier);
+bool
+agx_cdm_emit_indirect_dispatch(void *out, uint64_t launch, uint64_t indirect,
+                               const uint32_t local[3], bool indirect_local,
+                               const struct agx_apple9_compute_profile *profile,
+                               bool barrier);
 
 /* Replace the trailing barrier of a dispatch record emitted with one by the
  * compute-only barrier (0x160 in the barrier bits): it orders the following

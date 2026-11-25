@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: MIT
  * Exercise actual render/view ownership with host-backed command BOs. */
-#include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_tilebuffer.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "../hk_cmd_buffer.h"
 #include "../hk_device.h"
 #include "../hk_image.h"
 #include "../hk_image_view.h"
+#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
+#include "asahi/lib/agx_usc_descriptor.h"
 #include "hk_entrypoints.h"
 #include "hk_physical_device.h"
 #include "vk_alloc.h"
@@ -129,7 +129,8 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
          VK_SUCCESS);
    struct hk_image_view *view = hk_image_view_from_handle(handle);
    for (unsigned layered = 0; layered < 2; ++layered) {
-      const struct hk_apple9_render_view *owned = &view->render_descriptors[layered];
+      const struct hk_apple9_render_view *owned =
+         &view->render_descriptors[layered];
       agx_unpack(stderr,
                  layered ? &view->planes[0].layered_background
                          : &view->planes[0].background,

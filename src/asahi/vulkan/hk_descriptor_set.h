@@ -11,9 +11,9 @@
 #include "hk_private.h"
 
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
+#include "asahi/lib/agx_usc_descriptor.h"
 #include "hk_device.h"
 #include "vk_descriptor_update_template.h"
 #include "vk_object.h"
@@ -121,24 +121,21 @@ static_assert(offsetof(struct hk_usc_sampler_part, runtime_sampler) ==
                  AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER,
               "runtime sampler where shaders read it");
 static_assert(offsetof(struct hk_usc_sampler_part, sampler) ==
-                 AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY *
-                    AGX_USC_SAMPLER_STRIDE,
+                 AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY * AGX_USC_SAMPLER_STRIDE,
               "native sampler entry is where register indices expect it");
 
 /* A combined image sampler is an image part followed by a sampler part; a
  * multi-plane descriptor repeats the whole record per plane. */
-#define HK_USC_COMBINED_DESCRIPTOR_SIZE                                     \
+#define HK_USC_COMBINED_DESCRIPTOR_SIZE                                        \
    (sizeof(struct hk_usc_image_part) + sizeof(struct hk_usc_sampler_part))
 #define HK_MAX_SAMPLED_DESCRIPTOR_SIZE (3 * HK_USC_COMBINED_DESCRIPTOR_SIZE)
 
-void hk_texture_info(uint32_t *data,
-                            const struct agx_texture_packed *state);
-bool hk_runtime_sampler(uint32_t *data,
-                               const struct agx_sampler_packed *state,
-                               bool clamp_to_edge);
+void hk_texture_info(uint32_t *data, const struct agx_texture_packed *state);
+bool hk_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state,
+                        bool clamp_to_edge);
 /* A custom border sampler takes its packed colour from border. */
 bool hk_usc_sampler(void *out, const struct agx_sampler_packed *state,
-                              bool clamp_to_edge, const uint32_t *border);
+                    bool clamp_to_edge, const uint32_t *border);
 
 /* This has to match nir_address_format_64bit_bounded_global */
 struct hk_buffer_address {

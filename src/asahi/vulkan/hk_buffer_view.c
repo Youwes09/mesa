@@ -75,8 +75,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
                      uint64_t ro_addr, uint64_t rw_addr, uint32_t elements,
                      uint64_t residency, struct agx_texture_packed *tex,
                      struct agx_pbe_packed *pbe,
-                     struct agx_apple9_texel_metadata *m,
-                     uint8_t *usc_texture)
+                     struct agx_apple9_texel_metadata *m, uint8_t *usc_texture)
 {
    const struct util_format_description *desc = util_format_description(format);
 

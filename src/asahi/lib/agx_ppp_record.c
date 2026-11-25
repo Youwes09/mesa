@@ -49,7 +49,7 @@ put_f32(void *ptr, float value)
  * page, after per-draw argument records. Draw-specific tables live in their
  * own slots on the following pages so mixed interpolation can use one
  * descriptor per scalar without overwriting the next draw's roots. */
-#define DEFAULT_CF_TABLE      0x203d00u
+#define DEFAULT_CF_TABLE 0x203d00u
 
 static unsigned
 cf_binding_count(unsigned components)
@@ -97,8 +97,7 @@ build_direct_bind_group(uint8_t *page, unsigned varying_components)
    page[0x2c] = 4 + varying_components;
    /* G16's fragment-state layout moves the coefficient pointer ahead of
     * the pipeline words. */
-   put_u32(page + 0x04,
-                  0x100 | (cf_binding_count(varying_components) << 16));
+   put_u32(page + 0x04, 0x100 | (cf_binding_count(varying_components) << 16));
    put_u32(page + 0x08, DEFAULT_CF_TABLE);
    put_u32(page + 0x18, varying_components / 8);
 }
@@ -110,7 +109,7 @@ build_direct_bind_group(uint8_t *page, unsigned varying_components)
  * on top. */
 void
 agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
-                            uint8_t out[AGX_PPP_STATIC_SIZE])
+                     uint8_t out[AGX_PPP_STATIC_SIZE])
 {
    uint8_t *ppp = out;
    memset(ppp, 0, AGX_PPP_STATIC_SIZE);
@@ -135,12 +134,12 @@ agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
    if (pipeline->vertex->writes_layer_viewport)
       put_u32(group + 0x20, get_u32(group + 0x20) | (3u << 19));
    put_u32(group + 0x20,
-                  get_u32(group + 0x20) |
-                     BITFIELD_MASK(pipeline->vertex->clip_distance_count));
+           get_u32(group + 0x20) |
+              BITFIELD_MASK(pipeline->vertex->clip_distance_count));
    put_u32(group + 0x2c, 4 + pipeline->vertex->varying_components +
-                                   pipeline->vertex->writes_point_size +
-                                   pipeline->vertex->clip_distance_count +
-                                   pipeline->vertex->writes_layer_viewport);
+                            pipeline->vertex->writes_point_size +
+                            pipeline->vertex->clip_distance_count +
+                            pipeline->vertex->writes_layer_viewport);
    /* Match the textured setup's native state, including with two user
     * varyings. This field's full resource-count formula is unresolved;
     * the varying-only estimate is insufficient to describe the captures. */

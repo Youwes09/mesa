@@ -69,10 +69,10 @@ void agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
                    const uint8_t *uvs_slots);
 
 void agx_link_program(struct agx_linked_program *p, bool fragment,
-                     struct agx_shader_part *main,
-                     struct agx_shader_part *prolog,
-                     struct agx_shader_part *epilog, unsigned nr_samples_shaded,
-                     const uint8_t *uvs_slots);
+                      struct agx_shader_part *main,
+                      struct agx_shader_part *prolog,
+                      struct agx_shader_part *epilog,
+                      unsigned nr_samples_shaded, const uint8_t *uvs_slots);
 
 /* These parts of the vertex element affect the generated code */
 struct agx_velem_key {

@@ -178,9 +178,8 @@ agx_draw_record_reset(struct agx_draw_record *draw)
    memset(&draw->buffer_count, 0,
           offsetof(struct agx_draw_record, viewports) -
              offsetof(struct agx_draw_record, buffer_count));
-   memset(
-      &draw->scissor_index, 0,
-      sizeof(*draw) - offsetof(struct agx_draw_record, scissor_index));
+   memset(&draw->scissor_index, 0,
+          sizeof(*draw) - offsetof(struct agx_draw_record, scissor_index));
 }
 
 /* Whether a draw can take the previous draw's launch for stage (0 vertex, 1
@@ -189,8 +188,7 @@ agx_draw_record_reset(struct agx_draw_record *draw)
  * samples, tile_bytes and provoking_vertex must already be filled in. */
 static inline bool
 agx_draw_reuses_launch(const struct agx_draw_record *previous,
-                              const struct agx_draw_record *draw,
-                              unsigned stage)
+                       const struct agx_draw_record *draw, unsigned stage)
 {
    return previous && draw->program_id[stage] &&
           previous->program_id[stage] == draw->program_id[stage] &&
@@ -205,9 +203,8 @@ agx_draw_reuses_launch(const struct agx_draw_record *previous,
 }
 
 static inline bool
-agx_draw_reuses_coefficients(
-   const struct agx_draw_record *previous,
-   const struct agx_draw_record *draw)
+agx_draw_reuses_coefficients(const struct agx_draw_record *previous,
+                             const struct agx_draw_record *draw)
 {
    return previous && draw->program_id[0] && draw->program_id[1] &&
           previous->program_id[0] == draw->program_id[0] &&
@@ -215,15 +212,13 @@ agx_draw_reuses_coefficients(
           previous->provoking_vertex == draw->provoking_vertex;
 }
 
-
 #define AGX_CF_TABLE_SIZE   0x2a0
 #define AGX_CF_TABLE_STRIDE 0x2c0
-#define AGX_CF_TABLES_SIZE (3 * AGX_CF_TABLE_STRIDE)
-unsigned
-agx_coefficients_size(const struct agx_draw_stage *fragment);
+#define AGX_CF_TABLES_SIZE  (3 * AGX_CF_TABLE_STRIDE)
+unsigned agx_coefficients_size(const struct agx_draw_stage *fragment);
 void agx_init_coefficients(struct agx_device *dev,
-                                  struct agx_draw_stage *fragment,
-                                  struct agx_ptr allocation);
+                           struct agx_draw_stage *fragment,
+                           struct agx_ptr allocation);
 
 /* The caller owns both immutable arenas. Context allocations must lie wholly
  * within the render-context aperture; USC allocations use the shader aperture.
@@ -233,8 +228,7 @@ bool agx_prepare_draw_record_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_draw_pipeline *pipeline,
-   struct agx_draw_record *draw,
+   const struct agx_draw_pipeline *pipeline, struct agx_draw_record *draw,
    const struct agx_draw_record *previous);
 
 bool agx_prepare_draw_record(struct agx_device *dev, struct agx_pool *usc_pool,
@@ -250,27 +244,23 @@ bool agx_update_draw_tables_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_draw_pipeline *pipeline,
-   struct agx_draw_record *draw, const uint64_t tables[2],
-   const uint64_t push[2]);
+   const struct agx_draw_pipeline *pipeline, struct agx_draw_record *draw,
+   const uint64_t tables[2], const uint64_t push[2]);
 
+bool agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
+                            const struct agx_draw_stage *vertex,
+                            const struct agx_draw_stage *fragment);
 
-bool
-agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
-                                const struct agx_draw_stage *vertex,
-                                const struct agx_draw_stage *fragment);
+size_t agx_direct_draw_size(const struct agx_draw_pipeline *pipeline);
 
-size_t
-agx_direct_draw_size(const struct agx_draw_pipeline *pipeline);
-
-uint8_t *agx_emit_direct_draw(
-   uint8_t *out, const struct agx_draw_pipeline *pipeline,
-   unsigned vertex_count, unsigned instance_count, unsigned vertex_start);
-
-uint8_t *
-agx_emit_indirect_draw(uint8_t *out,
+uint8_t *agx_emit_direct_draw(uint8_t *out,
                               const struct agx_draw_pipeline *pipeline,
-                              uint64_t indirect);
+                              unsigned vertex_count, unsigned instance_count,
+                              unsigned vertex_start);
+
+uint8_t *agx_emit_indirect_draw(uint8_t *out,
+                                const struct agx_draw_pipeline *pipeline,
+                                uint64_t indirect);
 
 static inline struct agx_shader_body *
 agx_draw_stage_body(const struct agx_draw_stage *stage)

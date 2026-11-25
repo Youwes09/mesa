@@ -5,9 +5,9 @@
 
 #include <array>
 #include "asahi/compiler/agx_compile.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "agx_cdm.h"
 #include "agx_draw_table.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
 #include <gtest/gtest.h>
 
@@ -79,10 +79,10 @@ TEST(DispatchPacket, PacketFootprints)
       bool ok =
          mode == 0
             ? agx_cdm_emit_direct_dispatch(out.data() + 16, 0x10000010000ull,
-                                              global, local, &profile, true)
-            : agx_cdm_emit_indirect_dispatch(
-                 out.data() + 16, 0x10000010000ull, 0x200000000ull, local,
-                 mode == 2, &profile, true);
+                                           global, local, &profile, true)
+            : agx_cdm_emit_indirect_dispatch(out.data() + 16, 0x10000010000ull,
+                                             0x200000000ull, local, mode == 2,
+                                             &profile, true);
       ASSERT_TRUE(ok);
       for (unsigned i = 0; i < 16; ++i)
          EXPECT_EQ(out[i], 0xa5);

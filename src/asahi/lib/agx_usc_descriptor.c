@@ -18,10 +18,9 @@
 
 bool
 agx_translate_usc_pbe(void *out, const struct agx_pbe_packed *state,
-                         enum pipe_format format,
-                         const struct ail_layout *layout, uint64_t layer_base,
-                         unsigned level, unsigned layer_count, bool layered,
-                         unsigned dimension)
+                      enum pipe_format format, const struct ail_layout *layout,
+                      uint64_t layer_base, unsigned level, unsigned layer_count,
+                      bool layered, unsigned dimension)
 {
    if (dimension > 15 || !layout->levels || layout->levels > 16 ||
        level >= layout->levels || !layout->width_px || !layout->height_px ||
@@ -179,8 +178,8 @@ usc_sampler_address(unsigned wrap)
 
 static struct AGX_SAMPLER_G16
 usc_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
-               float min_lod, float max_lod, unsigned wrap_s, unsigned wrap_t,
-               unsigned max_anisotropy)
+            float min_lod, float max_lod, unsigned wrap_s, unsigned wrap_t,
+            unsigned max_anisotropy)
 {
    assert(mip_filter <= 2);
    max_lod = CLAMP(max_lod, 0.0f, 14.0f);
@@ -206,13 +205,13 @@ usc_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
 
 void
 agx_pack_basic_usc_sampler(void *out, bool min_linear, bool mag_linear,
-                        unsigned mip_filter, float min_lod, float max_lod,
-                        unsigned wrap_s, unsigned wrap_t,
-                        unsigned max_anisotropy)
+                           unsigned mip_filter, float min_lod, float max_lod,
+                           unsigned wrap_s, unsigned wrap_t,
+                           unsigned max_anisotropy)
 {
    struct AGX_SAMPLER_G16 sampler =
-      usc_sampler(min_linear, mag_linear, mip_filter, min_lod, max_lod,
-                     wrap_s, wrap_t, max_anisotropy);
+      usc_sampler(min_linear, mag_linear, mip_filter, min_lod, max_lod, wrap_s,
+                  wrap_t, max_anisotropy);
    AGX_SAMPLER_G16_pack(out, &sampler);
 }
 
@@ -364,7 +363,7 @@ agx_pack_usc_fetch_sampler(void *out)
 {
    struct AGX_SAMPLER_G16 sampler =
       usc_sampler(false, false, 1, 0, 14, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
-                     PIPE_TEX_WRAP_CLAMP_TO_BORDER, 1);
+                  PIPE_TEX_WRAP_CLAMP_TO_BORDER, 1);
    sampler.wrap_r = AGX_WRAP_CLAMP_TO_BORDER;
    AGX_SAMPLER_G16_pack(out, &sampler);
 }

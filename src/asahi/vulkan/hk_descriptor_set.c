@@ -61,9 +61,9 @@ write_desc(struct hk_descriptor_set *set, uint32_t binding, uint32_t elem,
  */
 static size_t
 hk_pack_usc_sampled_image(struct hk_device *dev, void *out,
-                             VkDescriptorType type,
-                             const VkDescriptorImageInfo *info,
-                             const struct hk_sampler *sampler)
+                          VkDescriptorType type,
+                          const VkDescriptorImageInfo *info,
+                          const struct hk_sampler *sampler)
 {
    const bool image = type != VK_DESCRIPTOR_TYPE_SAMPLER;
    const bool sampled = type == VK_DESCRIPTOR_TYPE_SAMPLER ||
@@ -81,8 +81,8 @@ hk_pack_usc_sampled_image(struct hk_device *dev, void *out,
       if (image) {
          struct hk_usc_image_part *part = (void *)dst;
          if (view && p < view->plane_count) {
-            *part = input ? view->planes[p].usc_input
-                          : view->planes[p].usc_sampled;
+            *part =
+               input ? view->planes[p].usc_input : view->planes[p].usc_sampled;
          } else {
             *part = (struct hk_usc_image_part){0};
             struct agx_texture_packed null;
@@ -120,7 +120,7 @@ hk_pack_sampled_image(struct hk_device *dev, void *out,
 {
    if (agx_has_usc_descriptors(&dev->dev))
       return hk_pack_usc_sampled_image(dev, out, descriptor_type, info,
-                                          sampler);
+                                       sampler);
 
    struct hk_sampled_image_descriptor desc[3] = {};
 
@@ -1086,10 +1086,11 @@ hk_get_texel_buffer_descriptor(struct hk_device *dev, VkDescriptorType type,
       uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
       enum pipe_format format = hk_format_to_pipe_format(info->format);
       uint32_t elements = info->range / util_format_get_blocksize(format);
-      hk_pack_texel_buffer(
-         dev, format, info->address, info->address, elements,
-         agx_has_residency_tables(&dev->dev) ? dev->resident_table->va->addr : 0, &tex,
-         &pbe, &m, texture);
+      hk_pack_texel_buffer(dev, format, info->address, info->address, elements,
+                           agx_has_residency_tables(&dev->dev)
+                              ? dev->resident_table->va->addr
+                              : 0,
+                           &tex, &pbe, &m, texture);
       size = hk_pack_texel_buffer_desc(dev, out, type, &tex, &pbe, &m, texture);
    } else {
       size = hk_pack_texel_buffer_desc(dev, out, type, NULL, NULL, NULL, NULL);

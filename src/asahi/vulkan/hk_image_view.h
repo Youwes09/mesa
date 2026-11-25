@@ -60,21 +60,19 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(hk_image_view, vk.base, VkImageView,
 
 /* Address of the struct agx_apple9_residency table for a plane of the view. */
 uint64_t hk_view_residency(const struct hk_device *dev,
-                                  const struct hk_image_view *view,
-                                  unsigned plane);
+                           const struct hk_image_view *view, unsigned plane);
 
 /* Encode an uncompressed native tile-store view for render submission. */
-bool hk_image_view_eot(const struct hk_image_view *view, bool layered,
-                              bool raw, void *out);
+bool hk_image_view_eot(const struct hk_image_view *view, bool layered, bool raw,
+                       void *out);
 
 /* Image memory must be dense and uncompressed for native storage writes. */
 bool hk_pbe_store_image(const struct hk_image *image, unsigned plane);
 bool hk_pbe_store_view_layout(const struct ail_layout *layout,
-                                        enum pipe_format view_format);
+                              enum pipe_format view_format);
 
 /* Native writes address an individual 2D plane of the storage PBE. */
-bool hk_translate_storage_pbe(void *out,
-                                     const struct agx_pbe_packed *state,
-                                     enum pipe_format format,
-                                     const struct ail_layout *layout,
-                                     uint64_t base, unsigned level);
+bool hk_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
+                              enum pipe_format format,
+                              const struct ail_layout *layout, uint64_t base,
+                              unsigned level);

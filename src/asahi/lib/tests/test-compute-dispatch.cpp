@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include <algorithm>
 #include <iterator>
+#include "asahi/lib/agx_apple9_layout.h"
 #include <gtest/gtest.h>
 #include "agx_cdm.h"
-#include "asahi/lib/agx_apple9_layout.h"
 
 TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
 {
@@ -30,9 +30,9 @@ TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
       } else {
          size = mode == 1 ? AGX_CDM_INDIRECT_DISPATCH_SIZE
                           : AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE;
-         ok_fenced = agx_cdm_emit_indirect_dispatch(
-            fenced, launch, 0x1234000, profile.local_size, mode == 2, &profile,
-            true);
+         ok_fenced = agx_cdm_emit_indirect_dispatch(fenced, launch, 0x1234000,
+                                                    profile.local_size,
+                                                    mode == 2, &profile, true);
          ok_unfenced = agx_cdm_emit_indirect_dispatch(
             unfenced, launch, 0x1234000, profile.local_size, mode == 2,
             &profile, false);
@@ -69,10 +69,10 @@ TEST(ComputeDispatch, RejectReasonMatchesEmitters)
    uint32_t out[16];
 
    EXPECT_EQ(agx_cdm_dispatch_reject_reason(launch, false, 0, global,
-                                               profile.local_size, &profile),
+                                            profile.local_size, &profile),
              nullptr);
    EXPECT_EQ(agx_cdm_dispatch_reject_reason(launch, true, 0x1234000, NULL,
-                                               profile.local_size, &profile),
+                                            profile.local_size, &profile),
              nullptr);
 
    struct {
@@ -87,18 +87,18 @@ TEST(ComputeDispatch, RejectReasonMatchesEmitters)
       {false, launch + 0x20, 0, global, "launch address not 64-byte aligned"},
    };
    for (const auto &c : cases) {
-      const char *reason = agx_cdm_dispatch_reject_reason(
-         c.launch, c.indirect, c.address, c.global, profile.local_size,
-         &profile);
+      const char *reason =
+         agx_cdm_dispatch_reject_reason(c.launch, c.indirect, c.address,
+                                        c.global, profile.local_size, &profile);
       ASSERT_NE(reason, nullptr) << c.reason;
       EXPECT_STREQ(reason, c.reason);
       bool ok =
          c.indirect
             ? agx_cdm_emit_indirect_dispatch(out, c.launch, c.address,
-                                                profile.local_size, false,
-                                                &profile, false)
-            : agx_cdm_emit_direct_dispatch(
-                 out, c.launch, c.global, profile.local_size, &profile, false);
+                                             profile.local_size, false,
+                                             &profile, false)
+            : agx_cdm_emit_direct_dispatch(out, c.launch, c.global,
+                                           profile.local_size, &profile, false);
       EXPECT_FALSE(ok) << c.reason;
    }
 }

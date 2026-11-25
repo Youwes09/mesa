@@ -12,7 +12,7 @@
 #define AGX_ENTRY_ARENA_SIZE 0x00800000u
 /* The arena is backed on demand in chunks of this size, see
  * agx_shader_entry_back. */
-#define AGX_ENTRY_CHUNK_SIZE 0x00100000u
+#define AGX_ENTRY_CHUNK_SIZE  0x00100000u
 #define AGX_ENTRY_CHUNKS      (AGX_ENTRY_ARENA_SIZE / AGX_ENTRY_CHUNK_SIZE)
 #define AGX_ENTRY_HEADER_SIZE 0x00000340u
 #define AGX_ENTRY_BLOCK_SIZE  0x000000c0u

@@ -373,8 +373,8 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
    CHECK(native.address == pbe.buffer);
    uint8_t native_expected[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
    if (!alias)
-      CHECK(agx_translate_usc_texture(native_expected,
-                                         &s->planes[0].ro_storage));
+      CHECK(
+         agx_translate_usc_texture(native_expected, &s->planes[0].ro_storage));
    CHECK(!memcmp(desc.texture, native_expected, sizeof(native_expected)));
    /* Independently inspect the native depth bits: a Z-major image must retain
     * its full mip-tree depth even when only one slice is visible to storage.

@@ -82,8 +82,8 @@ void agx_assign_uvs(struct agx_varyings_vs *varyings,
                     uint64_t linear_mask);
 
 void agx_uvs_word_slots(uint8_t *slots,
-                          const struct agx_unlinked_uvs_layout *layout,
-                          const struct agx_varyings_vs *varyings);
+                        const struct agx_unlinked_uvs_layout *layout,
+                        const struct agx_varyings_vs *varyings);
 
 struct agx_varyings_fs;
 

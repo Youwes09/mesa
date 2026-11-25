@@ -184,8 +184,7 @@ main(void)
       CHECK(fallback.va && fallback.vk.device_address == alias_base);
       CHECK(mapped_offset == info.memoryOffset);
       CHECK(mapped_size == 2 * AIL_PAGESIZE);
-      CHECK(mem.index_va == NULL &&
-            dev->index_alias_bytes == charged_before);
+      CHECK(mem.index_va == NULL && dev->index_alias_bytes == charged_before);
       __wrap_agx_va_free(&dev->dev, fallback.va, true);
       dev->index_alias_bytes = 0;
    }

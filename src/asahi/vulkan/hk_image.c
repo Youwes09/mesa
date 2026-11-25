@@ -6,9 +6,9 @@
  */
 #include "hk_image.h"
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
+#include "asahi/lib/agx_usc_descriptor.h"
 #include "drm-uapi/drm_fourcc.h"
 #include "util/bitscan.h"
 #include "util/format/u_format.h"
@@ -1054,7 +1054,7 @@ hk_image_init(struct hk_device *dev, struct hk_image *image,
 
 void
 hk_residency_init(struct agx_apple9_residency *r,
-                         const struct ail_layout *layout)
+                  const struct ail_layout *layout)
 {
    const unsigned block_w = util_format_get_blockwidth(layout->format);
    const unsigned block_h = util_format_get_blockheight(layout->format);

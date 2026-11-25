@@ -5,12 +5,12 @@
  * SPDX-License-Identifier: MIT
  */
 #include <assert.h>
+#include "asahi/compiler/agx_nir.h"
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
-#include "asahi/lib/agx_apple9_layout.h"
-#include "asahi/compiler/agx_nir.h"
 #include "agx_abi.h"
 #include "agx_bg_eot.h"
 #include "agx_bo.h"
@@ -42,15 +42,15 @@
 #include "asahi/libagx/mesh.h"
 #include "asahi/libagx/query.h"
 #include "asahi/libagx/tessellator.h"
-#include "poly/geometry.h"
 #include "pipe/p_defines.h"
+#include "poly/geometry.h"
 #include "util/blend.h"
 #include "util/format/format_utils.h"
 #include "util/format/u_formats.h"
 #include "util/macros.h"
-#include "util/u_math.h"
 #include "util/ralloc.h"
 #include "util/u_debug.h"
+#include "util/u_math.h"
 #include "util/u_prim.h"
 #include "vulkan/vulkan_core.h"
 #include "layout.h"
@@ -345,7 +345,7 @@ hk_bg_sysvals(struct hk_cmd_buffer *cmd, bool layered)
 /* Target rt: texture 2 * rt, image rt, clear colour in push words 4 + 8 * rt */
 static struct hk_bg_eot
 hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
-                        struct agx_bg_eot_key *key)
+                 struct agx_bg_eot_key *key)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_rendering_state *render = &cmd->state.gfx.render;
@@ -441,11 +441,10 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    unsigned samples = key->tib.nr_samples;
    uint32_t launch;
    if (!agx_prepare_stage_launch(
-          &dev->dev, cmd, hk_usc_alloc_cb, &stage, true, table,
-          textures.gpu, dev->fetch_sampler->va->addr, push_addr,
-          agx_launch_tile_bytes(hk_raw_tile_bytes(&key->tib),
-                                       samples),
-          samples, &launch))
+          &dev->dev, cmd, hk_usc_alloc_cb, &stage, true, table, textures.gpu,
+          dev->fetch_sampler->va->addr, push_addr,
+          agx_launch_tile_bytes(hk_raw_tile_bytes(&key->tib), samples), samples,
+          &launch))
       goto fail;
 
    return (struct hk_bg_eot){.usc = launch};
@@ -1508,8 +1507,9 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                        attach_z, attach_s, incomplete_render_area, true, false,
                        NULL);
 
-   const bool drop_stores = agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev) &&
-                            !(render->flags & VK_RENDERING_SUSPENDING_BIT);
+   const bool drop_stores =
+      agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev) &&
+      !(render->flags & VK_RENDERING_SUSPENDING_BIT);
    /* The first render pass of a chain decides its loads. */
    if (!resume && !merge) {
       render->chain_load[0] = attach_z && attach_z->imageView &&
@@ -2820,7 +2820,7 @@ hk_rast_primitive(enum mesa_prim prim)
  * sample count, the standard ones otherwise. */
 static uint32_t
 hk_draw_sample_positions(const struct vk_dynamic_graphics_state *dyn,
-                                unsigned samples)
+                         unsigned samples)
 {
    return dyn->ms.sample_locations_enable && dyn->ms.sample_locations &&
                 dyn->ms.sample_locations->per_pixel == samples
@@ -2989,9 +2989,8 @@ hk_launch_set_index_fetch(struct agx_draw_pipeline *pipeline,
 }
 
 static void
-hk_launch_emit_draw(struct hk_cs *cs,
-                             const struct agx_draw_pipeline *pipeline,
-                             struct agx_draw draw)
+hk_launch_emit_draw(struct hk_cs *cs, const struct agx_draw_pipeline *pipeline,
+                    struct agx_draw draw)
 {
    if (agx_is_indirect(draw.b))
       cs->current =
@@ -3163,8 +3162,7 @@ hk_launch_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
    fragment->reads_primitive_id = primitive_id;
    fragment->reads_z = fs_linked->b.cf.reads_z;
 
-   return agx_link_draw_pipeline(&cmd->draw_pipeline, vertex,
-                                          fragment);
+   return agx_link_draw_pipeline(&cmd->draw_pipeline, vertex, fragment);
 }
 
 /* Reuse preparation, not emission: every draw still records its scope and
@@ -3181,8 +3179,7 @@ hk_launch_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   struct agx_draw_pipeline *pipeline =
-      &cmd->draw_cache.pipeline;
+   struct agx_draw_pipeline *pipeline = &cmd->draw_cache.pipeline;
    if (draw.indexed) {
       uint64_t offset =
          (uint64_t)draw.start * agx_index_size_to_B(draw.index_size);
@@ -3230,9 +3227,9 @@ hk_launch_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          if (!push[0] || !push[1])
             return true; /* The pool recorded the allocation failure. */
 
-         if (!agx_update_draw_tables_alloc(
-                &dev->dev, cmd, hk_usc_alloc_cb, cmd,
-                hk_context_alloc_cb, pipeline, record, tables, push)) {
+         if (!agx_update_draw_tables_alloc(&dev->dev, cmd, hk_usc_alloc_cb, cmd,
+                                           hk_context_alloc_cb, pipeline,
+                                           record, tables, push)) {
             vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
             return true;
          }
@@ -3424,8 +3421,7 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    cs->tib = gfx->render.tilebuffer;
    const struct vk_dynamic_graphics_state *ms_dyn =
       &cmd->vk.dynamic_graphics_state;
-   gfx->sample_positions =
-      hk_draw_sample_positions(ms_dyn, pipeline.samples);
+   gfx->sample_positions = hk_draw_sample_positions(ms_dyn, pipeline.samples);
    /* hk_launch_prepare_draw committed the render's positions; meta draws
     * only fill them in for a render that has none yet. */
    if (!cs->has_sample_locations)
@@ -3669,7 +3665,7 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       const struct agx_draw_stage *s = &cmd->draw_stages[stage];
       uint64_t sysvals = 0;
       hk_upload_texture_tables(cmd, &record->texture_table[stage],
-                                &record->sampler_table[stage], &sysvals);
+                               &record->sampler_table[stage], &sysvals);
 
       record->push[stage] =
          hk_launch_push_words(cmd, shaders[stage], linked[stage], gfx->root);
@@ -3695,8 +3691,8 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       cmd->draw_record_cs == cs ? &cmd->draw_records[!cmd->draw_record_current]
                                 : NULL;
    bool prepared = agx_prepare_draw_record_alloc(
-      &dev->dev, cmd, hk_usc_alloc_cb, cmd, hk_context_alloc_cb,
-      &pipeline, record, previous);
+      &dev->dev, cmd, hk_usc_alloc_cb, cmd, hk_context_alloc_cb, &pipeline,
+      record, previous);
    if (!prepared)
       UNSUPPORTED("the draw state cannot be prepared");
    cmd->draw_record_current = !cmd->draw_record_current;
@@ -3749,8 +3745,7 @@ hk_launch_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 /* Run a software pre-rasterization stage, linked as s, as compute */
 static void
 hk_launch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
-                           struct hk_linked_shader *linked,
-                           struct agx_grid grid)
+                  struct hk_linked_shader *linked, struct agx_grid grid)
 {
    if (agx_is_shader_empty(&s->b))
       return;
@@ -4000,8 +3995,7 @@ hk_launch_tess_stage(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
 
    HK_TESS_LANE(0);
-   hk_launch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX],
-                              grid_vs);
+   hk_launch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX], grid_vs);
    HK_TESS_LANE(1);
    hk_launch_prerast(cmd, tcs, tcs->only_linked, grid_tcs);
 
@@ -4151,10 +4145,10 @@ hk_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    /* The stage before the GS: the API VS linked with its prolog, or the TES */
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
    hk_launch_prerast(cmd, vs,
-                              vs->info.stage == MESA_SHADER_VERTEX
-                                 ? gfx->linked[MESA_SHADER_VERTEX]
-                                 : vs->only_linked,
-                              grid_vs);
+                     vs->info.stage == MESA_SHADER_VERTEX
+                        ? gfx->linked[MESA_SHADER_VERTEX]
+                        : vs->only_linked,
+                     grid_vs);
    cmd->tess_batch.capture = NULL;
 
    if (xfb_or_queries) {
@@ -6677,9 +6671,9 @@ hk_launch_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       struct agx_draw draw;
       if (cpu_setup) {
          hk_launch_prerast(cmd, main, main->only_linked,
-                                    agx_3d(direct[0] * profile->local_size[0],
-                                           direct[1] * profile->local_size[1],
-                                           direct[2] * profile->local_size[2]));
+                           agx_3d(direct[0] * profile->local_size[0],
+                                  direct[1] * profile->local_size[1],
+                                  direct[2] * profile->local_size[2]));
          draw = (struct agx_draw){.b = agx_3d(direct_count * vertices, 1, 1)};
       } else {
          hk_launch_prerast(

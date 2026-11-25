@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "agx_cdm.h"
+#include "agx_device.h"
 #include "agx_draw_table.h"
 #include "agx_launch_program.h"
-#include "agx_device.h"
 #define CHECK(c)                                                               \
    do {                                                                        \
       if (!(c)) {                                                              \
@@ -74,11 +74,9 @@ main(void)
                   .preamble_address = preamble ? va.addr + 64 : 0,
                };
                uint8_t reference[AGX_GRAPHICS_LAUNCH_SIZE];
-               CHECK(agx_launch_program_build(reference, sizeof(reference),
-                                             fragment
-                                                ? AGX_LAUNCH_FRAGMENT
-                                                : AGX_LAUNCH_VERTEX,
-                                             &p));
+               CHECK(agx_launch_program_build(
+                  reference, sizeof(reference),
+                  fragment ? AGX_LAUNCH_FRAGMENT : AGX_LAUNCH_VERTEX, &p));
                CHECK(!memcmp(reference, a.data + 64, sizeof(reference)));
                for (unsigned i = a.size; i < sizeof(a.data); ++i)
                   CHECK(a.data[i] == 0xa5);

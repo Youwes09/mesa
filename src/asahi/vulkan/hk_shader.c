@@ -376,7 +376,7 @@ hk_make_feature_key(const struct vk_features *feats)
  */
 static bool
 hk_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
-                               UNUSED void *data)
+                        UNUSED void *data)
 {
    nir_def *sample;
    b->cursor = nir_before_instr(&intr->instr);
@@ -651,10 +651,9 @@ lower_load_global_bounded(nir_builder *b, nir_intrinsic_instr *intr,
 
 /* Natural alignment keeps a partly in-bounds merged load within one page */
 static bool
-hk_vectorize_cb(unsigned align_mul, unsigned align_offset,
-                       unsigned bit_size, unsigned num_components,
-                       int64_t hole_size, nir_intrinsic_instr *low,
-                       nir_intrinsic_instr *high, void *data)
+hk_vectorize_cb(unsigned align_mul, unsigned align_offset, unsigned bit_size,
+                unsigned num_components, int64_t hole_size,
+                nir_intrinsic_instr *low, nir_intrinsic_instr *high, void *data)
 {
    if (!agx_mem_vectorize_cb(align_mul, align_offset, bit_size, num_components,
                              hole_size, low, high, NULL))
@@ -1062,7 +1061,7 @@ lower_viewport_fs(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
  */
 static bool
 hk_lower_layer_viewport_fs(nir_builder *b, nir_intrinsic_instr *intr,
-                                  UNUSED void *data)
+                           UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_input)
       return false;
@@ -1478,8 +1477,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       if (agx_is_apple9(&dev->dev)) {
          NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-                  hk_lower_layer_viewport_fs, nir_metadata_control_flow,
-                  NULL);
+                  hk_lower_layer_viewport_fs, nir_metadata_control_flow, NULL);
       }
 
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_viewport_fs,
@@ -1530,9 +1528,8 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
 #define HK_BODY_ALIGNMENT 64
 /* USC may prefetch beyond the last instruction. Keep the end of every slab
  * mapped but unallocated so its last body cannot prefetch into the VA guard. */
-#define HK_BODY_TAIL 1024
-#define HK_BODY_SLAB_USABLE                                             \
-   (HK_BODY_SLAB_SIZE - HK_BODY_TAIL)
+#define HK_BODY_TAIL        1024
+#define HK_BODY_SLAB_USABLE (HK_BODY_SLAB_SIZE - HK_BODY_TAIL)
 
 static VkResult
 hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
@@ -1971,8 +1968,7 @@ hk_late_zs(nir_shader *nir)
  * (hk_cmd_draw.c) against an exported depth above the storable range, so
  * every sample fails depth and still takes its stencil depth-fail op. */
 static bool
-hk_clamp_depth_export(nir_builder *b, nir_intrinsic_instr *intr,
-                             void *data)
+hk_clamp_depth_export(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
    if (intr->intrinsic != nir_intrinsic_store_output ||
        nir_intrinsic_io_semantics(intr).location != FRAG_RESULT_DEPTH)
@@ -2051,7 +2047,7 @@ kill_psiz_write(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
 static bool
 hk_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
-                             UNUSED void *data)
+                      UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_clip_z_coeff)
       return false;
@@ -2462,8 +2458,8 @@ hk_lower_launch_fs(nir_shader *nir, struct hk_shader *shader)
 {
    /* Shading per sample interpolates at the sample */
    if (nir->info.fs.uses_sample_shading) {
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-               hk_lower_bary_to_sample, nir_metadata_control_flow, NULL);
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_lower_bary_to_sample,
+               nir_metadata_control_flow, NULL);
    }
 
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_clamp_depth_export,
@@ -2473,8 +2469,8 @@ hk_lower_launch_fs(nir_shader *nir, struct hk_shader *shader)
                                      nir->info.fs.pixel_interlock_unordered;
 
    /* Merged triangles share interpolation, wrong away from the pixel centre */
-   shader->info.fs.disable_tri_merging = nir->info.fs.uses_sample_shading ||
-                                         hk_interpolates_off_center(nir);
+   shader->info.fs.disable_tri_merging =
+      nir->info.fs.uses_sample_shading || hk_interpolates_off_center(nir);
 }
 
 VkResult

@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hk_image_view.h"
-#include "asahi/lib/agx_usc_descriptor.h"
 #include "asahi/lib/agx_tilebuffer.h"
+#include "asahi/lib/agx_usc_descriptor.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
 #include "vulkan/vulkan_core.h"
@@ -602,8 +602,7 @@ hk_init_usc_view_descriptors(struct hk_image_view *view)
    for (unsigned p = 0; p < view->plane_count; ++p) {
       for (unsigned input = 0; input < 2; ++input) {
          struct hk_usc_image_part *part =
-            input ? &view->planes[p].usc_input
-                  : &view->planes[p].usc_sampled;
+            input ? &view->planes[p].usc_input : &view->planes[p].usc_sampled;
          const struct agx_texture_packed *tex =
             input ? &view->planes[p].ia : &view->planes[p].sampled;
          part->base_level = view->vk.base_mip_level;
@@ -620,7 +619,7 @@ hk_init_usc_view_descriptors(struct hk_image_view *view)
          struct agx_texture_packed alias;
          pack_texture(view, p, HK_DESC_USAGE_CUBE_ALIAS, &alias);
          agx_translate_usc_texture(view->planes[p].usc_sampled.cube_alias,
-                                      &alias);
+                                   &alias);
       }
    }
 
@@ -697,8 +696,7 @@ hk_init_render_descriptors(struct hk_image_view *view)
          cfg = image;
       }
       out->texture_valid = agx_translate_usc_texture(out->texture, &packed);
-      out->store_valid =
-         hk_image_view_eot(view, layered, false, out->store);
+      out->store_valid = hk_image_view_eot(view, layered, false, out->store);
    }
 }
 
@@ -779,12 +777,12 @@ hk_DestroyImageView(VkDevice _device, VkImageView imageView,
 
 bool
 hk_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
-                                enum pipe_format format,
-                                const struct ail_layout *layout, uint64_t base,
-                                unsigned level)
+                         enum pipe_format format,
+                         const struct ail_layout *layout, uint64_t base,
+                         unsigned level)
 {
    return agx_translate_usc_pbe(out, state, format, layout, base, level, 1,
-                                   false, AGX_TEXTURE_DIMENSION_2D);
+                                false, AGX_TEXTURE_DIMENSION_2D);
 }
 
 bool
@@ -809,7 +807,7 @@ hk_pbe_store_image(const struct hk_image *image, unsigned plane)
  * converter, which addresses the view's elements. */
 bool
 hk_pbe_store_view_layout(const struct ail_layout *layout,
-                                   enum pipe_format view_format)
+                         enum pipe_format view_format)
 {
    return !util_format_is_compressed(layout->format) &&
           util_format_get_blocksize(layout->format) ==
@@ -895,9 +893,8 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
       }
    }
    view->storage_pbe_index = index;
-   view->storage_flags = array || slices
-                                 ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
-                                 : AGX_APPLE9_STORAGE_WRITE_VALID;
+   view->storage_flags = array || slices ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
+                                         : AGX_APPLE9_STORAGE_WRITE_VALID;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -927,8 +924,8 @@ hk_CreateImageView(VkDevice _device, const VkImageViewCreateInfo *pCreateInfo,
 }
 
 bool
-hk_image_view_eot(const struct hk_image_view *view, bool layered,
-                         bool raw, void *out)
+hk_image_view_eot(const struct hk_image_view *view, bool layered, bool raw,
+                  void *out)
 {
    if (view->plane_count != 1)
       return false;
@@ -953,13 +950,13 @@ hk_image_view_eot(const struct hk_image_view *view, bool layered,
    struct ail_layout store_layout = *layout;
    store_layout.compressed &= !raw;
    return agx_translate_usc_pbe(out, state, format_for_plane(view, 0),
-                                   &store_layout, base, view->vk.base_mip_level,
-                                   layered ? layers : 1, layered, dimension);
+                                &store_layout, base, view->vk.base_mip_level,
+                                layered ? layers : 1, layered, dimension);
 }
 
 uint64_t
-hk_view_residency(const struct hk_device *dev,
-                         const struct hk_image_view *view, unsigned plane)
+hk_view_residency(const struct hk_device *dev, const struct hk_image_view *view,
+                  unsigned plane)
 {
    const struct hk_image *image =
       container_of(view->vk.image, struct hk_image, vk);

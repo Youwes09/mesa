@@ -58,9 +58,7 @@ main(void)
     * No shader compilation or allocator is available in this host fixture. */
    uint8_t *end = expected;
    for (unsigned i = 0; i < 2; ++i) {
-      end = agx_emit_direct_draw(end, &cmd->draw_cache.pipeline,
-                                        3, 1, 0) -
-            4;
+      end = agx_emit_direct_draw(end, &cmd->draw_cache.pipeline, 3, 1, 0) - 4;
       hk_launch_draw(cmd, 0, draw);
    }
    CHECK((uint8_t *)cs.current - emitted == end - expected);
@@ -77,9 +75,9 @@ main(void)
    do {                                                                        \
       __typeof__(field) saved = field;                                         \
       field = value;                                                           \
-      CHECK(!hk_draw_record_reusable(cmd, draw));                        \
+      CHECK(!hk_draw_record_reusable(cmd, draw));                              \
       field = saved;                                                           \
-      CHECK(hk_draw_record_reusable(cmd, draw));                         \
+      CHECK(hk_draw_record_reusable(cmd, draw));                               \
    } while (0)
    INVALIDATE(cmd->draw_cache.valid, false);
    INVALIDATE(cmd->current_cs.gfx, &other);
@@ -121,15 +119,14 @@ main(void)
                               false);
       cmd->state.gfx.index.restart = BITFIELD_MASK(bytes * 8);
       CHECK(hk_draw_record_reusable(cmd, draw));
-      struct agx_draw_pipeline pipeline =
-         cmd->draw_cache.pipeline;
+      struct agx_draw_pipeline pipeline = cmd->draw_cache.pipeline;
       pipeline.index_size = bytes;
       pipeline.index_buffer = draw.index_buffer + draw.start * bytes;
       pipeline.index_extent =
          MIN2(128 - draw.start * bytes, draw.b.count[0] * bytes);
       pipeline.restart_index = cmd->state.gfx.index.restart;
       end = agx_emit_direct_draw(end, &pipeline, draw.b.count[0],
-                                        draw.b.count[1], draw.index_bias) -
+                                 draw.b.count[1], draw.index_bias) -
             4;
       hk_launch_draw(cmd, 0, draw);
    }

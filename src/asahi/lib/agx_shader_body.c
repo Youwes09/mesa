@@ -141,8 +141,7 @@ agx_init_shader_entries(struct agx_device *dev)
    uint8_t header[AGX_ENTRY_HEADER_SIZE];
    memset(header, 0, AGX_ENTRY_HEADER_SIZE);
    put_u32(header, AGX_ENTRY_HEADER_SIZE);
-   for (unsigned offset = 0x40; offset < AGX_ENTRY_HEADER_SIZE;
-        offset += 2)
+   for (unsigned offset = 0x40; offset < AGX_ENTRY_HEADER_SIZE; offset += 2)
       put_u16(header + offset, 0x0006);
    fill_helper_table(header, 0x100, 10);
    fill_helper_table(header, 0x200, 10);
@@ -161,11 +160,10 @@ agx_init_shader_entries(struct agx_device *dev)
 static void
 evict_entries(struct agx_device *dev)
 {
-   const unsigned target =
-      AGX_ENTRY_ARENA_SIZE / AGX_ENTRY_BLOCK_SIZE / 4;
+   const unsigned target = AGX_ENTRY_ARENA_SIZE / AGX_ENTRY_BLOCK_SIZE / 4;
    unsigned freed = 0;
-   list_for_each_entry_safe(struct agx_shader_body, body,
-                            &dev->entry_lru, entry_link) {
+   list_for_each_entry_safe(struct agx_shader_body, body, &dev->entry_lru,
+                            entry_link) {
       if (freed == target)
          break;
       if (body->entry_pins || body->entry_fixed)
@@ -184,26 +182,21 @@ agx_shader_entry(struct agx_device *dev, void *allocator,
                  struct agx_shader_body *body, bool compute)
 {
    simple_mtx_lock(&dev->entry_lock);
-   if (!allocator || !dev->pin_entry ||
-       !dev->pin_entry(allocator, body))
+   if (!allocator || !dev->pin_entry || !dev->pin_entry(allocator, body))
       body->entry_fixed = true;
    uint32_t entry = body->entry_offset;
    if (entry) {
       list_move_to(&body->entry_link, &dev->entry_lru);
    } else {
-      uint32_t block = util_vma_heap_alloc(&dev->entry_heap,
-                                           AGX_ENTRY_BLOCK_SIZE,
-                                           AGX_ENTRY_ALIGNMENT);
+      uint32_t block = util_vma_heap_alloc(
+         &dev->entry_heap, AGX_ENTRY_BLOCK_SIZE, AGX_ENTRY_ALIGNMENT);
       if (!block) {
          evict_entries(dev);
-         block = util_vma_heap_alloc(&dev->entry_heap,
-                                     AGX_ENTRY_BLOCK_SIZE,
+         block = util_vma_heap_alloc(&dev->entry_heap, AGX_ENTRY_BLOCK_SIZE,
                                      AGX_ENTRY_ALIGNMENT);
       }
-      if (block &&
-          !agx_shader_entry_back(dev, block + AGX_ENTRY_BLOCK_SIZE)) {
-         util_vma_heap_free(&dev->entry_heap, block,
-                            AGX_ENTRY_BLOCK_SIZE);
+      if (block && !agx_shader_entry_back(dev, block + AGX_ENTRY_BLOCK_SIZE)) {
+         util_vma_heap_free(&dev->entry_heap, block, AGX_ENTRY_BLOCK_SIZE);
          block = 0;
       }
       if (block) {
@@ -212,19 +205,16 @@ agx_shader_entry(struct agx_device *dev, void *allocator,
          memset(bytes, 0, AGX_ENTRY_BLOCK_SIZE);
          put_u32(bytes, AGX_ENTRY_BLOCK_SIZE);
          if (compute) {
-            util_call_once(&compute_entry_once,
-                           init_compute_entry);
+            util_call_once(&compute_entry_once, init_compute_entry);
             memcpy(bytes + 0x40, compute_entry_constants, 0x40);
          }
          if (build_body_entry(bytes + AGX_ENTRY_CODE_OFFSET,
-                                     dev->shader_base + entry, body->addr)) {
-            agx_shader_entry_write(dev, block, bytes,
-                                   AGX_ENTRY_BLOCK_SIZE);
+                              dev->shader_base + entry, body->addr)) {
+            agx_shader_entry_write(dev, block, bytes, AGX_ENTRY_BLOCK_SIZE);
             body->entry_offset = entry;
             list_addtail(&body->entry_link, &dev->entry_lru);
          } else {
-            util_vma_heap_free(&dev->entry_heap, block,
-                               AGX_ENTRY_BLOCK_SIZE);
+            util_vma_heap_free(&dev->entry_heap, block, AGX_ENTRY_BLOCK_SIZE);
             entry = 0;
          }
       }

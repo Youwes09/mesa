@@ -102,8 +102,8 @@ agx_build_tilebuffer_layout(const enum pipe_format *formats, uint8_t nr_cbufs,
 
 struct agx_tilebuffer_layout
 agx_build_raw_tilebuffer_layout(const enum pipe_format *formats,
-                                   uint8_t nr_cbufs, uint8_t nr_samples,
-                                   bool layered);
+                                uint8_t nr_cbufs, uint8_t nr_samples,
+                                bool layered);
 
 void agx_tilebuffer_set_samples(struct agx_tilebuffer_layout *tib,
                                 unsigned nr_samples);
@@ -202,8 +202,8 @@ agx_raw_tile_words(enum pipe_format format)
 {
    if (format == PIPE_FORMAT_NONE)
       return 1;
-   return DIV_ROUND_UP(
-      util_format_get_blocksize(agx_raw_tile_format(format)), 4);
+   return DIV_ROUND_UP(util_format_get_blocksize(agx_raw_tile_format(format)),
+                       4);
 }
 
 /* Raw tile accesses preserve format bits, including exact integer outputs */

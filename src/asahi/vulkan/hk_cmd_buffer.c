@@ -6,10 +6,10 @@
  */
 #include "hk_cmd_buffer.h"
 #include <inttypes.h>
+#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "util/simple_mtx.h"
 
 #include "agx_abi.h"
@@ -899,7 +899,8 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
        */
       struct hk_device *dev = hk_cmd_buffer_device(cmd);
       hk_ensure_cs_has_space(cmd, cs, AGX_CDM_BARRIER_LENGTH);
-      if (agx_has_compute_barrier(&dev->dev) && !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
+      if (agx_has_compute_barrier(&dev->dev) &&
+          !(dst_stages & HK_SYNC_DISPATCH_INDIRECT))
          hk_cdm_compute_barrier(dev, cs);
       else
          hk_cdm_cache_flush(dev, cs);
@@ -1688,8 +1689,8 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
 
    if (prog->launched) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
-      hk_launch_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
-                         grid, args, 0, NULL);
+      hk_launch_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile, grid,
+                         args, 0, NULL);
       return;
    }
 

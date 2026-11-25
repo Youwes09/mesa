@@ -12,11 +12,11 @@
 #include "asahi/lib/pool.h"
 #include "asahi/libagx/libagx_dgc.h"
 #include "util/u_math.h"
-#include "agx_tilebuffer.h"
 #include "agx_device.h"
 #include "agx_pack.h"
 #include "agx_ppp_record.h"
 #include "agx_shader_body.h"
+#include "agx_tilebuffer.h"
 
 static inline void
 put_u32(void *ptr, uint32_t value)
@@ -72,8 +72,8 @@ draw_provoking_vertex(unsigned primitive, bool first)
 
 static enum agx_shade_model
 cf_shade_model(struct agx_apple9_interp_mask linear_mask,
-                   struct agx_apple9_interp_mask flat_mask,
-                   enum agx_shade_model flat_shade, unsigned i)
+               struct agx_apple9_interp_mask flat_mask,
+               enum agx_shade_model flat_shade, unsigned i)
 {
    if (agx_apple9_interp_mask_test(flat_mask, i))
       return flat_shade;
@@ -85,10 +85,10 @@ cf_shade_model(struct agx_apple9_interp_mask linear_mask,
 
 static unsigned
 build_cf_table(uint8_t *table, unsigned components,
-                         struct agx_apple9_interp_mask linear_mask,
-                         struct agx_apple9_interp_mask flat_mask,
-                         unsigned provoking_vertex, bool reads_z,
-                         bool reads_point_coord, bool reads_primitive_id)
+               struct agx_apple9_interp_mask linear_mask,
+               struct agx_apple9_interp_mask flat_mask,
+               unsigned provoking_vertex, bool reads_z, bool reads_point_coord,
+               bool reads_primitive_id)
 {
    const enum agx_shade_model flat_shade =
       provoking_vertex == 1   ? AGX_SHADE_MODEL_FLAT_VERTEX_1
@@ -120,7 +120,7 @@ build_cf_table(uint8_t *table, unsigned components,
       unsigned count = 1;
       while (count < 4 && start + count < components &&
              cf_shade_model(linear_mask, flat_mask, flat_shade,
-                                start + count) == shade)
+                            start + count) == shade)
          ++count;
 
       agx_pack(&bindings[binding++], CF_BINDING, cfg) {
@@ -178,20 +178,17 @@ agx_coefficients_size(const struct agx_draw_stage *fragment)
 }
 
 void
-agx_init_coefficients(struct agx_device *dev,
-                             struct agx_draw_stage *fragment,
-                             struct agx_ptr allocation)
+agx_init_coefficients(struct agx_device *dev, struct agx_draw_stage *fragment,
+                      struct agx_ptr allocation)
 {
-   unsigned count =
-      agx_coefficients_size(fragment) / AGX_CF_TABLE_STRIDE;
+   unsigned count = agx_coefficients_size(fragment) / AGX_CF_TABLE_STRIDE;
    memset(allocation.cpu, 0, count * AGX_CF_TABLE_STRIDE);
    for (unsigned pv = 0; pv < count; ++pv) {
       unsigned offset = pv * AGX_CF_TABLE_STRIDE;
       fragment->coefficient_count = build_cf_table(
          (uint8_t *)allocation.cpu + offset, fragment->varying_components,
-         fragment->linear_mask, fragment->flat_mask, pv,
-         fragment->reads_z, fragment->reads_point_coord,
-         fragment->reads_primitive_id);
+         fragment->linear_mask, fragment->flat_mask, pv, fragment->reads_z,
+         fragment->reads_point_coord, fragment->reads_primitive_id);
       fragment->coefficients[pv] = agx_usc_addr(dev, allocation.gpu + offset);
    }
    if (count == 1)
@@ -206,12 +203,11 @@ agx_prepare_draw_record_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_draw_pipeline *pipeline,
-   struct agx_draw_record *draw,
+   const struct agx_draw_pipeline *pipeline, struct agx_draw_record *draw,
    const struct agx_draw_record *previous)
 {
    const struct agx_draw_stage *stages[] = {pipeline->vertex,
-                                                     pipeline->fragment};
+                                            pipeline->fragment};
    unsigned tile_bytes = 0;
    for (unsigned rt = 0; rt < pipeline->fragment->render_targets; rt++)
       tile_bytes += 4 * agx_raw_tile_words(pipeline->color_formats[rt]);
@@ -229,10 +225,9 @@ agx_prepare_draw_record_alloc(
    for (unsigned stage = 0; stage < 2; stage++) {
       const struct agx_draw_stage *shader = stages[stage];
       if (!shader->bo || !shader->publication_count_valid) {
-         fprintf(
-            stderr,
-            "draw: stage %u missing shader BO or publication count\n",
-            stage);
+         fprintf(stderr,
+                 "draw: stage %u missing shader BO or publication count\n",
+                 stage);
          return false;
       }
       draw->program_id[stage] = shader->program_id;
@@ -248,15 +243,13 @@ agx_prepare_draw_record_alloc(
       if (!agx_prepare_stage_launch(
              dev, usc_allocator, usc_alloc, shader, stage != 0, table,
              draw->texture_table[stage], draw->sampler_table[stage],
-             draw->push[stage],
-             agx_launch_tile_bytes(tile_bytes, samples), samples,
-             &draw->launch[stage]))
+             draw->push[stage], agx_launch_tile_bytes(tile_bytes, samples),
+             samples, &draw->launch[stage]))
          return false;
    }
    draw->provoking_vertex =
       draw_provoking_vertex(pipeline->primitive, draw->flatshade_first);
-   bool reuse_coefficients =
-      agx_draw_reuses_coefficients(previous, draw);
+   bool reuse_coefficients = agx_draw_reuses_coefficients(previous, draw);
    unsigned cf_count;
    if (pipeline->fragment->coefficients[draw->provoking_vertex]) {
       draw->coefficients =
@@ -269,9 +262,8 @@ agx_prepare_draw_record_alloc(
       uint8_t contents[AGX_CF_TABLE_SIZE];
       cf_count = build_cf_table(
          contents, pipeline->vertex->varying_components,
-         pipeline->fragment->linear_mask,
-         pipeline->fragment->flat_mask, draw->provoking_vertex,
-         pipeline->fragment->reads_z,
+         pipeline->fragment->linear_mask, pipeline->fragment->flat_mask,
+         draw->provoking_vertex, pipeline->fragment->reads_z,
          pipeline->fragment->reads_point_coord,
          pipeline->fragment->reads_primitive_id);
       struct agx_ptr cf = usc_alloc(usc_allocator, sizeof(contents), 64);
@@ -298,8 +290,7 @@ agx_prepare_draw_record_alloc(
           sizeof(draw->ppp_record) - AGX_PPP_STATIC_SIZE);
    uint8_t *group = ppp + 0x40;
    put_u32(group + 8, draw->coefficients);
-   put_u32(group + 4,
-                  (get_u32(group + 4) & 0xffff) | (cf_count << 16));
+   put_u32(group + 4, (get_u32(group + 4) & 0xffff) | (cf_count << 16));
    put_u32(group + 0x14, draw->launch[1] / 0x40);
    put_u32(group + 0x5c, tile_bytes ? 0x1ffff : 0);
    /* Discards and explicit per-sample stores preserve omitted samples and
@@ -331,14 +322,12 @@ agx_prepare_draw_record_alloc(
     * bits 7/8, clipping/clamping bits 10/11, primitive MSAA bit 15, front
     * winding bit 16. */
    put_u32(group + 0x70, (get_u32(group + 0x70) & ~0x38d83u) |
-                                   ((draw->provoking_vertex + 1u) << 7) |
-                                   draw->raster_control);
-   put_u32(group + 0x50, get_u32(group + 0x50) |
-                                   (draw->visibility_mode << 14) |
-                                   (draw->depth_control & (1u << 21)));
+                            ((draw->provoking_vertex + 1u) << 7) |
+                            draw->raster_control);
+   put_u32(group + 0x50, get_u32(group + 0x50) | (draw->visibility_mode << 14) |
+                            (draw->depth_control & (1u << 21)));
    put_u32(group + 0x48, (uint32_t)draw->occlusion_index << 17);
-   put_u32(group + 0x34,
-                  draw->depth_control | (unfilled ? 1u << 26 : 0));
+   put_u32(group + 0x34, draw->depth_control | (unfilled ? 1u << 26 : 0));
    put_u32(group + 0x38, draw->depth_face[0]);
    put_u32(group + 0x3c, draw->stencil[0]);
    put_u32(group + 0x40, draw->depth_face[1]);
@@ -353,10 +342,9 @@ agx_prepare_draw_record_alloc(
          else if (polygon_mode == AGX_POLYGON_MODE_POINT)
             object_type = AGX_OBJECT_TYPE_POINT_FILLED_TRIANGLE;
       }
-      put_u32(face2, (get_u32(face2) & 0x0f33ffffu) |
-                               (polygon_mode << 18) |
-                               ((draw->writes_depth ? 0u : 3u) << 22) |
-                               (object_type << 28));
+      put_u32(face2, (get_u32(face2) & 0x0f33ffffu) | (polygon_mode << 18) |
+                        ((draw->writes_depth ? 0u : 3u) << 22) |
+                        (object_type << 28));
    }
    /* Viewport block: a count word, one region clip pair per viewport, a
     * word set when there are several viewports, then {translate, scale} for
@@ -380,7 +368,7 @@ agx_prepare_draw_record_alloc(
          uint32_t lo = draw->scissor_min[axis] / 32;
          uint32_t hi = DIV_ROUND_UP(MAX2(draw->scissor_max[axis], 1), 32) - 1;
          put_u32(vp + 4 + v * 8 + axis * 4,
-                        (axis ? 0 : 0x80000000u) | (lo << 16) | hi);
+                 (axis ? 0 : 0x80000000u) | (lo << 16) | hi);
       }
    }
    put_u32(vp + 4 + viewports * 8, viewports > 1);
@@ -391,13 +379,12 @@ agx_prepare_draw_record_alloc(
    }
    for (unsigned v = 1; v < viewports; ++v) {
       for (unsigned i = 0; i < 6; ++i)
-         put_f32(transforms + v * 0x18 + i * 4,
-                        draw->viewports[v - 1][i]);
+         put_f32(transforms + v * 0x18 + i * 4, draw->viewports[v - 1][i]);
    }
    /* PPP depth-bias/scissor record: header followed by two 16-bit indices. */
    put_u32(ppp + 0xf0, 0x100);
-   put_u32(ppp + 0xf4, draw->scissor_index |
-                                 ((uint32_t)draw->depth_bias_index << 16));
+   put_u32(ppp + 0xf4,
+           draw->scissor_index | ((uint32_t)draw->depth_bias_index << 16));
    /* Compare only this canonical 256-byte record, in CPU storage. This
     * bounded check reuses an immutable allocation; it neither scans an arena
     * nor derives byte-range patches. A new batch has no predecessor. */
@@ -422,12 +409,11 @@ agx_update_draw_tables_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_draw_pipeline *pipeline,
-   struct agx_draw_record *draw, const uint64_t tables[2],
-   const uint64_t push[2])
+   const struct agx_draw_pipeline *pipeline, struct agx_draw_record *draw,
+   const uint64_t tables[2], const uint64_t push[2])
 {
    const struct agx_draw_stage *stages[] = {pipeline->vertex,
-                                                     pipeline->fragment};
+                                            pipeline->fragment};
    const uint64_t old_tables[] = {draw->vertex_table, draw->fragment_table};
    const uint64_t new_push[] = {push ? push[0] : draw->push[0],
                                 push ? push[1] : draw->push[1]};
@@ -479,9 +465,8 @@ agx_prepare_draw_record(struct agx_device *dev, struct agx_pool *usc_pool,
                         struct agx_draw_record *draw,
                         const struct agx_draw_record *previous)
 {
-   return agx_prepare_draw_record_alloc(dev, usc_pool, pool_alloc,
-                                        context_pool, pool_alloc,
-                                        pipeline, draw, previous);
+   return agx_prepare_draw_record_alloc(dev, usc_pool, pool_alloc, context_pool,
+                                        pool_alloc, pipeline, draw, previous);
 }
 
 /*
@@ -498,15 +483,15 @@ static_assert(AGX_PPP_RECORD_MAX >=
 static const struct {
    uint16_t offset, words;
 } ppp_blocks[] = {
-   {0x00, 5}, {0x40, 7}, {0x5c, 5}, {0x70, 7}, {0x8c, 5},
-   {0xc0, 10}, /* viewports */
+   {0x00, 5}, {0x40, 7}, {0x5c, 5},
+   {0x70, 7}, {0x8c, 5}, {0xc0, 10}, /* viewports */
    {0xa0, 3}, {0xac, 2}, {0xf0, 2},
 };
 
 bool
 agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
-                                const struct agx_draw_stage *vertex,
-                                const struct agx_draw_stage *fragment)
+                       const struct agx_draw_stage *vertex,
+                       const struct agx_draw_stage *fragment)
 {
    if (!pipeline || !vertex || !fragment || !vertex->binary ||
        !vertex->binary_size || !fragment->binary || !fragment->binary_size ||
@@ -514,8 +499,9 @@ agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
       return false;
 
    /*
-    * The launch path compacts the cross-stage interface to scalar UVS slots.  Position
-    * occupies slots 0..3; compacted user scalars follow in semantic order.
+    * The launch path compacts the cross-stage interface to scalar UVS slots.
+    * Position occupies slots 0..3; compacted user scalars follow in semantic
+    * order.
     */
    if (vertex->position_components != 4 ||
        vertex->varying_components > AGX_APPLE9_MAX_VARYING_COMPONENTS ||
@@ -549,8 +535,7 @@ agx_direct_draw_size(const struct agx_draw_pipeline *pipeline)
 }
 
 static uint8_t *
-emit_draw_state(uint8_t *out,
-                           const struct agx_draw_pipeline *pipeline)
+emit_draw_state(uint8_t *out, const struct agx_draw_pipeline *pipeline)
 {
    assert(pipeline && pipeline->vertex->binary && pipeline->fragment->binary);
    assert(pipeline->ppp && !(pipeline->ppp & 0x3f));
@@ -611,9 +596,8 @@ emit_draw_state(uint8_t *out,
  * without copies.
  */
 static uint8_t *
-emit_index_list(uint8_t *out,
-                       const struct agx_draw_pipeline *pipeline,
-                       bool indirect)
+emit_index_list(uint8_t *out, const struct agx_draw_pipeline *pipeline,
+                bool indirect)
 {
    assert(pipeline->index_size == 1 || pipeline->index_size == 2 ||
           pipeline->index_size == 4);
@@ -649,8 +633,7 @@ emit_index_list(uint8_t *out,
 }
 
 static uint8_t *
-emit_index_list_end(uint8_t *out,
-                           const struct agx_draw_pipeline *pipeline)
+emit_index_list_end(uint8_t *out, const struct agx_draw_pipeline *pipeline)
 {
    agx_push(out, INDEX_LIST_BUFFER_SIZE_G16, cfg) {
       cfg.size =
@@ -674,10 +657,9 @@ emit_draw_end(uint8_t *out)
 }
 
 uint8_t *
-agx_emit_direct_draw(uint8_t *out,
-                            const struct agx_draw_pipeline *pipeline,
-                            unsigned vertex_count, unsigned instance_count,
-                            unsigned vertex_start)
+agx_emit_direct_draw(uint8_t *out, const struct agx_draw_pipeline *pipeline,
+                     unsigned vertex_count, unsigned instance_count,
+                     unsigned vertex_start)
 {
    assert(vertex_count > 0 && instance_count > 0);
    out = emit_draw_state(out, pipeline);
@@ -714,9 +696,8 @@ agx_emit_direct_draw(uint8_t *out,
 }
 
 uint8_t *
-agx_emit_indirect_draw(uint8_t *out,
-                              const struct agx_draw_pipeline *pipeline,
-                              uint64_t indirect)
+agx_emit_indirect_draw(uint8_t *out, const struct agx_draw_pipeline *pipeline,
+                       uint64_t indirect)
 {
    assert(indirect && !(indirect & 3));
    out = emit_draw_state(out, pipeline);

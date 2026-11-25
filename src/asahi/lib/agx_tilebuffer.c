@@ -5,10 +5,10 @@
 
 #include "agx_tilebuffer.h"
 #include <assert.h>
-#include "util/format/u_format.h"
-#include "layout.h"
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "util/format/u_format.h"
+#include "layout.h"
 
 /* Maximum number of bytes per tile on G13G. This may change in future versions
  * of the architecture.
@@ -115,8 +115,8 @@ agx_build_tilebuffer_layout(const enum pipe_format *formats, uint8_t nr_cbufs,
 
 struct agx_tilebuffer_layout
 agx_build_raw_tilebuffer_layout(const enum pipe_format *formats,
-                                   uint8_t nr_cbufs, uint8_t nr_samples,
-                                   bool layered)
+                                uint8_t nr_cbufs, uint8_t nr_samples,
+                                bool layered)
 {
    struct agx_tilebuffer_layout tib = {
       .nr_samples = nr_samples,
@@ -166,7 +166,7 @@ agx_tilebuffer_set_samples(struct agx_tilebuffer_layout *tib,
    assert(tib->nr_samples == 0 && "must not be initialized");
 
    *tib = (tib->raw_tiles ? agx_build_raw_tilebuffer_layout
-                       : agx_build_tilebuffer_layout)(
+                          : agx_build_tilebuffer_layout)(
       tib->logical_format, ARRAY_SIZE(tib->logical_format), nr_samples,
       tib->layered);
 }

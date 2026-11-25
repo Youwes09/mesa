@@ -84,7 +84,7 @@ struct hk_image_plane {
 };
 
 void hk_residency_init(struct agx_apple9_residency *r,
-                              const struct ail_layout *layout);
+                       const struct ail_layout *layout);
 
 struct hk_image {
    struct vk_image vk;

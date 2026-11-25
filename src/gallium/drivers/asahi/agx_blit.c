@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/layout/layout.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "compiler/nir/nir_builder.h"
 #include "compiler/nir/nir_format_convert.h"
 #include "gallium/auxiliary/util/u_blitter.h"
@@ -25,7 +26,6 @@
 #include "util/ralloc.h"
 #include "util/u_sampler.h"
 #include "util/u_surface.h"
-#include "asahi/lib/agx_tilebuffer.h"
 #include "agx_state.h"
 #include "glsl_types.h"
 #include "nir.h"

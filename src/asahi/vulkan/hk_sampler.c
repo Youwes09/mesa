@@ -212,7 +212,8 @@ hk_CreateSampler(VkDevice device,
     * provides (customBorderColorWithoutFormat is not exposed). Their opaque
     * black needs no RGBA4 workaround. */
    const bool native = agx_has_native_border_colors(&pdev->dev);
-   bool workaround_rgba4 = !native && dev->vk.enabled_features.customBorderColors;
+   bool workaround_rgba4 =
+      !native && dev->vk.enabled_features.customBorderColors;
    bool custom_border =
       uses_border(info) &&
       is_border_color_custom(info->borderColor, workaround_rgba4);
@@ -352,10 +353,10 @@ hk_CreateSampler(VkDevice device,
    if (agx_has_usc_descriptors(&pdev->dev)) {
       for (unsigned p = 0; p < sampler->plane_count; ++p) {
          struct hk_usc_sampler_part *part = &sampler->planes[p].usc;
-         hk_usc_sampler(part->sampler, &sampler->planes[p].hw->key,
-                                  false, sampler->usc_border);
-         hk_runtime_sampler(part->runtime_sampler,
-                                   &sampler->planes[p].hw->key, false);
+         hk_usc_sampler(part->sampler, &sampler->planes[p].hw->key, false,
+                        sampler->usc_border);
+         hk_runtime_sampler(part->runtime_sampler, &sampler->planes[p].hw->key,
+                            false);
          part->lod_bias_fp16 = sampler->lod_bias_fp16;
          part->txl_nudge_fp16 = sampler->txl_nudge_fp16;
       }
