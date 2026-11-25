@@ -611,6 +611,11 @@ struct agx_isa_target {
     */
    bool texture_exports;
 
+   /* The preamble follows the main program, is entered first and runs once per
+    * workgroup. It cannot spill, so one that does is inlined.
+    */
+   bool trailing_preamble;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };

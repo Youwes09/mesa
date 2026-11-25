@@ -4343,9 +4343,10 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    if (!apple9)
       NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
-   /* Apple9 runs the preamble per workgroup, so one invocation gains nothing */
+   /* A preamble run per workgroup gains nothing for one invocation */
    bool single_invocation =
-      apple9 && mesa_shader_stage_is_compute(nir->info.stage) &&
+      agx_nir_target(nir)->trailing_preamble &&
+      mesa_shader_stage_is_compute(nir->info.stage) &&
       !nir->info.workgroup_size_variable && nir->info.workgroup_size[0] == 1 &&
       nir->info.workgroup_size[1] == 1 && nir->info.workgroup_size[2] == 1;
 
@@ -4995,10 +4996,12 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    ctx->scratch_size_B += ctx->atomic_frame_B;
 
    /* Stop the main shader or preamble shader after the exit block. For real
-    * functions, we would return here. Linked Apple9 preambles run in sequence.
+    * functions, we would return here. Linked trailing preambles run in
+    * sequence.
     */
-   bool stop = ctx->is_preamble ? !(agx_is_apple9(ctx) && ctx->key->secondary)
-                                : !ctx->key->no_stop;
+   bool stop = ctx->is_preamble
+                  ? !(ctx->target.trailing_preamble && ctx->key->secondary)
+                  : !ctx->key->no_stop;
 
    ctx->falls_through = !stop;
 
@@ -5424,7 +5427,7 @@ agx_stored_bits(nir_builder *b, const struct agx_stored_half *stored,
 
 /* Inline a preamble, which only stores uniforms, at the start of the shader */
 static void
-agx_inline_apple9_preamble(nir_function_impl *main)
+agx_inline_preamble(nir_function_impl *main)
 {
    nir_function_impl *preamble = main->preamble->impl;
    nir_foreach_block(block, preamble) {
@@ -5672,7 +5675,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    info->local_size = nir->info.shared_size;
 
-   if (apple9) {
+   if (target->trailing_preamble) {
       /* The preamble follows the main shader, is entered first and starts it */
       nir_function_impl *main = nir_shader_get_entrypoint(nir);
       agx_compile_function_nir(nir, main, key, &binary, &out->info);
@@ -5691,7 +5694,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                            agx_apple9_max_preamble_bytes(compute) ||
                         info->preamble_scratch_size;
          if (inline_) {
-            agx_inline_apple9_preamble(main);
+            agx_inline_preamble(main);
             util_dynarray_clear(&binary);
             memset(info->apple9_vary_stores, 0,
                    sizeof(info->apple9_vary_stores));

@@ -427,8 +427,8 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
             nir_steal_tex_src(tex, nir_tex_src_texture_handle);
             tex->texture_index = base / 2;
          } else if (src->src_type == nir_tex_src_texture_handle &&
-                    agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9) {
-            /* Apple9 handles are table indices, used as they are */
+                    !agx_nir_target(b->shader)->texture_exports) {
+            /* Exported texture handles are table indices, used as they are */
             assert(new_ != NULL);
             nir_src_rewrite(use, new_);
          }
@@ -442,15 +442,19 @@ bool
 agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
 {
    nir_opt_preamble_options options = preamble_options;
-   /* Apple9 preambles cannot spill, so keep control flow in the main shader */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
+   const struct agx_isa_target *target = agx_nir_target(nir);
+   if (target->word_registers)
       options.def_size = def_size_words;
+
+   /* Keep control flow in the main shader of a preamble that cannot spill */
+   if (target->trailing_preamble)
       options.straight_line = true;
 
-      /* Parameter-form textures cannot take implicit-LOD zero gradients */
+   /* Exported textures cannot take implicit-LOD zero gradients, and there are
+    * no texture or sampler state registers for preambles to fill.
+    */
+   if (target->texture_exports) {
       options.keep_implicit_lod_textures = true;
-
-      /* No texture or sampler state registers: preambles only fill uniforms */
       options.preamble_storage_size[nir_preamble_class_image] = 0;
       options.preamble_storage_size[nir_preamble_class_sampler] = 0;
    }
