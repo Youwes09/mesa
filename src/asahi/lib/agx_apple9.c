@@ -113,9 +113,6 @@ apple9_initialize_compute_helpers(void)
 struct apple9_compute_abi_desc {
    uint8_t resource_count;
    uint16_t resource_record_size;
-   uint32_t cdm_config;
-   uint32_t cdm_constant;
-   uint32_t cdm_tail;
    bool supports_indirect_dispatch;
 };
 
@@ -125,11 +122,6 @@ apple9_compute_abi(const struct agx_apple9_compute_profile *profile)
    static const struct apple9_compute_abi_desc ssbo8_superset = {
       .resource_count = AGX_APPLE9_COMPUTE_MAX_RESOURCES,
       .resource_record_size = AGX_APPLE9_COMPUTE_SUPERSET_RESOURCE_STRIDE,
-      .cdm_config = 0x00880000,
-      .cdm_constant = 0x01000040,
-      /* Match the full post-dispatch CDM barrier used by the Apple8 path.
-       * GPU cache ordering is independent of asynchronous CPU submission. */
-      .cdm_tail = 0x600fffff,
       .supports_indirect_dispatch = true,
    };
 
@@ -606,8 +598,55 @@ agx_apple9_compute_enabled(const struct agx_device *dev)
 void
 agx_apple9_set_compute_barrier(void *record, unsigned record_size)
 {
-   uint8_t *tail = (uint8_t *)record + record_size - 4;
-   apple9_put_u32(tail, 0x60000160);
+   agx_pack((uint8_t *)record + record_size - 4, CDM_BARRIER, cfg) {
+      cfg.unk_5 = true;
+      cfg.unk_6 = true;
+      cfg.unk_8 = true;
+   }
+}
+
+static void
+apple9_cdm_launch(void *out, uint64_t launch, enum agx_cdm_mode mode)
+{
+   agx_pack(out, CDM_LAUNCH_G16, cfg) {
+      cfg.unk_19 = true;
+      cfg.unk_23 = true;
+      cfg.mode = mode;
+      cfg.unk_38 = true;
+      cfg.unk_56 = true;
+      cfg.pipeline_lo = (uint32_t)(launch >> 6);
+      cfg.pipeline_hi = launch >> 40;
+      cfg.unk_126 = true;
+   }
+}
+
+/* The full post-dispatch barrier of the Apple8 path. GPU cache ordering is
+ * independent of asynchronous CPU submission. */
+static void
+apple9_cdm_barrier(void *out)
+{
+   agx_pack(out, CDM_BARRIER, cfg) {
+      cfg.unk_0 = true;
+      cfg.unk_1 = true;
+      cfg.unk_2 = true;
+      cfg.usc_cache_inval = true;
+      cfg.unk_4 = true;
+      cfg.unk_5 = true;
+      cfg.unk_6 = true;
+      cfg.unk_7 = true;
+      cfg.unk_8 = true;
+      cfg.unk_9 = true;
+      cfg.unk_10 = true;
+      cfg.unk_11 = true;
+      cfg.unk_12 = true;
+      cfg.unk_13 = true;
+      cfg.unk_14 = true;
+      cfg.unk_15 = true;
+      cfg.unk_16 = true;
+      cfg.unk_17 = true;
+      cfg.unk_18 = true;
+      cfg.unk_19 = true;
+   }
 }
 
 const char *
@@ -656,23 +695,30 @@ agx_apple9_emit_direct_dispatch(
    const uint32_t local[3], const struct agx_apple9_compute_profile *profile,
    bool barrier)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
    if (!out || agx_apple9_dispatch_reject_reason(launch, false, 0, global,
                                                  local, profile))
       return false;
 
    uint8_t *record = out;
-   uint64_t shader = ((launch >> 6) & 0xffffffffull) |
-                     ((0x40000000ull | (launch >> 40)) << 32);
-   apple9_put_u32(record + 0x00, abi->cdm_config);
-   apple9_put_u32(record + 0x04, abi->cdm_constant);
-   apple9_put_u64(record + 0x08, shader);
-   for (unsigned i = 0; i < 3; ++i) {
-      apple9_put_u32(record + 0x10 + (i * 4), global[i]);
-      apple9_put_u32(record + 0x1c + (i * 4), local[i]);
+   apple9_cdm_launch(record, launch, AGX_CDM_MODE_DIRECT);
+   record += AGX_CDM_LAUNCH_G16_LENGTH;
+
+   agx_pack(record, CDM_GLOBAL_SIZE, cfg) {
+      cfg.x = global[0];
+      cfg.y = global[1];
+      cfg.z = global[2];
    }
+   record += AGX_CDM_GLOBAL_SIZE_LENGTH;
+
+   agx_pack(record, CDM_LOCAL_SIZE, cfg) {
+      cfg.x = local[0];
+      cfg.y = local[1];
+      cfg.z = local[2];
+   }
+   record += AGX_CDM_LOCAL_SIZE_LENGTH;
+
    if (barrier)
-      apple9_put_u32(record + 0x28, abi->cdm_tail);
+      apple9_cdm_barrier(record);
    return true;
 }
 
@@ -682,29 +728,35 @@ agx_apple9_emit_indirect_dispatch(
    bool indirect_local, const struct agx_apple9_compute_profile *profile,
    bool barrier)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
    if (!out || agx_apple9_dispatch_reject_reason(launch, true, indirect, NULL,
                                                  local, profile))
       return false;
 
    uint8_t *record = out;
-   uint64_t shader = ((launch >> 6) & 0xffffffffull) |
-                     ((0x40000000ull | (launch >> 40)) << 32);
-   apple9_put_u32(record + 0x00,
-                  abi->cdm_config | (indirect_local ? 0x10000000 : 0x08000000));
-   apple9_put_u32(record + 0x04, abi->cdm_constant);
-   apple9_put_u64(record + 0x08, shader);
-   /* Native Apple9 indirect CDM stores the pointer halves high then low. */
-   apple9_put_u32(record + 0x10, indirect >> 32);
-   apple9_put_u32(record + 0x14, indirect);
-   /* Mode 2 reads six words: thread counts followed by local sizes. Mode 1
-    * reads three workgroup counts and takes local sizes from this command. */
-   if (!indirect_local) {
-      for (unsigned d = 0; d < 3; ++d)
-         apple9_put_u32(record + 0x18 + d * 4, local[d]);
+   apple9_cdm_launch(record, launch,
+                     indirect_local ? AGX_CDM_MODE_INDIRECT_LOCAL
+                                    : AGX_CDM_MODE_INDIRECT_GLOBAL);
+   record += AGX_CDM_LAUNCH_G16_LENGTH;
+
+   agx_pack(record, CDM_INDIRECT_G16, cfg) {
+      cfg.address_hi = indirect >> 32;
+      cfg.address_lo = indirect;
    }
+   record += AGX_CDM_INDIRECT_G16_LENGTH;
+
+   /* Indirect local reads the local size with the thread counts, indirect
+    * global reads workgroup counts and takes the local size from here. */
+   if (!indirect_local) {
+      agx_pack(record, CDM_LOCAL_SIZE, cfg) {
+         cfg.x = local[0];
+         cfg.y = local[1];
+         cfg.z = local[2];
+      }
+      record += AGX_CDM_LOCAL_SIZE_LENGTH;
+   }
+
    if (barrier)
-      apple9_put_u32(record + (indirect_local ? 0x18 : 0x24), abi->cdm_tail);
+      apple9_cdm_barrier(record);
    return true;
 }
 

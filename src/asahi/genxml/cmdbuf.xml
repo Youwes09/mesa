@@ -1242,4 +1242,25 @@
     <field name="Border colour" size="2" start="61" type="Border colour"/>
     <field name="Seamful cube maps" size="1" start="63" type="bool"/>
   </struct>
+
+  <!-- G16 compute launch, followed by the grid as on Apple8. The pipeline is
+       the launch program in the USC aperture. -->
+  <struct name="CDM Launch G16" size="16">
+    <field name="Unk 19" size="1" start="19" type="bool"/>
+    <field name="Unk 23" size="1" start="23" type="bool"/>
+    <field name="Mode" size="2" start="27" type="CDM Mode"/>
+    <field name="Block Type" size="3" start="29" type="CDM Block Type" exact="Launch"/>
+    <field name="Unk 38" size="1" start="38" type="bool"/>
+    <field name="Unk 56" size="1" start="56" type="bool"/>
+    <!-- Bits 6 to 37 of the address -->
+    <field name="Pipeline lo" size="32" start="64" type="hex"/>
+    <!-- Bits 40 and up -->
+    <field name="Pipeline hi" size="8" start="96" type="hex"/>
+    <field name="Unk 126" size="1" start="126" type="bool"/>
+  </struct>
+
+  <struct name="CDM Indirect G16" size="8">
+    <field name="Address hi" size="32" start="0:0" type="hex"/>
+    <field name="Address lo" size="32" start="1:0" type="hex"/>
+  </struct>
 </genxml>
