@@ -165,7 +165,7 @@ lower_texel_buffer(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    fetch->texture_index = tex->texture_index;
    fetch->texture_non_uniform = tex->texture_non_uniform;
    /* Bounds checked above, and the level is always zero */
-   fetch->backend_flags = tex->backend_flags | AGX_APPLE9_TEXTURE_FETCH_BOUNDED;
+   fetch->backend_flags = tex->backend_flags | AGX_TEXTURE_FLAG_FETCH_BOUNDED;
    fetch->src[0] =
       (nir_tex_src){.src_type = nir_tex_src_texture_handle,
                     .src = nir_src_for_ssa(tex->src[handle_idx].src.ssa)};
@@ -797,7 +797,7 @@ texture_load(nir_builder *b, nir_intrinsic_instr *intr,
    tex->dest_type = nir_intrinsic_dest_type(intr);
    /* Bounds checked by the caller, as no texture state is beside the entry */
    tex->backend_flags |=
-      AGX_TEXTURE_FLAG_NO_CLAMP | AGX_APPLE9_TEXTURE_FETCH_BOUNDED;
+      AGX_TEXTURE_FLAG_NO_CLAMP | AGX_TEXTURE_FLAG_FETCH_BOUNDED;
    coord = nir_u2u32(b, coord);
 
    /* 1D views are 2D textures one texel high */
@@ -967,11 +967,10 @@ native_store(nir_builder *b, nir_intrinsic_instr *intr, nir_def *pbe_addr,
    /* Cube coordinates already hold the face layer, 3D ones the slice */
    if (array)
       index = nir_iadd(b, index, nir_channel(b, coord, 2));
-   nir_image_store_apple9_agx(b, index,
-                              nir_trim_vector(b, nir_u2u32(b, coord), 2),
-                              nir_pad_vector_imm_int(b, intr->src[3].ssa, 0, 4),
-                              .access = nir_intrinsic_access(intr),
-                              .src_type = nir_intrinsic_src_type(intr));
+   nir_image_store_pbe_agx(b, index, nir_trim_vector(b, nir_u2u32(b, coord), 2),
+                           nir_pad_vector_imm_int(b, intr->src[3].ssa, 0, 4),
+                           .access = nir_intrinsic_access(intr),
+                           .src_type = nir_intrinsic_src_type(intr));
 }
 
 static bool

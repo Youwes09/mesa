@@ -464,8 +464,8 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
       }
    }
 
-   if (fetch && !(tex->backend_flags & (AGX_APPLE9_TEXTURE_FETCH_BOUNDED |
-                                        AGX_TEXTURE_FLAG_NO_CLAMP)))
+   if (fetch && !(tex->backend_flags &
+                  (AGX_TEXTURE_FLAG_FETCH_BOUNDED | AGX_TEXTURE_FLAG_NO_CLAMP)))
       coord = apple9_bound_fetch(b, tex, coord, &lod, layer, ms);
 
    /* Native min LOD needs a bias, so implicit samples become zero-biased */
@@ -585,7 +585,7 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
        */
       seamful = !tex->is_shadow &&
                 (tex->op == nir_texop_txl || tex->op == nir_texop_tg4) &&
-                !(tex->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY) &&
+                !(tex->backend_flags & AGX_TEXTURE_FLAG_CUBE_AS_ARRAY) &&
                 nr == 4;
 
       if (seamful) {
@@ -621,7 +621,7 @@ lower_regular_texture_apple9(nir_builder *b, nir_tex_instr *tex)
 
       nir_tex_instr *as_array =
          nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
-      as_array->backend_flags |= AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
+      as_array->backend_flags |= AGX_TEXTURE_FLAG_CUBE_AS_ARRAY;
       nir_def *alt_words = nir_vec(b, alt, 4);
 
       /* The cube view's alias; clone sources are rewritten once inserted */
@@ -1397,7 +1397,7 @@ apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 {
    int offset = nir_tex_instr_src_index(tex, nir_tex_src_offset);
    if (offset < 0 || tex->op == nir_texop_txf ||
-       (tex->backend_flags & AGX_APPLE9_TEXTURE_OFFSET_FALLBACK))
+       (tex->backend_flags & AGX_TEXTURE_FLAG_OFFSET_FALLBACK))
       return false;
 
    bool volume = tex->sampler_dim == GLSL_SAMPLER_DIM_3D;
@@ -1443,7 +1443,7 @@ apple9_flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
        agx_apple9_texture_encodable(&I))
       return false;
 
-   tex->backend_flags |= AGX_APPLE9_TEXTURE_OFFSET_FALLBACK;
+   tex->backend_flags |= AGX_TEXTURE_FLAG_OFFSET_FALLBACK;
    return true;
 }
 
@@ -1457,7 +1457,7 @@ apple9_fetch_buffer(nir_builder *b, const nir_tex_instr *buf, nir_def *index)
    tex->texture_index = buf->texture_index;
    tex->dest_type = buf->dest_type;
    tex->coord_components = 2;
-   tex->backend_flags = AGX_APPLE9_TEXTURE_FETCH_BOUNDED;
+   tex->backend_flags = AGX_TEXTURE_FLAG_FETCH_BOUNDED;
    tex->src[0] = nir_tex_src_for_ssa(
       nir_tex_src_coord,
       nir_vec2(b, nir_umod_imm(b, index, AGX_TEXTURE_BUFFER_WIDTH),
@@ -1706,7 +1706,7 @@ sample_border(nir_builder *b, nir_tex_instr *tex, nir_def *coord, unsigned dims)
    bt->dest_type = nir_alu_type_get_base_type(tex->dest_type) | 32;
    bt->texture_index = tex->texture_index;
    bt->sampler_index = tex->sampler_index;
-   bt->backend_flags = tex->backend_flags | AGX_APPLE9_TEXTURE_BIASED_LEVEL;
+   bt->backend_flags = tex->backend_flags | AGX_TEXTURE_FLAG_BIASED_LEVEL;
    bt->can_speculate = tex->can_speculate;
    nir_def *comps[4];
    for (unsigned c = 0; c < coord->num_components; ++c)
@@ -1984,7 +1984,7 @@ native_offset_level(nir_builder *b, const struct offset_sample *s,
    nt->dest_type = tex->dest_type;
    nt->texture_index = tex->texture_index;
    nt->sampler_index = tex->sampler_index;
-   nt->backend_flags = tex->backend_flags | AGX_APPLE9_TEXTURE_BIASED_LEVEL;
+   nt->backend_flags = tex->backend_flags | AGX_TEXTURE_FLAG_BIASED_LEVEL;
    nt->can_speculate = tex->can_speculate;
    unsigned n = 0;
    nt->src[n++] = (nir_tex_src){
@@ -2011,10 +2011,10 @@ agx_apple9_texture_native_offset(const nir_tex_instr *tex, uint16_t *bits)
    int offset = nir_tex_instr_src_index(tex, nir_tex_src_offset);
    /* The shape of an encodable offset. Whether the sample's final form has
     * a measured offset variant is decided by the backend, which lowers the
-    * offset otherwise (AGX_APPLE9_TEXTURE_OFFSET_FALLBACK). */
+    * offset otherwise (AGX_TEXTURE_FLAG_OFFSET_FALLBACK). */
    if (offset < 0 || !nir_src_is_const(tex->src[offset].src) ||
        tex->op == nir_texop_txf ||
-       (tex->backend_flags & AGX_APPLE9_TEXTURE_OFFSET_FALLBACK) ||
+       (tex->backend_flags & AGX_TEXTURE_FLAG_OFFSET_FALLBACK) ||
        (tex->op != nir_texop_tex && tex->op != nir_texop_txb &&
         tex->op != nir_texop_txl && tex->op != nir_texop_txd &&
         tex->op != nir_texop_tg4) ||

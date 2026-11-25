@@ -20,15 +20,15 @@
 #define AGX_TEXTURE_FLAG_CLAMP_TO_0 (1 << 1)
 
 /* A 2D access the driver rewrote as layer 0 of a one-layer array, so the
- * Apple9 texture lowering still treats it as 2D, for unnormalized samplers. */
+ * exported texture lowering still treats it as 2D, for unnormalized samplers. */
 #define AGX_TEXTURE_FLAG_ARRAYED_2D (1 << 2)
 
 /* A size, level or sample query of a sampled view, answered from the view's
- * texture metadata (Apple9 texture_info) rather than its texture descriptor.
- * agx_nir_lower_texture_queries leaves it to the Apple9 backend. */
+ * texture metadata (texture_info) rather than its texture descriptor.
+ * agx_nir_lower_texture_queries leaves it to the exported texture lowering. */
 #define AGX_TEXTURE_FLAG_METADATA_QUERY (1 << 3)
 
-/* An Apple9 sample with a minimum LOD in its parameters */
+/* An exported sample with a minimum LOD in its parameters */
 #define AGX_TEXTURE_FLAG_MIN_LOD (1 << 4)
 
 /* Texel buffers lowered to (at most) 16384x16384 2D textures */
@@ -37,16 +37,16 @@
 #define AGX_TEXTURE_BUFFER_MAX_SIZE                                            \
    (AGX_TEXTURE_BUFFER_WIDTH * AGX_TEXTURE_BUFFER_MAX_HEIGHT)
 
-/* Apple9 backend texture flags, disjoint from the AGX_TEXTURE_FLAG_* bits */
+/* Flags of exported textures */
 
 /* A seamful cube sample, of the faces as layers of the cube's 2D array alias */
-#define AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY (1 << 8)
+#define AGX_TEXTURE_FLAG_CUBE_AS_ARRAY (1 << 8)
 /* Texel fetch whose level, layer and sample are already bounded */
-#define AGX_APPLE9_TEXTURE_FETCH_BOUNDED (1 << 10)
+#define AGX_TEXTURE_FLAG_FETCH_BOUNDED (1 << 10)
 /* The final form has no offset encoding, so lower the offset in NIR */
-#define AGX_APPLE9_TEXTURE_OFFSET_FALLBACK (1 << 12)
+#define AGX_TEXTURE_FLAG_OFFSET_FALLBACK (1 << 12)
 /* Explicit level from the offset lowering, already including the LOD bias */
-#define AGX_APPLE9_TEXTURE_BIASED_LEVEL (1 << 13)
+#define AGX_TEXTURE_FLAG_BIASED_LEVEL (1 << 13)
 
 struct nir_builder;
 struct nir_def;

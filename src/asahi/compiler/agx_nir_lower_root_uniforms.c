@@ -480,7 +480,7 @@ agx_nir_lower_root_uniforms(nir_shader *nir, bool graphics,
             if (instr->type == nir_instr_type_tex ||
                 (instr->type == nir_instr_type_intrinsic &&
                  nir_instr_as_intrinsic(instr)->intrinsic ==
-                    nir_intrinsic_image_store_apple9_agx))
+                    nir_intrinsic_image_store_pbe_agx))
                profile->abi = AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
          }
       }

@@ -2262,7 +2262,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_bindless_image_store_block_agx:
       return agx_emit_block_image_store(b, instr);
 
-   case nir_intrinsic_image_store_apple9_agx:
+   case nir_intrinsic_image_store_pbe_agx:
       return agx_emit_image_store_export(b, instr);
 
    case nir_intrinsic_load_workgroup_id:
@@ -3384,7 +3384,7 @@ agx_emit_tex_export(agx_builder *b, nir_tex_instr *instr)
          MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
    /* agx_nir_lower_texture points cubes sampled as arrays at their aliases */
-   bool cube_as_array = instr->backend_flags & AGX_APPLE9_TEXTURE_CUBE_AS_ARRAY;
+   bool cube_as_array = instr->backend_flags & AGX_TEXTURE_FLAG_CUBE_AS_ARRAY;
    if (cube_as_array && texture.type == AGX_INDEX_IMMEDIATE)
       b->shader->out->apple9_cube_aliases = true;
 

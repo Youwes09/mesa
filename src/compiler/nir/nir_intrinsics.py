@@ -3346,7 +3346,7 @@ system_value("is_viewport_z_transform_emulated_kk", 1, bit_sizes=[1])
 # Loads the viewport Z range for a given viewport index.
 load("viewport_z_range_kk", [1], [], [CAN_ELIMINATE, CAN_REORDER])
 
-# Apple9 native storage write. src0 is a USC-relative 32-byte PBE index;
+# Storage write through a PBE. src0 is a USC-relative 32-byte PBE index;
 # coordinates/data remain per-invocation values. The PBE supplies the format.
-intrinsic("image_store_apple9_agx", [1, 2, 4], indices=[ACCESS, SRC_TYPE])
+intrinsic("image_store_pbe_agx", [1, 2, 4], indices=[ACCESS, SRC_TYPE])
 
