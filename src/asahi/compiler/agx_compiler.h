@@ -595,6 +595,11 @@ struct agx_isa_target {
     */
    bool coherent_memory;
 
+   /* Fragment shaders hold tile domains rather than waiting on pixel fences,
+    * and write coverage and depth/stencil through export registers.
+    */
+   bool tile_domains;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
@@ -674,7 +679,7 @@ typedef struct agx_context {
    bool any_cf;
 
    /* Release the depth/stencil domain once at the end (repeated tests) */
-   bool apple9_zs_release_at_end;
+   bool zs_release_at_end;
 
    /* Do we need r0h zero throughout the program to handle quad-divergent
     * shuffle?

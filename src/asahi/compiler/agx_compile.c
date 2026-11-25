@@ -846,8 +846,8 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 static void
 agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
 {
-   /* Apple9 holds the tile domains for the whole shader instead */
-   if (agx_is_apple9(b->shader)) {
+   /* Tile domains are held for the whole shader instead */
+   if (b->shader->target.tile_domains) {
       b->shader->out->apple9_tile_reads |= mask & 0x8;
       b->shader->out->apple9_tile_writes |= mask & 0x4;
       b->shader->out->apple9_tile_domain =
@@ -879,7 +879,7 @@ agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
 
 /* Tile accesses are per word, with a sample mask of 1 or in a register */
 static agx_index
-agx_tile_sample_mask_apple9(agx_builder *b, agx_index mask)
+agx_tile_sample_mask(agx_builder *b, agx_index mask)
 {
    if (mask.type == AGX_INDEX_IMMEDIATE && mask.value != 1)
       mask = agx_mov_imm(b, 32, mask.value);
@@ -888,14 +888,14 @@ agx_tile_sample_mask_apple9(agx_builder *b, agx_index mask)
 }
 
 static agx_instr *
-agx_emit_local_store_pixel_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_local_store_pixel_words(agx_builder *b, nir_intrinsic_instr *instr)
 {
    assert(!nir_intrinsic_explicit_coord(instr) && "no tile coordinate stores");
    assert(nir_src_bit_size(instr->src[0]) == 32 &&
           (nir_intrinsic_base(instr) % 4) == 0);
 
    agx_index mask =
-      agx_tile_sample_mask_apple9(b, agx_src_index(b->shader, &instr->src[1]));
+      agx_tile_sample_mask(b, agx_src_index(b->shader, &instr->src[1]));
    unsigned base = nir_intrinsic_base(instr) / 4;
 
    b->shader->out->apple9_tile_writes = true;
@@ -912,15 +912,15 @@ agx_emit_local_store_pixel_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 }
 
 static void
-agx_emit_local_load_pixel_apple9(agx_builder *b, agx_index dest,
-                                 nir_intrinsic_instr *instr)
+agx_emit_local_load_pixel_words(agx_builder *b, agx_index dest,
+                                nir_intrinsic_instr *instr)
 {
    bool coords = instr->intrinsic == nir_intrinsic_load_tile_pixel_agx;
    unsigned nr = instr->def.num_components;
    assert(instr->def.bit_size == 32 && (nir_intrinsic_base(instr) % 4) == 0);
 
    agx_index mask =
-      agx_tile_sample_mask_apple9(b, agx_src_index(b->shader, &instr->src[0]));
+      agx_tile_sample_mask(b, agx_src_index(b->shader, &instr->src[0]));
    agx_index xy =
       coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null();
 
@@ -944,8 +944,8 @@ agx_emit_local_store_pixel(agx_builder *b, nir_intrinsic_instr *instr)
 {
    bool explicit = nir_intrinsic_explicit_coord(instr);
 
-   if (agx_is_apple9(b->shader))
-      return agx_emit_local_store_pixel_apple9(b, instr);
+   if (b->shader->target.tile_domains)
+      return agx_emit_local_store_pixel_words(b, instr);
 
    /* TODO: Reverse-engineer interactions with MRT */
    if (b->shader->stage == MESA_SHADER_FRAGMENT) {
@@ -994,7 +994,7 @@ agx_emit_store_uvs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 
 /* Hold the tile domains for the whole shader, as the linker does for parts */
 static void
-agx_hold_tile_apple9(agx_context *ctx)
+agx_hold_tile_domains(agx_context *ctx)
 {
    const struct agx_shader_info *info = ctx->out;
    bool access = info->apple9_tile_reads || info->apple9_tile_writes;
@@ -1040,7 +1040,7 @@ agx_commit_uvs_apple9(agx_context *ctx)
 
 /* Control word: live samples in bits 0-3, affected samples in 4-7 and 8-11 */
 static agx_index
-agx_coverage_control_apple9(agx_builder *b, agx_index affected, agx_index live)
+agx_coverage_control(agx_builder *b, agx_index affected, agx_index live)
 {
    agx_index coverage = agx_get_sr_coverage(b, 32, AGX_SR_COVERAGE_MASK);
    agx_index covered = agx_and(b, coverage, agx_immediate(0xf));
@@ -1055,7 +1055,7 @@ agx_coverage_control_apple9(agx_builder *b, agx_index affected, agx_index live)
 }
 
 static agx_index
-agx_export_word_apple9(agx_builder *b, agx_index value)
+agx_export_word(agx_builder *b, agx_index value)
 {
    agx_index pub = agx_temp(b->shader, AGX_SIZE_32);
    pub.reg_class = RA_EXPORT;
@@ -1066,26 +1066,26 @@ agx_export_word_apple9(agx_builder *b, agx_index value)
 
 /* Whether a coverage write or depth/stencil export tests depth and stencil */
 static bool
-agx_apple9_tests_zs(nir_intrinsic_instr *intr)
+agx_tests_zs(nir_intrinsic_instr *intr)
 {
    if (intr->intrinsic == nir_intrinsic_store_zs_agx)
       return true;
 
-   /* As on Apple8, writes that kill samples unconditionally run no tests */
+   /* Writes that kill samples unconditionally run no tests */
    return intr->intrinsic == nir_intrinsic_sample_mask_agx &&
           !(nir_src_is_const(intr->src[1]) && nir_src_as_uint(intr->src[1]) == 0);
 }
 
 /* Releasing the depth/stencil domain ends testing, so release it once */
 static bool
-agx_apple9_tests_zs_repeatedly(nir_function_impl *impl)
+agx_tests_zs_repeatedly(nir_function_impl *impl)
 {
    unsigned count = 0;
 
    nir_foreach_block(block, impl) {
       nir_foreach_instr(instr, block) {
          if (instr->type != nir_instr_type_intrinsic ||
-             !agx_apple9_tests_zs(nir_instr_as_intrinsic(instr)))
+             !agx_tests_zs(nir_instr_as_intrinsic(instr)))
             continue;
 
          if (++count > 1)
@@ -1102,13 +1102,13 @@ agx_apple9_tests_zs_repeatedly(nir_function_impl *impl)
 }
 
 static void
-agx_test_zs_apple9(agx_builder *b, bool begin)
+agx_test_zs(agx_builder *b, bool begin)
 {
    agx_context *ctx = b->shader;
 
    if (begin) {
       agx_begin_tile(b, 1);
-   } else if (ctx->apple9_zs_release_at_end) {
+   } else if (ctx->zs_release_at_end) {
       ctx->out->apple9_zs_release = true;
    } else {
       agx_end_tile(b, 1);
@@ -1116,42 +1116,41 @@ agx_test_zs_apple9(agx_builder *b, bool begin)
 }
 
 static agx_instr *
-agx_emit_sample_mask_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_write_coverage(agx_builder *b, nir_intrinsic_instr *instr)
 {
    agx_index affected =
       agx_extend(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
    agx_index live =
       agx_extend(b, agx_src_index(b->shader, &instr->src[1]), 16, false);
 
-   bool tests = agx_apple9_tests_zs(instr);
+   bool tests = agx_tests_zs(instr);
 
    b->shader->out->apple9_tile_domain =
       MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
-   agx_index pub =
-      agx_export_word_apple9(b, agx_coverage_control_apple9(b, affected, live));
+   agx_index pub = agx_export_word(b, agx_coverage_control(b, affected, live));
 
    if (tests)
-      agx_test_zs_apple9(b, true);
+      agx_test_zs(b, true);
 
    agx_write_coverage(b, pub);
 
    if (tests)
-      agx_test_zs_apple9(b, false);
+      agx_test_zs(b, false);
 
    return NULL;
 }
 
 /* Export pair: the control word with the stencil reference high, then depth */
 static agx_instr *
-agx_emit_store_zs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
+agx_emit_zs_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    unsigned zs = nir_intrinsic_base(instr);
    assert(zs >= 1 && zs <= 3);
 
    agx_index mask =
       agx_extend(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
-   agx_index control = agx_coverage_control_apple9(b, mask, mask);
+   agx_index control = agx_coverage_control(b, mask, mask);
 
    if (zs & 2) {
       agx_index s =
@@ -1170,9 +1169,9 @@ agx_emit_store_zs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
    b->shader->out->apple9_tile_domain =
       MAX2(b->shader->out->apple9_tile_domain, 0x600);
 
-   agx_test_zs_apple9(b, true);
+   agx_test_zs(b, true);
    agx_zs_store(b, pair, zs);
-   agx_test_zs_apple9(b, false);
+   agx_test_zs(b, false);
    return NULL;
 }
 
@@ -1210,8 +1209,8 @@ static void
 agx_emit_local_load_pixel(agx_builder *b, agx_index dest,
                           nir_intrinsic_instr *instr)
 {
-   if (agx_is_apple9(b->shader)) {
-      agx_emit_local_load_pixel_apple9(b, dest, instr);
+   if (b->shader->target.tile_domains) {
+      agx_emit_local_load_pixel_words(b, dest, instr);
       return;
    }
 
@@ -2111,8 +2110,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_store_zs_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
-      if (agx_is_apple9(b->shader))
-         return agx_emit_store_zs_apple9(b, instr);
+      if (b->shader->target.tile_domains)
+         return agx_emit_zs_export(b, instr);
 
       return agx_emit_store_zs(b, instr);
 
@@ -2168,8 +2167,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       assert(stage == MESA_SHADER_FRAGMENT);
       b->shader->out->writes_sample_mask = true;
 
-      if (agx_is_apple9(b->shader))
-         return agx_emit_sample_mask_apple9(b, instr);
+      if (b->shader->target.tile_domains)
+         return agx_emit_write_coverage(b, instr);
 
       /* We need to wait_pix before running Z/S tests, but we don't need to
        * wait_pix before merely discarding. Omit the wait_pix when the affected
@@ -2200,8 +2199,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_to(b, dst, AGX_SR_SAMPLES_LOG2);
 
    case nir_intrinsic_load_sample_mask_in:
-      /* Apple9 coverage has the covered samples in its low bits */
-      if (agx_is_apple9(b->shader)) {
+      /* Coverage has the covered samples in its low bits */
+      if (b->shader->target.tile_domains) {
          return agx_and_to(b, dst,
                            agx_get_sr_coverage(b, 32, AGX_SR_COVERAGE_MASK),
                            agx_immediate(0xf));
@@ -2278,7 +2277,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_load_tile_id_agx:
       /* End-of-tile programs read the tile position as the workgroup's */
-      assert(agx_is_apple9(b->shader) && stage == MESA_SHADER_FRAGMENT);
+      assert(b->shader->target.tile_domains && stage == MESA_SHADER_FRAGMENT);
       return agx_load_compute_dimension(b, dst, instr,
                                         AGX_SR_THREADGROUP_POSITION_IN_GRID_X);
 
@@ -2554,7 +2553,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_barrier_to(b, dst, AGX_SR_HELPER_ARG_H);
 
    case nir_intrinsic_load_exported_agx:
-      if (agx_is_apple9(b->shader) && stage == MESA_SHADER_FRAGMENT &&
+      if (b->shader->target.tile_domains && stage == MESA_SHADER_FRAGMENT &&
           nir_intrinsic_base(instr) == AGX_ABI_FOUT_KILLED_SAMPLES)
          b->shader->out->apple9_reads_killed = true;
 
@@ -4946,9 +4945,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    if (ctx->stage == MESA_SHADER_FRAGMENT && !ctx->is_preamble) {
       ctx->any_cf = key->fs.inside_sample_loop;
-      ctx->apple9_zs_release_at_end =
-         agx_is_apple9(ctx) &&
-         (key->fs.inside_sample_loop || agx_apple9_tests_zs_repeatedly(impl));
+      ctx->zs_release_at_end =
+         ctx->target.tile_domains &&
+         (key->fs.inside_sample_loop || agx_tests_zs_repeatedly(impl));
    }
 
    /* A returning device atomic writes the private frame's first word */
@@ -4971,9 +4970,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       agx_commit_uvs_apple9(ctx);
 
    /* The linker holds the tile domains of shader parts */
-   if (agx_is_apple9(ctx) && !ctx->is_preamble &&
+   if (ctx->target.tile_domains && !ctx->is_preamble &&
        ctx->stage == MESA_SHADER_FRAGMENT && !key->no_stop && !key->secondary)
-      agx_hold_tile_apple9(ctx);
+      agx_hold_tile_domains(ctx);
 
    /* Index blocks now that we're done emitting so the order is consistent. Do
     * this before agx_remove_unreachable_blocks so we match NIR indexing. This
