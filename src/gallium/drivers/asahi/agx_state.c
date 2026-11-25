@@ -1891,7 +1891,7 @@ agx_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
 }
 
 /* Info record word flagging a clamped comparison reference, for buffers */
-#define AGX_APPLE9_INFO_CLAMP_REFERENCE 5
+#define AGX_INFO_CLAMP_REFERENCE 5
 
 /* Clamp the reference for normalized formats, as Z24 is stored as Z32F */
 static bool
@@ -1909,7 +1909,7 @@ agx_clamp_shadow_reference(nir_builder *b, nir_tex_instr *tex,
       b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
       nir_imm_int(b, AGX_APPLE9_TEXTURE_INFO_OFFSET +
                         tex->texture_index * AGX_APPLE9_TEXTURE_INFO_STRIDE +
-                        AGX_APPLE9_INFO_CLAMP_REFERENCE * 4),
+                        AGX_INFO_CLAMP_REFERENCE * 4),
       .align_mul = 4, .range = ~0);
 
    nir_src_rewrite(&tex->src[comparator].src,
@@ -3564,7 +3564,7 @@ agx_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
                                                                : layers;
       info[3] = view->base.u.tex.last_level - level + 1;
       info[4] = MAX2(texture->nr_samples, 1);
-      info[AGX_APPLE9_INFO_CLAMP_REFERENCE] =
+      info[AGX_INFO_CLAMP_REFERENCE] =
          util_format_has_depth(util_format_description(view->base.format)) &&
          util_format_is_unorm(view->base.format);
 
@@ -3584,9 +3584,9 @@ agx_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
 
 /* Write uncompressed in feedback loops and in-place decompression, as G13 */
 static bool
-agx_apple9_store_uncompressed(const struct agx_batch *batch,
-                              const struct pipe_image_view *view,
-                              const struct agx_resource *rsrc)
+agx_store_uncompressed(const struct agx_batch *batch,
+                       const struct pipe_image_view *view,
+                       const struct agx_resource *rsrc)
 {
    if (!rsrc->layout.compressed ||
        !(view->access & PIPE_IMAGE_ACCESS_DRIVER_INTERNAL))
@@ -3605,7 +3605,7 @@ agx_apple9_store_uncompressed(const struct agx_batch *batch,
 }
 
 static void
-agx_apple9_null_storage(struct agx_apple9_storage_descriptor *desc)
+agx_null_usc_storage(struct agx_apple9_storage_descriptor *desc)
 {
    *desc = (struct agx_apple9_storage_descriptor){0};
    agx_set_null_texture(&desc->common.tex);
@@ -3614,7 +3614,7 @@ agx_apple9_null_storage(struct agx_apple9_storage_descriptor *desc)
 
 /* Layers of a written view that get PBE entries, or 0 to store through memory */
 static unsigned
-agx_apple9_storage_pbe_count(const struct pipe_image_view *view, bool *layered)
+agx_usc_storage_pbe_count(const struct pipe_image_view *view, bool *layered)
 {
    struct agx_resource *rsrc = agx_resource(view->resource);
    const struct ail_layout *layout = &rsrc->layout;
@@ -3643,12 +3643,12 @@ agx_apple9_storage_pbe_count(const struct pipe_image_view *view, bool *layered)
 
 /* Texture table entries of a view: one to read, and its PBE entries */
 static unsigned
-agx_apple9_storage_slots(const struct pipe_image_view *view)
+agx_usc_storage_slots(const struct pipe_image_view *view)
 {
    bool layered;
    return view->resource->target == PIPE_BUFFER
              ? 0
-             : 1 + agx_apple9_storage_pbe_count(view, &layered);
+             : 1 + agx_usc_storage_pbe_count(view, &layered);
 }
 
 /* PBE entries of a view, one per layer, at index `slot` of the texture table */
@@ -3660,7 +3660,7 @@ agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
    struct agx_resource *rsrc = agx_resource(view->resource);
    const struct ail_layout *layout = &rsrc->layout;
    bool layered;
-   unsigned count = agx_apple9_storage_pbe_count(view, &layered);
+   unsigned count = agx_usc_storage_pbe_count(view, &layered);
    if (!count)
       return;
 
@@ -3691,7 +3691,7 @@ agx_pack_usc_storage(struct agx_batch *batch,
                      unsigned slot)
 {
    struct agx_resource *rsrc = agx_resource(view->resource);
-   agx_apple9_null_storage(desc);
+   agx_null_usc_storage(desc);
 
    /* Cubes are 2D arrays, matching the compiler */
    struct pipe_sampler_view sampler_view = util_image_to_sampler_view(view);
@@ -3730,7 +3730,7 @@ agx_pack_usc_storage(struct agx_batch *batch,
 
 /* Native texture record of a view. Layouts only allow views Apple9 samples */
 static void
-agx_apple9_pack_view(void *out, struct agx_sampler_view *view)
+agx_pack_usc_view(void *out, struct agx_sampler_view *view)
 {
    struct agx_resource *resource = view->rsrc;
    assert(agx_usc_texture_view_supported(view));
@@ -3797,7 +3797,7 @@ agx_upload_launch_tables(struct agx_batch *batch,
    /* Image entries are indexed from the texture root too, after the views */
    unsigned image_slots = 0;
    u_foreach_bit(i, st->image_mask & BITFIELD_MASK(nr_images))
-      image_slots += agx_apple9_storage_slots(&st->images[i]);
+      image_slots += agx_usc_storage_slots(&st->images[i]);
 
    uint8_t *table = NULL;
    if (table_size + image_slots) {
@@ -3820,16 +3820,16 @@ agx_upload_launch_tables(struct agx_batch *batch,
             continue;
          }
 
-         agx_apple9_pack_view(texture, view);
+         agx_pack_usc_view(texture, view);
 
          /* The alias is a 2D array view of the cube faces */
          if (aliases && (view->base.target == PIPE_TEXTURE_CUBE ||
                          view->base.target == PIPE_TEXTURE_CUBE_ARRAY)) {
             struct agx_sampler_view alias = *view;
             alias.base.target = PIPE_TEXTURE_2D_ARRAY;
-            agx_apple9_pack_view(out + AGX_APPLE9_CUBE_ALIAS_INDEX(i) *
-                                          AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-                                 &alias);
+            agx_pack_usc_view(out + AGX_APPLE9_CUBE_ALIAS_INDEX(i) *
+                                       AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                              &alias);
          }
 
          if (fragment)
@@ -3853,7 +3853,7 @@ agx_upload_launch_tables(struct agx_batch *batch,
 
       for (unsigned i = 0; i < nr_images; ++i) {
          if (!(st->image_mask & BITFIELD_BIT(i))) {
-            agx_apple9_null_storage(&out[i]);
+            agx_null_usc_storage(&out[i]);
             continue;
          }
 
@@ -3861,7 +3861,7 @@ agx_upload_launch_tables(struct agx_batch *batch,
          agx_batch_track_image(batch, view, stage);
 
          agx_pack_usc_storage(batch, &out[i], view, table, table_size);
-         table_size += agx_apple9_storage_slots(view);
+         table_size += agx_usc_storage_slots(view);
       }
 
       batch->stage_uniforms[stage].texture_base = t.gpu;

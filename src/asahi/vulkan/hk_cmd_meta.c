@@ -777,9 +777,10 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key)
 }
 
 static bool
-hk_meta_apple9(struct vk_device *device)
+hk_meta_usc_descriptors(struct vk_device *device)
 {
-   return agx_is_apple9(&container_of(device, struct hk_device, vk)->dev);
+   return agx_has_usc_descriptors(
+      &container_of(device, struct hk_device, vk)->dev);
 }
 
 static VkResult
@@ -810,7 +811,7 @@ get_image_copy_descriptor_set_layout(struct vk_device *device,
       },
       {
          .binding = BINDING_INPUT,
-         .descriptorType = hk_meta_apple9(device)
+         .descriptorType = hk_meta_usc_descriptors(device)
                               ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                               : VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
          .descriptorCount = 1,
@@ -836,7 +837,7 @@ get_image_copy_pipeline_layout(struct vk_device *device,
                                VkPipelineLayout *layout_out,
                                enum copy_type type)
 {
-   key->storage_read = hk_meta_apple9(device);
+   key->storage_read = hk_meta_usc_descriptors(device);
    if (key->storage_read) {
       key->block_based = false;
       /* Software image addressing only needs the texel byte size. Copy raw
@@ -1013,8 +1014,9 @@ hk_meta_copy_image_to_buffer2(struct vk_command_buffer *cmd,
          VkImageView src_view;
          const VkImageViewUsageCreateInfo src_view_usage = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
-            .usage = hk_meta_apple9(device) ? VK_IMAGE_USAGE_STORAGE_BIT
-                                            : VK_IMAGE_USAGE_SAMPLED_BIT,
+            .usage = hk_meta_usc_descriptors(device)
+                        ? VK_IMAGE_USAGE_STORAGE_BIT
+                        : VK_IMAGE_USAGE_SAMPLED_BIT,
          };
          const VkImageViewCreateInfo src_view_info = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -1052,7 +1054,7 @@ hk_meta_copy_image_to_buffer2(struct vk_command_buffer *cmd,
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = 0,
             .dstBinding = BINDING_INPUT,
-            .descriptorType = hk_meta_apple9(device)
+            .descriptorType = hk_meta_usc_descriptors(device)
                                  ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                  : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             .descriptorCount = 1,
@@ -1372,8 +1374,9 @@ hk_meta_copy_image2(struct vk_command_buffer *cmd, struct vk_meta_device *meta,
             VkImageView src_view;
             const VkImageViewUsageCreateInfo src_view_usage = {
                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
-               .usage = hk_meta_apple9(device) ? VK_IMAGE_USAGE_STORAGE_BIT
-                                               : VK_IMAGE_USAGE_SAMPLED_BIT,
+               .usage = hk_meta_usc_descriptors(device)
+                           ? VK_IMAGE_USAGE_STORAGE_BIT
+                           : VK_IMAGE_USAGE_SAMPLED_BIT,
             };
             const VkImageViewCreateInfo src_view_info = {
                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -1458,7 +1461,7 @@ hk_meta_copy_image2(struct vk_command_buffer *cmd, struct vk_meta_device *meta,
                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                .dstSet = 0,
                .dstBinding = BINDING_INPUT,
-               .descriptorType = hk_meta_apple9(device)
+               .descriptorType = hk_meta_usc_descriptors(device)
                                     ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                     : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                .descriptorCount = 1,
@@ -1508,7 +1511,7 @@ hk_meta_copy_image2(struct vk_command_buffer *cmd, struct vk_meta_device *meta,
 static VkFormat
 hk_meta_copy_plane_format(struct hk_image *img, unsigned plane, VkFormat format)
 {
-   if (!hk_meta_apple9(img->vk.base.device))
+   if (!hk_meta_usc_descriptors(img->vk.base.device))
       return format;
 
    const struct ail_layout *layout = &img->planes[plane].layout;

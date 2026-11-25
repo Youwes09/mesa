@@ -553,9 +553,8 @@ static bool
 find_image_table(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
    struct image_table *table = data;
-   table->used |=
-      intr->intrinsic == nir_intrinsic_bindless_image_agx &&
-      nir_intrinsic_desc_set(intr) == AGX_APPLE9_IMAGE_TABLE_UNIFORM;
+   table->used |= intr->intrinsic == nir_intrinsic_bindless_image_agx &&
+                  nir_intrinsic_desc_set(intr) == AGX_IMAGE_TABLE_UNIFORM;
    return false;
 }
 
@@ -598,7 +597,7 @@ assign_image_table(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
    struct image_table *table = data;
    if (intr->intrinsic != nir_intrinsic_bindless_image_agx ||
-       nir_intrinsic_desc_set(intr) != AGX_APPLE9_IMAGE_TABLE_UNIFORM)
+       nir_intrinsic_desc_set(intr) != AGX_IMAGE_TABLE_UNIFORM)
       return false;
 
    nir_intrinsic_set_desc_set(intr, table->uniform);

@@ -677,7 +677,7 @@ static void
 hk_init_render_descriptors(struct hk_image_view *view)
 {
    for (unsigned layered = 0; layered < 2; ++layered) {
-      struct hk_apple9_render_view *out = &view->render_descriptors[layered];
+      struct hk_render_descriptors *out = &view->render_descriptors[layered];
       const struct agx_texture_packed *texture =
          layered ? &view->planes[0].layered_background
                  : &view->planes[0].background;

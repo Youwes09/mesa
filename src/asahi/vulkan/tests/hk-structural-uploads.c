@@ -129,7 +129,7 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
          VK_SUCCESS);
    struct hk_image_view *view = hk_image_view_from_handle(handle);
    for (unsigned layered = 0; layered < 2; ++layered) {
-      const struct hk_apple9_render_view *owned =
+      const struct hk_render_descriptors *owned =
          &view->render_descriptors[layered];
       agx_unpack(stderr,
                  layered ? &view->planes[0].layered_background

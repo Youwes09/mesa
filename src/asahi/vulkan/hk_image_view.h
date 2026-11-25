@@ -27,7 +27,7 @@ struct hk_image_view {
    uint32_t storage_flags, storage_pbe_index;
    struct hk_descriptor_allocation storage_pbes;
 
-   struct hk_apple9_render_view {
+   struct hk_render_descriptors {
       uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
       uint8_t store[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
       uint32_t dimensions[4];

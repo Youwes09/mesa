@@ -559,7 +559,7 @@ struct asahi_fs_shader_key {
 static_assert(sizeof(struct asahi_fs_shader_key) == 40, "no holes");
 
 /* Placeholder for the texture_base uniform until agx_nir_layout_uniforms */
-#define AGX_APPLE9_IMAGE_TABLE_UNIFORM 0xffff
+#define AGX_IMAGE_TABLE_UNIFORM 0xffff
 
 /* The largest key comes first, so {0} zeroes the whole key */
 union asahi_shader_key {

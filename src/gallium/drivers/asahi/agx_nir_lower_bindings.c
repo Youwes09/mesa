@@ -83,7 +83,7 @@ lower(nir_builder *b, nir_instr *instr, void *data)
          nir_rewrite_image_intrinsic(
             intr,
             nir_bindless_image_agx(b, offset,
-                                   .desc_set = AGX_APPLE9_IMAGE_TABLE_UNIFORM),
+                                   .desc_set = AGX_IMAGE_TABLE_UNIFORM),
             nir_image_intrinsic_type_bindless);
          return true;
       }
