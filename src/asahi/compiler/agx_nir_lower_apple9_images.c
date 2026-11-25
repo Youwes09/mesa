@@ -683,9 +683,7 @@ apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(intr);
    bool cube = dim == GLSL_SAMPLER_DIM_CUBE;
    bool array = nir_intrinsic_image_array(intr) || cube;
-   unsigned coords = (dim == GLSL_SAMPLER_DIM_1D   ? 1
-                      : dim == GLSL_SAMPLER_DIM_3D ? 3
-                                                   : 2) +
+   unsigned coords = (dim == GLSL_SAMPLER_DIM_3D ? 3 : 2) +
                      (array && dim != GLSL_SAMPLER_DIM_3D);
    nir_def *native;
    if (table_indices) {
@@ -706,15 +704,25 @@ apple9_texture_load(nir_builder *b, nir_intrinsic_instr *intr,
    }
    nir_tex_instr *tex = nir_tex_instr_create(b->shader, 3);
    tex->op = nir_texop_txf;
-   tex->sampler_dim = cube ? GLSL_SAMPLER_DIM_2D : dim;
+   tex->sampler_dim =
+      cube || dim == GLSL_SAMPLER_DIM_1D ? GLSL_SAMPLER_DIM_2D : dim;
    tex->is_array = array;
    tex->coord_components = coords;
    tex->dest_type = nir_intrinsic_dest_type(intr);
    /* Bounds checked by the caller, as no texture state is beside the entry */
    tex->backend_flags |=
       AGX_TEXTURE_FLAG_NO_CLAMP | AGX_APPLE9_TEXTURE_FETCH_BOUNDED;
-   tex->src[0] = nir_tex_src_for_ssa(
-      nir_tex_src_coord, nir_trim_vector(b, nir_u2u32(b, coord), coords));
+   coord = nir_u2u32(b, coord);
+
+   /* 1D views are 2D textures one texel high */
+   if (dim == GLSL_SAMPLER_DIM_1D) {
+      nir_def *x = nir_channel(b, coord, 0), *zero = nir_imm_int(b, 0);
+      coord = array ? nir_vec3(b, x, zero, nir_channel(b, coord, 1))
+                    : nir_vec2(b, x, zero);
+   }
+
+   tex->src[0] =
+      nir_tex_src_for_ssa(nir_tex_src_coord, nir_trim_vector(b, coord, coords));
    tex->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(b, 0));
    tex->src[2] = nir_tex_src_for_ssa(nir_tex_src_texture_handle, native);
    nir_def_init(&tex->instr, &tex->def, 4, intr->def.bit_size);
