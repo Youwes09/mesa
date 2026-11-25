@@ -3,7 +3,7 @@
  */
 
 /* Storage-image texel encoding: the canonical fast arms of
- * agx_apple9_encode_texel_fast must produce exactly the words of the generic
+ * agx_encode_texel_fast must produce exactly the words of the generic
  * per-component layout encoder. Both are built for constant texels and
  * folded to constants, over special values (zeros, denormals, format
  * boundaries, infinities, NaNs, negatives) and a deterministic sweep of
@@ -14,7 +14,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "asahi/compiler/agx_apple9_storage.h"
+#include "asahi/compiler/agx_nir_texture.h"
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/format/u_format.h"
@@ -71,7 +71,7 @@ encode_batch(const float (*rgba)[4], unsigned n, enum pipe_format format,
       nir_def *layout = nir_imm_ivec4(&b, m.component[0], m.component[1],
                                       m.component[2], m.component[3]);
       for (unsigned k = 0; k < 2; ++k) {
-         nir_def *words = agx_apple9_encode_texel_fast(
+         nir_def *words = agx_encode_texel_fast(
             &b, value, layout, true,
             nir_imm_int(&b, k ? encode : AGX_APPLE9_STORE_ENCODE_GENERIC));
          nir_store_global(&b, words, nir_imm_int64(&b, (i * 2 + k) * 16),
@@ -248,7 +248,7 @@ path_alu_count(enum pipe_format format, enum agx_apple9_store_encode encode)
       nir_load_global(&b, 4, 32, nir_imm_int64(&b, 0), .align_mul = 16);
    nir_def *layout = nir_imm_ivec4(&b, m.component[0], m.component[1],
                                    m.component[2], m.component[3]);
-   nir_def *words = agx_apple9_encode_texel_fast(&b, value, layout, true,
+   nir_def *words = agx_encode_texel_fast(&b, value, layout, true,
                                                  nir_imm_int(&b, encode));
    nir_store_global(&b, words, nir_imm_int64(&b, 64), .align_mul = 16,
                     .write_mask = 0xf);

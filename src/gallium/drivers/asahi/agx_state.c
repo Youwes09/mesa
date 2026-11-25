@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include "indices/u_primconvert.h"
 
-#include "asahi/compiler/agx_apple9_storage.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_nir.h"
 #include "asahi/compiler/agx_nir_texture.h"
@@ -2030,7 +2029,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    /* Apple9 storage images go through storage descriptors, queries included */
    bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
    if (apple9) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_storage, true, true);
+      NIR_PASS(_, nir, agx_nir_lower_storage, true, true);
       NIR_PASS(_, nir, agx_nir_lower_images);
       NIR_PASS(_, nir, nir_shader_tex_pass, agx_flag_texture_metadata_queries,
                nir_metadata_all, NULL);
@@ -2048,7 +2047,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    agx_preprocess_nir(nir);
 
    if (apple9)
-      NIR_PASS(_, nir, agx_nir_lower_apple9_image_barriers);
+      NIR_PASS(_, nir, agx_nir_lower_image_barriers);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT &&
        (nir->info.inputs_read & VARYING_BITS_TEX_ANY)) {

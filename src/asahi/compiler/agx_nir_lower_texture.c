@@ -10,7 +10,6 @@
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "gallium/include/pipe/p_defines.h"
-#include "agx_apple9_storage.h"
 #include "agx_compile.h"
 #include "agx_compiler.h"
 #include "agx_nir.h"
@@ -2246,8 +2245,8 @@ agx_nir_lower_texture_apple9(nir_shader *s)
    bool progress = false;
 
    /* Residency first: it reads the buffer and image dimensions */
-   NIR_PASS(progress, s, agx_nir_lower_apple9_sparse_residency);
-   NIR_PASS(progress, s, agx_nir_lower_apple9_texel_buffers);
+   NIR_PASS(progress, s, agx_nir_lower_sparse_residency);
+   NIR_PASS(progress, s, agx_nir_lower_texel_buffers);
    NIR_PASS(progress, s, nir_shader_tex_pass, apple9_lower_texel_buffer_index,
             nir_metadata_none, NULL);
 

@@ -10,7 +10,7 @@
 #include "hk_descriptor_memory.h"
 #include "hk_private.h"
 
-#include "asahi/compiler/agx_apple9_storage.h"
+#include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/lib/agx_apple9.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "hk_device.h"

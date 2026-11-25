@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "asahi/compiler/agx_apple9_storage.h"
+#include "asahi/compiler/agx_nir_texture.h"
 
 #include "asahi/layout/layout.h"
 #include "vulkan/vulkan_core.h"

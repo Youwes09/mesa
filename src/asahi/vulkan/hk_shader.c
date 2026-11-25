@@ -1486,7 +1486,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    }
 
    if (agx_is_apple9(&dev->dev)) {
-      NIR_PASS(_, nir, agx_nir_lower_apple9_storage, false, false);
+      NIR_PASS(_, nir, agx_nir_lower_storage, false, false);
       NIR_PASS(_, nir, agx_nir_lower_images);
       /* Storage-image queries read the descriptor, sampled ones metadata */
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
@@ -1503,7 +1503,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       NIR_PASS(_, nir, agx_nir_lower_word_math);
    agx_preprocess_nir(nir);
    if (agx_is_apple9(&dev->dev))
-      NIR_PASS(_, nir, agx_nir_lower_apple9_image_barriers);
+      NIR_PASS(_, nir, agx_nir_lower_image_barriers);
 
    nir_opt_peephole_select_options peephole_select_options = {
       .limit = 0,

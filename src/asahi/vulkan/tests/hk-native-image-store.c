@@ -3,7 +3,7 @@
  */
 #include <stdio.h>
 #include <string.h>
-#include "asahi/compiler/agx_apple9_storage.h"
+#include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/layout/layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "hk_descriptor_buffer.h"
@@ -153,7 +153,7 @@ main(void)
       const nir_shader_compiler_options options = {0};
       nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
                                                      &options, "read_write");
-      CHECK(agx_apple9_native_store_shader(b.shader));
+      CHECK(agx_native_store_shader(b.shader));
       const nir_intrinsic_info *store_info =
          &nir_intrinsic_infos[nir_intrinsic_bindless_image_store];
       nir_intrinsic_instr *store = nir_intrinsic_instr_create(
@@ -168,7 +168,7 @@ main(void)
             nir_src_for_ssa(nir_imm_zero(&b, components, j == 0 ? 64 : 32));
       }
       nir_builder_instr_insert(&b, &store->instr);
-      CHECK(agx_apple9_native_store_shader(b.shader));
+      CHECK(agx_native_store_shader(b.shader));
       nir_intrinsic_instr *read =
          nir_intrinsic_instr_create(b.shader, reads[i]);
       read->num_components =
@@ -184,7 +184,7 @@ main(void)
       }
       nir_def_init(&read->instr, &read->def, read->num_components, 32);
       nir_builder_instr_insert(&b, &read->instr);
-      CHECK(!agx_apple9_native_store_shader(b.shader));
+      CHECK(!agx_native_store_shader(b.shader));
       ralloc_free(b.shader);
    }
    puts(
