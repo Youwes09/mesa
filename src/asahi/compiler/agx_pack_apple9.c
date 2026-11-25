@@ -363,6 +363,9 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
    bool uniforms = is_uniform(a) || is_uniform(b);
    unsigned dst = gpr(I, I->dest[0]);
 
+   /* The four-byte form reaches r63 for the destination and sources */
+   bool low = dst < 64 && a.value < 128 && b.value < 128;
+
    enum agx_apple9_encoding form;
    unsigned length;
    if (any_abs) {
@@ -372,7 +375,7 @@ pack_float2(const agx_instr *I, struct a9_packed *p)
    } else if (neg_a || I->saturate) {
       form = AGX_APPLE9_ENC_FLOAT2_MODIFIER_EXTENDED;
       length = 8;
-   } else if (!neg_b && !hi && !uniforms && !I->wait && dst < 64) {
+   } else if (!neg_b && !hi && !uniforms && !I->wait && low) {
       form = AGX_APPLE9_ENC_FLOAT2_BASE;
       length = 4;
    } else {
