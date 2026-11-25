@@ -122,8 +122,12 @@ agx_set_shader_images(struct pipe_context *pctx, mesa_shader_stage shader,
       struct agx_resource *rsrc = agx_resource(image->resource);
 
       if (rsrc && !(image->access & PIPE_IMAGE_ACCESS_DRIVER_INTERNAL)) {
-         if (!rsrc->layout.writeable_image &&
-             (image->shader_access & PIPE_IMAGE_ACCESS_WRITE)) {
+         /* Apple9 shaders may also read images from memory */
+         bool uncompressed =
+            (image->shader_access & PIPE_IMAGE_ACCESS_WRITE) ||
+            agx_is_apple9(agx_device(pctx->screen));
+
+         if (!rsrc->layout.writeable_image && uncompressed) {
 
             agx_decompress(ctx, rsrc, "Shader image");
          }
