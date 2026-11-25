@@ -144,12 +144,6 @@ agx_get_compiler_debug(void)
    return debug_get_option_agx_compiler_debug();
 }
 
-static bool
-agx_is_apple9(const agx_context *ctx)
-{
-   return ctx->target.isa == AGX_SHADER_ISA_APPLE9;
-}
-
 static agx_index
 agx_cached_preload(agx_context *ctx, unsigned base, enum agx_size size)
 {
@@ -4773,7 +4767,7 @@ agx_lower_float_moves(agx_context *ctx)
    }
 }
 
-/* Apple9 iadd, imad and widening imul can write the uniform file directly */
+/* iadd, imad and widening imul can write the uniform file directly */
 static bool
 fusable_uniform_def(const agx_instr *I)
 {
@@ -4825,7 +4819,7 @@ reads_reg(const agx_instr *I, agx_index reg)
 }
 
 static void
-agx_fuse_uniform_stores_apple9(agx_context *ctx)
+agx_fuse_uniform_stores(agx_context *ctx)
 {
    agx_foreach_block(ctx, block) {
       agx_instr *next = NULL;
@@ -5074,7 +5068,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    agx_validate(ctx, "agx_ra");
    agx_lower_64bit_postra(ctx);
 
-   if (agx_is_apple9(ctx)) {
+   if (ctx->target.shader_sized_frame) {
       /* Frames are in 16-byte units. Atomics alone only use the atomic frame */
       if (ctx->is_preamble) {
          /* Preambles have no frame, one that spills is inlined */
@@ -5136,8 +5130,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    /* Set last-use bits after lowering pseudo for best results. */
    agx_opt_register_cache(ctx);
 
-   if (agx_is_apple9(ctx))
-      agx_fuse_uniform_stores_apple9(ctx);
+   if (ctx->target.uniform_dests)
+      agx_fuse_uniform_stores(ctx);
 
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       agx_print_shader(ctx, stdout);

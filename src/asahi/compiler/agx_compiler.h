@@ -572,7 +572,9 @@ struct agx_isa_target {
    /* Scoreboard slots for asynchronous instructions */
    unsigned scoreboard_slots;
 
-   /* Shaders can always spill, as the launch sizes the private frame */
+   /* Shaders can always spill, as the launch sizes the private frame, which
+    * also holds returned atomics. The launch allocates the export registers.
+    */
    bool shader_sized_frame;
 
    /* Whether agx_occupancy_for_register_count describes this ISA */
@@ -636,6 +638,9 @@ struct agx_isa_target {
     * uniforms. Nothing is preloaded, so IDs come from system registers.
     */
    bool root_uniforms;
+
+   /* Integer adds and multiply-adds can write uniform registers */
+   bool uniform_dests;
 
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
