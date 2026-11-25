@@ -70,8 +70,8 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    bool single_vary = util_is_power_of_two_nonzero64(ctx->layout->written);
    enum uvs_group group = group_for_varying(sem.location);
 
-   /* Apple9 vertex shaders write unlinked slots for the linker to relocate */
-   bool unlinked = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+   /* Exported varyings go to unlinked slots for the linker to relocate */
+   bool unlinked = agx_nir_target(b->shader)->varying_exports;
 
    nir_def *base;
    if ((group == UVS_VARYINGS) && unlinked) {
@@ -236,7 +236,7 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
     * inline UVS indices to eliminate some indirection.
     */
    if (s->info.known_interpolation_qualifiers &&
-       agx_nir_shader_isa(s) != AGX_SHADER_ISA_APPLE9) {
+       !agx_nir_target(s)->varying_exports) {
       struct agx_varyings_vs v;
       uint64_t flat = ~(s->info.linear_varyings | s->info.perspective_varyings);
 

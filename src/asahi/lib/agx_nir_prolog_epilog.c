@@ -131,7 +131,7 @@ lower_non_monolithic_uniforms(nir_builder *b, nir_intrinsic_instr *intr,
       b->cursor = nir_instr_remove(&intr->instr);
       nir_def *load;
 
-      if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9 &&
+      if (agx_nir_target(b->shader)->root_uniforms &&
           (intr->intrinsic == nir_intrinsic_load_first_vertex ||
            intr->intrinsic == nir_intrinsic_load_base_instance)) {
          unsigned *nr_attribs = data;
@@ -445,9 +445,10 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    }
 
    /* Now lower the resulting program using the key */
-   bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
+   bool tile_domains = agx_nir_target(b->shader)->tile_domains;
    struct agx_tilebuffer_layout tib =
-      (apple9 ? agx_build_raw_tilebuffer_layout : agx_build_tilebuffer_layout)(
+      (tile_domains ? agx_build_raw_tilebuffer_layout
+                    : agx_build_tilebuffer_layout)(
          key->rt_formats, ARRAY_SIZE(key->rt_formats), key->nr_samples, true);
 
    if (key->force_small_tile)
@@ -597,8 +598,8 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
     */
    NIR_PASS(_, b->shader, lower_tests_zs, !key->link.already_ran_zs);
 
-   /* Apple9 masks stores by the killed samples, kept across iterations */
-   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+   /* Tile domains mask stores by the killed samples, kept across iterations */
+   if (agx_nir_target(b->shader)->tile_domains) {
       NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, key->link.kills,
                key->link.sample_shading);
    }
@@ -636,10 +637,10 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
       return true;
    }
 
-   /* Apple9 masks stores by the killed samples anyway, so it keeps discards */
+   /* Tile domains mask stores by the killed samples anyway, keeping discards */
    if (intr->intrinsic == nir_intrinsic_demote_samples &&
        b->shader->info.fs.early_fragment_tests &&
-       agx_nir_shader_isa(b->shader) != AGX_SHADER_ISA_APPLE9) {
+       !agx_nir_target(b->shader)->tile_domains) {
 
       if (!ctx->masked_samples) {
          b->cursor = nir_before_impl(nir_shader_get_entrypoint(b->shader));
@@ -710,9 +711,9 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
          info->loc0_w_1 = true;
       } else {
-         /* Apple9 keeps 16-bit values in the low half of 32-bit registers */
-         bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
-         unsigned stride = apple9 ? 2 : vec->bit_size / 16;
+         /* Word registers keep 16-bit values in their low half */
+         bool words = agx_nir_target(b->shader)->word_registers;
+         unsigned stride = words ? 2 : vec->bit_size / 16;
 
          nir_export_agx(b, nir_channel(b, vec, c),
                         .base = AGX_ABI_FOUT_COLOUR(loc) + (comp + c) * stride);
@@ -762,8 +763,7 @@ agx_nir_lower_fs_output_to_epilog(nir_shader *s,
                                   struct agx_fs_epilog_link_info *out)
 {
    struct lower_epilog_ctx ctx = {.info = out};
-   out->kills =
-      agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9 && kills_samples(s);
+   out->kills = agx_nir_target(s)->tile_domains && kills_samples(s);
 
    nir_shader_intrinsics_pass(s, lower_output_to_epilog,
                               nir_metadata_control_flow, &ctx);
@@ -848,8 +848,8 @@ agx_nir_fs_prolog(nir_builder *b, const void *key_)
             lower_non_monolithic_uniforms, nir_metadata_control_flow, NULL);
    NIR_PASS(_, b->shader, lower_tests_zs, key->run_zs_tests);
 
-   /* The prolog runs first, so on Apple9 it starts the killed samples */
-   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
+   /* The prolog runs first, so it starts the killed samples */
+   if (agx_nir_target(b->shader)->tile_domains)
       NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, false, true);
 
    b->shader->info.io_lowered = true;

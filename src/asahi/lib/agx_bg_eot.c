@@ -64,11 +64,10 @@ agx_compile_bg_eot_shader(struct agx_bg_eot_cache *cache, nir_shader *shader,
 
    res->info = bin.info;
 
-   /* Apple9 launches enter through the BO's shader body, so use its own BO */
-   if (key->dev.shader_isa == AGX_SHADER_ISA_APPLE9) {
-      res->bo =
-         agx_bo_create(cache->dev, bin.info.binary_size, 0,
-                       AGX_BO_EXEC | AGX_BO_LOW_VA, "Apple9 tile program");
+   /* Launches enter through the BO's shader body, so use its own BO */
+   if (agx_has_launch_programs(cache->dev)) {
+      res->bo = agx_bo_create(cache->dev, bin.info.binary_size, 0,
+                              AGX_BO_EXEC | AGX_BO_LOW_VA, "Tile program");
       if (res->bo) {
          memcpy(agx_bo_map(res->bo), bin.binary, bin.info.binary_size);
          res->ptr = res->bo->va->addr;
@@ -203,7 +202,7 @@ static nir_shader *
 agx_build_end_of_tile_shader(const struct agx_bg_eot_key *key,
                              enum agx_shader_isa isa)
 {
-   if (isa == AGX_SHADER_ISA_APPLE9)
+   if (key->tib.raw_tiles)
       return agx_build_raw_end_of_tile_shader(key);
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
@@ -305,7 +304,7 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
          agx_bo_unreference(cache->dev, cache->precomp[i]->bo);
    }
 
-   if (agx_gather_device_key(cache->dev).shader_isa == AGX_SHADER_ISA_APPLE9) {
+   if (agx_has_launch_programs(cache->dev)) {
       hash_table_foreach(cache->ht, ent) {
          struct agx_bg_eot_shader *shader = ent->data;
          agx_bo_unreference(cache->dev, shader->bo);
