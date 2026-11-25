@@ -22,7 +22,7 @@ put_u32(void *ptr, uint32_t value)
 void
 agx_shader_body_init_bo(struct agx_bo *bo)
 {
-   bo->apple9_body = (struct agx_shader_body){
+   bo->shader_body = (struct agx_shader_body){
       .bo = bo,
       .addr = bo->va->addr,
    };
@@ -46,16 +46,16 @@ agx_shader_body_finish(struct agx_device *dev, struct agx_shader_body *body)
    if (!body->entry_offset && !body->entry_fixed)
       return;
 
-   simple_mtx_lock(&dev->apple9_entry_lock);
+   simple_mtx_lock(&dev->entry_lock);
    if (body->entry_offset) {
-      util_vma_heap_free(&dev->apple9_entry_heap,
-                         body->entry_offset - AGX_APPLE9_ENTRY_CODE_OFFSET,
-                         AGX_APPLE9_ENTRY_BLOCK_SIZE);
+      util_vma_heap_free(&dev->entry_heap,
+                         body->entry_offset - AGX_ENTRY_CODE_OFFSET,
+                         AGX_ENTRY_BLOCK_SIZE);
       body->entry_offset = 0;
       list_del(&body->entry_link);
    }
    body->entry_fixed = false;
-   simple_mtx_unlock(&dev->apple9_entry_lock);
+   simple_mtx_unlock(&dev->entry_lock);
 }
 
 void
@@ -138,15 +138,15 @@ build_body_entry(uint8_t *out, uint64_t entry, uint64_t body)
 void
 agx_init_shader_entries(struct agx_device *dev)
 {
-   uint8_t header[AGX_APPLE9_ENTRY_HEADER_SIZE];
-   memset(header, 0, AGX_APPLE9_ENTRY_HEADER_SIZE);
-   put_u32(header, AGX_APPLE9_ENTRY_HEADER_SIZE);
-   for (unsigned offset = 0x40; offset < AGX_APPLE9_ENTRY_HEADER_SIZE;
+   uint8_t header[AGX_ENTRY_HEADER_SIZE];
+   memset(header, 0, AGX_ENTRY_HEADER_SIZE);
+   put_u32(header, AGX_ENTRY_HEADER_SIZE);
+   for (unsigned offset = 0x40; offset < AGX_ENTRY_HEADER_SIZE;
         offset += 2)
       put_u16(header + offset, 0x0006);
    fill_helper_table(header, 0x100, 10);
    fill_helper_table(header, 0x200, 10);
-   agx_apple9_entry_write(dev, 0, header, AGX_APPLE9_ENTRY_HEADER_SIZE);
+   agx_shader_entry_write(dev, 0, header, AGX_ENTRY_HEADER_SIZE);
 }
 
 /* The launch target addresses entries in a few megabytes, room for about
@@ -162,17 +162,17 @@ static void
 evict_entries(struct agx_device *dev)
 {
    const unsigned target =
-      AGX_APPLE9_ENTRY_ARENA_SIZE / AGX_APPLE9_ENTRY_BLOCK_SIZE / 4;
+      AGX_ENTRY_ARENA_SIZE / AGX_ENTRY_BLOCK_SIZE / 4;
    unsigned freed = 0;
    list_for_each_entry_safe(struct agx_shader_body, body,
-                            &dev->apple9_entry_lru, entry_link) {
+                            &dev->entry_lru, entry_link) {
       if (freed == target)
          break;
       if (body->entry_pins || body->entry_fixed)
          continue;
-      util_vma_heap_free(&dev->apple9_entry_heap,
-                         body->entry_offset - AGX_APPLE9_ENTRY_CODE_OFFSET,
-                         AGX_APPLE9_ENTRY_BLOCK_SIZE);
+      util_vma_heap_free(&dev->entry_heap,
+                         body->entry_offset - AGX_ENTRY_CODE_OFFSET,
+                         AGX_ENTRY_BLOCK_SIZE);
       body->entry_offset = 0;
       list_del(&body->entry_link);
       ++freed;
@@ -183,52 +183,52 @@ uint32_t
 agx_shader_entry(struct agx_device *dev, void *allocator,
                  struct agx_shader_body *body, bool compute)
 {
-   simple_mtx_lock(&dev->apple9_entry_lock);
-   if (!allocator || !dev->apple9_pin_entry ||
-       !dev->apple9_pin_entry(allocator, body))
+   simple_mtx_lock(&dev->entry_lock);
+   if (!allocator || !dev->pin_entry ||
+       !dev->pin_entry(allocator, body))
       body->entry_fixed = true;
    uint32_t entry = body->entry_offset;
    if (entry) {
-      list_move_to(&body->entry_link, &dev->apple9_entry_lru);
+      list_move_to(&body->entry_link, &dev->entry_lru);
    } else {
-      uint32_t block = util_vma_heap_alloc(&dev->apple9_entry_heap,
-                                           AGX_APPLE9_ENTRY_BLOCK_SIZE,
-                                           AGX_APPLE9_ENTRY_ALIGNMENT);
+      uint32_t block = util_vma_heap_alloc(&dev->entry_heap,
+                                           AGX_ENTRY_BLOCK_SIZE,
+                                           AGX_ENTRY_ALIGNMENT);
       if (!block) {
          evict_entries(dev);
-         block = util_vma_heap_alloc(&dev->apple9_entry_heap,
-                                     AGX_APPLE9_ENTRY_BLOCK_SIZE,
-                                     AGX_APPLE9_ENTRY_ALIGNMENT);
+         block = util_vma_heap_alloc(&dev->entry_heap,
+                                     AGX_ENTRY_BLOCK_SIZE,
+                                     AGX_ENTRY_ALIGNMENT);
       }
       if (block &&
-          !agx_apple9_entry_back(dev, block + AGX_APPLE9_ENTRY_BLOCK_SIZE)) {
-         util_vma_heap_free(&dev->apple9_entry_heap, block,
-                            AGX_APPLE9_ENTRY_BLOCK_SIZE);
+          !agx_shader_entry_back(dev, block + AGX_ENTRY_BLOCK_SIZE)) {
+         util_vma_heap_free(&dev->entry_heap, block,
+                            AGX_ENTRY_BLOCK_SIZE);
          block = 0;
       }
       if (block) {
-         entry = block + AGX_APPLE9_ENTRY_CODE_OFFSET;
-         uint8_t bytes[AGX_APPLE9_ENTRY_BLOCK_SIZE];
-         memset(bytes, 0, AGX_APPLE9_ENTRY_BLOCK_SIZE);
-         put_u32(bytes, AGX_APPLE9_ENTRY_BLOCK_SIZE);
+         entry = block + AGX_ENTRY_CODE_OFFSET;
+         uint8_t bytes[AGX_ENTRY_BLOCK_SIZE];
+         memset(bytes, 0, AGX_ENTRY_BLOCK_SIZE);
+         put_u32(bytes, AGX_ENTRY_BLOCK_SIZE);
          if (compute) {
             util_call_once(&compute_entry_once,
                            init_compute_entry);
             memcpy(bytes + 0x40, compute_entry_constants, 0x40);
          }
-         if (build_body_entry(bytes + AGX_APPLE9_ENTRY_CODE_OFFSET,
+         if (build_body_entry(bytes + AGX_ENTRY_CODE_OFFSET,
                                      dev->shader_base + entry, body->addr)) {
-            agx_apple9_entry_write(dev, block, bytes,
-                                   AGX_APPLE9_ENTRY_BLOCK_SIZE);
+            agx_shader_entry_write(dev, block, bytes,
+                                   AGX_ENTRY_BLOCK_SIZE);
             body->entry_offset = entry;
-            list_addtail(&body->entry_link, &dev->apple9_entry_lru);
+            list_addtail(&body->entry_link, &dev->entry_lru);
          } else {
-            util_vma_heap_free(&dev->apple9_entry_heap, block,
-                               AGX_APPLE9_ENTRY_BLOCK_SIZE);
+            util_vma_heap_free(&dev->entry_heap, block,
+                               AGX_ENTRY_BLOCK_SIZE);
             entry = 0;
          }
       }
    }
-   simple_mtx_unlock(&dev->apple9_entry_lock);
+   simple_mtx_unlock(&dev->entry_lock);
    return entry;
 }

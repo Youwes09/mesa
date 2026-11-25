@@ -11,7 +11,6 @@
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_primitive_count.h"
 
@@ -717,7 +716,7 @@ struct hk_cmd_buffer {
     * compares against the previous draw in the same graphics control stream,
     * so an unchanged launch, coefficient table or PPP record is reused
     * without hashing. Records are allocated per control stream (batch). */
-   struct agx_apple9_uniform_draw apple9_draw[2];
+   struct agx_draw_record apple9_draw[2];
    unsigned apple9_draw_current;
    struct hk_cs *apple9_prev_cs;
 
@@ -728,7 +727,7 @@ struct hk_cmd_buffer {
       bool valid;
       uint32_t render_gen;
       uint32_t first_vertex, base_instance;
-      struct agx_apple9_render_pipeline pipeline;
+      struct agx_draw_pipeline pipeline;
       struct hk_shader *shader[2];
       struct hk_linked_shader *linked[2];
    } apple9_draw_state;
@@ -736,10 +735,10 @@ struct hk_cmd_buffer {
    /* The last linked Apple9 (vertex, fragment) pair, by program id: shader
     * objects pair stages only at draw time, so link once per change. The
     * stages hold the pair's varying layout and coefficient tables. */
-   struct agx_apple9_render_stage apple9_stage[2];
-   struct agx_apple9_render_pipeline apple9_linked;
-   /* Stage-derived PPP bytes of apple9_linked (agx_apple9_build_ppp_static). */
-   uint8_t apple9_ppp_static[AGX_APPLE9_PPP_STATIC_SIZE];
+   struct agx_draw_stage apple9_stage[2];
+   struct agx_draw_pipeline apple9_linked;
+   /* Stage-derived PPP bytes of apple9_linked (agx_build_ppp_static). */
+   uint8_t apple9_ppp_static[AGX_PPP_STATIC_SIZE];
    uint64_t apple9_linked_id[2];
 
    /* List of all recorded control streams */

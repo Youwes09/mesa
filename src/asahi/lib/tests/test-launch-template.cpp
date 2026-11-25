@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "asahi/lib/agx_launch_program.h"
+#include "asahi/lib/agx_shader_body.h"
 extern "C" {
 #include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/compiler/agx_apple9_profile.h"
@@ -47,7 +48,7 @@ TEST(LaunchTemplate, MatchesBuild)
       for (unsigned launch = 0; launch < 4; ++launch) {
          struct agx_launch_parameters q = p;
          q.resource_table = rng();
-         q.entry_offset = (rng() % (AGX_APPLE9_ENTRY_MAX_OFFSET + 1)) & ~1u;
+         q.entry_offset = (rng() % (AGX_ENTRY_MAX_OFFSET + 1)) & ~1u;
          q.launch_address = base + ((rng() % (1u << 31)) & ~63ull);
          uint32_t roots[2 * (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE +
                              AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)];

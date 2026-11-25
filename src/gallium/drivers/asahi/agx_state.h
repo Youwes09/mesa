@@ -11,7 +11,6 @@
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_bo.h"
 #include "asahi/lib/agx_device.h"
@@ -491,7 +490,7 @@ struct agx_batch {
    uint16_t attachments_were_valid;
    struct agx_pool apple9_context_pool;
    unsigned apple9_draw_count;
-   struct agx_apple9_uniform_draw apple9_previous_draw;
+   struct agx_draw_record apple9_previous_draw;
 
    /* Apple9 direct records appended to cdm for this command. */
    struct util_dynarray apple9_attachments;

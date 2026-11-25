@@ -111,7 +111,7 @@ bool agx_launch_template_set_roots(
    uint8_t *out, const struct agx_launch_template *tmpl,
    const uint32_t *root_words);
 
-struct agx_apple9_render_stage;
+struct agx_draw_stage;
 struct agx_device;
 struct agx_ptr;
 
@@ -120,21 +120,21 @@ struct agx_ptr;
  * fragment tile allocation and sample count (vertex stages use 0/0) and then
  * patched per launch. Entries are immutable once published; owned by the
  * compiled shader alongside its BO. */
-#define AGX_APPLE9_STAGE_LAUNCH_TEMPLATES 4
-struct agx_apple9_stage_launch_cache {
+#define AGX_STAGE_LAUNCH_TEMPLATES 4
+struct agx_stage_launch_cache {
    simple_mtx_t lock;
    /* Published entries; written with release ordering under the lock. */
    unsigned count;
    struct {
       uint8_t tile_bytes, samples;
       struct agx_launch_template tmpl;
-   } entry[AGX_APPLE9_STAGE_LAUNCH_TEMPLATES];
+   } entry[AGX_STAGE_LAUNCH_TEMPLATES];
 };
 
 void
-agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c);
+agx_stage_launch_cache_init(struct agx_stage_launch_cache *c);
 void
-agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c);
+agx_stage_launch_cache_finish(struct agx_stage_launch_cache *c);
 
 /* Per-sample tile allocation for a fragment-stage launch or render. As in
  * agx_build_tilebuffer_layout, multisampled renders keep a nonempty
@@ -142,7 +142,7 @@ agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c);
  * with zero-byte fragment launches can leave its fragment stage unretired.
  */
 static inline unsigned
-agx_apple9_tile_sample_bytes(unsigned color_bytes, unsigned samples)
+agx_launch_tile_bytes(unsigned color_bytes, unsigned samples)
 {
    return color_bytes || samples <= 1 ? color_bytes : 8;
 }
@@ -151,10 +151,10 @@ agx_apple9_tile_sample_bytes(unsigned color_bytes, unsigned samples)
  * The caller retains the shader BO and immutable allocation until completion.
  * push is the address of the stage's push words (AGX_APPLE9_PUSH_ROOT).
  */
-bool agx_apple9_prepare_graphics_stage(
+bool agx_prepare_stage_launch(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
-   const struct agx_apple9_render_stage *shader, bool fragment, uint64_t table,
+   const struct agx_draw_stage *shader, bool fragment, uint64_t table,
    uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
    unsigned samples, uint32_t *launch);
 

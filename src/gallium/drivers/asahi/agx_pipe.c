@@ -187,7 +187,7 @@ agx_resource_layout_valid(struct agx_device *dev,
    }
    if (layout->tiling == AIL_TILING_LINEAR) {
       unsigned stride = ail_get_linear_stride_B(layout, 0);
-      if (!stride || (stride & 15) || stride > AGX_APPLE9_MAX_LINEAR_STRIDE)
+      if (!stride || (stride & 15) || stride > AGX_USC_MAX_LINEAR_STRIDE)
          return false;
    }
    return true;
@@ -229,7 +229,7 @@ agx_resource_from_handle(struct pipe_screen *pscreen,
        rsc->modifier == DRM_FORMAT_MOD_LINEAR &&
        templat->target != PIPE_BUFFER &&
        ((whandle->offset & 15) || !whandle->stride ||
-        whandle->stride > AGX_APPLE9_MAX_LINEAR_STRIDE)) {
+        whandle->stride > AGX_USC_MAX_LINEAR_STRIDE)) {
       FREE(rsc);
       return NULL;
    }
@@ -2541,7 +2541,7 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
        * as Honeykrisp's shaderStencilExport does. */
       caps->shader_stencil_export = true;
       caps->framebuffer_no_attachment = false;
-      /* Native sampler address mode 5 (agx_apple9_pack_sampler). */
+      /* Native sampler address mode 5 (agx_pack_basic_usc_sampler). */
       caps->texture_mirror_clamp_to_edge = true;
       caps->texture_buffer_objects = true;
       /* RGB32 views consume three physical scalar texels per logical texel. */
@@ -2596,9 +2596,9 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
             target != PIPE_TEXTURE_RECT && target != PIPE_TEXTURE_2D &&
             target != PIPE_TEXTURE_CUBE && target != PIPE_TEXTURE_CUBE_ARRAY &&
             target != PIPE_TEXTURE_2D_ARRAY && target != PIPE_TEXTURE_3D) ||
-           (!agx_apple9_color_is_wide(format) &&
-            !agx_apple9_color_is_packed(format) &&
-            !agx_apple9_color_is_normalized(format) &&
+           (!agx_tile_format_is_wide(format) &&
+            !agx_raw_tile_is_packed(format) &&
+            !agx_tile_format_is_normalized(format) &&
             format != PIPE_FORMAT_R8_UNORM &&
             format != PIPE_FORMAT_R8G8_UNORM &&
             format != PIPE_FORMAT_R8G8B8A8_SRGB &&
@@ -2614,7 +2614,7 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
             format != PIPE_FORMAT_R16G16B16A16_FLOAT)))
          return false;
       if ((usage & PIPE_BIND_RENDER_TARGET) &&
-          agx_apple9_block_export_format(agx_apple9_color_tile_format(format)) >
+          agx_apple9_block_export_format(agx_raw_tile_format(format)) >
              15)
          return false;
       if ((usage & PIPE_BIND_SAMPLER_VIEW) &&
@@ -2623,8 +2623,8 @@ agx_is_format_supported(struct pipe_screen *pscreen, enum pipe_format format,
             target != PIPE_TEXTURE_RECT && target != PIPE_TEXTURE_3D &&
             target != PIPE_TEXTURE_CUBE && target != PIPE_TEXTURE_CUBE_ARRAY &&
             target != PIPE_TEXTURE_2D_ARRAY) ||
-           !(agx_apple9_texture_format_supported(format) ||
-             (target == PIPE_BUFFER && agx_apple9_texture_is_rgb32(format)))))
+           !(agx_usc_texture_format_supported(format) ||
+             (target == PIPE_BUFFER && agx_texture_is_rgb32(format)))))
          return false;
    }
 

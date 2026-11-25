@@ -4,7 +4,6 @@
  */
 
 #include "agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "agx_pack.h"
 
@@ -104,7 +103,7 @@ TEST(TextureDescriptor, FullAddressDoesNotOverlapFlagsOrStride)
    for (unsigned bit = 40; bit < 48; ++bit) {
       tex.address = (UINT64_C(1) << bit) | 0x12345670;
       uint32_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 4] = {};
-      ASSERT_TRUE(agx_apple9_pack_texture(words, &tex));
+      ASSERT_TRUE(agx_pack_usc_texture(words, &tex));
       uint64_t address_word = words[2] | (uint64_t(words[3]) << 32);
       EXPECT_EQ((address_word & ((UINT64_C(1) << 44) - 1)) << 4, tex.address);
       EXPECT_EQ((address_word >> 44) & 3, 3u);
@@ -112,9 +111,9 @@ TEST(TextureDescriptor, FullAddressDoesNotOverlapFlagsOrStride)
    }
    uint32_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 4];
    tex.address = UINT64_C(1) << 48;
-   EXPECT_FALSE(agx_apple9_pack_texture(words, &tex));
+   EXPECT_FALSE(agx_pack_usc_texture(words, &tex));
    tex.address = (UINT64_C(1) << 40) | 1;
-   EXPECT_FALSE(agx_apple9_pack_texture(words, &tex));
+   EXPECT_FALSE(agx_pack_usc_texture(words, &tex));
 }
 
 TEST(TextureDescriptor, ThreeDimensionalDepthHasElevenBits)
@@ -127,17 +126,17 @@ TEST(TextureDescriptor, ThreeDimensionalDepthHasElevenBits)
    uint64_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 8];
    for (unsigned depth : {1u, 192u, 2047u, 2048u}) {
       tex.depth = depth;
-      ASSERT_TRUE(agx_apple9_pack_texture(words, &tex));
+      ASSERT_TRUE(agx_pack_usc_texture(words, &tex));
       EXPECT_EQ((words[1] >> 46) & 0x7ff, depth - 1);
    }
    for (unsigned depth : {2049u, 4095u, 4096u, 8192u, 16384u}) {
       tex.depth = depth;
-      EXPECT_FALSE(agx_apple9_pack_texture(words, &tex));
+      EXPECT_FALSE(agx_pack_usc_texture(words, &tex));
    }
    /* Array counts use a different hardware field; retain their range. */
    tex.dimension = AGX_TEXTURE_DIMENSION_2D_ARRAY;
    tex.depth = 16384;
-   EXPECT_TRUE(agx_apple9_pack_texture(words, &tex));
+   EXPECT_TRUE(agx_pack_usc_texture(words, &tex));
 }
 
 TEST(TextureDescriptor, LinearR32fWithHighAddress)
@@ -154,7 +153,7 @@ TEST(TextureDescriptor, LinearR32fWithHighAddress)
    tex.height = 9;
    tex.address = UINT64_C(0x10000018000);
    uint32_t words[8];
-   ASSERT_TRUE(agx_apple9_pack_texture(words, &tex));
+   ASSERT_TRUE(agx_pack_usc_texture(words, &tex));
    const uint32_t reference[8] = {
       0x09688842, 0x00002001, 0x00001800, 0x00000010, 0, 0, 0, 0,
    };

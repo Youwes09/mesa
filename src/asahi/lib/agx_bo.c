@@ -396,7 +396,7 @@ agx_bo_unreference(struct agx_device *dev, struct agx_bo *bo)
    if (p_atomic_dec_zero(&bo->refcnt)) {
       assert(!p_atomic_read_relaxed(&bo->writer));
 
-      agx_shader_body_finish(dev, &bo->apple9_body);
+      agx_shader_body_finish(dev, &bo->shader_body);
 
       if (dev->debug & AGX_DBG_TRACE)
          agxdecode_track_free(dev->agxdecode, bo);

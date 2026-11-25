@@ -138,7 +138,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
    texture.stride = (texture.width * util_format_get_blocksize(format)) - 16;
 
    if (usc_descriptors) {
-      bool packed = agx_apple9_pack_texture(apple9_texture, &texture);
+      bool packed = agx_pack_usc_texture(apple9_texture, &texture);
       assert(packed);
       (void)packed;
       /* The common prefix is software query state on G16. Storage accesses

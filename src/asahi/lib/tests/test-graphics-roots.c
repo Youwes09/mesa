@@ -29,14 +29,14 @@ main(void)
    struct agx_device *dev = calloc(1, sizeof(*dev));
    CHECK(dev);
    dev->shader_base = 1ull << 40;
-   simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);
-   list_inithead(&dev->apple9_entry_lru);
+   simple_mtx_init(&dev->entry_lock, mtx_plain);
+   list_inithead(&dev->entry_lru);
    struct agx_va va = {.addr = dev->shader_base + 0x10000};
    struct agx_bo bo = {.va = &va};
    agx_shader_body_init_bo(&bo);
-   bo.apple9_body.entry_offset = 0x400;
-   list_add(&bo.apple9_body.entry_link, &dev->apple9_entry_lru);
-   struct agx_apple9_render_stage shader = {
+   bo.shader_body.entry_offset = 0x400;
+   list_add(&bo.shader_body.entry_link, &dev->entry_lru);
+   struct agx_draw_stage shader = {
       .bo = &bo,
       .publication_count_valid = true,
       .publication_count = 32,
@@ -46,8 +46,8 @@ main(void)
       for (unsigned fragment = 0; fragment < 2; ++fragment) {
          for (unsigned samples = 1; samples <= 4; samples *= 2) {
             for (unsigned preamble = 0; preamble < 2; ++preamble) {
-               struct agx_apple9_stage_launch_cache cache;
-               agx_apple9_stage_launch_cache_init(&cache);
+               struct agx_stage_launch_cache cache;
+               agx_stage_launch_cache_init(&cache);
                shader.launch_cache = cached ? &cache : NULL;
                shader.preamble_size = preamble ? 64 : 0;
                shader.preamble_offset = preamble ? 64 : 0;
@@ -55,7 +55,7 @@ main(void)
                memset(&a, 0xa5, sizeof(a));
                a.gpu = dev->shader_base + 0x20000;
                uint32_t launch = 0;
-               CHECK(agx_apple9_prepare_graphics_stage(
+               CHECK(agx_prepare_stage_launch(
                   dev, &a, allocate, &shader, fragment, 0x30000, 0x40000,
                   0x50000, 0x60000, 16, samples, &launch));
                CHECK(a.size == 64 + AGX_GRAPHICS_LAUNCH_SIZE);
@@ -65,7 +65,7 @@ main(void)
                CHECK(!memcmp(a.data, roots, sizeof(roots)));
                struct agx_launch_parameters p = {
                   .shader_base = dev->shader_base,
-                  .entry_offset = bo.apple9_body.entry_offset,
+                  .entry_offset = bo.shader_body.entry_offset,
                   .publication_count = shader.publication_count,
                   .resource_table = a.gpu,
                   .launch_address = a.gpu + 64,
@@ -82,12 +82,12 @@ main(void)
                CHECK(!memcmp(reference, a.data + 64, sizeof(reference)));
                for (unsigned i = a.size; i < sizeof(a.data); ++i)
                   CHECK(a.data[i] == 0xa5);
-               agx_apple9_stage_launch_cache_finish(&cache);
+               agx_stage_launch_cache_finish(&cache);
             }
          }
       }
    }
-   simple_mtx_destroy(&dev->apple9_entry_lock);
+   simple_mtx_destroy(&dev->entry_lock);
    free(dev);
    puts(
       "PASS 24 graphics allocations: roots, full launch bytes, preambles and bounds");

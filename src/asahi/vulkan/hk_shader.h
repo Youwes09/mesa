@@ -490,8 +490,8 @@ struct hk_linked_shader {
    struct agx_linked_shader b;
 
    /* Apple9: the program as draws launch it, see hk_cmd_apple9.c */
-   struct agx_apple9_render_stage apple9_stage;
-   struct agx_apple9_stage_launch_cache apple9_launch;
+   struct agx_draw_stage apple9_stage;
+   struct agx_stage_launch_cache apple9_launch;
 
    /* True if the VS prolog uses software indexing, either for geom/tess or
     * adjacency primitives.

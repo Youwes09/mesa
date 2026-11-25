@@ -9,7 +9,6 @@
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/compiler/agx_nir.h"
 #include "agx_abi.h"
@@ -311,7 +310,7 @@ hk_apple9_tile_bytes(const struct agx_tilebuffer_layout *tib)
    unsigned bytes = 0;
    for (unsigned rt = 0; rt < ARRAY_SIZE(tib->logical_format); ++rt) {
       if (tib->logical_format[rt] != PIPE_FORMAT_NONE && !tib->spilled[rt])
-         bytes += 4 * agx_apple9_color_words(tib->logical_format[rt]);
+         bytes += 4 * agx_raw_tile_words(tib->logical_format[rt]);
    }
    return bytes;
 }
@@ -404,7 +403,7 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
       goto fail;
 
    const struct agx_apple9_compute_profile *p = &shader->info.apple9_compute;
-   struct agx_apple9_render_stage stage = {
+   struct agx_draw_stage stage = {
       .bo = shader->bo,
       .binary = agx_bo_map(shader->bo),
       .binary_size = shader->info.binary_size,
@@ -441,10 +440,10 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
 
    unsigned samples = key->tib.nr_samples;
    uint32_t launch;
-   if (!agx_apple9_prepare_graphics_stage(
+   if (!agx_prepare_stage_launch(
           &dev->dev, cmd, hk_apple9_usc_alloc, &stage, true, table,
           textures.gpu, dev->apple9_fetch_sampler->va->addr, push_addr,
-          agx_apple9_tile_sample_bytes(hk_apple9_tile_bytes(&key->tib),
+          agx_launch_tile_bytes(hk_apple9_tile_bytes(&key->tib),
                                        samples),
           samples, &launch))
       goto fail;
@@ -1344,7 +1343,7 @@ hk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     * easier.
     */
    render->tilebuffer = (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)
-                            ? agx_build_tilebuffer_layout_apple9
+                            ? agx_build_raw_tilebuffer_layout
                             : agx_build_tilebuffer_layout)(
       formats, render->color_att_count, render->tilebuffer.nr_samples, true);
 
@@ -2791,7 +2790,7 @@ hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    }
 }
 
-static_assert(HK_MAX_VIEWPORTS == AGX_APPLE9_MAX_VIEWPORTS,
+static_assert(HK_MAX_VIEWPORTS == AGX_PPP_MAX_VIEWPORTS,
               "Vulkan viewport limit matches the PPP viewport block");
 
 static struct agx_ptr
@@ -2977,7 +2976,7 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
  * shader bindings or launch records. Callers resolve null bindings and check
  * the aperture before using this for either the full or cached draw path. */
 static void
-hk_apple9_set_index_fetch(struct agx_apple9_render_pipeline *pipeline,
+hk_apple9_set_index_fetch(struct agx_draw_pipeline *pipeline,
                           struct agx_draw draw, uint64_t buffer, uint64_t range,
                           uint64_t offset)
 {
@@ -2991,14 +2990,14 @@ hk_apple9_set_index_fetch(struct agx_apple9_render_pipeline *pipeline,
 
 static void
 hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
-                             const struct agx_apple9_render_pipeline *pipeline,
+                             const struct agx_draw_pipeline *pipeline,
                              struct agx_draw draw)
 {
    if (agx_is_indirect(draw.b))
       cs->current =
-         agx_apple9_emit_indirect_draw(cs->current, pipeline, draw.b.ptr) - 4;
+         agx_emit_indirect_draw(cs->current, pipeline, draw.b.ptr) - 4;
    else
-      cs->current = agx_apple9_emit_direct_draw(
+      cs->current = agx_emit_direct_draw(
                        cs->current, pipeline, draw.b.count[0], draw.b.count[1],
                        draw.indexed ? draw.index_bias : draw.start) -
                     4;
@@ -3007,7 +3006,7 @@ hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
 /* Record the final draw packet after its resources and pipeline are prepared. */
 static void
 hk_apple9_record_draw(struct hk_cs *cs,
-                      const struct agx_apple9_render_pipeline *pipeline,
+                      const struct agx_draw_pipeline *pipeline,
                       struct agx_draw draw)
 {
    hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
@@ -3015,7 +3014,7 @@ hk_apple9_record_draw(struct hk_cs *cs,
 
 static void
 hk_apple9_account_draw(struct hk_cs *cs,
-                       const struct agx_apple9_render_pipeline *pipeline,
+                       const struct agx_draw_pipeline *pipeline,
                        struct agx_draw draw, bool emulated)
 {
    if (cs->primitive_count < AGX_PRIMITIVE_COUNT_UNKNOWN) {
@@ -3109,8 +3108,8 @@ hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    const struct agx_unlinked_uvs_layout *uvs = &vs->info.uvs;
-   struct agx_apple9_render_stage *vertex = &cmd->apple9_stage[0];
-   struct agx_apple9_render_stage *fragment = &cmd->apple9_stage[1];
+   struct agx_draw_stage *vertex = &cmd->apple9_stage[0];
+   struct agx_draw_stage *fragment = &cmd->apple9_stage[1];
 
    *vertex = vs_linked->apple9_stage;
    *fragment = fs_linked->apple9_stage;
@@ -3162,9 +3161,9 @@ hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
 
    fragment->coefficient_count = bindings;
    fragment->reads_primitive_id = primitive_id;
-   fragment->apple9_reads_z = fs_linked->b.cf.reads_z;
+   fragment->reads_z = fs_linked->b.cf.reads_z;
 
-   return agx_apple9_link_render_pipeline(&cmd->apple9_linked, vertex,
+   return agx_link_draw_pipeline(&cmd->apple9_linked, vertex,
                                           fragment);
 }
 
@@ -3182,7 +3181,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   struct agx_apple9_render_pipeline *pipeline =
+   struct agx_draw_pipeline *pipeline =
       &cmd->apple9_draw_state.pipeline;
    if (draw.indexed) {
       uint64_t offset =
@@ -3216,7 +3215,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          return true; /* The pool recorded the allocation failure. */
       if (root != gfx->root) {
          gfx->root = root;
-         struct agx_apple9_uniform_draw *record =
+         struct agx_draw_record *record =
             &cmd->apple9_draw[!cmd->apple9_draw_current];
 
          /* The push words hold the root address */
@@ -3231,7 +3230,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          if (!push[0] || !push[1])
             return true; /* The pool recorded the allocation failure. */
 
-         if (!agx_apple9_update_draw_tables_alloc(
+         if (!agx_update_draw_tables_alloc(
                 &dev->dev, cmd, hk_apple9_usc_alloc, cmd,
                 hk_apple9_context_alloc, pipeline, record, tables, push)) {
             vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
@@ -3312,7 +3311,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (!linked[0] || !linked[1] ||
        (!rasterizer_discard &&
         (!dyn->vp.viewport_count ||
-         dyn->vp.viewport_count > AGX_APPLE9_MAX_VIEWPORTS ||
+         dyn->vp.viewport_count > AGX_PPP_MAX_VIEWPORTS ||
          dyn->vp.scissor_count != dyn->vp.viewport_count)) ||
        (!emulated &&
         dyn->ia.primitive_topology > VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
@@ -3341,11 +3340,11 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       }
       cmd->apple9_linked_id[0] = linked[0]->apple9_stage.program_id;
       cmd->apple9_linked_id[1] = linked[1]->apple9_stage.program_id;
-      agx_apple9_build_ppp_static(&cmd->apple9_linked, cmd->apple9_ppp_static);
+      agx_build_ppp_static(&cmd->apple9_linked, cmd->apple9_ppp_static);
       cmd->apple9_linked.ppp_static = cmd->apple9_ppp_static;
    }
-   const struct agx_apple9_render_stage *fragment = &cmd->apple9_stage[1];
-   struct agx_apple9_render_pipeline pipeline = cmd->apple9_linked;
+   const struct agx_draw_stage *fragment = &cmd->apple9_stage[1];
+   struct agx_draw_pipeline pipeline = cmd->apple9_linked;
    /* Attachmentless render passes acquire their sample count from the first
     * drawing pipeline. Keep the native tile layout and submission state in
     * agreement with the fragment launch, including a pre-existing query CS.
@@ -3433,9 +3432,9 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       cs->ppp_multisamplectl = gfx->apple9_sample_positions;
    hk_reserve_scratch(cmd, cs, shaders[0]);
    hk_reserve_scratch(cmd, cs, shaders[1]);
-   struct agx_apple9_uniform_draw *record =
+   struct agx_draw_record *record =
       &cmd->apple9_draw[cmd->apple9_draw_current];
-   agx_apple9_uniform_draw_reset(record);
+   agx_draw_record_reset(record);
    /* Rasterizer discard pipelines may omit viewport/scissor state entirely.
     * Supply harmless hardware state without consulting those ignored API
     * values or dropping the draw through the empty-scissor optimization.
@@ -3448,7 +3447,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
     * both the transform and the scissor. The tile-granular region clip is
     * their union.
     */
-   struct agx_scissor_packed scissors[AGX_APPLE9_MAX_VIEWPORTS];
+   struct agx_scissor_packed scissors[AGX_PPP_MAX_VIEWPORTS];
    int bbox[4] = {INT_MAX, INT_MAX, INT_MIN, INT_MIN};
    for (unsigned v = 0; v < viewports; ++v) {
       const VkViewport *vp =
@@ -3667,7 +3666,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    hk_cmd_buffer_flush_push_descriptors(cmd, &gfx->descriptors);
    gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
    for (unsigned stage = 0; stage < 2; ++stage) {
-      const struct agx_apple9_render_stage *s = &cmd->apple9_stage[stage];
+      const struct agx_draw_stage *s = &cmd->apple9_stage[stage];
       uint64_t sysvals = 0;
       hk_apple9_upload_textures(cmd, &record->texture_table[stage],
                                 &record->sampler_table[stage], &sysvals);
@@ -3692,10 +3691,10 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       else
          record->vertex_table = table;
    }
-   const struct agx_apple9_uniform_draw *previous =
+   const struct agx_draw_record *previous =
       cmd->apple9_prev_cs == cs ? &cmd->apple9_draw[!cmd->apple9_draw_current]
                                 : NULL;
-   bool prepared = agx_apple9_prepare_draw_alloc(
+   bool prepared = agx_prepare_draw_record_alloc(
       &dev->dev, cmd, hk_apple9_usc_alloc, cmd, hk_apple9_context_alloc,
       &pipeline, record, previous);
    if (!prepared)
@@ -3769,8 +3768,8 @@ hk_apple9_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
       return;
 
    hk_reserve_scratch(cmd, cs, s);
-   hk_apple9_dispatch(cmd, cs, &linked->b.bo->apple9_body,
-                      &linked->b.apple9.profile, grid, cmd->state.gfx.root,
+   hk_apple9_dispatch(cmd, cs, &linked->b.bo->shader_body,
+                      &linked->b.program.profile, grid, cmd->state.gfx.root,
                       push, s);
 }
 
@@ -4359,7 +4358,7 @@ hk_flush_shaders(struct hk_cmd_buffer *cmd)
                   hk_only_variant(fs)->info.fs.interp.flat,
                   hk_only_variant(fs)->info.fs.interp.linear);
 
-   /* Apple9 outputs stay in their unlinked slots, see agx_apple9_link */
+   /* Apple9 outputs stay in their unlinked slots, see agx_link_program */
    if (agx_is_apple9(&hk_cmd_buffer_device(cmd)->dev)) {
       const struct agx_unlinked_uvs_layout *uvs = &hw_vs->info.uvs;
       unsigned slot = uvs->group_offs[UVS_VARYINGS];
@@ -6606,7 +6605,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (desc->push_dirty)
       hk_cmd_buffer_flush_push_descriptors(cmd, desc);
    const struct agx_apple9_compute_profile *profile =
-      &main->only_linked->b.apple9.profile;
+      &main->only_linked->b.program.profile;
 
    /* Draws without a task shader and with a known grid are set up here */
    bool cpu_setup = direct && !task;

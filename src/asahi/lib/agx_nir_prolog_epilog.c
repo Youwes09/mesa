@@ -447,7 +447,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    /* Now lower the resulting program using the key */
    bool apple9 = agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9;
    struct agx_tilebuffer_layout tib =
-      (apple9 ? agx_build_tilebuffer_layout_apple9
+      (apple9 ? agx_build_raw_tilebuffer_layout
               : agx_build_tilebuffer_layout)(
          key->rt_formats, ARRAY_SIZE(key->rt_formats), key->nr_samples, true);
 

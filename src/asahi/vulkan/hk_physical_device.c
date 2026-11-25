@@ -1284,7 +1284,7 @@ hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
    /* The 3D sampler uses only eleven depth bits, unlike the array layer
     * count. Copies can address deeper slices, but normalized samples cannot.
     */
-   props->maxImageDimension3D = AGX_APPLE9_MAX_3D_TEXTURE_DIMENSION;
+   props->maxImageDimension3D = AGX_USC_MAX_3D_DIMENSION;
 
    *ext = (struct vk_device_extension_table){
       /* Vulkan 1.1 */

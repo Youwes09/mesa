@@ -8,7 +8,6 @@
 #include "util/format/u_format.h"
 #include "layout.h"
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
 /* Maximum number of bytes per tile on G13G. This may change in future versions
@@ -112,17 +111,17 @@ agx_build_tilebuffer_layout(const enum pipe_format *formats, uint8_t nr_cbufs,
 }
 
 /* Apple9 render targets are whole tile-format words, at most 128 B a sample */
-#define APPLE9_MAX_BYTES_PER_SAMPLE (128)
+#define RAW_TILE_MAX_SAMPLE_BYTES (128)
 
 struct agx_tilebuffer_layout
-agx_build_tilebuffer_layout_apple9(const enum pipe_format *formats,
+agx_build_raw_tilebuffer_layout(const enum pipe_format *formats,
                                    uint8_t nr_cbufs, uint8_t nr_samples,
                                    bool layered)
 {
    struct agx_tilebuffer_layout tib = {
       .nr_samples = nr_samples,
       .layered = layered,
-      .apple9 = true,
+      .raw_tiles = true,
    };
 
    unsigned offset_B = 0;
@@ -133,9 +132,9 @@ agx_build_tilebuffer_layout_apple9(const enum pipe_format *formats,
       if (formats[rt] == PIPE_FORMAT_NONE)
          continue;
 
-      unsigned size_B = 4 * agx_apple9_color_words(formats[rt]);
+      unsigned size_B = 4 * agx_raw_tile_words(formats[rt]);
 
-      if (offset_B + size_B <= APPLE9_MAX_BYTES_PER_SAMPLE) {
+      if (offset_B + size_B <= RAW_TILE_MAX_SAMPLE_BYTES) {
          tib._offset_B[rt] = offset_B;
          offset_B += size_B;
       } else {
@@ -166,7 +165,7 @@ agx_tilebuffer_set_samples(struct agx_tilebuffer_layout *tib,
 {
    assert(tib->nr_samples == 0 && "must not be initialized");
 
-   *tib = (tib->apple9 ? agx_build_tilebuffer_layout_apple9
+   *tib = (tib->raw_tiles ? agx_build_raw_tilebuffer_layout
                        : agx_build_tilebuffer_layout)(
       tib->logical_format, ARRAY_SIZE(tib->logical_format), nr_samples,
       tib->layered);
@@ -188,8 +187,8 @@ agx_tilebuffer_supports_mask(struct agx_tilebuffer_layout *tib, unsigned rt)
       return false;
 
    /* Apple9 masks whole words, so only formats with a word per channel */
-   if (tib->apple9)
-      return agx_apple9_color_words(tib->logical_format[rt]) ==
+   if (tib->raw_tiles)
+      return agx_raw_tile_words(tib->logical_format[rt]) ==
              util_format_get_nr_components(tib->logical_format[rt]);
 
    enum pipe_format fmt = agx_tilebuffer_physical_format(tib, rt);

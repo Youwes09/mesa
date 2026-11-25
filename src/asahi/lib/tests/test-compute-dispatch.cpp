@@ -3,7 +3,6 @@
 #include <iterator>
 #include <gtest/gtest.h>
 #include "agx_cdm.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
 TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
@@ -23,18 +22,18 @@ TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
       bool ok_fenced, ok_unfenced;
       unsigned size;
       if (mode == 0) {
-         size = AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE;
-         ok_fenced = agx_apple9_emit_direct_dispatch(
+         size = AGX_CDM_DISPATCH_SIZE;
+         ok_fenced = agx_cdm_emit_direct_dispatch(
             fenced, launch, global, profile.local_size, &profile, true);
-         ok_unfenced = agx_apple9_emit_direct_dispatch(
+         ok_unfenced = agx_cdm_emit_direct_dispatch(
             unfenced, launch, global, profile.local_size, &profile, false);
       } else {
-         size = mode == 1 ? AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE
-                          : AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE;
-         ok_fenced = agx_apple9_emit_indirect_dispatch(
+         size = mode == 1 ? AGX_CDM_INDIRECT_DISPATCH_SIZE
+                          : AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE;
+         ok_fenced = agx_cdm_emit_indirect_dispatch(
             fenced, launch, 0x1234000, profile.local_size, mode == 2, &profile,
             true);
-         ok_unfenced = agx_apple9_emit_indirect_dispatch(
+         ok_unfenced = agx_cdm_emit_indirect_dispatch(
             unfenced, launch, 0x1234000, profile.local_size, mode == 2,
             &profile, false);
       }
@@ -48,7 +47,7 @@ TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
       EXPECT_EQ(unfenced[size / 4], 0xdeadbeefu);
 
       /* The compute-only barrier replaces just the trailing word. */
-      agx_apple9_set_compute_barrier(fenced, size);
+      agx_cdm_set_compute_barrier(fenced, size);
       for (unsigned i = 0; i + 1 < size / 4; ++i)
          EXPECT_EQ(fenced[i], unfenced[i]);
       EXPECT_EQ(fenced[size / 4 - 1], 0x60000160u);
@@ -56,7 +55,7 @@ TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
    }
 }
 
-/* The emitters refuse exactly the records agx_apple9_dispatch_reject_reason
+/* The emitters refuse exactly the records agx_cdm_dispatch_reject_reason
  * names, and the reason is what hk prints for "dispatch failed (6)". */
 TEST(ComputeDispatch, RejectReasonMatchesEmitters)
 {
@@ -69,10 +68,10 @@ TEST(ComputeDispatch, RejectReasonMatchesEmitters)
    const uint32_t global[] = {8, 1, 1}, zero_axis[] = {8, 0, 1};
    uint32_t out[16];
 
-   EXPECT_EQ(agx_apple9_dispatch_reject_reason(launch, false, 0, global,
+   EXPECT_EQ(agx_cdm_dispatch_reject_reason(launch, false, 0, global,
                                                profile.local_size, &profile),
              nullptr);
-   EXPECT_EQ(agx_apple9_dispatch_reject_reason(launch, true, 0x1234000, NULL,
+   EXPECT_EQ(agx_cdm_dispatch_reject_reason(launch, true, 0x1234000, NULL,
                                                profile.local_size, &profile),
              nullptr);
 
@@ -88,17 +87,17 @@ TEST(ComputeDispatch, RejectReasonMatchesEmitters)
       {false, launch + 0x20, 0, global, "launch address not 64-byte aligned"},
    };
    for (const auto &c : cases) {
-      const char *reason = agx_apple9_dispatch_reject_reason(
+      const char *reason = agx_cdm_dispatch_reject_reason(
          c.launch, c.indirect, c.address, c.global, profile.local_size,
          &profile);
       ASSERT_NE(reason, nullptr) << c.reason;
       EXPECT_STREQ(reason, c.reason);
       bool ok =
          c.indirect
-            ? agx_apple9_emit_indirect_dispatch(out, c.launch, c.address,
+            ? agx_cdm_emit_indirect_dispatch(out, c.launch, c.address,
                                                 profile.local_size, false,
                                                 &profile, false)
-            : agx_apple9_emit_direct_dispatch(
+            : agx_cdm_emit_direct_dispatch(
                  out, c.launch, c.global, profile.local_size, &profile, false);
       EXPECT_FALSE(ok) << c.reason;
    }

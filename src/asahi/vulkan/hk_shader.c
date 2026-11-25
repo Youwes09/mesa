@@ -1570,9 +1570,9 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
       }
 
       if (shader->info.stage == MESA_SHADER_COMPUTE) {
-         const struct agx_apple9_program *p = &shader->only_linked->b.apple9;
+         const struct agx_linked_program *p = &shader->only_linked->b.program;
          struct agx_launch_template *t = malloc(sizeof(*t));
-         if (t && agx_apple9_compute_launch_template(
+         if (t && agx_cdm_launch_template(
                      t, &p->profile, dev->dev.shader_base,
                      p->preamble_size ? shader->only_linked->b.bo->va->addr +
                                            p->preamble_offset
@@ -2401,7 +2401,7 @@ static void
 hk_destroy_linked_shader(struct hk_device *dev, struct hk_linked_shader *linked)
 {
    if (agx_is_apple9(&dev->dev))
-      agx_apple9_stage_launch_cache_finish(&linked->apple9_launch);
+      agx_stage_launch_cache_finish(&linked->apple9_launch);
 
    agx_bo_unreference(&dev->dev, linked->b.bo);
    ralloc_free(linked);
@@ -3122,10 +3122,10 @@ hk_apple9_init_linked(struct hk_device *dev, struct hk_linked_shader *s,
                       struct agx_shader_part *prolog,
                       struct agx_shader_part *epilog)
 {
-   const struct agx_apple9_program *p = &s->b.apple9;
-   agx_apple9_stage_launch_cache_init(&s->apple9_launch);
+   const struct agx_linked_program *p = &s->b.program;
+   agx_stage_launch_cache_init(&s->apple9_launch);
 
-   s->apple9_stage = (struct agx_apple9_render_stage){
+   s->apple9_stage = (struct agx_draw_stage){
       .program_id = p_atomic_inc_return(&dev->apple9_last_program_id),
       .bo = s->b.bo,
       .binary = s->b.bo ? agx_bo_map(s->b.bo) : NULL,

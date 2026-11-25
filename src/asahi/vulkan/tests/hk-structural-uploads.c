@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Exercise actual render/view ownership with host-backed command BOs. */
 #include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "../hk_cmd_buffer.h"
 #include "../hk_device.h"
@@ -148,7 +148,7 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
          cfg = legacy;
       }
       uint8_t expected[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
-      bool valid = agx_apple9_translate_texture(expected, &packed);
+      bool valid = agx_translate_usc_texture(expected, &packed);
       CHECK(owned->texture_valid == valid);
       if (valid)
          CHECK(!memcmp(owned->texture, expected, sizeof(expected)));

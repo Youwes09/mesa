@@ -202,8 +202,8 @@ check(void)
                                        .residency_hi = va[0].addr >> 32};
    struct agx_texture_packed tex;
    agx_set_null_texture(&tex);
-   agx_apple9_translate_texture(null.texture, &tex);
-   agx_apple9_translate_texture(null.cube_alias, &tex);
+   agx_translate_usc_texture(null.texture, &tex);
+   agx_translate_usc_texture(null.cube_alias, &tex);
    hk_apple9_texture_info(null.texture_info, &tex);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, info, &null,
                        sizeof(null)));
@@ -212,7 +212,7 @@ check(void)
    CHECK(null.texture_info[3] == 0 && null.min_lod_fp16 == 0);
    uint8_t native[AGX_APPLE9_TEXTURE_TABLE_STRIDE + 2];
    memset(native, 0xa5, sizeof(native));
-   agx_apple9_set_null_texture(native + 1);
+   agx_set_null_usc_texture(native + 1);
    CHECK(native[0] == 0xa5 && native[sizeof(native) - 1] == 0xa5);
    CHECK(!memcmp(native + 1, null.texture, sizeof(null.texture)));
    uint8_t combined[2 * (sizeof(null) + sizeof(sampler.planes[0].apple9))];

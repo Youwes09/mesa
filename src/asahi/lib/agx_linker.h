@@ -13,9 +13,9 @@
 #include "util/macros.h"
 
 /* Apple9 program linked from no_stop parts that share the agx_abi.h registers
- * and load push words at uniform 24 + w, see agx_apple9_link.
+ * and load push words at uniform 24 + w, see agx_link_program.
  */
-struct agx_apple9_program {
+struct agx_linked_program {
    /* Code from malloc, starting at offset 0 */
    uint8_t *binary;
    uint32_t size;
@@ -52,7 +52,7 @@ struct agx_linked_shader {
    struct agx_varyings_fs cf;
 
    /* Apple9 program, at the start of bo */
-   struct agx_apple9_program apple9;
+   struct agx_linked_program program;
 
    /* Data structures packed for the linked program */
    struct agx_usc_shader_packed shader;
@@ -66,9 +66,9 @@ void agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
                    bool fragment, struct agx_shader_part *main,
                    struct agx_shader_part *prolog,
                    struct agx_shader_part *epilog, unsigned nr_samples_shaded,
-                   const uint8_t *apple9_uvs_slots);
+                   const uint8_t *uvs_slots);
 
-void agx_apple9_link(struct agx_apple9_program *p, bool fragment,
+void agx_link_program(struct agx_linked_program *p, bool fragment,
                      struct agx_shader_part *main,
                      struct agx_shader_part *prolog,
                      struct agx_shader_part *epilog, unsigned nr_samples_shaded,

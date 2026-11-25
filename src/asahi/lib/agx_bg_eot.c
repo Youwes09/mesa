@@ -18,7 +18,6 @@
 #include "nir_serialize.h"
 #include "pool.h"
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
 static bool
@@ -48,7 +47,7 @@ agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
       NIR_PASS(_, shader, agx_nir_lower_multisampled_image_store);
 
       /* Spilled render targets. Apple9 does not spill, lowers textures once */
-      if (!tib->apple9)
+      if (!tib->raw_tiles)
          NIR_PASS(_, shader, agx_nir_lower_texture);
       NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_tex_handle_to_u0,
                nir_metadata_control_flow, NULL);
@@ -161,7 +160,7 @@ agx_build_background_shader(const struct agx_bg_eot_key *key,
 
 /* Apple9 block image stores each render target's tile at the tile origin */
 static nir_shader *
-agx_build_end_of_tile_shader_apple9(const struct agx_bg_eot_key *key)
+agx_build_raw_end_of_tile_shader(const struct agx_bg_eot_key *key)
 {
    nir_builder b = nir_builder_init_simple_shader(
       MESA_SHADER_FRAGMENT, &agx_nir_options_apple9, "agx_eot");
@@ -169,7 +168,7 @@ agx_build_end_of_tile_shader_apple9(const struct agx_bg_eot_key *key)
    enum glsl_sampler_dim dim =
       (key->tib.nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;
 
-   assert(key->tib.apple9 && "Apple9 tile layout");
+   assert(key->tib.raw_tiles && "Apple9 tile layout");
    unsigned height = key->tib.tile_size == 32 * 16 ? 16 : 32;
    nir_def *tile = nir_load_tile_id_agx(&b);
    nir_def *xy = nir_vec2(&b, nir_imul_imm(&b, nir_channel(&b, tile, 0), 32),
@@ -191,7 +190,7 @@ agx_build_end_of_tile_shader_apple9(const struct agx_bg_eot_key *key)
       nir_image_store_block_agx(
          &b, nir_imm_int(&b, rt),
          nir_imm_int(&b, agx_tilebuffer_offset_B(&key->tib, rt)), coords,
-         .format = agx_apple9_color_tile_format(format), .image_dim = dim,
+         .format = agx_raw_tile_format(format), .image_dim = dim,
          .image_array = key->tib.layered);
    }
 
@@ -205,7 +204,7 @@ agx_build_end_of_tile_shader(const struct agx_bg_eot_key *key,
                              enum agx_shader_isa isa)
 {
    if (isa == AGX_SHADER_ISA_APPLE9)
-      return agx_build_end_of_tile_shader_apple9(key);
+      return agx_build_raw_end_of_tile_shader(key);
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
                                                   &agx_nir_options, "agx_eot");
@@ -302,7 +301,7 @@ void
 agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
 {
    for (unsigned i = 0; i < LIBAGX_NUM_PROGRAMS; ++i) {
-      if (cache->precomp[i] && cache->precomp[i]->apple9)
+      if (cache->precomp[i] && cache->precomp[i]->launched)
          agx_bo_unreference(cache->dev, cache->precomp[i]->bo);
    }
 
@@ -322,7 +321,7 @@ agx_bg_eot_cleanup(struct agx_bg_eot_cache *cache)
 
 /* Apple9 programs get their own BO. False if the USC aperture is full */
 static bool
-agx_upload_apple9_precompiled(struct agx_bg_eot_cache *cache,
+agx_upload_launched_precompiled(struct agx_bg_eot_cache *cache,
                               struct agx_precompiled_shader *p,
                               unsigned program)
 {
@@ -332,8 +331,8 @@ agx_upload_apple9_precompiled(struct agx_bg_eot_cache *cache,
    const struct agx_precompiled_apple9_kernel_info *info = (const void *)bin;
    const uint32_t *local = info->profile.local_size;
 
-   p->apple9 = true;
-   p->apple9_profile = info->profile;
+   p->launched = true;
+   p->profile = info->profile;
    p->b.workgroup = agx_workgroup(local[0], local[1], local[2]);
    p->bo = agx_bo_create(cache->dev, info->binary_size, 0,
                          AGX_BO_EXEC | AGX_BO_LOW_VA | AGX_BO_WRITEBACK,
@@ -362,7 +361,7 @@ agx_get_precompiled_locked(struct agx_bg_eot_cache *cache, unsigned program)
       rzalloc(cache->ht, struct agx_precompiled_shader);
 
    if (agx_has_launch_programs(cache->dev)) {
-      if (!agx_upload_apple9_precompiled(cache, p, program)) {
+      if (!agx_upload_launched_precompiled(cache, p, program)) {
          ralloc_free(p);
          return NULL;
       }

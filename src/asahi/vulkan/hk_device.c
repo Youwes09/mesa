@@ -10,7 +10,7 @@
 #include "wsi_common_entrypoints.h"
 
 #include "agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "agx_bg_eot.h"
 #include "agx_helpers.h"
@@ -460,16 +460,16 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
 
    if (agx_is_apple9(&dev->dev)) {
       dev->apple9_fetch_sampler =
-         agx_bo_create(&dev->dev, 64 + AGX_APPLE9_SAMPLER_TABLE_STRIDE, 0,
+         agx_bo_create(&dev->dev, 64 + AGX_USC_SAMPLER_STRIDE, 0,
                        AGX_BO_LOW_VA, "Apple9 immutable samplers");
       if (!dev->apple9_fetch_sampler) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
       }
       uint8_t *samplers = agx_bo_map(dev->apple9_fetch_sampler);
-      memset(samplers, 0, 64 + AGX_APPLE9_SAMPLER_TABLE_STRIDE);
-      agx_apple9_pack_fetch_sampler(samplers);
-      agx_apple9_pack_sampler(samplers + 64, false, false, 1, 0, 14,
+      memset(samplers, 0, 64 + AGX_USC_SAMPLER_STRIDE);
+      agx_pack_usc_fetch_sampler(samplers);
+      agx_pack_basic_usc_sampler(samplers + 64, false, false, 1, 0, 14,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
 
@@ -535,7 +535,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    }
 
    simple_mtx_init(&dev->heap_lock, mtx_plain);
-   dev->dev.apple9_pin_entry = hk_apple9_pin_entry;
+   dev->dev.pin_entry = hk_apple9_pin_entry;
    result = hk_device_init_meta(dev);
    if (result != VK_SUCCESS)
       goto fail_mem_cache;

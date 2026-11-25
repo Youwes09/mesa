@@ -7,7 +7,6 @@
 #include "asahi/compiler/agx_compile.h"
 #include "agx_cdm.h"
 #include "agx_draw_table.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
 #include <gtest/gtest.h>
@@ -71,17 +70,17 @@ TEST(DispatchPacket, PacketFootprints)
    profile.resource_write_mask = 1;
    const uint32_t global[] = {3, 5, 7};
    const uint32_t local[] = {1, 1, 1};
-   const unsigned sizes[] = {AGX_APPLE9_COMPUTE_CDM_RECORD_SIZE,
-                             AGX_APPLE9_COMPUTE_INDIRECT_CDM_RECORD_SIZE,
-                             AGX_APPLE9_COMPUTE_INDIRECT_LOCAL_CDM_RECORD_SIZE};
+   const unsigned sizes[] = {AGX_CDM_DISPATCH_SIZE,
+                             AGX_CDM_INDIRECT_DISPATCH_SIZE,
+                             AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE};
    for (unsigned mode = 0; mode < 3; ++mode) {
       std::array<uint8_t, 76> out;
       out.fill(0xa5);
       bool ok =
          mode == 0
-            ? agx_apple9_emit_direct_dispatch(out.data() + 16, 0x10000010000ull,
+            ? agx_cdm_emit_direct_dispatch(out.data() + 16, 0x10000010000ull,
                                               global, local, &profile, true)
-            : agx_apple9_emit_indirect_dispatch(
+            : agx_cdm_emit_indirect_dispatch(
                  out.data() + 16, 0x10000010000ull, 0x200000000ull, local,
                  mode == 2, &profile, true);
       ASSERT_TRUE(ok);
@@ -100,7 +99,7 @@ TEST(DispatchPacket, PacketFootprints)
  * every id at zero, which silently disabled the reuse). */
 TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
 {
-   agx_apple9_uniform_draw a = {}, b = {};
+   agx_draw_record a = {}, b = {};
    for (unsigned s = 0; s < 2; ++s) {
       a.program_id[s] = b.program_id[s] = 7 + s;
       a.code[s] = b.code[s] = 0x10000100000ull + s * 0x1000;
@@ -112,34 +111,34 @@ TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
    a.samples = b.samples = 1;
    a.tile_bytes = b.tile_bytes = 4;
    a.provoking_vertex = b.provoking_vertex = 0;
-   EXPECT_TRUE(agx_apple9_draw_reuses_launch(&a, &b, 0));
-   EXPECT_TRUE(agx_apple9_draw_reuses_launch(&a, &b, 1));
-   EXPECT_TRUE(agx_apple9_draw_reuses_coefficients(&a, &b));
+   EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 0));
+   EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 1));
+   EXPECT_TRUE(agx_draw_reuses_coefficients(&a, &b));
 
    /* A changed stage table only affects that stage's launch. */
    b.vertex_table = 0x3000;
-   EXPECT_FALSE(agx_apple9_draw_reuses_launch(&a, &b, 0));
-   EXPECT_TRUE(agx_apple9_draw_reuses_launch(&a, &b, 1));
-   EXPECT_TRUE(agx_apple9_draw_reuses_coefficients(&a, &b));
+   EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 0));
+   EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 1));
+   EXPECT_TRUE(agx_draw_reuses_coefficients(&a, &b));
    b.vertex_table = a.vertex_table;
 
    /* Tile allocation and sample count only matter to the fragment launch. */
    b.tile_bytes = 8;
-   EXPECT_TRUE(agx_apple9_draw_reuses_launch(&a, &b, 0));
-   EXPECT_FALSE(agx_apple9_draw_reuses_launch(&a, &b, 1));
+   EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 0));
+   EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 1));
    b.tile_bytes = a.tile_bytes;
 
-   EXPECT_FALSE(agx_apple9_draw_reuses_launch(nullptr, &b, 0));
-   EXPECT_FALSE(agx_apple9_draw_reuses_coefficients(nullptr, &b));
+   EXPECT_FALSE(agx_draw_reuses_launch(nullptr, &b, 0));
+   EXPECT_FALSE(agx_draw_reuses_coefficients(nullptr, &b));
 }
 
 TEST(DrawReuse, ZeroProgramIdNeverReuses)
 {
-   agx_apple9_uniform_draw a = {}, b = {};
-   EXPECT_FALSE(agx_apple9_draw_reuses_launch(&a, &b, 0));
-   EXPECT_FALSE(agx_apple9_draw_reuses_launch(&a, &b, 1));
-   EXPECT_FALSE(agx_apple9_draw_reuses_coefficients(&a, &b));
+   agx_draw_record a = {}, b = {};
+   EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 0));
+   EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 1));
+   EXPECT_FALSE(agx_draw_reuses_coefficients(&a, &b));
    a.program_id[0] = b.program_id[0] = 3;
-   EXPECT_TRUE(agx_apple9_draw_reuses_launch(&a, &b, 0));
-   EXPECT_FALSE(agx_apple9_draw_reuses_coefficients(&a, &b));
+   EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 0));
+   EXPECT_FALSE(agx_draw_reuses_coefficients(&a, &b));
 }

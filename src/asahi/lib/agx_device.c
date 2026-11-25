@@ -600,7 +600,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
    dev->guard_size = AIL_PAGESIZE;
    uint64_t default_shader_base =
       ALIGN_POT(MAX2(dev->params.vm_start, reservation), 0x100000000ull);
-   bool fixed_apple9_usc_base =
+   bool fixed_usc_base =
       dev->params.gpu_generation == 16 || dev->params.gpu_generation == 17;
 
    /* Apple9 compact shader references resolve through the fixed native 1-TiB
@@ -609,7 +609,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * for the complete 4-GiB heap there, so use the hardware address directly
     * instead of requiring a kernel-side alias.
     */
-   if (fixed_apple9_usc_base) {
+   if (fixed_usc_base) {
       dev->shader_base = 1ull << 40;
    } else {
       // Put the USC heap at the bottom of the user address space, 4GiB aligned
@@ -631,7 +631,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * so this is a Mesa compatibility guard, not a hardware address limit.
     * Executable/AGX_BO_LOW_VA allocations still use usc_heap.
     */
-   uint64_t user_start = fixed_apple9_usc_base ? default_shader_base
+   uint64_t user_start = fixed_usc_base ? default_shader_base
                                                : dev->shader_base + shader_size;
 
    assert(dev->shader_base >= dev->params.vm_start);
@@ -658,7 +658,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
        (dev->params.gpu_variant == 'G' || dev->params.gpu_variant == 'S' ||
         dev->params.gpu_variant == 'C')) {
       kernel_size = dev->params.vm_kernel_min_size;
-      vm_create.kernel_end = AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32);
+      vm_create.kernel_end = AGX_RENDER_CONTEXT_BASE + (1ull << 32);
       vm_create.kernel_start = vm_create.kernel_end - kernel_size;
       /* PPP and VDM records share the same 4-GiB aperture, between the low
        * 64 MiB of fixed aliases and the kernel heap. Keep at least 1 GiB for
@@ -682,7 +682,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * of this partition.
     */
    uint64_t user_end =
-      fixed_apple9_usc_base ? (1ull << 39) : vm_create.kernel_start;
+      fixed_usc_base ? (1ull << 39) : vm_create.kernel_start;
    assert(user_start < user_end);
    uint64_t user_size = user_end - user_start;
 
@@ -735,12 +735,12 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * [0x02000000, 0x05200000). Keep caller command/PPP state above it;
     * later growth tranches are selected around existing caller mappings. */
    uint64_t context_start =
-      AGX_APPLE9_RENDER_CONTEXT_BASE +
+      AGX_RENDER_CONTEXT_BASE +
       (dev->params.gpu_generation == 17 ? 0x8000000ull : 0x4000000ull);
    uint64_t context_end = MIN2(vm_create.kernel_start,
-                               AGX_APPLE9_RENDER_CONTEXT_BASE + (1ull << 32));
+                               AGX_RENDER_CONTEXT_BASE + (1ull << 32));
    util_vma_heap_init(&dev->context_heap, context_start,
-                      fixed_apple9_usc_base ? context_end - context_start : 0);
+                      fixed_usc_base ? context_end - context_start : 0);
    dev->context_heap.alloc_high = false;
 
    /* The compact Apple9 entry arena must start at the USC base. Allocate
@@ -768,12 +768,12 @@ agx_open_device(void *memctx, struct agx_device *dev)
    dev->apple9_direct_render = agx_is_apple9(dev);
 
    if (agx_has_launch_programs(dev)) {
-      simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);
-      list_inithead(&dev->apple9_entry_lru);
+      simple_mtx_init(&dev->entry_lock, mtx_plain);
+      list_inithead(&dev->entry_lru);
       util_vma_heap_init(
-         &dev->apple9_entry_heap, AGX_APPLE9_ENTRY_HEADER_SIZE,
-         AGX_APPLE9_ENTRY_ARENA_SIZE - AGX_APPLE9_ENTRY_HEADER_SIZE);
-      dev->apple9_entry_heap.alloc_high = false;
+         &dev->entry_heap, AGX_ENTRY_HEADER_SIZE,
+         AGX_ENTRY_ARENA_SIZE - AGX_ENTRY_HEADER_SIZE);
+      dev->entry_heap.alloc_high = false;
    }
 
    /* Entry instructions are CPU-authored and GPU-read-only. The same mapping
@@ -781,14 +781,14 @@ agx_open_device(void *memctx, struct agx_device *dev)
     * and back its first chunk, which holds the header; later chunks are backed
     * as entries reach them. */
    if (agx_has_launch_programs(dev) && !dev->probe_only) {
-      dev->apple9_entry_va = agx_va_alloc(
-         dev, AGX_APPLE9_ENTRY_ARENA_SIZE, AGX_APPLE9_ENTRY_ARENA_SIZE,
+      dev->entry_va = agx_va_alloc(
+         dev, AGX_ENTRY_ARENA_SIZE, AGX_ENTRY_ARENA_SIZE,
          AGX_VA_USC | AGX_VA_FIXED, dev->shader_base);
-      if (!dev->apple9_entry_va) {
+      if (!dev->entry_va) {
          fprintf(stderr, "Failed to reserve compact Apple9 shader entries\n");
          return false;
       }
-      if (!agx_apple9_entry_back(dev, AGX_APPLE9_ENTRY_HEADER_SIZE)) {
+      if (!agx_shader_entry_back(dev, AGX_ENTRY_HEADER_SIZE)) {
          fprintf(stderr, "Failed to back compact Apple9 shader entries\n");
          return false;
       }
@@ -843,44 +843,44 @@ agx_open_device(void *memctx, struct agx_device *dev)
 }
 
 bool
-agx_apple9_entry_back(struct agx_device *dev, uint32_t end_B)
+agx_shader_entry_back(struct agx_device *dev, uint32_t end_B)
 {
-   assert(end_B <= AGX_APPLE9_ENTRY_ARENA_SIZE);
-   for (unsigned i = 0; i * AGX_APPLE9_ENTRY_CHUNK_SIZE < end_B; ++i) {
-      if (dev->apple9_entry_chunks[i])
+   assert(end_B <= AGX_ENTRY_ARENA_SIZE);
+   for (unsigned i = 0; i * AGX_ENTRY_CHUNK_SIZE < end_B; ++i) {
+      if (dev->entry_chunks[i])
          continue;
 
       struct agx_bo *bo =
-         agx_bo_create(dev, AGX_APPLE9_ENTRY_CHUNK_SIZE, 0,
+         agx_bo_create(dev, AGX_ENTRY_CHUNK_SIZE, 0,
                        AGX_BO_EXEC | AGX_BO_WRITEBACK | AGX_BO_READONLY,
                        "Apple9 shader entries");
       if (!bo)
          return false;
 
       /* The chunk's place in the arena, read-only for the GPU. */
-      uint32_t offset = i * AGX_APPLE9_ENTRY_CHUNK_SIZE;
+      uint32_t offset = i * AGX_ENTRY_CHUNK_SIZE;
       if (agx_bo_bind(dev, bo, dev->shader_base + offset,
-                      AGX_APPLE9_ENTRY_CHUNK_SIZE, 0, DRM_ASAHI_BIND_READ) ||
+                      AGX_ENTRY_CHUNK_SIZE, 0, DRM_ASAHI_BIND_READ) ||
           !agx_bo_map(bo)) {
          agx_bo_unreference(dev, bo);
          return false;
       }
 
-      dev->apple9_entry_chunks[i] = bo;
+      dev->entry_chunks[i] = bo;
    }
    return true;
 }
 
 void
-agx_apple9_entry_write(struct agx_device *dev, uint32_t offset,
+agx_shader_entry_write(struct agx_device *dev, uint32_t offset,
                        const void *data, uint32_t size)
 {
    const uint8_t *src = data;
    while (size) {
       struct agx_bo *bo =
-         dev->apple9_entry_chunks[offset / AGX_APPLE9_ENTRY_CHUNK_SIZE];
-      uint32_t in_chunk = offset % AGX_APPLE9_ENTRY_CHUNK_SIZE;
-      uint32_t n = MIN2(size, AGX_APPLE9_ENTRY_CHUNK_SIZE - in_chunk);
+         dev->entry_chunks[offset / AGX_ENTRY_CHUNK_SIZE];
+      uint32_t in_chunk = offset % AGX_ENTRY_CHUNK_SIZE;
+      uint32_t n = MIN2(size, AGX_ENTRY_CHUNK_SIZE - in_chunk);
       memcpy((uint8_t *)agx_bo_map(bo) + in_chunk, src, n);
       offset += n;
       src += n;
@@ -891,18 +891,18 @@ agx_apple9_entry_write(struct agx_device *dev, uint32_t offset,
 static void
 agx_finish_device(struct agx_device *dev)
 {
-   for (unsigned i = 0; i < AGX_APPLE9_ENTRY_CHUNKS; ++i)
-      agx_bo_unreference(dev, dev->apple9_entry_chunks[i]);
-   if (dev->apple9_entry_va)
-      agx_va_free(dev, dev->apple9_entry_va, true);
+   for (unsigned i = 0; i < AGX_ENTRY_CHUNKS; ++i)
+      agx_bo_unreference(dev, dev->entry_chunks[i]);
+   if (dev->entry_va)
+      agx_va_free(dev, dev->entry_va, true);
    agx_bo_unreference(dev, dev->printf.bo);
    agx_bo_unreference(dev, dev->zero_bo);
    agx_bo_unreference(dev, dev->scratch_bo);
    u_printf_destroy(&dev->printf);
    agx_bo_cache_finish(dev);
    if (agx_has_launch_programs(dev)) {
-      util_vma_heap_finish(&dev->apple9_entry_heap);
-      simple_mtx_destroy(&dev->apple9_entry_lock);
+      util_vma_heap_finish(&dev->entry_heap);
+      simple_mtx_destroy(&dev->entry_lock);
    }
    util_sparse_array_finish(&dev->bo_map);
    pthread_mutex_destroy(&dev->bo_map_lock);

@@ -17,8 +17,9 @@ struct agx_precompiled_shader {
    struct agx_shader b;
    struct agx_bo *bo;
    uint64_t ptr;
-   bool apple9;
-   struct agx_apple9_compute_profile apple9_profile;
+   /* Runs through a launch program, described by profile */
+   bool launched;
+   struct agx_apple9_compute_profile profile;
 };
 
 struct agx_bg_eot_cache {

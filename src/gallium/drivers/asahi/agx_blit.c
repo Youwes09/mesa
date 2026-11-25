@@ -25,7 +25,7 @@
 #include "util/ralloc.h"
 #include "util/u_sampler.h"
 #include "util/u_surface.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "agx_state.h"
 #include "glsl_types.h"
 #include "nir.h"
@@ -815,9 +815,9 @@ asahi_raw_resolve(struct pipe_context *pctx, const struct pipe_blit_info *info)
        (src_samples > 1 && dst_samples > 1 && src_samples != dst_samples))
       return false;
    if ((info->src.format != info->dst.format && !swap_rb) ||
-       (!agx_apple9_color_is_wide(info->src.format) &&
-        !agx_apple9_color_is_packed(info->src.format) &&
-        !agx_apple9_color_is_half(info->src.format) &&
+       (!agx_tile_format_is_wide(info->src.format) &&
+        !agx_raw_tile_is_packed(info->src.format) &&
+        !agx_tile_format_is_half(info->src.format) &&
         util_format_linear(info->src.format) != PIPE_FORMAT_B8G8R8A8_UNORM &&
         util_format_linear(info->src.format) != PIPE_FORMAT_B8G8R8X8_UNORM &&
         util_format_linear(info->src.format) != PIPE_FORMAT_R8G8B8A8_UNORM &&

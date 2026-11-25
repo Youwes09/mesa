@@ -254,7 +254,7 @@ TEST(LaunchProgram, MultisampledZeroTargetLaunchesKeepTileAllocation)
 {
    auto p = parameters();
    std::array<uint8_t, 256> out;
-   /* agx_apple9_tile_sample_bytes(0, samples): 0 at 1x, 8 when multisampled. */
+   /* agx_launch_tile_bytes(0, samples): 0 at 1x, 8 when multisampled. */
    struct {
       unsigned samples, bytes, low;
    } cases[] = {{1, 0, 0x41}, {2, 8, 0x42}, {4, 8, 2}};

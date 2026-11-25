@@ -5,11 +5,27 @@
 #include <stdint.h>
 #include "util/list.h"
 
+/* The launch target carries 2 * entry_offset + 0x2a in 24 bits. Entries
+ * reside in this compact USC range and branch to independently allocated
+ * shader bodies anywhere in the 4-GiB USC heap. An entry belongs to its
+ * shader BO and cannot be recycled while any batch references that BO. */
+#define AGX_ENTRY_ARENA_SIZE 0x00800000u
+/* The arena is backed on demand in chunks of this size, see
+ * agx_shader_entry_back. */
+#define AGX_ENTRY_CHUNK_SIZE 0x00100000u
+#define AGX_ENTRY_CHUNKS      (AGX_ENTRY_ARENA_SIZE / AGX_ENTRY_CHUNK_SIZE)
+#define AGX_ENTRY_HEADER_SIZE 0x00000340u
+#define AGX_ENTRY_BLOCK_SIZE  0x000000c0u
+#define AGX_ENTRY_CODE_OFFSET 0x00000080u
+#define AGX_ENTRY_ALIGNMENT   0x00000040u
+#define AGX_ENTRY_MAX_OFFSET  ((0xffffffu - 0x2au) / 2u)
+
 struct agx_bo;
 struct agx_device;
 
-/* Immutable Apple9 code at a stable address. Entry identity and recording
- * ownership belong to the body, which may occupy only part of its BO.
+/* Immutable shader code at a stable address, entered through the shader entry
+ * arena. Entry identity and recording ownership belong to the body, which may
+ * occupy only part of its BO.
  *
  * A whole-BO body is embedded in agx_bo and has no destroy callback: its
  * references delegate to that BO. Separately allocated bodies start with one
@@ -21,7 +37,7 @@ struct agx_shader_body {
    int32_t refcnt;
    void (*destroy)(struct agx_device *dev, struct agx_shader_body *body);
 
-   /* Protected by agx_device::apple9_entry_lock. Entries may be evicted only
+   /* Protected by agx_device::entry_lock. Entries may be evicted only
     * when no recording pins them; a later use allocates another entry. */
    uint32_t entry_offset;
    uint32_t entry_pins;

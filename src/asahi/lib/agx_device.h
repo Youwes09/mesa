@@ -5,6 +5,7 @@
 
 #pragma once
 #include "agx_apple9_layout.h"
+#include "agx_shader_body.h"
 
 #include <stdint.h>
 #include <xf86drm.h>
@@ -100,7 +101,7 @@ int agx_bind_timestamps(struct agx_device *dev, struct agx_bo *bo,
                         uint32_t *handle);
 
 /* Basis for the native Apple9 context-relative PPP and VDM addresses. */
-#define AGX_APPLE9_RENDER_CONTEXT_BASE UINT64_C(0x1000000000)
+#define AGX_RENDER_CONTEXT_BASE UINT64_C(0x1000000000)
 
 struct agx_device {
    uint32_t debug;
@@ -163,20 +164,20 @@ struct agx_device {
    /* One stable, GPU-read-only entry arena shared by graphics and compute.
     * Suballocations follow the lifetime of immutable shader bodies. The arena
     * is a fixed VA range at shader_base, backed from the start in
-    * AGX_APPLE9_ENTRY_CHUNK_SIZE chunks as entries reach them: an application
+    * AGX_ENTRY_CHUNK_SIZE chunks as entries reach them: an application
     * with a few thousand shaders uses one chunk of the 8 MiB. The CPU writes
-    * entries through agx_apple9_entry_write, chunk by chunk. */
-   struct agx_va *apple9_entry_va;
-   struct agx_bo *apple9_entry_chunks[AGX_APPLE9_ENTRY_CHUNKS];
-   struct util_vma_heap apple9_entry_heap;
-   simple_mtx_t apple9_entry_lock;
+    * entries through agx_shader_entry_write, chunk by chunk. */
+   struct agx_va *entry_va;
+   struct agx_bo *entry_chunks[AGX_ENTRY_CHUNKS];
+   struct util_vma_heap entry_heap;
+   simple_mtx_t entry_lock;
    /* Bodies holding an entry, least recently pinned first. */
-   struct list_head apple9_entry_lru;
+   struct list_head entry_lru;
    /* Optional: pin a shader body for the lifetime of the recording that
-    * allocator belongs to, with apple9_entry_lock held. Returns false if the
+    * allocator belongs to, with entry_lock held. Returns false if the
     * body cannot be pinned. Without it, entries are never evicted.
     */
-   bool (*apple9_pin_entry)(void *allocator, struct agx_shader_body *body);
+   bool (*pin_entry)(void *allocator, struct agx_shader_body *body);
 
    struct renderonly *ro;
 
@@ -294,11 +295,11 @@ agx_rw_addr_to_ro(struct agx_device *dev, uint64_t addr)
    return addr + dev->sparse_ro_offset;
 }
 
-/* Back the shader entry arena up to end_B, with apple9_entry_lock held (or
+/* Back the shader entry arena up to end_B, with entry_lock held (or
  * while opening the device). Returns false if a chunk cannot be allocated. */
-bool agx_apple9_entry_back(struct agx_device *dev, uint32_t end_B);
+bool agx_shader_entry_back(struct agx_device *dev, uint32_t end_B);
 /* Write size bytes at offset in the backed shader entry arena. */
-void agx_apple9_entry_write(struct agx_device *dev, uint32_t offset,
+void agx_shader_entry_write(struct agx_device *dev, uint32_t offset,
                             const void *data, uint32_t size);
 
 /* A separate mapping of the first size bytes of a BO, at fixed_addr unless

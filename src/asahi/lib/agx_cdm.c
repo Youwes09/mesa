@@ -16,19 +16,19 @@
 #include "agx_shader_body.h"
 
 static inline void
-apple9_put_u32(void *ptr, uint32_t value)
+put_u32(void *ptr, uint32_t value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
 
 static inline void
-apple9_put_u64(void *ptr, uint64_t value)
+put_u64(void *ptr, uint64_t value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
 
 static inline uint32_t
-apple9_get_u32(const void *ptr)
+get_u32(const void *ptr)
 {
    uint32_t value;
    memcpy(&value, ptr, sizeof(value));
@@ -36,7 +36,7 @@ apple9_get_u32(const void *ptr)
 }
 
 static inline uint64_t
-apple9_get_u64(const void *ptr)
+get_u64(const void *ptr)
 {
    uint64_t value;
    memcpy(&value, ptr, sizeof(value));
@@ -44,23 +44,23 @@ apple9_get_u64(const void *ptr)
 }
 
 static inline void
-apple9_put_f32(void *ptr, float value)
+put_f32(void *ptr, float value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
 
-struct apple9_compute_abi_desc {
+struct cdm_abi_desc {
    uint8_t resource_count;
    uint16_t resource_record_size;
    bool supports_indirect_dispatch;
 };
 
-static const struct apple9_compute_abi_desc *
-apple9_compute_abi(const struct agx_apple9_compute_profile *profile)
+static const struct cdm_abi_desc *
+cdm_abi(const struct agx_apple9_compute_profile *profile)
 {
-   static const struct apple9_compute_abi_desc ssbo8_superset = {
+   static const struct cdm_abi_desc ssbo8_superset = {
       .resource_count = AGX_APPLE9_COMPUTE_MAX_RESOURCES,
-      .resource_record_size = AGX_APPLE9_COMPUTE_SUPERSET_RESOURCE_STRIDE,
+      .resource_record_size = AGX_CDM_SUPERSET_RESOURCE_STRIDE,
       .supports_indirect_dispatch = true,
    };
 
@@ -77,8 +77,8 @@ apple9_compute_abi(const struct agx_apple9_compute_profile *profile)
 }
 
 static bool
-apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
-                             const struct apple9_compute_abi_desc *abi)
+cdm_profile_valid(const struct agx_apple9_compute_profile *profile,
+                             const struct cdm_abi_desc *abi)
 {
    /* Programs with the graphics argument layout may have no buffer table */
    bool tables =
@@ -134,13 +134,13 @@ apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
 /* Launch parameters of a compute profile; the caller sets the per-launch
  * entry, resource table and program address. */
 static bool
-apple9_compute_launch_params(struct agx_launch_parameters *out,
+cdm_launch_params(struct agx_launch_parameters *out,
                              uint64_t usc_exec_base,
                              const struct agx_apple9_compute_profile *profile,
                              uint64_t preamble_address)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   if (!abi || !apple9_compute_profile_valid(profile, abi))
+   const struct cdm_abi_desc *abi = cdm_abi(profile);
+   if (!abi || !cdm_profile_valid(profile, abi))
       return false;
 
    struct agx_launch_parameters params = {
@@ -164,7 +164,7 @@ apple9_compute_launch_params(struct agx_launch_parameters *out,
 }
 
 static bool
-apple9_build_compute_launch(uint8_t *out, uint64_t usc_exec_base,
+cdm_build_launch(uint8_t *out, uint64_t usc_exec_base,
                             uint64_t launch_address, uint64_t resource_address,
                             const uint32_t *root_words, uint32_t main_offset,
                             const struct agx_apple9_compute_profile *profile,
@@ -172,53 +172,53 @@ apple9_build_compute_launch(uint8_t *out, uint64_t usc_exec_base,
 {
    struct agx_launch_parameters params;
    if (main_offset <
-          AGX_APPLE9_ENTRY_HEADER_SIZE + AGX_APPLE9_ENTRY_CODE_OFFSET ||
-       !apple9_compute_launch_params(&params, usc_exec_base, profile,
+          AGX_ENTRY_HEADER_SIZE + AGX_ENTRY_CODE_OFFSET ||
+       !cdm_launch_params(&params, usc_exec_base, profile,
                                      preamble_address))
       return false;
    params.entry_offset = main_offset;
    params.resource_table = resource_address;
    params.launch_address = launch_address;
    params.root_words = root_words;
-   return agx_launch_program_build(out, agx_apple9_compute_launch_size(profile),
+   return agx_launch_program_build(out, agx_cdm_launch_size(profile),
                                   AGX_LAUNCH_COMPUTE, &params);
 }
 
 bool
-agx_apple9_compute_launch_template(
+agx_cdm_launch_template(
    struct agx_launch_template *tmpl,
    const struct agx_apple9_compute_profile *profile, uint64_t usc_exec_base,
    uint64_t preamble_address)
 {
    struct agx_launch_parameters params;
    memset(tmpl, 0, sizeof(*tmpl));
-   return apple9_compute_launch_params(&params, usc_exec_base, profile,
+   return cdm_launch_params(&params, usc_exec_base, profile,
                                        preamble_address) &&
           agx_launch_template_init(
-             tmpl, agx_apple9_compute_launch_size(profile),
+             tmpl, agx_cdm_launch_size(profile),
              AGX_LAUNCH_COMPUTE, &params);
 }
 
 size_t
-agx_apple9_compute_launch_size(const struct agx_apple9_compute_profile *profile)
+agx_cdm_launch_size(const struct agx_apple9_compute_profile *profile)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
+   const struct cdm_abi_desc *abi = cdm_abi(profile);
    return abi ? AGX_COMPUTE_LAUNCH_SIZE : 0;
 }
 
 static size_t
-apple9_compute_resource_record_size_for_abi(
-   const struct apple9_compute_abi_desc *abi)
+cdm_resource_record_size(
+   const struct cdm_abi_desc *abi)
 {
    return abi && abi->resource_record_size ? abi->resource_record_size
-                                           : AGX_APPLE9_COMPUTE_RESOURCE_STRIDE;
+                                           : AGX_CDM_RESOURCE_STRIDE;
 }
 
 enum agx_apple9_compute_resource_kind
-agx_apple9_compute_resource_kind(
+agx_cdm_resource_kind(
    const struct agx_apple9_compute_profile *profile, unsigned argument)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
+   const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi || argument >= profile->resource_binding_count)
       return AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
 
@@ -229,11 +229,11 @@ agx_apple9_compute_resource_kind(
 
 
 bool
-agx_apple9_build_compute_geometry_fields(
+agx_cdm_build_geometry_fields(
    void *record_, size_t record_size, uint64_t record_address,
-   const struct agx_apple9_compute_geometry *geometry)
+   const struct agx_cdm_geometry *geometry)
 {
-   const unsigned offset = AGX_APPLE9_COMPUTE_GEOMETRY_GROUPS_OFFSET;
+   const unsigned offset = AGX_CDM_GEOMETRY_GROUPS_OFFSET;
    if (!record_ || !geometry || record_size < offset + 12 ||
        record_address > UINT64_MAX - offset)
       return false;
@@ -248,7 +248,7 @@ agx_apple9_build_compute_geometry_fields(
    uint32_t groups[3] = {0};
    uint64_t pointer;
    switch (geometry->mode) {
-   case AGX_APPLE9_COMPUTE_GEOMETRY_DIRECT:
+   case AGX_CDM_GEOMETRY_DIRECT:
       for (unsigned d = 0; d < 3; ++d) {
          if (!geometry->threads[d])
             return false;
@@ -259,7 +259,7 @@ agx_apple9_build_compute_geometry_fields(
       }
       pointer = record_address + offset;
       break;
-   case AGX_APPLE9_COMPUTE_GEOMETRY_INDIRECT:
+   case AGX_CDM_GEOMETRY_INDIRECT:
       pointer = geometry->group_counts;
       if (!pointer || (pointer & 3))
          return false;
@@ -269,41 +269,41 @@ agx_apple9_build_compute_geometry_fields(
    }
 
    uint8_t *record = record_;
-   apple9_put_u64(record, pointer);
+   put_u64(record, pointer);
    for (unsigned d = 0; d < 3; ++d)
-      apple9_put_u32(record + offset + d * sizeof(uint32_t), groups[d]);
+      put_u32(record + offset + d * sizeof(uint32_t), groups[d]);
    return true;
 }
 
 bool
-agx_apple9_prepare_compute_dispatch_alloc(
+agx_cdm_prepare_dispatch_alloc(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
    struct agx_shader_body *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers,
-   const struct agx_apple9_compute_geometry *geometry,
+   const struct agx_cdm_geometry *geometry,
    uint64_t preamble_address, uint64_t *launch_address)
 {
-   return agx_apple9_prepare_compute_dispatch_alloc_tmpl(
+   return agx_cdm_prepare_dispatch_alloc_tmpl(
       dev, allocator, alloc, body, profile, resources, resource_count, textures,
       samplers, 0, geometry, preamble_address, NULL, launch_address);
 }
 
 bool
-agx_apple9_prepare_compute_dispatch_alloc_tmpl(
+agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
    struct agx_shader_body *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
-   const struct agx_apple9_compute_geometry *geometry,
+   const struct agx_cdm_geometry *geometry,
    uint64_t preamble_address, const struct agx_launch_template *tmpl,
    uint64_t *launch_address)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
+   const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi || (resource_count && !resources) || !geometry || !launch_address ||
-       !apple9_compute_profile_valid(profile, abi) ||
+       !cdm_profile_valid(profile, abi) ||
        resource_count != profile->resource_binding_count ||
        !!preamble_address != !!profile->preamble_size)
       return false;
@@ -312,10 +312,10 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
    if (!entry)
       return false;
 
-   size_t record_size = apple9_compute_resource_record_size_for_abi(abi);
+   size_t record_size = cdm_resource_record_size(abi);
    /* The launch materializes its root words from the record's head. */
    struct agx_launch_parameters lp;
-   if (!apple9_compute_launch_params(&lp, dev->shader_base, profile,
+   if (!cdm_launch_params(&lp, dev->shader_base, profile,
                                      preamble_address) ||
        4 * agx_apple9_compute_root_words(lp.resource_count) > record_size)
       return false;
@@ -323,7 +323,7 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
    if (!record.cpu)
       return false;
    memset(record.cpu, 0, record_size);
-   if (!agx_apple9_build_compute_geometry_fields(record.cpu, record_size,
+   if (!agx_cdm_build_geometry_fields(record.cpu, record_size,
                                                  record.gpu, geometry))
       return false;
    if (profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES) {
@@ -339,20 +339,20 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
          textures,
          samplers,
          table.gpu,
-         apple9_get_u64(record.cpu),
+         get_u64(record.cpu),
          AGX_APPLE9_COMPUTE_SHARED_ROOT,
          push,
       };
       memcpy(record.cpu, roots, sizeof(roots));
    } else {
       for (unsigned i = 0; i < resource_count; i++)
-         apple9_put_u64((uint8_t *)record.cpu +
+         put_u64((uint8_t *)record.cpu +
                            (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE + i) * 8,
                         resources[i]);
    }
 
    struct agx_ptr launch =
-      alloc(allocator, agx_apple9_compute_launch_size(profile), 64);
+      alloc(allocator, agx_cdm_launch_size(profile), 64);
    if (!launch.cpu)
       return false;
    if (tmpl && tmpl->valid) {
@@ -360,12 +360,12 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
        * record, entry and program address differ per dispatch. */
       assert(tmpl->preamble_address == preamble_address &&
              tmpl->shader_base == dev->shader_base);
-      if (entry < AGX_APPLE9_ENTRY_HEADER_SIZE + AGX_APPLE9_ENTRY_CODE_OFFSET ||
+      if (entry < AGX_ENTRY_HEADER_SIZE + AGX_ENTRY_CODE_OFFSET ||
           !agx_launch_template_emit(launch.cpu, tmpl, record.gpu, entry,
                                            launch.gpu) ||
           !agx_launch_template_set_roots(launch.cpu, tmpl, record.cpu))
          return false;
-   } else if (!apple9_build_compute_launch(launch.cpu, dev->shader_base,
+   } else if (!cdm_build_launch(launch.cpu, dev->shader_base,
                                            launch.gpu, record.gpu, record.cpu,
                                            entry, profile, preamble_address)) {
       return false;
@@ -375,27 +375,27 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
 }
 
 static struct agx_ptr
-apple9_pool_alloc(void *pool, size_t size, size_t alignment)
+pool_alloc(void *pool, size_t size, size_t alignment)
 {
    return agx_pool_alloc_aligned(pool, size, alignment);
 }
 
 bool
-agx_apple9_prepare_compute_dispatch(
+agx_cdm_prepare_dispatch(
    struct agx_device *dev, struct agx_pool *usc_pool, struct agx_bo *body,
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
-   const struct agx_apple9_compute_geometry *geometry,
+   const struct agx_cdm_geometry *geometry,
    uint64_t preamble_address, uint64_t *launch_address)
 {
-   return agx_apple9_prepare_compute_dispatch_alloc_tmpl(
-      dev, usc_pool, apple9_pool_alloc, &body->apple9_body, profile, resources,
+   return agx_cdm_prepare_dispatch_alloc_tmpl(
+      dev, usc_pool, pool_alloc, &body->shader_body, profile, resources,
       resource_count, textures, samplers, push, geometry, preamble_address,
       NULL, launch_address);
 }
 
 void
-agx_apple9_set_compute_barrier(void *record, unsigned record_size)
+agx_cdm_set_compute_barrier(void *record, unsigned record_size)
 {
    agx_pack((uint8_t *)record + record_size - 4, CDM_BARRIER, cfg) {
       cfg.unk_5 = true;
@@ -405,7 +405,7 @@ agx_apple9_set_compute_barrier(void *record, unsigned record_size)
 }
 
 static void
-apple9_cdm_launch(void *out, uint64_t launch, enum agx_cdm_mode mode)
+cdm_launch(void *out, uint64_t launch, enum agx_cdm_mode mode)
 {
    agx_pack(out, CDM_LAUNCH_G16, cfg) {
       cfg.unk_19 = true;
@@ -422,7 +422,7 @@ apple9_cdm_launch(void *out, uint64_t launch, enum agx_cdm_mode mode)
 /* The full post-dispatch barrier of the Apple8 path. GPU cache ordering is
  * independent of asynchronous CPU submission. */
 static void
-apple9_cdm_barrier(void *out)
+cdm_barrier(void *out)
 {
    agx_pack(out, CDM_BARRIER, cfg) {
       cfg.unk_0 = true;
@@ -449,17 +449,17 @@ apple9_cdm_barrier(void *out)
 }
 
 const char *
-agx_apple9_dispatch_reject_reason(
+agx_cdm_dispatch_reject_reason(
    uint64_t launch, bool indirect, uint64_t indirect_address,
    const uint32_t global[3], const uint32_t local[3],
    const struct agx_apple9_compute_profile *profile)
 {
-   const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
+   const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi)
       return "no compute ABI for the profile";
    if (launch & 0x3f)
       return "launch address not 64-byte aligned";
-   if (!apple9_compute_profile_valid(profile, abi))
+   if (!cdm_profile_valid(profile, abi))
       return "invalid compute profile";
    if (indirect) {
       if (!abi->supports_indirect_dispatch)
@@ -489,17 +489,17 @@ agx_apple9_dispatch_reject_reason(
 }
 
 bool
-agx_apple9_emit_direct_dispatch(
+agx_cdm_emit_direct_dispatch(
    void *out, uint64_t launch, const uint32_t global[3],
    const uint32_t local[3], const struct agx_apple9_compute_profile *profile,
    bool barrier)
 {
-   if (!out || agx_apple9_dispatch_reject_reason(launch, false, 0, global,
+   if (!out || agx_cdm_dispatch_reject_reason(launch, false, 0, global,
                                                  local, profile))
       return false;
 
    uint8_t *record = out;
-   apple9_cdm_launch(record, launch, AGX_CDM_MODE_DIRECT);
+   cdm_launch(record, launch, AGX_CDM_MODE_DIRECT);
    record += AGX_CDM_LAUNCH_G16_LENGTH;
 
    agx_pack(record, CDM_GLOBAL_SIZE, cfg) {
@@ -517,22 +517,22 @@ agx_apple9_emit_direct_dispatch(
    record += AGX_CDM_LOCAL_SIZE_LENGTH;
 
    if (barrier)
-      apple9_cdm_barrier(record);
+      cdm_barrier(record);
    return true;
 }
 
 bool
-agx_apple9_emit_indirect_dispatch(
+agx_cdm_emit_indirect_dispatch(
    void *out, uint64_t launch, uint64_t indirect, const uint32_t local[3],
    bool indirect_local, const struct agx_apple9_compute_profile *profile,
    bool barrier)
 {
-   if (!out || agx_apple9_dispatch_reject_reason(launch, true, indirect, NULL,
+   if (!out || agx_cdm_dispatch_reject_reason(launch, true, indirect, NULL,
                                                  local, profile))
       return false;
 
    uint8_t *record = out;
-   apple9_cdm_launch(record, launch,
+   cdm_launch(record, launch,
                      indirect_local ? AGX_CDM_MODE_INDIRECT_LOCAL
                                     : AGX_CDM_MODE_INDIRECT_GLOBAL);
    record += AGX_CDM_LAUNCH_G16_LENGTH;
@@ -555,6 +555,6 @@ agx_apple9_emit_indirect_dispatch(
    }
 
    if (barrier)
-      apple9_cdm_barrier(record);
+      cdm_barrier(record);
    return true;
 }

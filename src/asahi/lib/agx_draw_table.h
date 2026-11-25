@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: MIT
  */
 
+/*
+ * Draws with launch programs: the linked stage pair, the per-draw tables,
+ * launches and PPP record, and the VDM draw commands.
+ */
+
 #ifndef AGX_DRAW_TABLE_H
 #define AGX_DRAW_TABLE_H
 
@@ -27,7 +32,7 @@ struct agx_pool;
 struct agx_ptr;
 struct agx_shader_body;
 
-struct agx_apple9_render_stage {
+struct agx_draw_stage {
    /* Stable compiled-object identity; zero for externally supplied stages. */
    uint64_t program_id;
    /* Owned by the compiled shader; each using batch retains a BO reference. */
@@ -55,12 +60,12 @@ struct agx_apple9_render_stage {
     * order") instead of per covered sample. */
    bool pixel_interlock;
 
-   /* Scalar interface counts used by the bounded Apple9 stage linker. */
+   /* Scalar interface counts used by the bounded stage linker. */
    uint8_t position_components;
    uint8_t varying_components;
    struct agx_apple9_varying_layout varyings;
-   struct agx_apple9_interp_mask apple9_linear_mask, apple9_flat_mask;
-   bool apple9_reads_z;
+   struct agx_apple9_interp_mask linear_mask, flat_mask;
+   bool reads_z;
    bool reads_primitive_id;
    bool writes_point_size;
    bool writes_layer_viewport;
@@ -68,26 +73,26 @@ struct agx_apple9_render_stage {
    bool reads_point_coord;
    uint8_t render_targets;
    /* Optional per-shader launch templates; NULL builds every launch. */
-   struct agx_apple9_stage_launch_cache *launch_cache;
+   struct agx_stage_launch_cache *launch_cache;
    /* Fragment-owned interpolation tables for each provoking vertex. */
    uint32_t coefficients[3];
    uint16_t coefficient_count;
 };
 
-struct agx_apple9_render_pipeline {
+struct agx_draw_pipeline {
    /* Vertex fetch is lowered into the API vertex program. The stages belong
     * to their compiled shaders, which outlive every draw using them. */
-   const struct agx_apple9_render_stage *vertex;
-   const struct agx_apple9_render_stage *fragment;
+   const struct agx_draw_stage *vertex;
+   const struct agx_draw_stage *fragment;
 
    /* Color surfaces in draw-buffer order; absent attachments have address 0. */
    uint64_t color_targets[8];
    enum pipe_format color_formats[8];
    uint8_t samples;
 
-   /* The first AGX_APPLE9_PPP_STATIC_SIZE bytes of the PPP record that depend
+   /* The first AGX_PPP_STATIC_SIZE bytes of the PPP record that depend
     * only on the linked vertex and fragment stages
-    * (agx_apple9_build_ppp_static), built once per link; NULL builds them in
+    * (agx_build_ppp_static), built once per link; NULL builds them in
     * every draw. */
    const uint8_t *ppp_static;
 
@@ -99,7 +104,7 @@ struct agx_apple9_render_pipeline {
    uint16_t ppp_viewport_offset;
    uint16_t ppp_viewport_words;
 
-   /* Apple9 VDM linkage words produced by the bounded pipeline linker. */
+   /* VDM linkage words produced by the bounded pipeline linker. */
    uint32_t pipeline_word;
    uint32_t vertex_launch;
    /* Scalar vertex outputs, position included */
@@ -116,7 +121,7 @@ struct agx_apple9_render_pipeline {
 
 /* CPU snapshot used while encoding a draw and for adjacent state reuse.
  * Encoded allocations belong to the batch's growing pools. */
-struct agx_apple9_uniform_draw {
+struct agx_draw_record {
    uint64_t code[2];
    uint32_t launch[2], ppp, coefficients;
    uint64_t program_id[2];
@@ -126,7 +131,7 @@ struct agx_apple9_uniform_draw {
     * Records with several viewports append the viewport block after the
     * fixed 256-byte state.
     */
-   uint8_t ppp_record[AGX_APPLE9_PPP_RECORD_MAX];
+   uint8_t ppp_record[AGX_PPP_RECORD_MAX];
    uint16_t ppp_size, ppp_viewport_offset, ppp_viewport_words;
    uint64_t buffers[2][AGX_APPLE9_MAX_GRAPHICS_BUFFERS];
    uint8_t buffer_count[2];
@@ -145,7 +150,7 @@ struct agx_apple9_uniform_draw {
     * additional viewports follow scissor_index consecutively.
     */
    uint8_t viewport_count;
-   float viewports[AGX_APPLE9_MAX_VIEWPORTS - 1][6];
+   float viewports[AGX_PPP_MAX_VIEWPORTS - 1][6];
    uint32_t scissor_index;
    uint16_t depth_bias_index;
    uint16_t occlusion_index;
@@ -161,21 +166,21 @@ struct agx_apple9_uniform_draw {
 };
 
 /* Clear a record for reuse without touching its large arrays:
- * agx_apple9_prepare_draw_alloc rebuilds ppp_record, and buffers and
+ * agx_prepare_draw_record_alloc rebuilds ppp_record, and buffers and
  * viewports are read only up to the counts the caller fills in. */
 static inline void
-agx_apple9_uniform_draw_reset(struct agx_apple9_uniform_draw *draw)
+agx_draw_record_reset(struct agx_draw_record *draw)
 {
-   memset(draw, 0, offsetof(struct agx_apple9_uniform_draw, ppp_record));
+   memset(draw, 0, offsetof(struct agx_draw_record, ppp_record));
    memset(&draw->ppp_size, 0,
-          offsetof(struct agx_apple9_uniform_draw, buffers) -
-             offsetof(struct agx_apple9_uniform_draw, ppp_size));
+          offsetof(struct agx_draw_record, buffers) -
+             offsetof(struct agx_draw_record, ppp_size));
    memset(&draw->buffer_count, 0,
-          offsetof(struct agx_apple9_uniform_draw, viewports) -
-             offsetof(struct agx_apple9_uniform_draw, buffer_count));
+          offsetof(struct agx_draw_record, viewports) -
+             offsetof(struct agx_draw_record, buffer_count));
    memset(
       &draw->scissor_index, 0,
-      sizeof(*draw) - offsetof(struct agx_apple9_uniform_draw, scissor_index));
+      sizeof(*draw) - offsetof(struct agx_draw_record, scissor_index));
 }
 
 /* Whether a draw can take the previous draw's launch for stage (0 vertex, 1
@@ -183,8 +188,8 @@ agx_apple9_uniform_draw_reset(struct agx_apple9_uniform_draw *draw)
  * a stage without an id is never reused. draw->program_id, code, tables,
  * samples, tile_bytes and provoking_vertex must already be filled in. */
 static inline bool
-agx_apple9_draw_reuses_launch(const struct agx_apple9_uniform_draw *previous,
-                              const struct agx_apple9_uniform_draw *draw,
+agx_draw_reuses_launch(const struct agx_draw_record *previous,
+                              const struct agx_draw_record *draw,
                               unsigned stage)
 {
    return previous && draw->program_id[stage] &&
@@ -200,9 +205,9 @@ agx_apple9_draw_reuses_launch(const struct agx_apple9_uniform_draw *previous,
 }
 
 static inline bool
-agx_apple9_draw_reuses_coefficients(
-   const struct agx_apple9_uniform_draw *previous,
-   const struct agx_apple9_uniform_draw *draw)
+agx_draw_reuses_coefficients(
+   const struct agx_draw_record *previous,
+   const struct agx_draw_record *draw)
 {
    return previous && draw->program_id[0] && draw->program_id[1] &&
           previous->program_id[0] == draw->program_id[0] &&
@@ -211,66 +216,66 @@ agx_apple9_draw_reuses_coefficients(
 }
 
 
-#define AGX_APPLE9_CF_BINDINGS_SIZE   0x2a0
-#define AGX_APPLE9_CF_BINDINGS_STRIDE 0x2c0
-#define AGX_APPLE9_CF_ALLOCATION_SIZE (3 * AGX_APPLE9_CF_BINDINGS_STRIDE)
+#define AGX_CF_TABLE_SIZE   0x2a0
+#define AGX_CF_TABLE_STRIDE 0x2c0
+#define AGX_CF_TABLES_SIZE (3 * AGX_CF_TABLE_STRIDE)
 unsigned
-agx_apple9_coefficients_size(const struct agx_apple9_render_stage *fragment);
-void agx_apple9_init_coefficients(struct agx_device *dev,
-                                  struct agx_apple9_render_stage *fragment,
+agx_coefficients_size(const struct agx_draw_stage *fragment);
+void agx_init_coefficients(struct agx_device *dev,
+                                  struct agx_draw_stage *fragment,
                                   struct agx_ptr allocation);
 
 /* The caller owns both immutable arenas. Context allocations must lie wholly
  * within the render-context aperture; USC allocations use the shader aperture.
  * A false return leaves the draw unpublished, including on allocation failure.
  */
-bool agx_apple9_prepare_draw_alloc(
+bool agx_prepare_draw_record_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_apple9_render_pipeline *pipeline,
-   struct agx_apple9_uniform_draw *draw,
-   const struct agx_apple9_uniform_draw *previous);
+   const struct agx_draw_pipeline *pipeline,
+   struct agx_draw_record *draw,
+   const struct agx_draw_record *previous);
 
-bool agx_apple9_prepare_draw(struct agx_device *dev, struct agx_pool *usc_pool,
+bool agx_prepare_draw_record(struct agx_device *dev, struct agx_pool *usc_pool,
                              struct agx_pool *context_pool,
-                             const struct agx_apple9_render_pipeline *pipeline,
-                             struct agx_apple9_uniform_draw *draw,
-                             const struct agx_apple9_uniform_draw *previous);
+                             const struct agx_draw_pipeline *pipeline,
+                             struct agx_draw_record *draw,
+                             const struct agx_draw_record *previous);
 
 /* Update the tables and push words (unless push is NULL) of a prepared draw
  * with unchanged shader and raster state. Failure leaves the draw unchanged.
  */
-bool agx_apple9_update_draw_tables_alloc(
+bool agx_update_draw_tables_alloc(
    struct agx_device *dev, void *usc_allocator,
    struct agx_ptr (*usc_alloc)(void *, size_t, size_t), void *context_allocator,
    struct agx_ptr (*context_alloc)(void *, size_t, size_t),
-   const struct agx_apple9_render_pipeline *pipeline,
-   struct agx_apple9_uniform_draw *draw, const uint64_t tables[2],
+   const struct agx_draw_pipeline *pipeline,
+   struct agx_draw_record *draw, const uint64_t tables[2],
    const uint64_t push[2]);
 
 
 bool
-agx_apple9_link_render_pipeline(struct agx_apple9_render_pipeline *pipeline,
-                                const struct agx_apple9_render_stage *vertex,
-                                const struct agx_apple9_render_stage *fragment);
+agx_link_draw_pipeline(struct agx_draw_pipeline *pipeline,
+                                const struct agx_draw_stage *vertex,
+                                const struct agx_draw_stage *fragment);
 
 size_t
-agx_apple9_direct_draw_size(const struct agx_apple9_render_pipeline *pipeline);
+agx_direct_draw_size(const struct agx_draw_pipeline *pipeline);
 
-uint8_t *agx_apple9_emit_direct_draw(
-   uint8_t *out, const struct agx_apple9_render_pipeline *pipeline,
+uint8_t *agx_emit_direct_draw(
+   uint8_t *out, const struct agx_draw_pipeline *pipeline,
    unsigned vertex_count, unsigned instance_count, unsigned vertex_start);
 
 uint8_t *
-agx_apple9_emit_indirect_draw(uint8_t *out,
-                              const struct agx_apple9_render_pipeline *pipeline,
+agx_emit_indirect_draw(uint8_t *out,
+                              const struct agx_draw_pipeline *pipeline,
                               uint64_t indirect);
 
 static inline struct agx_shader_body *
-apple9_stage_body(const struct agx_apple9_render_stage *stage)
+agx_draw_stage_body(const struct agx_draw_stage *stage)
 {
-   return stage->body ? stage->body : &stage->bo->apple9_body;
+   return stage->body ? stage->body : &stage->bo->shader_body;
 }
 
 #ifdef __cplusplus

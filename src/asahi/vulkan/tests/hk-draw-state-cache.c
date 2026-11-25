@@ -39,10 +39,10 @@ main(void)
    struct agx_draw draw = {.b = agx_3d(3, 1, 1)};
    struct hk_shader fragment = {0};
    static const uint8_t binary[] = {0};
-   struct agx_apple9_render_stage stage = {.binary = binary, .binary_size = 1};
+   struct agx_draw_stage stage = {.binary = binary, .binary_size = 1};
    cmd->apple9_draw_state.valid = true;
    cmd->apple9_draw_state.shader[1] = &fragment;
-   cmd->apple9_draw_state.pipeline = (struct agx_apple9_render_pipeline){
+   cmd->apple9_draw_state.pipeline = (struct agx_draw_pipeline){
       .vertex = &stage,
       .fragment = &stage,
       .ppp = 0x100,
@@ -58,7 +58,7 @@ main(void)
     * No shader compilation or allocator is available in this host fixture. */
    uint8_t *end = expected;
    for (unsigned i = 0; i < 2; ++i) {
-      end = agx_apple9_emit_direct_draw(end, &cmd->apple9_draw_state.pipeline,
+      end = agx_emit_direct_draw(end, &cmd->apple9_draw_state.pipeline,
                                         3, 1, 0) -
             4;
       hk_apple9_draw(cmd, 0, draw);
@@ -121,23 +121,23 @@ main(void)
                               false);
       cmd->state.gfx.index.restart = BITFIELD_MASK(bytes * 8);
       CHECK(hk_apple9_draw_state_reusable(cmd, draw));
-      struct agx_apple9_render_pipeline pipeline =
+      struct agx_draw_pipeline pipeline =
          cmd->apple9_draw_state.pipeline;
       pipeline.index_size = bytes;
       pipeline.index_buffer = draw.index_buffer + draw.start * bytes;
       pipeline.index_extent =
          MIN2(128 - draw.start * bytes, draw.b.count[0] * bytes);
       pipeline.restart_index = cmd->state.gfx.index.restart;
-      end = agx_apple9_emit_direct_draw(end, &pipeline, draw.b.count[0],
+      end = agx_emit_direct_draw(end, &pipeline, draw.b.count[0],
                                         draw.b.count[1], draw.index_bias) -
             4;
       hk_apple9_draw(cmd, 0, draw);
    }
    draw = (struct agx_draw){.b = agx_3d(6, 2, 1)};
    CHECK(hk_apple9_draw_state_reusable(cmd, draw));
-   struct agx_apple9_render_pipeline pipeline = cmd->apple9_draw_state.pipeline;
+   struct agx_draw_pipeline pipeline = cmd->apple9_draw_state.pipeline;
    pipeline.index_size = 0;
-   end = agx_apple9_emit_direct_draw(end, &pipeline, 6, 2, 0) - 4;
+   end = agx_emit_direct_draw(end, &pipeline, 6, 2, 0) - 4;
    hk_apple9_draw(cmd, 0, draw);
    CHECK((uint8_t *)cs.current - emitted == end - expected);
    CHECK(!memcmp(emitted, expected, end - expected));

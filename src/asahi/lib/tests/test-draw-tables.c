@@ -5,7 +5,7 @@
 #include "agx_cdm.h"
 #include "agx_draw_table.h"
 #include "agx_launch_program.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "agx_device.h"
 
@@ -36,8 +36,8 @@ allocate(void *data, size_t size, size_t alignment)
 }
 
 static void
-compare(const struct agx_apple9_render_pipeline *pipeline,
-        const struct agx_apple9_uniform_draw draw[2], const struct arena usc[2],
+compare(const struct agx_draw_pipeline *pipeline,
+        const struct agx_draw_record draw[2], const struct arena usc[2],
         const struct arena context[2])
 {
    CHECK(!memcmp(&draw[0], &draw[1], sizeof(draw[0])));
@@ -48,15 +48,15 @@ compare(const struct agx_apple9_render_pipeline *pipeline,
    CHECK(!memcmp(context[0].bytes, context[1].bytes, sizeof(context[0].bytes)));
    uint8_t commands[2][256] = {0};
    for (unsigned i = 0; i < 2; ++i) {
-      struct agx_apple9_render_pipeline p = *pipeline;
+      struct agx_draw_pipeline p = *pipeline;
       p.ppp = draw[i].ppp;
       p.ppp_viewport_offset = draw[i].ppp_viewport_offset;
       p.ppp_viewport_words = draw[i].ppp_viewport_words;
       p.vertex_launch = draw[i].launch[0] / 64;
       p.pipeline_word = 0x01000000;
-      CHECK(agx_apple9_emit_direct_draw(commands[i], &p, 3, 1, 0) -
+      CHECK(agx_emit_direct_draw(commands[i], &p, 3, 1, 0) -
                commands[i] ==
-            agx_apple9_direct_draw_size(&p));
+            agx_direct_draw_size(&p));
    }
    CHECK(!memcmp(commands[0], commands[1], sizeof(commands[0])));
 }
@@ -67,20 +67,20 @@ main(void)
    struct agx_device *dev = calloc(1, sizeof(*dev));
    CHECK(dev);
    dev->shader_base = 1ull << 40;
-   simple_mtx_init(&dev->apple9_entry_lock, mtx_plain);
-   list_inithead(&dev->apple9_entry_lru);
+   simple_mtx_init(&dev->entry_lock, mtx_plain);
+   list_inithead(&dev->entry_lru);
    struct agx_va va = {.addr = dev->shader_base + 0x10000};
    struct agx_bo bo = {.va = &va};
    agx_shader_body_init_bo(&bo);
-   bo.apple9_body.entry_offset = 0x400;
-   list_add(&bo.apple9_body.entry_link, &dev->apple9_entry_lru);
+   bo.shader_body.entry_offset = 0x400;
+   list_add(&bo.shader_body.entry_link, &dev->entry_lru);
    uint8_t code[128] = {0};
    unsigned cases = 0, failures = 0;
    for (unsigned owned = 0; owned < 2; ++owned) {
       for (unsigned samples = 1; samples <= 4; samples *= 2) {
          for (unsigned viewports = 1; viewports <= 16; viewports *= 2) {
             for (unsigned state = 0; state < 8; ++state) {
-               struct agx_apple9_render_stage vs = {
+               struct agx_draw_stage vs = {
                   .bo = &bo,
                   .binary = code,
                   .binary_size = sizeof(code),
@@ -91,7 +91,7 @@ main(void)
                   .program_id = 1,
                   .resource_count = 1,
                };
-               struct agx_apple9_render_stage fs = vs;
+               struct agx_draw_stage fs = vs;
                fs.program_id = 2;
                fs.position_components = 0;
                fs.render_targets = state & 1 ? 2 : 1;
@@ -101,8 +101,8 @@ main(void)
                   fs.coefficients[2] = 0x60580;
                   fs.coefficient_count = 4;
                }
-               struct agx_apple9_render_pipeline pipeline;
-               CHECK(agx_apple9_link_render_pipeline(&pipeline, &vs, &fs));
+               struct agx_draw_pipeline pipeline;
+               CHECK(agx_link_draw_pipeline(&pipeline, &vs, &fs));
                pipeline.samples = samples;
                pipeline.primitive = state & 2 ? AGX_PRIMITIVE_TRIANGLE_FAN
                                               : AGX_PRIMITIVE_TRIANGLES;
@@ -110,8 +110,8 @@ main(void)
                pipeline.color_formats[1] = AGX_CHANNELS_R16G16B16A16;
                struct arena usc[2] = {{.gpu = dev->shader_base + 0x20000}};
                struct arena context[2] = {
-                  {.gpu = AGX_APPLE9_RENDER_CONTEXT_BASE + 0x10000}};
-               struct agx_apple9_uniform_draw draw[2] = {0};
+                  {.gpu = AGX_RENDER_CONTEXT_BASE + 0x10000}};
+               struct agx_draw_record draw[2] = {0};
                draw[0].vertex_table = 0x40000;
                draw[0].fragment_table = 0x50000;
                draw[0].texture_table[0] = 0x70000;
@@ -147,7 +147,7 @@ main(void)
                for (unsigned v = 1; v < viewports; ++v)
                   for (unsigned i = 0; i < 6; ++i)
                      draw[0].viewports[v - 1][i] = v + i * 0.25f;
-               CHECK(agx_apple9_prepare_draw_alloc(dev, &usc[0], allocate,
+               CHECK(agx_prepare_draw_record_alloc(dev, &usc[0], allocate,
                                                    &context[0], allocate,
                                                    &pipeline, &draw[0], NULL));
                usc[1] = usc[0];
@@ -157,7 +157,7 @@ main(void)
                 * by a full raster update, exercise predecessor ownership.
                 */
                for (unsigned step = 0; step < 8; ++step) {
-                  struct agx_apple9_uniform_draw previous = draw[0];
+                  struct agx_draw_record previous = draw[0];
                   unsigned mask = step % 4;
                   uint64_t tables[] = {
                      previous.vertex_table + ((mask & 1) ? 64 : 0),
@@ -168,10 +168,10 @@ main(void)
                   memcpy(old_ctx, context[0].bytes, ctx_used);
                   draw[0].vertex_table = tables[0];
                   draw[0].fragment_table = tables[1];
-                  CHECK(agx_apple9_prepare_draw_alloc(
+                  CHECK(agx_prepare_draw_record_alloc(
                      dev, &usc[0], allocate, &context[0], allocate, &pipeline,
                      &draw[0], &previous));
-                  CHECK(agx_apple9_update_draw_tables_alloc(
+                  CHECK(agx_update_draw_tables_alloc(
                      dev, &usc[1], allocate, &context[1], allocate, &pipeline,
                      &draw[1], tables, NULL));
                   compare(&pipeline, draw, usc, context);
@@ -180,16 +180,16 @@ main(void)
                   ++cases;
                }
                for (unsigned arm = 0; arm < 2; ++arm) {
-                  struct agx_apple9_uniform_draw previous = draw[arm];
+                  struct agx_draw_record previous = draw[arm];
                   draw[arm].viewport_scale[0] += 1.0f;
-                  CHECK(agx_apple9_prepare_draw_alloc(
+                  CHECK(agx_prepare_draw_record_alloc(
                      dev, &usc[arm], allocate, &context[arm], allocate,
                      &pipeline, &draw[arm], &previous));
                }
                compare(&pipeline, draw, usc, context);
                for (unsigned fail = 0; fail < 5; ++fail) {
                   struct arena u = usc[1], c = context[1];
-                  struct agx_apple9_uniform_draw d = draw[1];
+                  struct agx_draw_record d = draw[1];
                   const uint64_t tables[] = {d.vertex_table + 64,
                                              d.fragment_table + 64};
                   if (fail < 2)
@@ -197,11 +197,11 @@ main(void)
                   if (fail == 2)
                      c.fail_at = c.calls + 1;
                   if (fail == 3)
-                     c.gpu = AGX_APPLE9_RENDER_CONTEXT_BASE - c.used - 64;
+                     c.gpu = AGX_RENDER_CONTEXT_BASE - c.used - 64;
                   if (fail == 4)
                      c.gpu =
-                        AGX_APPLE9_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
-                  CHECK(!agx_apple9_update_draw_tables_alloc(
+                        AGX_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
+                  CHECK(!agx_update_draw_tables_alloc(
                      dev, &u, allocate, &c, allocate, &pipeline, &d, tables,
                      NULL));
                   CHECK(!memcmp(&d, &draw[1], sizeof(d)));
@@ -213,7 +213,7 @@ main(void)
          }
       }
    }
-   simple_mtx_destroy(&dev->apple9_entry_lock);
+   simple_mtx_destroy(&dev->entry_lock);
    free(dev);
    printf(
       "PASS %u updates: exact launch/PPP/VDM bytes and allocation order; %u failure cases leave prepared state unchanged\n",

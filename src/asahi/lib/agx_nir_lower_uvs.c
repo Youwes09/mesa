@@ -251,7 +251,7 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
 
 /* Linked slot of each unlinked UVS word, non-user varyings keep theirs */
 void
-agx_apple9_uvs_slots(uint8_t *slots,
+agx_uvs_word_slots(uint8_t *slots,
                      const struct agx_unlinked_uvs_layout *layout,
                      const struct agx_varyings_vs *varyings)
 {

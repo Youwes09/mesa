@@ -134,7 +134,7 @@ static_assert(AGX_ABI_FIN_SAMPLE_MASK == 2, "r1 known");
 static_assert(AGX_ABI_FOUT_KILLED_SAMPLES == 0, "r0 known");
 
 /* clang-format off */
-static const uint8_t apple9_sample_loop_header[] = {
+static const uint8_t agx3_sample_loop_header[] = {
    /* mov r2 = #0xffff */
    0x2c, 0xff, 0x02, 0x00, 0x1e, 0x0c, 0x07, 0x00,
 
@@ -157,22 +157,22 @@ static const uint8_t apple9_sample_loop_header[] = {
    0x0f, 0x06, 0x04, 0x01, 0x00, 0x00,
 };
 
-#define APPLE9_SAMPLE_LOOP_END_PATCH_OFFS (18 + 3)
+#define AGX3_SAMPLE_LOOP_END_PATCH_OFFS (18 + 3)
 
 /* ishl r1 = r1, #0x1 */
-static const uint8_t apple9_sample_loop_shift[] = {
+static const uint8_t agx3_sample_loop_shift[] = {
    0x27, 0x00, 0x54, 0x02, 0x02, 0x04, 0x04, 0x00, 0xf0, 0x11, 0x01, 0x00,
 };
 
 /* pop_loop */
-static const uint8_t apple9_pop_loop[] = {
+static const uint8_t agx3_pop_loop[] = {
    0x0f, 0x06, 0x04, 0x02, 0x00, 0x00,
 };
 /* clang-format on */
 
 /* See agx_linker.h */
 void
-agx_apple9_link(struct agx_apple9_program *p, bool fragment,
+agx_link_program(struct agx_linked_program *p, bool fragment,
                 struct agx_shader_part *main, struct agx_shader_part *prolog,
                 struct agx_shader_part *epilog, unsigned nr_samples_shaded,
                 const uint8_t *uvs_slots)
@@ -251,9 +251,9 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
       append(&d, bytes, sizeof(bytes));
 
       loop_start = d.size;
-      uint8_t header[sizeof(apple9_sample_loop_header)];
-      memcpy(header, apple9_sample_loop_header, sizeof(header));
-      header[APPLE9_SAMPLE_LOOP_END_PATCH_OFFS] |= 1u << nr_samples_shaded;
+      uint8_t header[sizeof(agx3_sample_loop_header)];
+      memcpy(header, agx3_sample_loop_header, sizeof(header));
+      header[AGX3_SAMPLE_LOOP_END_PATCH_OFFS] |= 1u << nr_samples_shaded;
       append(&d, header, sizeof(header));
    } else if (nr_samples_shaded) {
       uint8_t bytes[2];
@@ -282,14 +282,14 @@ agx_apple9_link(struct agx_apple9_program *p, bool fragment,
    }
 
    if (nr_samples_shaded > 1) {
-      append(&d, apple9_sample_loop_shift, sizeof(apple9_sample_loop_shift));
+      append(&d, agx3_sample_loop_shift, sizeof(agx3_sample_loop_shift));
 
       uint8_t jmp[10];
       ASSERTED bool ok =
          agx_apple9_encode_branch(jmp, true, (int64_t)loop_start - d.size);
       assert(ok);
       append(&d, jmp, sizeof(jmp));
-      append(&d, apple9_pop_loop, sizeof(apple9_pop_loop));
+      append(&d, agx3_pop_loop, sizeof(agx3_pop_loop));
    }
 
    if (fragment) {
@@ -338,12 +338,12 @@ void
 agx_fast_link(struct agx_linked_shader *linked, struct agx_device *dev,
               bool fragment, struct agx_shader_part *main,
               struct agx_shader_part *prolog, struct agx_shader_part *epilog,
-              unsigned nr_samples_shaded, const uint8_t *apple9_uvs_slots)
+              unsigned nr_samples_shaded, const uint8_t *uvs_slots)
 {
    if (main->info.apple9_compute.abi) {
-      struct agx_apple9_program *p = &linked->apple9;
-      agx_apple9_link(p, fragment, main, prolog, epilog, nr_samples_shaded,
-                      apple9_uvs_slots);
+      struct agx_linked_program *p = &linked->program;
+      agx_link_program(p, fragment, main, prolog, epilog, nr_samples_shaded,
+                      uvs_slots);
 
       linked->bo = agx_bo_create(dev, p->size, 0, AGX_BO_EXEC | AGX_BO_LOW_VA,
                                  "Linked executable");

@@ -113,7 +113,7 @@ struct agx_bo {
    uint64_t writer;
 
    /* Entry identity for callers that store one Apple9 body in this BO. */
-   struct agx_shader_body apple9_body;
+   struct agx_shader_body shader_body;
 
    /* Update atomically */
    int32_t refcnt;

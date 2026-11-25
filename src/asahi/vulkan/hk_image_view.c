@@ -6,7 +6,7 @@
  */
 #include "hk_image_view.h"
 #include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "util/format/u_format.h"
 #include "util/half_float.h"
 #include "vulkan/vulkan_core.h"
@@ -610,7 +610,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
          part->base_layer = view->vk.base_array_layer;
          part->min_lod_fp16 = _mesa_float_to_half(min_lod);
          part->min_lod_uint16 = min_lod;
-         agx_apple9_translate_texture(part->texture, tex);
+         agx_translate_usc_texture(part->texture, tex);
          hk_apple9_texture_info(part->texture_info, tex);
       }
 
@@ -619,7 +619,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
           view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
          struct agx_texture_packed alias;
          pack_texture(view, p, HK_DESC_USAGE_CUBE_ALIAS, &alias);
-         agx_apple9_translate_texture(view->planes[p].apple9_sampled.cube_alias,
+         agx_translate_usc_texture(view->planes[p].apple9_sampled.cube_alias,
                                       &alias);
       }
    }
@@ -643,7 +643,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
                          vk_format_is_compressed(view->vk.image->format) &&
                          !vk_format_is_compressed(view->vk.format);
    if (!alias_3d &&
-       agx_apple9_translate_texture(storage->texture, &storage->common.tex))
+       agx_translate_usc_texture(storage->texture, &storage->common.tex))
       storage->native_ok = AGX_APPLE9_STORAGE_READ_VALID;
 
    /* Native fetches need the original depth: it participates in the
@@ -696,7 +696,7 @@ hk_apple9_init_render_view(struct hk_image_view *view)
       agx_pack(&packed, TEXTURE, cfg) {
          cfg = image;
       }
-      out->texture_valid = agx_apple9_translate_texture(out->texture, &packed);
+      out->texture_valid = agx_translate_usc_texture(out->texture, &packed);
       out->store_valid =
          hk_apple9_image_view_eot(view, layered, false, out->store);
    }
@@ -783,7 +783,7 @@ hk_apple9_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
                                 const struct ail_layout *layout, uint64_t base,
                                 unsigned level)
 {
-   return agx_apple9_translate_pbe(out, state, format, layout, base, level, 1,
+   return agx_translate_usc_pbe(out, state, format, layout, base, level, 1,
                                    false, AGX_TEXTURE_DIMENSION_2D);
 }
 
@@ -952,7 +952,7 @@ hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered,
       layered ? HK_DESC_USAGE_LAYERED_BG_EOT : HK_DESC_USAGE_BG_EOT);
    struct ail_layout store_layout = *layout;
    store_layout.compressed &= !raw;
-   return agx_apple9_translate_pbe(out, state, format_for_plane(view, 0),
+   return agx_translate_usc_pbe(out, state, format_for_plane(view, 0),
                                    &store_layout, base, view->vk.base_mip_level,
                                    layered ? layers : 1, layered, dimension);
 }

@@ -83,7 +83,7 @@ encode_target(uint8_t out[10], enum agx_launch_stage stage,
 {
    if (entry_offset & 1)
       return false;
-   if (entry_offset > AGX_APPLE9_ENTRY_MAX_OFFSET)
+   if (entry_offset > AGX_ENTRY_MAX_OFFSET)
       return false;
    /* The header and fixed control fields were constructed from bit-forcing
     * and bit-clearing tests with authored shaders, including multi-frame
@@ -310,30 +310,30 @@ agx_launch_template_emit(uint8_t *out,
 
 
 void
-agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c)
+agx_stage_launch_cache_init(struct agx_stage_launch_cache *c)
 {
    memset(c, 0, sizeof(*c));
    simple_mtx_init(&c->lock, mtx_plain);
 }
 
 void
-agx_apple9_stage_launch_cache_finish(struct agx_apple9_stage_launch_cache *c)
+agx_stage_launch_cache_finish(struct agx_stage_launch_cache *c)
 {
    simple_mtx_destroy(&c->lock);
 }
 
 
 static void
-apple9_graphics_launch_params(struct agx_launch_parameters *params,
+stage_launch_params(struct agx_launch_parameters *params,
                               const struct agx_device *dev,
-                              const struct agx_apple9_render_stage *shader,
+                              const struct agx_draw_stage *shader,
                               bool fragment, unsigned tile_bytes,
                               unsigned samples)
 {
    *params = (struct agx_launch_parameters){
       .preamble_address =
          shader->preamble_size
-            ? apple9_stage_body(shader)->addr + shader->preamble_offset
+            ? agx_draw_stage_body(shader)->addr + shader->preamble_offset
             : 0,
       .shader_base = dev->shader_base,
       .publication_count = shader->publication_count,
@@ -346,7 +346,7 @@ apple9_graphics_launch_params(struct agx_launch_parameters *params,
 
 /* Linear search of the first count published templates. */
 static const struct agx_launch_template *
-apple9_stage_launch_find(struct agx_apple9_stage_launch_cache *c,
+stage_launch_find(struct agx_stage_launch_cache *c,
                          unsigned count, unsigned tile_bytes, unsigned samples)
 {
    for (unsigned i = 0; i < count; ++i) {
@@ -362,24 +362,24 @@ apple9_stage_launch_find(struct agx_apple9_stage_launch_cache *c,
  * Published entries are immutable: lookups read the count with acquire
  * ordering and take no lock; only building locks. */
 static const struct agx_launch_template *
-apple9_stage_launch_template(const struct agx_device *dev,
-                             const struct agx_apple9_render_stage *shader,
+stage_launch_template(const struct agx_device *dev,
+                             const struct agx_draw_stage *shader,
                              bool fragment, unsigned tile_bytes,
                              unsigned samples)
 {
-   struct agx_apple9_stage_launch_cache *c = shader->launch_cache;
+   struct agx_stage_launch_cache *c = shader->launch_cache;
    if (!fragment)
       tile_bytes = samples = 0;
-   const struct agx_launch_template *found = apple9_stage_launch_find(
+   const struct agx_launch_template *found = stage_launch_find(
       c, __atomic_load_n(&c->count, __ATOMIC_ACQUIRE), tile_bytes, samples);
    if (found)
       return found;
    simple_mtx_lock(&c->lock);
    unsigned i = c->count;
-   found = apple9_stage_launch_find(c, i, tile_bytes, samples);
-   if (!found && i < AGX_APPLE9_STAGE_LAUNCH_TEMPLATES) {
+   found = stage_launch_find(c, i, tile_bytes, samples);
+   if (!found && i < AGX_STAGE_LAUNCH_TEMPLATES) {
       struct agx_launch_parameters params;
-      apple9_graphics_launch_params(&params, dev, shader, fragment, tile_bytes,
+      stage_launch_params(&params, dev, shader, fragment, tile_bytes,
                                     samples);
       if (agx_launch_template_init(
              &c->entry[i].tmpl, AGX_GRAPHICS_LAUNCH_SIZE,
@@ -396,24 +396,24 @@ apple9_stage_launch_template(const struct agx_device *dev,
 }
 
 bool
-agx_apple9_prepare_graphics_stage(
+agx_prepare_stage_launch(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
-   const struct agx_apple9_render_stage *shader, bool fragment, uint64_t table,
+   const struct agx_draw_stage *shader, bool fragment, uint64_t table,
    uint64_t textures, uint64_t samplers, uint64_t push, unsigned tile_bytes,
    unsigned samples, uint32_t *launch)
 {
    if (!shader->bo || !shader->publication_count_valid)
       return false;
    unsigned entry =
-      agx_shader_entry(dev, allocator, apple9_stage_body(shader), false);
+      agx_shader_entry(dev, allocator, agx_draw_stage_body(shader), false);
    if (!entry)
       return false;
    if (shader->preamble_offset > shader->binary_size ||
        shader->preamble_size > shader->binary_size - shader->preamble_offset) {
       fprintf(
          stderr,
-         "Apple9 draw: stage %u invalid preamble offset %u size %u in binary %zu\n",
+         "draw: stage %u invalid preamble offset %u size %u in binary %zu\n",
          fragment, shader->preamble_offset, shader->preamble_size,
          (size_t)shader->binary_size);
       return false;
@@ -424,7 +424,7 @@ agx_apple9_prepare_graphics_stage(
    enum { roots_size = ALIGN_POT(AGX_APPLE9_GRAPHICS_ROOT_WORDS * 4, 64) };
    const unsigned launch_size = AGX_GRAPHICS_LAUNCH_SIZE;
    struct agx_launch_parameters params;
-   apple9_graphics_launch_params(&params, dev, shader, fragment, tile_bytes,
+   stage_launch_params(&params, dev, shader, fragment, tile_bytes,
                                  samples);
    params.entry_offset = entry;
 
@@ -432,7 +432,7 @@ agx_apple9_prepare_graphics_stage(
     * per launch: emit the program next to fresh roots, without encoding it
     * or hashing it into the upload cache. */
    const struct agx_launch_template *tmpl =
-      shader->launch_cache ? apple9_stage_launch_template(dev, shader, fragment,
+      shader->launch_cache ? stage_launch_template(dev, shader, fragment,
                                                           tile_bytes, samples)
                            : NULL;
    if (tmpl) {
@@ -471,7 +471,7 @@ agx_apple9_prepare_graphics_stage(
           &params)) {
       fprintf(
          stderr,
-         "Apple9 draw: stage %u launch rejected: entry=0x%x "
+         "draw: stage %u launch rejected: entry=0x%x "
          "base=0x%llx roots=0x%llx launch=0x%llx preamble=0x%llx "
          "publications=%u scratch=%u tile=%u samples=%u\n",
          fragment, params.entry_offset, (unsigned long long)params.shader_base,

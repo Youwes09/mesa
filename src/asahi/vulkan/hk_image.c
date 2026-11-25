@@ -7,7 +7,7 @@
 #include "hk_image.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "drm-uapi/drm_fourcc.h"
 #include "util/bitscan.h"
@@ -510,7 +510,7 @@ hk_GetPhysicalDeviceImageFormatProperties2(
 
    const uint32_t max_dim =
       agx_is_apple9(&pdev->dev) && pImageFormatInfo->type == VK_IMAGE_TYPE_3D
-         ? AGX_APPLE9_MAX_3D_TEXTURE_DIMENSION
+         ? AGX_USC_MAX_3D_DIMENSION
          : 16384;
    VkExtent3D maxExtent;
    uint32_t maxArraySize;

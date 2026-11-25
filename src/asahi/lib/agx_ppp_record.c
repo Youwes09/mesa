@@ -13,19 +13,19 @@
 #include "agx_draw_table.h"
 
 static inline void
-apple9_put_u32(void *ptr, uint32_t value)
+put_u32(void *ptr, uint32_t value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
 
 static inline void
-apple9_put_u64(void *ptr, uint64_t value)
+put_u64(void *ptr, uint64_t value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
 
 static inline uint32_t
-apple9_get_u32(const void *ptr)
+get_u32(const void *ptr)
 {
    uint32_t value;
    memcpy(&value, ptr, sizeof(value));
@@ -33,7 +33,7 @@ apple9_get_u32(const void *ptr)
 }
 
 static inline uint64_t
-apple9_get_u64(const void *ptr)
+get_u64(const void *ptr)
 {
    uint64_t value;
    memcpy(&value, ptr, sizeof(value));
@@ -41,7 +41,7 @@ apple9_get_u64(const void *ptr)
 }
 
 static inline void
-apple9_put_f32(void *ptr, float value)
+put_f32(void *ptr, float value)
 {
    memcpy(ptr, &value, sizeof(value));
 }
@@ -49,16 +49,16 @@ apple9_put_f32(void *ptr, float value)
  * page, after per-draw argument records. Draw-specific tables live in their
  * own slots on the following pages so mixed interpolation can use one
  * descriptor per scalar without overwriting the next draw's roots. */
-#define APPLE9_CF_BINDINGS      0x203d00u
+#define DEFAULT_CF_TABLE      0x203d00u
 
 static unsigned
-apple9_cf_binding_count(unsigned components)
+cf_binding_count(unsigned components)
 {
    return 1 + DIV_ROUND_UP(components, 4);
 }
 
 static void
-apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
+build_direct_bind_group(uint8_t *page, unsigned varying_components)
 {
    static const struct {
       uint16_t offset;
@@ -76,15 +76,15 @@ apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
 
    memset(page, 0, 0x80);
    for (unsigned i = 0; i < ARRAY_SIZE(common); ++i)
-      apple9_put_u32(page + common[i].offset, common[i].value);
+      put_u32(page + common[i].offset, common[i].value);
 
-   /* T8140 direct-render deltas reused by Apple9. */
-   apple9_put_u32(page + 0x04, 0);
-   apple9_put_u32(page + 0x08, 0);
-   apple9_put_u32(page + 0x14, 0x00004e19);
-   apple9_put_u32(page + 0x20, 0);
-   apple9_put_u32(page + 0x2c, 4);
-   apple9_put_u32(page + 0x5c, 0x0001ffff);
+   /* T8140 direct-render deltas reused by G16. */
+   put_u32(page + 0x04, 0);
+   put_u32(page + 0x08, 0);
+   put_u32(page + 0x14, 0x00004e19);
+   put_u32(page + 0x20, 0);
+   put_u32(page + 0x2c, 4);
+   put_u32(page + 0x5c, 0x0001ffff);
 
    /* Small G16 packing deltas established independently on T8132. */
    page[0x05] = 0x01;
@@ -97,10 +97,10 @@ apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
    page[0x2c] = 4 + varying_components;
    /* G16's fragment-state layout moves the coefficient pointer ahead of
     * the pipeline words. */
-   apple9_put_u32(page + 0x04,
-                  0x100 | (apple9_cf_binding_count(varying_components) << 16));
-   apple9_put_u32(page + 0x08, APPLE9_CF_BINDINGS);
-   apple9_put_u32(page + 0x18, varying_components / 8);
+   put_u32(page + 0x04,
+                  0x100 | (cf_binding_count(varying_components) << 16));
+   put_u32(page + 0x08, DEFAULT_CF_TABLE);
+   put_u32(page + 0x18, varying_components / 8);
 }
 
 /* The PPP record bytes that depend only on the linked stages: header,
@@ -109,12 +109,12 @@ apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
  * tile allocation, raster, depth, stencil and viewports) are applied per draw
  * on top. */
 void
-agx_apple9_build_ppp_static(const struct agx_apple9_render_pipeline *pipeline,
-                            uint8_t out[AGX_APPLE9_PPP_STATIC_SIZE])
+agx_build_ppp_static(const struct agx_draw_pipeline *pipeline,
+                            uint8_t out[AGX_PPP_STATIC_SIZE])
 {
    uint8_t *ppp = out;
-   memset(ppp, 0, AGX_APPLE9_PPP_STATIC_SIZE);
-   apple9_put_u32(ppp, 0x10040000);
+   memset(ppp, 0, AGX_PPP_STATIC_SIZE);
+   put_u32(ppp, 0x10040000);
    unsigned counts[3] = {0};
    const struct agx_apple9_varying_layout *varyings =
       &pipeline->vertex->varyings;
@@ -122,27 +122,27 @@ agx_apple9_build_ppp_static(const struct agx_apple9_render_pipeline *pipeline,
       assert(varyings->group[i] < ARRAY_SIZE(counts));
       counts[varyings->group[i]] += util_bitcount(varyings->mask[i]);
    }
-   apple9_put_u32(ppp + 4, counts[0] | (counts[1] << 8) | (counts[2] << 16));
+   put_u32(ppp + 4, counts[0] | (counts[1] << 8) | (counts[2] << 16));
    uint8_t *group = ppp + 0x40;
-   apple9_build_direct_bind_group(group, pipeline->vertex->varying_components);
-   if (pipeline->fragment->apple9_reads_z)
-      apple9_put_u32(group + 0x20, apple9_get_u32(group + 0x20) | (1u << 21));
+   build_direct_bind_group(group, pipeline->vertex->varying_components);
+   if (pipeline->fragment->reads_z)
+      put_u32(group + 0x20, get_u32(group + 0x20) | (1u << 21));
    if (pipeline->fragment->reads_primitive_id)
-      apple9_put_u32(group + 0x68, apple9_get_u32(group + 0x68) | (1u << 12));
+      put_u32(group + 0x68, get_u32(group + 0x68) | (1u << 12));
    if (pipeline->vertex->writes_point_size) {
-      apple9_put_u32(group + 0x20, apple9_get_u32(group + 0x20) | (1u << 18));
+      put_u32(group + 0x20, get_u32(group + 0x20) | (1u << 18));
    }
    if (pipeline->vertex->writes_layer_viewport)
-      apple9_put_u32(group + 0x20, apple9_get_u32(group + 0x20) | (3u << 19));
-   apple9_put_u32(group + 0x20,
-                  apple9_get_u32(group + 0x20) |
+      put_u32(group + 0x20, get_u32(group + 0x20) | (3u << 19));
+   put_u32(group + 0x20,
+                  get_u32(group + 0x20) |
                      BITFIELD_MASK(pipeline->vertex->clip_distance_count));
-   apple9_put_u32(group + 0x2c, 4 + pipeline->vertex->varying_components +
+   put_u32(group + 0x2c, 4 + pipeline->vertex->varying_components +
                                    pipeline->vertex->writes_point_size +
                                    pipeline->vertex->clip_distance_count +
                                    pipeline->vertex->writes_layer_viewport);
    /* Match the textured setup's native state, including with two user
     * varyings. This field's full resource-count formula is unresolved;
     * the varying-only estimate is insufficient to describe the captures. */
-   apple9_put_u32(group + 0x18, MAX2(apple9_get_u32(group + 0x18), 1));
+   put_u32(group + 0x18, MAX2(get_u32(group + 0x18), 1));
 }

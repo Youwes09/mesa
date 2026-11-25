@@ -9,7 +9,6 @@
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
-#include "asahi/lib/agx_apple9_color.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "util/simple_mtx.h"
 
@@ -126,13 +125,13 @@ hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    if (cmd->apple9_pinned) {
-      simple_mtx_lock(&dev->dev.apple9_entry_lock);
+      simple_mtx_lock(&dev->dev.entry_lock);
       set_foreach(cmd->apple9_pinned, entry) {
          struct agx_shader_body *body = (void *)entry->key;
          assert(body->entry_pins > 0);
          body->entry_pins--;
       }
-      simple_mtx_unlock(&dev->dev.apple9_entry_lock);
+      simple_mtx_unlock(&dev->dev.entry_lock);
       set_foreach(cmd->apple9_pinned, entry)
          agx_shader_body_unreference(&dev->dev, (void *)entry->key);
       _mesa_set_clear(cmd->apple9_pinned, NULL);
@@ -140,7 +139,7 @@ hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd)
    cmd->apple9_last_pin[0] = cmd->apple9_last_pin[1] = NULL;
 }
 
-/* agx_device::apple9_pin_entry. Every Apple9 entry is requested while
+/* agx_device::pin_entry. Every Apple9 entry is requested while
  * recording a command buffer, which passes itself as the allocator. */
 bool
 hk_apple9_pin_entry(void *allocator, struct agx_shader_body *body)
@@ -1687,9 +1686,9 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
    if (!cs)
       return;
 
-   if (prog->apple9) {
+   if (prog->launched) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
-      hk_apple9_dispatch(cmd, cs, &prog->bo->apple9_body, &prog->apple9_profile,
+      hk_apple9_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
                          grid, args, 0, NULL);
       return;
    }
@@ -1812,9 +1811,9 @@ hk_ensure_cs_has_space(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    /* Native VDM continuation pointers are relative to the render context. */
    uint64_t target = T.gpu;
    if (vdm && agx_has_render_context(&hk_cmd_buffer_device(cmd)->dev)) {
-      assert(target >= AGX_APPLE9_RENDER_CONTEXT_BASE &&
-             target - AGX_APPLE9_RENDER_CONTEXT_BASE <= UINT32_MAX);
-      target -= AGX_APPLE9_RENDER_CONTEXT_BASE;
+      assert(target >= AGX_RENDER_CONTEXT_BASE &&
+             target - AGX_RENDER_CONTEXT_BASE <= UINT32_MAX);
+      target -= AGX_RENDER_CONTEXT_BASE;
    }
    agx_cs_jump(cs->current, target, vdm);
 

@@ -12,7 +12,7 @@
 
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/lib/agx_usc_descriptor.h"
-#include "asahi/lib/agx_apple9_color.h"
+#include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "hk_device.h"
 #include "vk_descriptor_update_template.h"
@@ -114,7 +114,7 @@ struct hk_apple9_sampler_part {
    uint32_t runtime_sampler[AGX_APPLE9_RUNTIME_SAMPLER_STRIDE / 4];
    uint16_t lod_bias_fp16, txl_nudge_fp16;
    uint8_t pad0[28];
-   uint8_t sampler[AGX_APPLE9_SAMPLER_TABLE_STRIDE];
+   uint8_t sampler[AGX_USC_SAMPLER_STRIDE];
 };
 static_assert(sizeof(struct hk_apple9_sampler_part) == 128, "128-byte record");
 static_assert(offsetof(struct hk_apple9_sampler_part, runtime_sampler) ==
@@ -122,7 +122,7 @@ static_assert(offsetof(struct hk_apple9_sampler_part, runtime_sampler) ==
               "runtime sampler where shaders read it");
 static_assert(offsetof(struct hk_apple9_sampler_part, sampler) ==
                  AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY *
-                    AGX_APPLE9_SAMPLER_TABLE_STRIDE,
+                    AGX_USC_SAMPLER_STRIDE,
               "native sampler entry is where register indices expect it");
 
 /* A combined image sampler is an image part followed by a sampler part; a

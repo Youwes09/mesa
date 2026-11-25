@@ -12,13 +12,12 @@
 #include "asahi/layout/layout.h"
 #include "pipe/p_defines.h"
 #include "util/u_math.h"
-#include "agx_apple9_color.h"
 #include "agx_helpers.h"
 #include "agx_pack.h"
 #include "agx_tilebuffer.h"
 
 bool
-agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
+agx_translate_usc_pbe(void *out, const struct agx_pbe_packed *state,
                          enum pipe_format format,
                          const struct ail_layout *layout, uint64_t layer_base,
                          unsigned level, unsigned layer_count, bool layered,
@@ -40,7 +39,7 @@ agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
       return false;
    uint32_t stride = linear ? ail_get_linear_stride_B(layout, level) : 0;
    if (linear &&
-       (!stride || (stride & 15) || stride > AGX_APPLE9_MAX_LINEAR_STRIDE))
+       (!stride || (stride & 15) || stride > AGX_USC_MAX_LINEAR_STRIDE))
       return false;
 
    agx_unpack(stderr, state, PBE, pbe);
@@ -50,7 +49,7 @@ agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
       return false;
 
    /* Packed tile words already have memory channel order. */
-   bool packed = agx_apple9_color_is_packed(agx_apple9_color_tile_format(format));
+   bool packed = agx_raw_tile_is_packed(agx_raw_tile_format(format));
 
    agx_pack(out, PBE_G16, cfg) {
       cfg.dimension = dimension;
@@ -91,10 +90,10 @@ agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
 }
 
 bool
-agx_apple9_texture_format_supported(enum pipe_format format)
+agx_usc_texture_format_supported(enum pipe_format format)
 {
-   if (agx_apple9_color_is_wide(format) || agx_apple9_color_is_packed(format) ||
-       agx_apple9_color_is_normalized(format))
+   if (agx_tile_format_is_wide(format) || agx_raw_tile_is_packed(format) ||
+       agx_tile_format_is_normalized(format))
       return true;
    switch (format) {
    case PIPE_FORMAT_R8_SNORM:
@@ -154,7 +153,7 @@ agx_apple9_texture_format_supported(enum pipe_format format)
 }
 
 static unsigned
-apple9_sampler_address(unsigned wrap)
+usc_sampler_address(unsigned wrap)
 {
    /* Native descriptor address codes, captured for each axis. Wrapping in
     * hardware preserves filtering across seams. */
@@ -174,12 +173,12 @@ apple9_sampler_address(unsigned wrap)
    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
       return 5;
    default:
-      UNREACHABLE("unsupported Apple9 sampler address mode");
+      UNREACHABLE("unsupported sampler address mode");
    }
 }
 
 static struct AGX_SAMPLER_G16
-apple9_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
+usc_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
                float min_lod, float max_lod, unsigned wrap_s, unsigned wrap_t,
                unsigned max_anisotropy)
 {
@@ -198,34 +197,34 @@ apple9_sampler(bool min_linear, bool mag_linear, unsigned mip_filter,
       .magnify = mag_linear ? AGX_FILTER_LINEAR : AGX_FILTER_NEAREST,
       .minify = min_linear ? AGX_FILTER_LINEAR : AGX_FILTER_NEAREST,
       .mip_filter = mip_filter,
-      .wrap_s = apple9_sampler_address(wrap_s),
-      .wrap_t = apple9_sampler_address(wrap_t),
+      .wrap_s = usc_sampler_address(wrap_s),
+      .wrap_t = usc_sampler_address(wrap_t),
       .compare_func = AGX_COMPARE_FUNC_NEVER,
       .unk_42 = true,
    };
 }
 
 void
-agx_apple9_pack_sampler(void *out, bool min_linear, bool mag_linear,
+agx_pack_basic_usc_sampler(void *out, bool min_linear, bool mag_linear,
                         unsigned mip_filter, float min_lod, float max_lod,
                         unsigned wrap_s, unsigned wrap_t,
                         unsigned max_anisotropy)
 {
    struct AGX_SAMPLER_G16 sampler =
-      apple9_sampler(min_linear, mag_linear, mip_filter, min_lod, max_lod,
+      usc_sampler(min_linear, mag_linear, mip_filter, min_lod, max_lod,
                      wrap_s, wrap_t, max_anisotropy);
    AGX_SAMPLER_G16_pack(out, &sampler);
 }
 
 bool
-agx_apple9_translate_texture(void *out, const struct agx_texture_packed *state)
+agx_translate_usc_texture(void *out, const struct agx_texture_packed *state)
 {
    agx_unpack(stderr, state, TEXTURE, tex);
-   return agx_apple9_pack_texture(out, &tex);
+   return agx_pack_usc_texture(out, &tex);
 }
 
 void
-agx_apple9_set_null_texture(void *out)
+agx_set_null_usc_texture(void *out)
 {
    /* A one-texel, zero-swizzled view of the zero page, as agx_set_null_texture */
    agx_pack(out, TEXTURE_G16, cfg) {
@@ -241,14 +240,14 @@ agx_apple9_set_null_texture(void *out)
 }
 
 bool
-agx_apple9_pack_texture(void *out, const struct AGX_TEXTURE *state)
+agx_pack_usc_texture(void *out, const struct AGX_TEXTURE *state)
 {
    struct AGX_TEXTURE tex = *state;
    if ((tex.address & 15) || (tex.address >> 48))
       return false;
 
    if (tex.dimension == AGX_TEXTURE_DIMENSION_3D &&
-       tex.depth > AGX_APPLE9_MAX_3D_TEXTURE_DIMENSION)
+       tex.depth > AGX_USC_MAX_3D_DIMENSION)
       return false;
 
    bool single_layer_linear =
@@ -324,7 +323,7 @@ agx_apple9_pack_texture(void *out, const struct AGX_TEXTURE *state)
 }
 
 bool
-agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
+agx_pack_usc_sampler(void *out, const struct AGX_SAMPLER *state)
 {
    const struct AGX_SAMPLER sampler = *state;
    if (sampler.magnify > AGX_FILTER_LINEAR ||
@@ -342,7 +341,7 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
       PIPE_TEX_WRAP_MIRROR_REPEAT, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
       PIPE_TEX_WRAP_CLAMP,         PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE,
    };
-   struct AGX_SAMPLER_G16 g16 = apple9_sampler(
+   struct AGX_SAMPLER_G16 g16 = usc_sampler(
       sampler.minify == AGX_FILTER_LINEAR, sampler.magnify == AGX_FILTER_LINEAR,
       sampler.mip_filter, sampler.minimum_lod, sampler.maximum_lod,
       wrap[sampler.wrap_s], wrap[sampler.wrap_t], sampler.maximum_anisotropy);
@@ -352,7 +351,7 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
    if (sampler.compare_enable)
       g16.compare_func = sampler.compare_func;
 
-   memset(out, 0, AGX_APPLE9_SAMPLER_TABLE_STRIDE);
+   memset(out, 0, AGX_USC_SAMPLER_STRIDE);
    AGX_SAMPLER_G16_pack(out, &g16);
    return true;
 }
@@ -361,10 +360,10 @@ agx_apple9_pack_sampler_state(void *out, const struct AGX_SAMPLER *state)
  * requires: clamp every axis to the transparent black border.
  */
 void
-agx_apple9_pack_fetch_sampler(void *out)
+agx_pack_usc_fetch_sampler(void *out)
 {
    struct AGX_SAMPLER_G16 sampler =
-      apple9_sampler(false, false, 1, 0, 14, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
+      usc_sampler(false, false, 1, 0, 14, PIPE_TEX_WRAP_CLAMP_TO_BORDER,
                      PIPE_TEX_WRAP_CLAMP_TO_BORDER, 1);
    sampler.wrap_r = AGX_WRAP_CLAMP_TO_BORDER;
    AGX_SAMPLER_G16_pack(out, &sampler);
