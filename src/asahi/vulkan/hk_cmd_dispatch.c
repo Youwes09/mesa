@@ -4,7 +4,7 @@
  * Copyright 2022-2023 Collabora Ltd. and Red Hat Inc.
  * SPDX-License-Identifier: MIT
  */
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "libagx/query.h"
 #include "libagx/tessellator_fold.h"
 #include "pipe/p_defines.h"
@@ -136,7 +136,7 @@ hk_usc_alloc_cb(void *data, size_t size, size_t alignment)
 void
 hk_texture_info(uint32_t *data, const struct agx_texture_packed *state)
 {
-   memset(data, 0, AGX_APPLE9_TEXTURE_INFO_STRIDE);
+   memset(data, 0, AGX_TEXTURE_INFO_STRIDE);
    agx_unpack(stderr, state, TEXTURE, image);
    data[0] = u_minify(image.width, image.first_level);
    data[1] = u_minify(image.height, image.first_level);
@@ -179,7 +179,7 @@ hk_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state,
       PIPE_FUNC_EQUAL,  PIPE_FUNC_NOTEQUAL, PIPE_FUNC_ALWAYS, PIPE_FUNC_NEVER,
    };
 
-   memset(data, 0, AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
+   memset(data, 0, AGX_RUNTIME_SAMPLER_STRIDE);
    agx_unpack(stderr, state, SAMPLER, sampler);
    if (clamp_to_edge) {
       sampler.wrap_s = AGX_WRAP_CLAMP_TO_EDGE;
@@ -190,29 +190,29 @@ hk_runtime_sampler(uint32_t *data, const struct agx_sampler_packed *state,
        sampler.wrap_t >= ARRAY_SIZE(wraps) ||
        sampler.wrap_r >= ARRAY_SIZE(wraps))
       return false;
-   data[AGX_APPLE9_SAMP_WRAP_S] = wraps[sampler.wrap_s];
-   data[AGX_APPLE9_SAMP_WRAP_T] = wraps[sampler.wrap_t];
-   data[AGX_APPLE9_SAMP_WRAP_R] = wraps[sampler.wrap_r];
-   data[AGX_APPLE9_SAMP_MIN] = sampler.minify == AGX_FILTER_LINEAR
-                                  ? PIPE_TEX_FILTER_LINEAR
-                                  : PIPE_TEX_FILTER_NEAREST;
-   data[AGX_APPLE9_SAMP_MAG] = sampler.magnify == AGX_FILTER_LINEAR
-                                  ? PIPE_TEX_FILTER_LINEAR
-                                  : PIPE_TEX_FILTER_NEAREST;
-   data[AGX_APPLE9_SAMP_MIP] = sampler.mip_filter == AGX_MIP_FILTER_NONE
-                                  ? PIPE_TEX_MIPFILTER_NONE
-                               : sampler.mip_filter == AGX_MIP_FILTER_LINEAR
-                                  ? PIPE_TEX_MIPFILTER_LINEAR
-                                  : PIPE_TEX_MIPFILTER_NEAREST;
-   data[AGX_APPLE9_SAMP_COMPARE] = comparisons[sampler.compare_func];
-   data[AGX_APPLE9_SAMP_MIN_LOD] = fui(sampler.minimum_lod);
-   data[AGX_APPLE9_SAMP_MAX_LOD] = fui(sampler.maximum_lod);
+   data[AGX_SAMP_WRAP_S] = wraps[sampler.wrap_s];
+   data[AGX_SAMP_WRAP_T] = wraps[sampler.wrap_t];
+   data[AGX_SAMP_WRAP_R] = wraps[sampler.wrap_r];
+   data[AGX_SAMP_MIN] = sampler.minify == AGX_FILTER_LINEAR
+                           ? PIPE_TEX_FILTER_LINEAR
+                           : PIPE_TEX_FILTER_NEAREST;
+   data[AGX_SAMP_MAG] = sampler.magnify == AGX_FILTER_LINEAR
+                           ? PIPE_TEX_FILTER_LINEAR
+                           : PIPE_TEX_FILTER_NEAREST;
+   data[AGX_SAMP_MIP] = sampler.mip_filter == AGX_MIP_FILTER_NONE
+                           ? PIPE_TEX_MIPFILTER_NONE
+                        : sampler.mip_filter == AGX_MIP_FILTER_LINEAR
+                           ? PIPE_TEX_MIPFILTER_LINEAR
+                           : PIPE_TEX_MIPFILTER_NEAREST;
+   data[AGX_SAMP_COMPARE] = comparisons[sampler.compare_func];
+   data[AGX_SAMP_MIN_LOD] = fui(sampler.minimum_lod);
+   data[AGX_SAMP_MAX_LOD] = fui(sampler.maximum_lod);
    /* Honeykrisp already applies sampler bias when lowering descriptors. */
-   data[AGX_APPLE9_SAMP_BIAS] = 0;
-   data[AGX_APPLE9_SAMP_BORDER] = sampler.border_colour;
-   data[AGX_APPLE9_SAMP_PIXEL_COORDS] = sampler.pixel_coordinates;
-   data[AGX_APPLE9_SAMP_MAX_ANISOTROPY] = fui(sampler.maximum_anisotropy);
-   data[AGX_APPLE9_SAMP_SEAMFUL_CUBE] = sampler.seamful_cube_maps;
+   data[AGX_SAMP_BIAS] = 0;
+   data[AGX_SAMP_BORDER] = sampler.border_colour;
+   data[AGX_SAMP_PIXEL_COORDS] = sampler.pixel_coordinates;
+   data[AGX_SAMP_MAX_ANISOTROPY] = fui(sampler.maximum_anisotropy);
+   data[AGX_SAMP_SEAMFUL_CUBE] = sampler.seamful_cube_maps;
    return true;
 }
 
@@ -250,10 +250,10 @@ hk_usc_sampler(void *out, const struct agx_sampler_packed *state,
 void
 hk_init_compute_sysvals(struct hk_device *dev, void *out)
 {
-   memset(out, 0, AGX_APPLE9_RUNTIME_SYSVAL_SIZE);
+   memset(out, 0, AGX_RUNTIME_SYSVAL_SIZE);
    uint32_t fetch = (dev->fetch_sampler->va->addr - dev->dev.shader_base) /
                     AGX_USC_SAMPLER_STRIDE;
-   memcpy((uint8_t *)out + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET, &fetch,
+   memcpy((uint8_t *)out + AGX_FETCH_SAMPLER_INDEX_OFFSET, &fetch,
           sizeof(fetch));
 }
 
@@ -331,7 +331,7 @@ hk_launch_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       }
       if (binding == 0) {
          resources[i] = root;
-      } else if (binding == AGX_APPLE9_GRAPHICS_SYSVAL_BINDING) {
+      } else if (binding == AGX_GRAPHICS_SYSVAL_BINDING) {
          resources[i] = sysvals;
       } else {
          mesa_loge(

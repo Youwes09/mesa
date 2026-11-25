@@ -4,7 +4,7 @@
  */
 
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "compiler/nir/nir_builtin_builder.h"
 #include "compiler/nir/nir_format_convert.h"
@@ -782,10 +782,10 @@ texture_load(nir_builder *b, nir_intrinsic_instr *intr,
    } else {
       native = nir_bindless_image_agx(
          b,
-         nir_iadd_imm(b, handle->src[0].ssa,
-                      offsetof(struct agx_apple9_storage_descriptor, texture) -
-                         AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
-                            AGX_APPLE9_TEXTURE_TABLE_STRIDE),
+         nir_iadd_imm(
+            b, handle->src[0].ssa,
+            offsetof(struct agx_apple9_storage_descriptor, texture) -
+               AGX_DESCRIPTOR_TEXTURE_ENTRY * AGX_TEXTURE_TABLE_STRIDE),
          .desc_set = nir_intrinsic_desc_set(handle));
    }
    nir_tex_instr *tex = nir_tex_instr_create(b->shader, 3);

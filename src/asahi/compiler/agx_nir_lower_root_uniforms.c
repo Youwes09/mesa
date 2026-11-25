@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_launch_abi.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "agx_compile.h"
 #include "agx_nir.h"
@@ -51,21 +51,21 @@ lower_tex(nir_builder *b, nir_tex_instr *tex)
       if (!handle)
          continue;
 
-      unsigned entry = i ? AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY
-                         : AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY;
+      unsigned entry =
+         i ? AGX_DESCRIPTOR_SAMPLER_ENTRY : AGX_DESCRIPTOR_TEXTURE_ENTRY;
       nir_def *index = nir_iadd_imm(
          b, nir_ushr_imm(b, descriptor_offset(b, handle), 5), entry);
 
-      static_assert(AGX_APPLE9_TEXTURE_TABLE_STRIDE == 32, "shift");
+      static_assert(AGX_TEXTURE_TABLE_STRIDE == 32, "shift");
       nir_src_rewrite(&tex->src[s].src, index);
    }
 
    if (sampler < 0 &&
        (tex->op == nir_texop_txf || tex->op == nir_texop_txf_ms)) {
       nir_def *fetch = nir_load_ubo(
-         b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-         nir_imm_int(b, AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET), .align_mul = 4,
-         .range_base = AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET, .range = 4);
+         b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+         nir_imm_int(b, AGX_FETCH_SAMPLER_INDEX_OFFSET), .align_mul = 4,
+         .range_base = AGX_FETCH_SAMPLER_INDEX_OFFSET, .range = 4);
 
       nir_tex_instr_add_src(tex, nir_tex_src_sampler_handle, fetch);
    }
@@ -130,7 +130,7 @@ agx_nir_descriptor_address(nir_builder *b, nir_def *handle, unsigned offset)
    }
 
    return nir_pack_64_2x32_split(b, nir_iadd_imm(b, handle, offset),
-                                 nir_imm_int(b, AGX_APPLE9_USC_BASE >> 32));
+                                 nir_imm_int(b, AGX_USC_BASE >> 32));
 }
 
 bool

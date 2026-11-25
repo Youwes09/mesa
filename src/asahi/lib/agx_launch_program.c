@@ -3,8 +3,8 @@
  */
 #include "agx_launch_program.h"
 #include "asahi/compiler/agx3_emit.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_launch_abi.h"
+#include "asahi/lib/agx_resource_layout.h"
 
 #include <stdio.h>
 #include <string.h>

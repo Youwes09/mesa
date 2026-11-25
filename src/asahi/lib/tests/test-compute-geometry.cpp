@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_launch_program.h"
+#include "asahi/lib/agx_resource_layout.h"
 
 #include <cstring>
 #include <gtest/gtest.h>

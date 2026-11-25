@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "util/format/u_formats.h"
 
 /* Texture backend flags */
@@ -53,10 +53,10 @@ struct nir_def;
 struct nir_shader;
 struct nir_tex_instr;
 
-/* Runtime sampler record field (enum agx_apple9_sampler_field) of tex */
-struct nir_def *agx_apple9_sampler_field(struct nir_builder *b,
-                                         const struct nir_tex_instr *tex,
-                                         unsigned field);
+/* Runtime sampler record field (enum agx_sampler_field) of tex */
+struct nir_def *agx_sampler_field(struct nir_builder *b,
+                                  const struct nir_tex_instr *tex,
+                                  unsigned field);
 
 /* Storage image and texel buffer descriptors of texture_exports targets:
  * drivers fill them, and agx_nir_lower_storage.c reads them through texture
@@ -99,13 +99,12 @@ struct agx_apple9_texel_metadata {
 struct agx_apple9_texel_descriptor {
    struct agx_texture_packed tex;
    struct agx_apple9_texel_metadata metadata;
-   uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint8_t texture[AGX_TEXTURE_TABLE_STRIDE];
 };
 static_assert(sizeof(struct agx_apple9_texel_descriptor) == 96,
               "Apple9 texel descriptor has no holes");
 static_assert(offsetof(struct agx_apple9_texel_descriptor, texture) ==
-                 AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                 AGX_DESCRIPTOR_TEXTURE_ENTRY * AGX_TEXTURE_TABLE_STRIDE,
               "native texture entry is where register indices expect it");
 
 enum agx_apple9_storage_native_flags {
@@ -124,7 +123,7 @@ struct agx_apple9_storage_descriptor {
    uint32_t store_encode;
    union {
       /* Native texture entry, indexed by its USC address (Honeykrisp) */
-      uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+      uint8_t texture[AGX_TEXTURE_TABLE_STRIDE];
       /* Or its index from the texture root (Gallium) */
       uint32_t texture_index;
    };
@@ -132,8 +131,7 @@ struct agx_apple9_storage_descriptor {
 static_assert(sizeof(struct agx_apple9_storage_descriptor) == 128,
               "Apple9 storage descriptor retains the 128-byte ABI");
 static_assert(offsetof(struct agx_apple9_storage_descriptor, texture) ==
-                 (AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY + 1) *
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                 (AGX_DESCRIPTOR_TEXTURE_ENTRY + 1) * AGX_TEXTURE_TABLE_STRIDE,
               "native storage entry is one table slot past the image one");
 
 /* native_ok: flags in bits 0-2, PBE index from the texture root in 3-29 */
@@ -163,7 +161,7 @@ bool agx_apple9_native_store_format(enum pipe_format format);
 
 /* Sparse image records: residency table address, then level | layer << 16 */
 #define AGX_APPLE9_DESCRIPTOR_RESIDENCY                                        \
-   (AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO + AGX_APPLE9_TEXTURE_INFO_STRIDE)
+   (AGX_DESCRIPTOR_TEXTURE_INFO + AGX_TEXTURE_INFO_STRIDE)
 
 /* Raster-order tile pages from page; the mip tail has no tiles_per_row */
 struct agx_apple9_residency_level {

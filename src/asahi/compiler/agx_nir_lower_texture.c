@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "gallium/include/pipe/p_defines.h"
@@ -209,8 +209,7 @@ export_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
 
    if (handle >= 0) {
       nir_def *address = agx_nir_descriptor_address(
-         b, tex->src[handle].src.ssa,
-         AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO + field * 4);
+         b, tex->src[handle].src.ssa, AGX_DESCRIPTOR_TEXTURE_INFO + field * 4);
 
       return nir_load_global_constant(
          b, 1, 32, address, .align_mul = 4,
@@ -218,9 +217,9 @@ export_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
    }
 
    return nir_load_ubo(
-      b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-      nir_imm_int(b, AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                        tex->texture_index * AGX_APPLE9_TEXTURE_INFO_STRIDE +
+      b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+      nir_imm_int(b, AGX_TEXTURE_INFO_OFFSET +
+                        tex->texture_index * AGX_TEXTURE_INFO_STRIDE +
                         field * 4),
       .align_mul = 4, .range = ~0);
 }
@@ -352,20 +351,18 @@ lower_lod_bias_export(nir_builder *b, nir_tex_instr *tex)
    nir_def *bias;
 
    if (handle >= 0) {
-      nir_def *address =
-         agx_nir_descriptor_address(b, tex->src[handle].src.ssa,
-                                    AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER +
-                                       AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
+      nir_def *address = agx_nir_descriptor_address(
+         b, tex->src[handle].src.ssa,
+         AGX_DESCRIPTOR_RUNTIME_SAMPLER + AGX_RUNTIME_SAMPLER_STRIDE);
 
       bias = nir_load_global_constant(
          b, 1, 16, address, .align_mul = 2,
          .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
    } else {
-      bias = nir_load_ubo(b, 1, 32,
-                          nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-                          nir_imm_int(b, AGX_APPLE9_SAMPLER_BIAS_OFFSET +
-                                            tex->sampler_index * 4),
-                          .align_mul = 4, .range = ~0);
+      bias = nir_load_ubo(
+         b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+         nir_imm_int(b, AGX_SAMPLER_BIAS_OFFSET + tex->sampler_index * 4),
+         .align_mul = 4, .range = ~0);
    }
 
    nir_def_replace(&tex->def, nir_f2fN(b, bias, tex->def.bit_size));
@@ -616,8 +613,8 @@ lower_regular_texture_export(nir_builder *b, nir_tex_instr *tex)
    }
 
    if (seamful) {
-      nir_def *is_seamful = nir_ine_imm(
-         b, agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_SEAMFUL_CUBE), 0);
+      nir_def *is_seamful =
+         nir_ine_imm(b, agx_sampler_field(b, tex, AGX_SAMP_SEAMFUL_CUBE), 0);
 
       nir_tex_instr *as_array =
          nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
@@ -641,17 +638,16 @@ lower_regular_texture_export(nir_builder *b, nir_tex_instr *tex)
             alias = nir_bindless_image_agx(
                b,
                nir_iadd_imm(b, bindless->src[0].ssa,
-                            AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET),
+                            AGX_CUBE_ALIAS_HANDLE_OFFSET),
                .desc_set = nir_intrinsic_desc_set(bindless));
          } else {
-            alias = nir_iadd_imm(b, h, AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET);
+            alias = nir_iadd_imm(b, h, AGX_CUBE_ALIAS_HANDLE_OFFSET);
          }
       } else {
          assert(nir_tex_instr_src_index(as_array, nir_tex_src_texture_offset) <
                    0 &&
-                tex->texture_index < AGX_APPLE9_MAX_TEXTURE_INDICES);
-         as_array->texture_index =
-            AGX_APPLE9_CUBE_ALIAS_INDEX(tex->texture_index);
+                tex->texture_index < AGX_MAX_TEXTURE_INDICES);
+         as_array->texture_index = AGX_CUBE_ALIAS_INDEX(tex->texture_index);
       }
 
       nir_push_if(b, is_seamful);
@@ -1562,11 +1558,11 @@ descriptor_texture_info(nir_builder *b, const nir_tex_instr *tex,
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
    if (handle >= 0)
       return descriptor_word(b, tex->src[handle].src.ssa,
-                             AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO + field * 4);
+                             AGX_DESCRIPTOR_TEXTURE_INFO + field * 4);
    return nir_load_ubo(
-      b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-      nir_imm_int(b, AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                        tex->texture_index * AGX_APPLE9_TEXTURE_INFO_STRIDE +
+      b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+      nir_imm_int(b, AGX_TEXTURE_INFO_OFFSET +
+                        tex->texture_index * AGX_TEXTURE_INFO_STRIDE +
                         field * 4),
       .align_mul = 4, .range = 4);
 }
@@ -1625,17 +1621,16 @@ struct offset_sample {
 };
 
 nir_def *
-agx_apple9_sampler_field(nir_builder *b, const nir_tex_instr *tex,
-                         unsigned field)
+agx_sampler_field(nir_builder *b, const nir_tex_instr *tex, unsigned field)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_sampler_handle);
    if (handle >= 0)
       return descriptor_word(b, tex->src[handle].src.ssa,
-                             AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER + field * 4);
+                             AGX_DESCRIPTOR_RUNTIME_SAMPLER + field * 4);
    return nir_load_ubo(
-      b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-      nir_imm_int(b, AGX_APPLE9_RUNTIME_SAMPLER_OFFSET +
-                        tex->sampler_index * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE +
+      b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+      nir_imm_int(b, AGX_RUNTIME_SAMPLER_OFFSET +
+                        tex->sampler_index * AGX_RUNTIME_SAMPLER_STRIDE +
                         4 * field),
       .align_mul = 4, .range = 4);
 }
@@ -1662,8 +1657,7 @@ normalize_runtime_coordinates(nir_builder *b, nir_tex_instr *tex,
    if (src < 0 || tex->texture_index >= 32 || tex->sampler_index >= 32)
       return false;
    b->cursor = nir_before_instr(&tex->instr);
-   nir_def *pixel =
-      agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_PIXEL_COORDS);
+   nir_def *pixel = agx_sampler_field(b, tex, AGX_SAMP_PIXEL_COORDS);
    nir_def *coord = tex->src[src].src.ssa;
    nir_def *normalized[NIR_MAX_VEC_COMPONENTS];
 
@@ -2083,22 +2077,16 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
          b.cursor = nir_before_instr(instr);
          {
             for (unsigned c = 0; c < s.dims; ++c)
-               s.wrap[c] =
-                  agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_WRAP_S + c);
-            s.min = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIN);
-            s.mag = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MAG);
-            s.mip = agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIP);
-            s.compare =
-               agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_COMPARE);
-            s.min_lod =
-               agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MIN_LOD);
-            s.max_lod =
-               agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_MAX_LOD);
+               s.wrap[c] = agx_sampler_field(&b, tex, AGX_SAMP_WRAP_S + c);
+            s.min = agx_sampler_field(&b, tex, AGX_SAMP_MIN);
+            s.mag = agx_sampler_field(&b, tex, AGX_SAMP_MAG);
+            s.mip = agx_sampler_field(&b, tex, AGX_SAMP_MIP);
+            s.compare = agx_sampler_field(&b, tex, AGX_SAMP_COMPARE);
+            s.min_lod = agx_sampler_field(&b, tex, AGX_SAMP_MIN_LOD);
+            s.max_lod = agx_sampler_field(&b, tex, AGX_SAMP_MAX_LOD);
             s.bias = bias_applied ? nir_imm_float(&b, 0)
-                                  : agx_apple9_sampler_field(
-                                       &b, tex, AGX_APPLE9_SAMP_BIAS);
-            nir_def *preset =
-               agx_apple9_sampler_field(&b, tex, AGX_APPLE9_SAMP_BORDER);
+                                  : agx_sampler_field(&b, tex, AGX_SAMP_BIAS);
+            nir_def *preset = agx_sampler_field(&b, tex, AGX_SAMP_BORDER);
             bool floating =
                tex->is_shadow ||
                nir_alu_type_get_base_type(tex->dest_type) == nir_type_float;

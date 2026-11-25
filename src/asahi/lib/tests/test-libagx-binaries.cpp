@@ -5,7 +5,7 @@
 
 #include <array>
 #include "asahi/compiler/agx_compile.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "agx_cdm.h"
 #include "agx_draw_table.h"
 

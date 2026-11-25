@@ -11,7 +11,7 @@
 #include "util/u_queue.h"
 #include "hk_shader.h"
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "pipe/p_defines.h"
 #include "poly/geometry.h"
 #include "poly/nir/poly_nir.h"

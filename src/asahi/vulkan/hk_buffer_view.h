@@ -23,7 +23,7 @@ struct hk_buffer_view {
    struct agx_texture_packed tex;
    struct agx_pbe_packed pbe;
    struct agx_apple9_texel_metadata texel_metadata;
-   uint8_t usc_texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint8_t usc_texture[AGX_TEXTURE_TABLE_STRIDE];
 };
 
 struct hk_device;

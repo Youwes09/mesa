@@ -161,7 +161,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
    case nir_intrinsic_load_ubo:
       /* Apple9 texture state is a buffer the compiler binds itself */
       if (nir_src_is_const(intr->src[0]) &&
-          nir_src_as_uint(intr->src[0]) == AGX_APPLE9_GRAPHICS_SYSVAL_BINDING &&
+          nir_src_as_uint(intr->src[0]) == AGX_GRAPHICS_SYSVAL_BINDING &&
           agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
          return NULL;
 

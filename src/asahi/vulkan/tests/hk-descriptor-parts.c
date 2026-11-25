@@ -209,7 +209,7 @@ check(void)
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, info, &null,
                        sizeof(null)));
    CHECK(null.texture_info[3] == 0 && null.min_lod_fp16 == 0);
-   uint8_t native[AGX_APPLE9_TEXTURE_TABLE_STRIDE + 2];
+   uint8_t native[AGX_TEXTURE_TABLE_STRIDE + 2];
    memset(native, 0xa5, sizeof(native));
    agx_set_null_usc_texture(native + 1);
    CHECK(native[0] == 0xa5 && native[sizeof(native) - 1] == 0xa5);

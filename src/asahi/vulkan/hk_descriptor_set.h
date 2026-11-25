@@ -11,7 +11,7 @@
 #include "hk_private.h"
 
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_usc_descriptor.h"
 #include "hk_device.h"
@@ -77,51 +77,50 @@ static_assert(sizeof(struct hk_storage_image_descriptor) ==
  * them with their 128-byte paths: an image part and a sampler part. A
  * combined image sampler is the image part followed by the sampler part.
  * Shaders address each part through its own handle; the native entries keep
- * the table slots AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY and
- * AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY past their part's base, as the texel
+ * the table slots AGX_DESCRIPTOR_TEXTURE_ENTRY and
+ * AGX_DESCRIPTOR_SAMPLER_ENTRY past their part's base, as the texel
  * and storage descriptors do.
  */
 struct hk_usc_image_part {
    /* Same layout as the per-draw texture info record. */
-   uint32_t texture_info[AGX_APPLE9_TEXTURE_INFO_STRIDE / 4];
+   uint32_t texture_info[AGX_TEXTURE_INFO_STRIDE / 4];
    /* Sparse residency table and the view's base level and layer. */
    uint32_t residency_lo, residency_hi;
    uint16_t base_level, base_layer;
    uint16_t min_lod_fp16, min_lod_uint16;
    uint8_t pad0[16];
-   uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
-   /* 2D array alias of cube views (agx_apple9_layout.h), zero otherwise */
-   uint8_t cube_alias[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint8_t texture[AGX_TEXTURE_TABLE_STRIDE];
+   /* 2D array alias of cube views (agx_resource_layout.h), zero otherwise */
+   uint8_t cube_alias[AGX_TEXTURE_TABLE_STRIDE];
 };
 static_assert(sizeof(struct hk_usc_image_part) == 128, "128-byte record");
 static_assert(offsetof(struct hk_usc_image_part, residency_lo) ==
                  AGX_APPLE9_DESCRIPTOR_RESIDENCY,
               "residency table where shaders read it");
 static_assert(offsetof(struct hk_usc_image_part, texture_info) ==
-                 AGX_APPLE9_DESCRIPTOR_TEXTURE_INFO,
+                 AGX_DESCRIPTOR_TEXTURE_INFO,
               "texture info where shaders read it");
 static_assert(offsetof(struct hk_usc_image_part, texture) ==
-                 AGX_APPLE9_DESCRIPTOR_TEXTURE_ENTRY *
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+                 AGX_DESCRIPTOR_TEXTURE_ENTRY * AGX_TEXTURE_TABLE_STRIDE,
               "native texture entry is where register indices expect it");
 static_assert(offsetof(struct hk_usc_image_part, cube_alias) ==
                  offsetof(struct hk_usc_image_part, texture) +
-                    AGX_APPLE9_CUBE_ALIAS_HANDLE_OFFSET,
+                    AGX_CUBE_ALIAS_HANDLE_OFFSET,
               "cube alias where the compiler reads it");
 
 struct hk_usc_sampler_part {
    /* Same layout as the per-draw runtime sampler record. */
-   uint32_t runtime_sampler[AGX_APPLE9_RUNTIME_SAMPLER_STRIDE / 4];
+   uint32_t runtime_sampler[AGX_RUNTIME_SAMPLER_STRIDE / 4];
    uint16_t lod_bias_fp16, txl_nudge_fp16;
    uint8_t pad0[28];
    uint8_t sampler[AGX_USC_SAMPLER_STRIDE];
 };
 static_assert(sizeof(struct hk_usc_sampler_part) == 128, "128-byte record");
 static_assert(offsetof(struct hk_usc_sampler_part, runtime_sampler) ==
-                 AGX_APPLE9_DESCRIPTOR_RUNTIME_SAMPLER,
+                 AGX_DESCRIPTOR_RUNTIME_SAMPLER,
               "runtime sampler where shaders read it");
 static_assert(offsetof(struct hk_usc_sampler_part, sampler) ==
-                 AGX_APPLE9_DESCRIPTOR_SAMPLER_ENTRY * AGX_USC_SAMPLER_STRIDE,
+                 AGX_DESCRIPTOR_SAMPLER_ENTRY * AGX_USC_SAMPLER_STRIDE,
               "native sampler entry is where register indices expect it");
 
 /* A combined image sampler is an image part followed by a sampler part; a

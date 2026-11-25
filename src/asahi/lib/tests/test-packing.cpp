@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "agx_pack.h"
 #include "agx_usc_descriptor.h"
 
@@ -102,14 +102,14 @@ TEST(TextureDescriptor, FullAddressDoesNotOverlapFlagsOrStride)
 
    for (unsigned bit = 40; bit < 48; ++bit) {
       tex.address = (UINT64_C(1) << bit) | 0x12345670;
-      uint32_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 4] = {};
+      uint32_t words[AGX_TEXTURE_TABLE_STRIDE / 4] = {};
       ASSERT_TRUE(agx_pack_usc_texture(words, &tex));
       uint64_t address_word = words[2] | (uint64_t(words[3]) << 32);
       EXPECT_EQ((address_word & ((UINT64_C(1) << 44) - 1)) << 4, tex.address);
       EXPECT_EQ((address_word >> 44) & 3, 3u);
       EXPECT_EQ(address_word >> 46, tex.stride >> 4);
    }
-   uint32_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 4];
+   uint32_t words[AGX_TEXTURE_TABLE_STRIDE / 4];
    tex.address = UINT64_C(1) << 48;
    EXPECT_FALSE(agx_pack_usc_texture(words, &tex));
    tex.address = (UINT64_C(1) << 40) | 1;
@@ -123,7 +123,7 @@ TEST(TextureDescriptor, ThreeDimensionalDepthHasElevenBits)
    tex.layout = AGX_LAYOUT_TWIDDLED;
    tex.width = tex.height = 2;
    tex.address = UINT64_C(0x2fff000000);
-   uint64_t words[AGX_APPLE9_TEXTURE_TABLE_STRIDE / 8];
+   uint64_t words[AGX_TEXTURE_TABLE_STRIDE / 8];
    for (unsigned depth : {1u, 192u, 2047u, 2048u}) {
       tex.depth = depth;
       ASSERT_TRUE(agx_pack_usc_texture(words, &tex));

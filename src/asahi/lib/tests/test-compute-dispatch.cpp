@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <algorithm>
 #include <iterator>
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include <gtest/gtest.h>
 #include "agx_cdm.h"
 

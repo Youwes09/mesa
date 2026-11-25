@@ -10,8 +10,8 @@
 #include "asahi/isa/disasm.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_abi.h"
-#include "asahi/lib/agx_apple9_color.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_block_export.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
 #include "util/glheader.h"
@@ -1465,8 +1465,7 @@ agx_emit_block_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
    params.reg_class = RA_EXPORT;
    agx_emit_collect_to(b, params, 4, words);
 
-   unsigned format =
-      agx_apple9_block_export_format(nir_intrinsic_format(instr));
+   unsigned format = agx_block_export_format(nir_intrinsic_format(instr));
    assert(format <= 15 && "tile representations are exportable");
 
    return agx_block_image_store(

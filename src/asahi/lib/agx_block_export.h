@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
-#ifndef AGX_APPLE9_COLOR_H
-#define AGX_APPLE9_COLOR_H
+#ifndef AGX_BLOCK_EXPORT_H
+#define AGX_BLOCK_EXPORT_H
 
 #include <stdbool.h>
 #include "util/format/u_format.h"
@@ -9,7 +9,7 @@
 
 /* Tile formats the PBE exports without expansion, it applies signedness */
 static inline unsigned
-agx_apple9_block_export_format(enum pipe_format format)
+agx_block_export_format(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
    if (format == PIPE_FORMAT_R10G10B10A2_UNORM ||

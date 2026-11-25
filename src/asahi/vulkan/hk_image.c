@@ -6,7 +6,7 @@
  */
 #include "hk_image.h"
 #include "asahi/layout/layout.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_usc_descriptor.h"
 #include "drm-uapi/drm_fourcc.h"

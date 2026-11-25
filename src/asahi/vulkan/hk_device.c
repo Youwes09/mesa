@@ -9,7 +9,7 @@
 #include "vk_util.h"
 #include "wsi_common_entrypoints.h"
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "agx_bg_eot.h"
 #include "agx_helpers.h"
@@ -473,9 +473,8 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
                                  PIPE_TEX_WRAP_CLAMP_TO_EDGE,
                                  PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
 
-      dev->compute_sysvals =
-         agx_bo_create(&dev->dev, AGX_APPLE9_RUNTIME_SYSVAL_SIZE, 0, 0,
-                       "Apple9 compute sysvals");
+      dev->compute_sysvals = agx_bo_create(&dev->dev, AGX_RUNTIME_SYSVAL_SIZE,
+                                           0, 0, "Apple9 compute sysvals");
       if (!dev->compute_sysvals) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;

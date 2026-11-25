@@ -22,7 +22,7 @@
  * Shaders without the execution mode are not modified.
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"

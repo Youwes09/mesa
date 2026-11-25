@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "compiler/nir/nir_builder.h"
 #include "util/bitset.h"
 #include "util/set.h"

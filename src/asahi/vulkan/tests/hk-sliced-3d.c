@@ -345,13 +345,13 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
    CHECK(!!s->storage_pbes.map == pbes);
    if (pbes) {
       CHECK(s->storage_pbes.size >=
-            (uint64_t)slices * AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+            (uint64_t)slices * AGX_TEXTURE_TABLE_STRIDE);
       const unsigned probe[] = {0, slices - 1};
       for (unsigned i = 0; i < ARRAY_SIZE(probe); ++i) {
          uint64_t entry_address;
          memcpy(&entry_address,
                 (uint8_t *)s->storage_pbes.map +
-                   probe[i] * AGX_APPLE9_TEXTURE_TABLE_STRIDE + 8,
+                   probe[i] * AGX_TEXTURE_TABLE_STRIDE + 8,
                 8);
          CHECK((entry_address & ((UINT64_C(1) << 40) - 1)) ==
                (image.planes[0].addr +
@@ -371,7 +371,7 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
                           offset * (uint64_t)layout->layer_stride_B +
                           (alias ? layout->level_offsets_B[level] : 0));
    CHECK(native.address == pbe.buffer);
-   uint8_t native_expected[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
+   uint8_t native_expected[AGX_TEXTURE_TABLE_STRIDE] = {0};
    if (!alias)
       CHECK(
          agx_translate_usc_texture(native_expected, &s->planes[0].ro_storage));

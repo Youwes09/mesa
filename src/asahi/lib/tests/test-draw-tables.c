@@ -2,7 +2,7 @@
  * Compare binding-only updates with complete preparation at fixed addresses.
  * The reference rebuilds all raster state; both arms emit real launch/VDM bytes.
  */
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"
 #include "agx_device.h"

@@ -1083,7 +1083,7 @@ hk_get_texel_buffer_descriptor(struct hk_device *dev, VkDescriptorType type,
       struct agx_texture_packed tex;
       struct agx_pbe_packed pbe;
       struct agx_apple9_texel_metadata m = {0};
-      uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
+      uint8_t texture[AGX_TEXTURE_TABLE_STRIDE] = {0};
       enum pipe_format format = hk_format_to_pipe_format(info->format);
       uint32_t elements = info->range / util_format_get_blocksize(format);
       hk_pack_texel_buffer(dev, format, info->address, info->address, elements,

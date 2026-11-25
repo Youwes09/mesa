@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Compare object-owned interpolation state with draw-time packing using fixed
  * semantic allocation addresses. No shader compilation or GPU is involved. */
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"
 #include "agx_device.h"

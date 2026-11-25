@@ -4,7 +4,7 @@
 #include "../hk_device.h"
 #include "../hk_image.h"
 #include "../hk_image_view.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/agx_usc_descriptor.h"
 #include "hk_entrypoints.h"
@@ -148,7 +148,7 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
       agx_pack(&packed, TEXTURE, cfg) {
          cfg = legacy;
       }
-      uint8_t expected[AGX_APPLE9_TEXTURE_TABLE_STRIDE] = {0};
+      uint8_t expected[AGX_TEXTURE_TABLE_STRIDE] = {0};
       bool valid = agx_translate_usc_texture(expected, &packed);
       CHECK(owned->texture_valid == valid);
       if (valid)

@@ -6,7 +6,7 @@
 #include "agx_tilebuffer.h"
 #include <assert.h>
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "util/format/u_format.h"
 #include "layout.h"
 

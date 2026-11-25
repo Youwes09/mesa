@@ -7,8 +7,8 @@
 
 #pragma once
 
-#include "agx_apple9_layout.h"
 #include "agx_pack.h"
+#include "agx_resource_layout.h"
 #include "hk_descriptor_memory.h"
 #include "hk_descriptor_set.h"
 #include "hk_private.h"
@@ -28,8 +28,8 @@ struct hk_image_view {
    struct hk_descriptor_allocation storage_pbes;
 
    struct hk_render_descriptors {
-      uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
-      uint8_t store[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+      uint8_t texture[AGX_TEXTURE_TABLE_STRIDE];
+      uint8_t store[AGX_TEXTURE_TABLE_STRIDE];
       uint32_t dimensions[4];
       bool array, texture_valid, store_valid;
    } render_descriptors[2]; /* single layer, layered */

@@ -161,7 +161,7 @@ struct agx_shader_info {
    /* The main fragment shader may kill samples */
    bool kills_samples;
 
-   /* Reads cube aliases, see AGX_APPLE9_CUBE_ALIAS_INDEX */
+   /* Reads cube aliases, see AGX_CUBE_ALIAS_INDEX */
    bool cube_aliases;
 
    union agx_varyings varyings;

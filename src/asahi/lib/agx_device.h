@@ -4,7 +4,7 @@
  */
 
 #pragma once
-#include "agx_apple9_layout.h"
+#include "agx_resource_layout.h"
 #include "agx_shader_body.h"
 
 #include <stdint.h>
@@ -18,9 +18,9 @@
 #include "util/u_printf.h"
 #include "util/u_thread.h"
 #include "util/vma.h"
-#include "agx_apple9_layout.h"
 #include "agx_bo.h"
 #include "agx_pack.h"
+#include "agx_resource_layout.h"
 #include "decode.h"
 #include "layout.h"
 #include "libagx_dgc.h"

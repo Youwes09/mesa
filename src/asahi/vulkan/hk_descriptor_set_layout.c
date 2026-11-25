@@ -84,7 +84,7 @@ hk_descriptor_stride_align_for_type(
                    : type == VK_DESCRIPTOR_TYPE_SAMPLER
                       ? sizeof(struct hk_usc_sampler_part)
                       : sizeof(struct hk_usc_image_part);
-         *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+         *alignment = AGX_TEXTURE_TABLE_STRIDE;
          break;
       }
       *stride = *alignment = sizeof(struct hk_sampled_image_descriptor);
@@ -93,7 +93,7 @@ hk_descriptor_stride_align_for_type(
    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
       if (agx_has_usc_descriptors(&pdev->dev)) {
          *stride = sizeof(struct agx_apple9_texel_descriptor);
-         *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+         *alignment = AGX_TEXTURE_TABLE_STRIDE;
          break;
       }
       FALLTHROUGH;
@@ -102,7 +102,7 @@ hk_descriptor_stride_align_for_type(
       if (agx_has_usc_descriptors(&pdev->dev) &&
           type != VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
          *stride = sizeof(struct agx_apple9_storage_descriptor);
-         *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+         *alignment = AGX_TEXTURE_TABLE_STRIDE;
          break;
       }
       *stride = sizeof(struct hk_storage_image_descriptor);

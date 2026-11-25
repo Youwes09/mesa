@@ -124,7 +124,7 @@ main(void)
    struct agx_pbe_packed legacy = {0};
    ((uint8_t *)&legacy)[0] = AGX_TEXTURE_DIMENSION_2D_ARRAY;
    struct agx_pbe_packed saved = legacy;
-   uint8_t entries[12][AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint8_t entries[12][AGX_TEXTURE_TABLE_STRIDE];
    for (unsigned i = 0; i < 12; ++i) {
       uint64_t base =
          UINT64_C(0x2ffff00000) + ail_get_layer_offset_B(&layout, 3 + i);

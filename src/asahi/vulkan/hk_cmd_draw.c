@@ -6,11 +6,11 @@
  */
 #include <assert.h>
 #include "asahi/compiler/agx_nir.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_cdm.h"
 #include "asahi/lib/agx_draw_table.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "agx_abi.h"
 #include "agx_bg_eot.h"
 #include "agx_bo.h"
@@ -323,7 +323,7 @@ hk_bg_sysvals(struct hk_cmd_buffer *cmd, bool layered)
    struct hk_rendering_state *render = &cmd->state.gfx.render;
    unsigned samples = MAX2(render->tilebuffer.nr_samples, 1);
 
-   alignas(64) uint8_t sysvals[AGX_APPLE9_RUNTIME_SYSVAL_SIZE];
+   alignas(64) uint8_t sysvals[AGX_RUNTIME_SYSVAL_SIZE];
    hk_init_compute_sysvals(dev, sysvals);
 
    for (unsigned rt = 0; rt < render->color_att_count; ++rt) {
@@ -334,9 +334,9 @@ hk_bg_sysvals(struct hk_cmd_buffer *cmd, bool layered)
       uint32_t info[5];
       memcpy(info, view->render_descriptors[layered].dimensions, 16);
       info[4] = samples;
-      memcpy(sysvals + AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                (2 * rt) * AGX_APPLE9_TEXTURE_INFO_STRIDE,
-             info, sizeof(info));
+      memcpy(
+         sysvals + AGX_TEXTURE_INFO_OFFSET + (2 * rt) * AGX_TEXTURE_INFO_STRIDE,
+         info, sizeof(info));
    }
 
    return hk_pool_upload(cmd, sysvals, sizeof(sysvals), 64);
@@ -353,11 +353,11 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    VkResult error = VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
    struct agx_ptr textures =
-      hk_pool_alloc(cmd, 2 * HK_MAX_RTS * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
+      hk_pool_alloc(cmd, 2 * HK_MAX_RTS * AGX_TEXTURE_TABLE_STRIDE, 64);
    if (!textures.cpu)
       goto fail;
 
-   memset(textures.cpu, 0, 2 * HK_MAX_RTS * AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+   memset(textures.cpu, 0, 2 * HK_MAX_RTS * AGX_TEXTURE_TABLE_STRIDE);
    uint8_t push[2 * (4 + 8 * HK_MAX_RTS)] = {0};
    unsigned uniforms = 0;
 
@@ -370,15 +370,15 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
          if (!view || !view->render_descriptors[layered].texture_valid)
             goto unsupported;
 
-         memcpy(entry + (2 * rt) * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+         memcpy(entry + (2 * rt) * AGX_TEXTURE_TABLE_STRIDE,
                 view->render_descriptors[layered].texture,
-                AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+                AGX_TEXTURE_TABLE_STRIDE);
       } else if (key->op[rt] == AGX_BG_CLEAR) {
          memcpy(push + 2 * (4 + 8 * rt),
                 &info->pColorAttachments[rt].clearValue, 16);
          uniforms = MAX2(uniforms, 4 + 8 * rt + 8);
       } else if (key->op[rt] == AGX_EOT_STORE) {
-         void *store = entry + rt * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+         void *store = entry + rt * AGX_TEXTURE_TABLE_STRIDE;
 
          /* Feedback-raw attachments store uncompressed, unlike the prepacked */
          if (view && (render->raw_color_mask & BITFIELD_BIT(rt))) {
@@ -386,7 +386,7 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
                goto unsupported;
          } else if (view && view->render_descriptors[layered].store_valid) {
             memcpy(store, view->render_descriptors[layered].store,
-                   AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+                   AGX_TEXTURE_TABLE_STRIDE);
          } else {
             goto unsupported;
          }
@@ -418,7 +418,7 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    uint64_t resources[AGX_COMPUTE_MAX_RESOURCES];
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
       if (p->resource_kind[i] != AGX_COMPUTE_RESOURCE_UBO ||
-          p->resource_binding[i] != AGX_APPLE9_GRAPHICS_SYSVAL_BINDING)
+          p->resource_binding[i] != AGX_GRAPHICS_SYSVAL_BINDING)
          goto unsupported;
 
       resources[i] = hk_bg_sysvals(cmd, layered);
@@ -3673,7 +3673,7 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          FAIL(VK_ERROR_OUT_OF_DEVICE_MEMORY, "out of memory");
 
       for (unsigned slot = 0; slot < s->resource_count; ++slot) {
-         if (s->resource_binding[slot] != AGX_APPLE9_GRAPHICS_SYSVAL_BINDING)
+         if (s->resource_binding[slot] != AGX_GRAPHICS_SYSVAL_BINDING)
             UNSUPPORTED("unknown uniform buffer binding");
 
          record->buffers[stage][slot] = sysvals;

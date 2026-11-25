@@ -17,9 +17,9 @@
 #include "asahi/genxml/agx_pack.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_abi.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_helpers.h"
 #include "asahi/lib/agx_ppp.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_usc.h"
 #include "asahi/libagx/compression.h"
 #include "asahi/libagx/query.h"
@@ -1876,7 +1876,7 @@ agx_lower_lod_query_mip_filter(nir_builder *b, nir_tex_instr *tex,
 
    b->cursor = nir_after_instr(&tex->instr);
    nir_def *lod = nir_channel(b, &tex->def, 0);
-   nir_def *mip = agx_apple9_sampler_field(b, tex, AGX_APPLE9_SAMP_MIP);
+   nir_def *mip = agx_sampler_field(b, tex, AGX_SAMP_MIP);
 
    nir_def *nearest =
       nir_fadd_imm(b, nir_fceil(b, nir_fadd_imm(b, lod, 0.5)), -1.0);
@@ -1906,9 +1906,9 @@ agx_clamp_shadow_reference(nir_builder *b, nir_tex_instr *tex,
    b->cursor = nir_before_instr(&tex->instr);
    nir_def *ref = tex->src[comparator].src.ssa;
    nir_def *clamp = nir_load_ubo(
-      b, 1, 32, nir_imm_int(b, AGX_APPLE9_GRAPHICS_SYSVAL_BINDING),
-      nir_imm_int(b, AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                        tex->texture_index * AGX_APPLE9_TEXTURE_INFO_STRIDE +
+      b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
+      nir_imm_int(b, AGX_TEXTURE_INFO_OFFSET +
+                        tex->texture_index * AGX_TEXTURE_INFO_STRIDE +
                         AGX_INFO_CLAMP_REFERENCE * 4),
       .align_mul = 4, .range = ~0);
 
@@ -3474,36 +3474,36 @@ agx_usc_texture_view_supported(const struct agx_sampler_view *view)
 static void
 agx_runtime_sampler(uint32_t *record, const struct pipe_sampler_state *state)
 {
-   memset(record, 0, AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
+   memset(record, 0, AGX_RUNTIME_SAMPLER_STRIDE);
    if (!state)
       return;
 
-   record[AGX_APPLE9_SAMP_WRAP_S] = state->wrap_s;
-   record[AGX_APPLE9_SAMP_WRAP_T] = state->wrap_t;
-   record[AGX_APPLE9_SAMP_WRAP_R] = state->wrap_r;
-   record[AGX_APPLE9_SAMP_MIN] = state->min_img_filter;
-   record[AGX_APPLE9_SAMP_MAG] = state->mag_img_filter;
-   record[AGX_APPLE9_SAMP_MIP] = state->min_mip_filter;
-   record[AGX_APPLE9_SAMP_COMPARE] = state->compare_func;
-   record[AGX_APPLE9_SAMP_MIN_LOD] = fui(state->min_lod);
-   record[AGX_APPLE9_SAMP_MAX_LOD] = fui(state->max_lod);
-   record[AGX_APPLE9_SAMP_BIAS] = fui(CLAMP(state->lod_bias, -16.f, 16.f));
-   record[AGX_APPLE9_SAMP_BORDER] = usc_border_preset(state);
+   record[AGX_SAMP_WRAP_S] = state->wrap_s;
+   record[AGX_SAMP_WRAP_T] = state->wrap_t;
+   record[AGX_SAMP_WRAP_R] = state->wrap_r;
+   record[AGX_SAMP_MIN] = state->min_img_filter;
+   record[AGX_SAMP_MAG] = state->mag_img_filter;
+   record[AGX_SAMP_MIP] = state->min_mip_filter;
+   record[AGX_SAMP_COMPARE] = state->compare_func;
+   record[AGX_SAMP_MIN_LOD] = fui(state->min_lod);
+   record[AGX_SAMP_MAX_LOD] = fui(state->max_lod);
+   record[AGX_SAMP_BIAS] = fui(CLAMP(state->lod_bias, -16.f, 16.f));
+   record[AGX_SAMP_BORDER] = usc_border_preset(state);
    /* Rectangle textures are normalized in NIR, so SAMP_PIXEL_COORDS stays 0 */
-   record[AGX_APPLE9_SAMP_MAX_ANISOTROPY] = fui(MAX2(state->max_anisotropy, 1));
-   record[AGX_APPLE9_SAMP_SEAMFUL_CUBE] = !state->seamless_cube_map;
+   record[AGX_SAMP_MAX_ANISOTROPY] = fui(MAX2(state->max_anisotropy, 1));
+   record[AGX_SAMP_SEAMFUL_CUBE] = !state->seamless_cube_map;
 }
 
 /* Texture and sampler records the shader reads from the sysval UBO */
 static uint64_t
 agx_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
 {
-   static_assert(PIPE_MAX_SAMPLERS * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE +
-                       AGX_APPLE9_RUNTIME_SAMPLER_OFFSET ==
-                    AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET,
+   static_assert(PIPE_MAX_SAMPLERS * AGX_RUNTIME_SAMPLER_STRIDE +
+                       AGX_RUNTIME_SAMPLER_OFFSET ==
+                    AGX_FETCH_SAMPLER_INDEX_OFFSET,
                  "runtime records of every sampler");
 
-   size_t size = AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET + 4;
+   size_t size = AGX_FETCH_SAMPLER_INDEX_OFFSET + 4;
    struct agx_ptr sysvals = agx_pool_alloc_aligned(&batch->pool, size, 16);
    memset(sysvals.cpu, 0, size);
 
@@ -3515,28 +3515,27 @@ agx_upload_texture_info(struct agx_batch *batch, struct agx_stage *stage)
 
    uint32_t fetch_index =
       (fetch.gpu - dev->shader_base) / AGX_USC_SAMPLER_STRIDE;
-   memcpy((uint8_t *)sysvals.cpu + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET,
-          &fetch_index, sizeof(fetch_index));
+   memcpy((uint8_t *)sysvals.cpu + AGX_FETCH_SAMPLER_INDEX_OFFSET, &fetch_index,
+          sizeof(fetch_index));
 
-   float *bias =
-      (float *)((uint8_t *)sysvals.cpu + AGX_APPLE9_SAMPLER_BIAS_OFFSET);
+   float *bias = (float *)((uint8_t *)sysvals.cpu + AGX_SAMPLER_BIAS_OFFSET);
 
    for (unsigned i = 0; i < PIPE_MAX_SAMPLERS; ++i) {
       struct agx_sampler_state *sampler = stage->samplers[i];
-      uint32_t *record = (uint32_t *)((uint8_t *)sysvals.cpu +
-                                      AGX_APPLE9_RUNTIME_SAMPLER_OFFSET +
-                                      i * AGX_APPLE9_RUNTIME_SAMPLER_STRIDE);
+      uint32_t *record =
+         (uint32_t *)((uint8_t *)sysvals.cpu + AGX_RUNTIME_SAMPLER_OFFSET +
+                      i * AGX_RUNTIME_SAMPLER_STRIDE);
 
       agx_runtime_sampler(record, sampler ? &sampler->base : NULL);
 
-      if (sampler && i < AGX_APPLE9_SAMPLER_BIAS_COUNT)
+      if (sampler && i < AGX_SAMPLER_BIAS_COUNT)
          bias[i] = CLAMP(sampler->base.lod_bias, -16.f, 16.f);
    }
 
    for (unsigned i = 0; i < MIN2(stage->texture_count, 32); ++i) {
       uint32_t *info =
-         (uint32_t *)((uint8_t *)sysvals.cpu + AGX_APPLE9_TEXTURE_INFO_OFFSET +
-                      i * AGX_APPLE9_TEXTURE_INFO_STRIDE);
+         (uint32_t *)((uint8_t *)sysvals.cpu + AGX_TEXTURE_INFO_OFFSET +
+                      i * AGX_TEXTURE_INFO_STRIDE);
       struct agx_sampler_view *view = stage->textures[i];
       if (!view)
          continue;
@@ -3671,7 +3670,7 @@ agx_pack_storage_pbes(struct agx_apple9_storage_descriptor *desc,
                       ail_get_layer_level_B(layout, view->u.tex.first_layer + i,
                                             0);
 
-      if (!agx_translate_usc_pbe(entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+      if (!agx_translate_usc_pbe(entries + i * AGX_TEXTURE_TABLE_STRIDE,
                                  &desc->common.pbe, view->format, layout, base,
                                  view->u.tex.level, 1, false,
                                  AGX_TEXTURE_DIMENSION_2D))
@@ -3716,7 +3715,7 @@ agx_pack_usc_storage(struct agx_batch *batch,
       view->u.tex.level | (view->u.tex.first_layer << 16);
 
    /* The read entry, then the PBE entries, from texture table index `slot` */
-   uint8_t *entry = table + slot * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+   uint8_t *entry = table + slot * AGX_TEXTURE_TABLE_STRIDE;
    desc->texture_index = slot;
 
    if (agx_translate_usc_texture(entry, &desc->common.tex))
@@ -3724,7 +3723,7 @@ agx_pack_usc_storage(struct agx_batch *batch,
    else
       agx_set_null_usc_texture(entry);
 
-   agx_pack_storage_pbes(desc, view, entry + AGX_APPLE9_TEXTURE_TABLE_STRIDE,
+   agx_pack_storage_pbes(desc, view, entry + AGX_TEXTURE_TABLE_STRIDE,
                          slot + 1);
 }
 
@@ -3753,7 +3752,7 @@ agx_pack_usc_view(void *out, struct agx_sampler_view *view)
       /* Linear 2D, AGX_TEXTURE_BUFFER_WIDTH texels wide, address at bit 64 */
       struct agx_texture_packed texture;
       agx_pack_texture(&texture, resource, format, &physical);
-      memset(out, 0, AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+      memset(out, 0, AGX_TEXTURE_TABLE_STRIDE);
       memcpy(out, &texture, 8);
 
       uint64_t address = (agx_map_gpu(resource) + physical.u.buf.offset) >> 4;
@@ -3789,10 +3788,10 @@ agx_upload_launch_tables(struct agx_batch *batch,
    unsigned nr_textures = cs->so ? cs->so->info.nr_bindful_textures : 0;
    unsigned nr_images = cs->so ? cs->so->info.nr_bindful_images : 0;
 
-   /* Cube aliases follow the textures (agx_apple9_layout.h) */
+   /* Cube aliases follow the textures (agx_resource_layout.h) */
    bool aliases = nr_textures && cs->b.info.cube_aliases;
    unsigned table_size =
-      aliases ? AGX_APPLE9_CUBE_ALIAS_INDEX(nr_textures) : nr_textures;
+      aliases ? AGX_CUBE_ALIAS_INDEX(nr_textures) : nr_textures;
 
    /* Image entries are indexed from the texture root too, after the views */
    unsigned image_slots = 0;
@@ -3802,16 +3801,16 @@ agx_upload_launch_tables(struct agx_batch *batch,
    uint8_t *table = NULL;
    if (table_size + image_slots) {
       struct agx_ptr t = agx_pool_alloc_aligned(
-         &batch->pool,
-         (table_size + image_slots) * AGX_APPLE9_TEXTURE_TABLE_STRIDE, 64);
+         &batch->pool, (table_size + image_slots) * AGX_TEXTURE_TABLE_STRIDE,
+         64);
       uint8_t *out = t.cpu;
       table = out;
 
       for (unsigned i = nr_textures; i < table_size; ++i)
-         agx_set_null_usc_texture(out + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+         agx_set_null_usc_texture(out + i * AGX_TEXTURE_TABLE_STRIDE);
 
       for (unsigned i = 0; i < nr_textures; ++i) {
-         uint8_t *texture = out + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+         uint8_t *texture = out + i * AGX_TEXTURE_TABLE_STRIDE;
          struct agx_sampler_view *view =
             i < st->texture_count ? st->textures[i] : NULL;
 
@@ -3827,9 +3826,9 @@ agx_upload_launch_tables(struct agx_batch *batch,
                          view->base.target == PIPE_TEXTURE_CUBE_ARRAY)) {
             struct agx_sampler_view alias = *view;
             alias.base.target = PIPE_TEXTURE_2D_ARRAY;
-            agx_pack_usc_view(out + AGX_APPLE9_CUBE_ALIAS_INDEX(i) *
-                                       AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-                              &alias);
+            agx_pack_usc_view(
+               out + AGX_CUBE_ALIAS_INDEX(i) * AGX_TEXTURE_TABLE_STRIDE,
+               &alias);
          }
 
          if (fragment)
@@ -3848,7 +3847,7 @@ agx_upload_launch_tables(struct agx_batch *batch,
       struct agx_ptr t = agx_pool_alloc_aligned(
          &batch->pipeline_pool,
          nr_images * sizeof(struct agx_apple9_storage_descriptor),
-         AGX_APPLE9_TEXTURE_TABLE_STRIDE);
+         AGX_TEXTURE_TABLE_STRIDE);
       struct agx_apple9_storage_descriptor *out = t.cpu;
 
       for (unsigned i = 0; i < nr_images; ++i) {
@@ -3956,8 +3955,7 @@ agx_upload_launch_buffers(struct agx_batch *batch, struct agx_stage *stage,
       } else {
          /* Gallium buffers are global memory, leaving the texture state */
          assert(profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_UBO &&
-                profile->resource_binding[i] ==
-                   AGX_APPLE9_GRAPHICS_SYSVAL_BINDING);
+                profile->resource_binding[i] == AGX_GRAPHICS_SYSVAL_BINDING);
          addresses[i] = agx_upload_texture_info(batch, stage);
       }
    }
@@ -4150,7 +4148,7 @@ agx_launch_bg_eot(struct agx_batch *batch, struct agx_bg_eot_key *key)
 {
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
-   uint8_t textures[2 * PIPE_MAX_COLOR_BUFS][AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   uint8_t textures[2 * PIPE_MAX_COLOR_BUFS][AGX_TEXTURE_TABLE_STRIDE];
    uint32_t push[2 + 4 * PIPE_MAX_COLOR_BUFS] = {0};
    unsigned nr_textures = 0, push_words = 0;
    bool fetch = false;

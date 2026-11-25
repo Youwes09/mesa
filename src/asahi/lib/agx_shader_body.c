@@ -4,8 +4,8 @@
 #include "util/u_atomic.h"
 #include "util/u_call_once.h"
 #include "util/vma.h"
-#include "agx_apple9_layout.h"
 #include "agx_device.h"
+#include "agx_resource_layout.h"
 
 static inline void
 put_u16(void *ptr, uint16_t value)

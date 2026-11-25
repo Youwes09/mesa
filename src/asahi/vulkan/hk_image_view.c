@@ -32,7 +32,7 @@ enum hk_desc_usage {
    HK_DESC_USAGE_LAYERED_BG_EOT,
    HK_DESC_USAGE_EMRT,
 
-   /* A sampled cube view's 2D array alias, see agx_apple9_layout.h */
+   /* A sampled cube view's 2D array alias, see agx_resource_layout.h */
    HK_DESC_USAGE_CUBE_ALIAS,
 };
 
@@ -865,13 +865,13 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
                             : 1;
    simple_mtx_lock(&dev->usc_heap_lock);
    bool allocated = hk_usc_heap_alloc(
-      &dev->usc_heap, (uint64_t)count * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-      AGX_APPLE9_TEXTURE_TABLE_STRIDE, &view->storage_pbes);
+      &dev->usc_heap, (uint64_t)count * AGX_TEXTURE_TABLE_STRIDE,
+      AGX_TEXTURE_TABLE_STRIDE, &view->storage_pbes);
    simple_mtx_unlock(&dev->usc_heap_lock);
    if (!allocated)
       return;
    uint64_t index = (view->storage_pbes.addr - dev->dev.shader_base) /
-                    AGX_APPLE9_TEXTURE_TABLE_STRIDE;
+                    AGX_TEXTURE_TABLE_STRIDE;
    if (index + count - 1 > AGX_APPLE9_STORAGE_PBE_MASK) {
       simple_mtx_lock(&dev->usc_heap_lock);
       hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
@@ -882,10 +882,10 @@ hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
    for (unsigned i = 0; i < count; ++i) {
       uint64_t base = hk_image_base_address(image, plane) +
                       ail_get_layer_level_B(layout, first + i, 0);
-      if (!hk_translate_storage_pbe(
-             entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-             &view->planes[0].storage, format_for_plane(view, 0), layout, base,
-             view->vk.base_mip_level)) {
+      if (!hk_translate_storage_pbe(entries + i * AGX_TEXTURE_TABLE_STRIDE,
+                                    &view->planes[0].storage,
+                                    format_for_plane(view, 0), layout, base,
+                                    view->vk.base_mip_level)) {
          simple_mtx_lock(&dev->usc_heap_lock);
          hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
          simple_mtx_unlock(&dev->usc_heap_lock);

@@ -9,8 +9,8 @@
 #include "asahi/lib/agx_shader_body.h"
 extern "C" {
 #include "asahi/compiler/agx3_emit.h"
-#include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_launch_abi.h"
+#include "asahi/lib/agx_resource_layout.h"
 }
 
 /* A template emitted with per-launch fields (and, for compute, its root

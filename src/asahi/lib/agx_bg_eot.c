@@ -5,7 +5,7 @@
 
 #include "agx_bg_eot.h"
 #include "asahi/compiler/agx_nir_texture.h"
-#include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_resource_layout.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
 #include "agx_compile.h"
