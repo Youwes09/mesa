@@ -2651,8 +2651,8 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    assert(!nir_alu_instr_is_signed_zero_preserve(alu) &&
           "should've been lowered");
 
-   /* Apple9 flushes FP32 results in agx_nir_lower_apple9_denorms instead */
-   assert((agx_is_apple9(b->shader) ||
+   /* Flushing targets flush FP32 results in agx_nir_lower_apple9_denorms */
+   assert((b->shader->target.flushes_denorms ||
            (alu->def.bit_size == 16) ==
               (alu->op == nir_op_fmin || alu->op == nir_op_fmax)) &&
           "fp32 should be lowered");
@@ -4337,10 +4337,11 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * expressions. Do it after nir_opt_reassociate because nir_opt_reassociate
     * should work on unlowered fmin/fmax.
     *
-    * Apple9 flushes min/max where needed, in agx_nir_lower_apple9_denorms.
+    * Flushing targets flush min/max where needed, in
+    * agx_nir_lower_apple9_denorms.
     */
-   bool apple9 = agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9;
-   if (!apple9)
+   bool flushes_denorms = agx_nir_target(nir)->flushes_denorms;
+   if (!flushes_denorms)
       NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
    /* A preamble run per workgroup gains nothing for one invocation */
@@ -4392,7 +4393,7 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * GLES.
     */
    NIR_PASS(_, nir, nir_opt_algebraic_late);
-   if (!apple9)
+   if (!flushes_denorms)
       NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
    /* Fuse add/sub/multiplies/shifts after running opt_algebraic_late to fuse
@@ -4740,9 +4741,9 @@ agx_should_dump(nir_shader *nir, unsigned agx_dbg_bit)
       agx_validate(ctx, #pass);                                                \
    } while (0)
 
-/* Apple9 float moves flush subnormals, so negate and abs by the sign bit */
+/* Float moves flush subnormals, so negate and abs by the sign bit */
 static void
-agx_lower_float_moves_apple9(agx_context *ctx)
+agx_lower_float_moves(agx_context *ctx)
 {
    agx_foreach_instr_global_safe(ctx, I) {
       if (I->op != AGX_OPCODE_FADD || !agx_is_equiv(I->src[1], agx_negzero()) ||
@@ -5036,8 +5037,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       }
    }
 
-   if (agx_is_apple9(ctx))
-      AGX_PASS(ctx, agx_lower_float_moves_apple9);
+   if (ctx->target.flushes_denorms)
+      AGX_PASS(ctx, agx_lower_float_moves);
    AGX_PASS(ctx, agx_lower_half_compares);
 
    /* For correctness, lower uniform sources after copyprop (for correctness,
@@ -5316,11 +5317,12 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, agx_lower_front_face,
             nir_metadata_control_flow, NULL);
 
-   /* Apple9 lacks compute derivatives and must flush FP32 min/max reductions */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
+   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
       NIR_PASS(_, nir, agx_nir_lower_apple9_compute_derivatives);
+
+   /* Flush FP32 min/max reductions */
+   if (agx_nir_target(nir)->flushes_denorms)
       NIR_PASS(_, nir, agx_nir_lower_apple9_subgroup_denorms);
-   }
 
    NIR_PASS(_, nir, agx_nir_lower_subgroups);
    NIR_PASS(_, nir, nir_lower_all_phis_to_scalar);
@@ -5664,7 +5666,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    }
 
    /* Flush FP32 subnormals after the algebraic passes, which could undo it */
-   if (apple9) {
+   if (target->flushes_denorms) {
       NIR_PASS(_, nir, agx_nir_lower_apple9_denorms);
       NIR_PASS(_, nir, agx_nir_lower_apple9_denorm_preserve);
       NIR_PASS(_, nir, nir_opt_dce);

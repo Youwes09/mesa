@@ -621,6 +621,11 @@ struct agx_isa_target {
     */
    bool mask_stack;
 
+   /* FP32 arithmetic and moves flush subnormal inputs and results, fmin/fmax
+    * included, so NIR flushes and preserves them as the API asks.
+    */
+   bool flushes_denorms;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
