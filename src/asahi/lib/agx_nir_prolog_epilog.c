@@ -600,7 +600,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
 
    /* Apple9 masks stores by the killed samples, kept across iterations */
    if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
-      NIR_PASS(_, b->shader, agx_nir_lower_apple9_coverage, key->link.kills,
+      NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, key->link.kills,
                key->link.sample_shading);
    }
 
@@ -851,7 +851,7 @@ agx_nir_fs_prolog(nir_builder *b, const void *key_)
 
    /* The prolog runs first, so on Apple9 it starts the killed samples */
    if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9)
-      NIR_PASS(_, b->shader, agx_nir_lower_apple9_coverage, false, true);
+      NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, false, true);
 
    b->shader->info.io_lowered = true;
 }

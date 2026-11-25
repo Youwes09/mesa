@@ -5494,7 +5494,7 @@ agx_inline_preamble(nir_function_impl *main)
 
 /* Whether the main fragment shader may kill samples */
 static bool
-agx_apple9_may_kill(nir_shader *nir)
+agx_may_kill_samples(nir_shader *nir)
 {
    nir_foreach_function_impl(impl, nir) {
       nir_foreach_block(block, impl) {
@@ -5569,8 +5569,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    /* Prolog and epilog builders lower their own parts */
    if (target->tile_domains && nir->info.stage == MESA_SHADER_FRAGMENT &&
        !key->secondary) {
-      info->apple9_kills = agx_apple9_may_kill(nir);
-      NIR_PASS(_, nir, agx_nir_lower_apple9_coverage, key->no_stop,
+      info->apple9_kills = agx_may_kill_samples(nir);
+      NIR_PASS(_, nir, agx_nir_lower_killed_samples, key->no_stop,
                key->no_stop);
    }
 
