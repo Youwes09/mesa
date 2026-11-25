@@ -43,7 +43,7 @@
 struct hk_device_memory;
 struct hk_physical_device;
 
-bool hk_apple9_storage_format_supported(VkFormat format);
+bool hk_usc_storage_format_supported(VkFormat format);
 
 static VkFormatFeatureFlags2
 hk_get_image_plane_format_features(struct hk_physical_device *pdev,
@@ -80,10 +80,10 @@ struct hk_image_plane {
    /* Apple9 has no texture residency mode. Its sparse-resident planes instead
     * have a struct agx_apple9_residency table, which shaders consult.
     */
-   struct agx_bo *apple9_residency;
+   struct agx_bo *residency_table;
 };
 
-void hk_apple9_residency_init(struct agx_apple9_residency *r,
+void hk_residency_init(struct agx_apple9_residency *r,
                               const struct ail_layout *layout);
 
 struct hk_image {

@@ -622,7 +622,7 @@ main(int argc, char **argv)
    for (uint32_t generation = 0; generation < generations; ++generation) {
       if (generation) {
          if (gate_path) {
-            printf("APPLE9_RETAINED_READY tag=%s generation=%u\n", tag,
+            printf("RETAINED_READY tag=%s generation=%u\n", tag,
                    generation + 1);
             fflush(stdout);
             FILE *gate = fopen(gate_path, "r");
@@ -714,7 +714,7 @@ main(int argc, char **argv)
       if (wrong)
          return 1;
       printf(
-         "APPLE9_RETAINED_RESULT tag=%s generation=%u instances=%u checked_pixels=%llu PASS\n",
+         "RETAINED_RESULT tag=%s generation=%u instances=%u checked_pixels=%llu PASS\n",
          tag, generation + 1, instances, (unsigned long long)W * H * draws);
       fflush(stdout);
    }

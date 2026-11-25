@@ -127,14 +127,14 @@ hk_dispatch_with_usc(struct hk_device *dev, struct hk_cs *cs,
 }
 
 static struct agx_ptr
-hk_apple9_alloc(void *data, size_t size, size_t alignment)
+hk_usc_alloc_cb(void *data, size_t size, size_t alignment)
 {
    return hk_pool_usc_alloc(data, size, alignment);
 }
 
 /* Per-view texture metadata read by shader queries and bounds checks. */
 void
-hk_apple9_texture_info(uint32_t *data, const struct agx_texture_packed *state)
+hk_texture_info(uint32_t *data, const struct agx_texture_packed *state)
 {
    memset(data, 0, AGX_APPLE9_TEXTURE_INFO_STRIDE);
    agx_unpack(stderr, state, TEXTURE, image);
@@ -166,7 +166,7 @@ hk_apple9_texture_info(uint32_t *data, const struct agx_texture_packed *state)
 
 /* Sampler state for the software sampling paths. */
 bool
-hk_apple9_runtime_sampler(uint32_t *data,
+hk_runtime_sampler(uint32_t *data,
                           const struct agx_sampler_packed *state,
                           bool clamp_to_edge)
 {
@@ -218,7 +218,7 @@ hk_apple9_runtime_sampler(uint32_t *data,
 }
 
 bool
-hk_apple9_native_sampler(void *out, const struct agx_sampler_packed *state,
+hk_usc_sampler(void *out, const struct agx_sampler_packed *state,
                          bool clamp_to_edge, const uint32_t *border)
 {
    agx_unpack(stderr, state, SAMPLER, sampler);
@@ -249,11 +249,11 @@ hk_apple9_native_sampler(void *out, const struct agx_sampler_packed *state,
 }
 
 void
-hk_apple9_compute_sysvals(struct hk_device *dev, void *out)
+hk_init_compute_sysvals(struct hk_device *dev, void *out)
 {
    memset(out, 0, AGX_APPLE9_RUNTIME_SYSVAL_SIZE);
    uint32_t fetch =
-      (dev->apple9_fetch_sampler->va->addr - dev->dev.shader_base) /
+      (dev->fetch_sampler->va->addr - dev->dev.shader_base) /
       AGX_USC_SAMPLER_STRIDE;
    memcpy((uint8_t *)out + AGX_APPLE9_FETCH_SAMPLER_INDEX_OFFSET, &fetch,
           sizeof(fetch));
@@ -261,19 +261,19 @@ hk_apple9_compute_sysvals(struct hk_device *dev, void *out)
 
 /* Descriptors live in the USC aperture, see agx_nir_lower_handle_offsets */
 void
-hk_apple9_upload_textures(struct hk_cmd_buffer *cmd, uint64_t *textures,
+hk_upload_texture_tables(struct hk_cmd_buffer *cmd, uint64_t *textures,
                           uint64_t *samplers, uint64_t *sysvals)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    *textures = *samplers = dev->dev.shader_base;
-   *sysvals = dev->apple9_compute_sysvals->va->addr;
+   *sysvals = dev->compute_sysvals->va->addr;
 }
 
 /* Report why the CDM record emitter rejected a dispatch, with the values it
  * checked, so an intermittent failure in an application log is diagnosable.
  */
 static void
-hk_apple9_report_dispatch_reject(const char *where, struct agx_grid grid,
+hk_report_dispatch_reject(const char *where, struct agx_grid grid,
                                  bool indirect_local, uint64_t launch,
                                  const uint32_t threads[3],
                                  const uint32_t local[3],
@@ -297,7 +297,7 @@ hk_apple9_report_dispatch_reject(const char *where, struct agx_grid grid,
 }
 
 void
-hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
+hk_launch_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                    struct agx_shader_body *body,
                    const struct agx_apple9_compute_profile *p,
                    struct agx_grid grid, uint64_t root, uint64_t push,
@@ -319,7 +319,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    }
 
    uint64_t textures = 0, samplers = 0, sysvals = 0;
-   hk_apple9_upload_textures(cmd, &textures, &samplers, &sysvals);
+   hk_upload_texture_tables(cmd, &textures, &samplers, &sysvals);
 
    uint64_t resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES] = {0};
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
@@ -363,12 +363,12 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    uint64_t launch;
    if (!root ||
        !agx_cdm_prepare_dispatch_alloc_tmpl(
-          &dev->dev, cmd, hk_apple9_alloc, body, p, resources,
+          &dev->dev, cmd, hk_usc_alloc_cb, body, p, resources,
           p->resource_binding_count, textures, samplers, push, &geometry,
           p->preamble_size ? body->addr + p->preamble_offset : 0,
           shader && shader->only_linked &&
                 &shader->only_linked->b.bo->shader_body == body
-             ? shader->apple9_launch
+             ? shader->stage_launch_cache
              : NULL,
           &launch)) {
       mesa_loge("hk: Apple9 dispatch failed: out of memory");
@@ -406,7 +406,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
             : agx_cdm_emit_direct_dispatch(rec, launch, geometry.threads,
                                               geometry.local, p, false);
       if (!ok) {
-         hk_apple9_report_dispatch_reject("batched", grid, indirect_local,
+         hk_report_dispatch_reject("batched", grid, indirect_local,
                                           launch, geometry.threads,
                                           geometry.local, p);
          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
@@ -441,7 +441,7 @@ hk_apple9_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                                                   geometry.threads,
                                                   geometry.local, p, barrier);
    if (!ok) {
-      hk_apple9_report_dispatch_reject("stream", grid, indirect_local, launch,
+      hk_report_dispatch_reject("stream", grid, indirect_local, launch,
                                        geometry.threads, geometry.local, p);
       vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
       return;
@@ -500,7 +500,7 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
       uint64_t root =
          hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
       cmd->api_dispatch = !cmd->in_meta;
-      hk_apple9_dispatch(cmd, cs, &linked->b.bo->shader_body, p, grid, root,
+      hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body, p, grid, root,
                          root, s);
       cmd->api_dispatch = false;
       return;
@@ -616,7 +616,7 @@ hk_tess_fold_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    }
 
    cmd->tess_batch.capture = lane;
-   hk_apple9_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
+   hk_launch_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
                       grid, args, 0, NULL);
    cmd->tess_batch.capture = NULL;
 }

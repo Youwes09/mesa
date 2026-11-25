@@ -127,7 +127,7 @@ check(void)
                                 {.va = &va[1]},
                                 {.va = &va[2]},
                                 {.va = &va[3]}};
-   dev->apple9_resident = &resident[0];
+   dev->resident_table = &resident[0];
    struct hk_image image = {0};
    struct hk_image_view view = {.vk.base.type = VK_OBJECT_TYPE_IMAGE_VIEW,
                                 .vk.image = &image.vk,
@@ -137,22 +137,22 @@ check(void)
                                 .plane_count = 2};
    for (unsigned p = 0; p < 3; ++p) {
       view.planes[p].image_plane = 2 - p;
-      image.planes[p].apple9_residency = &resident[p + 1];
-      memset(&view.planes[p].apple9_sampled, 0x31 + p,
-             sizeof(view.planes[p].apple9_sampled));
-      memset(&view.planes[p].apple9_ia, 0x41 + p,
-             sizeof(view.planes[p].apple9_ia));
+      image.planes[p].residency_table = &resident[p + 1];
+      memset(&view.planes[p].usc_sampled, 0x31 + p,
+             sizeof(view.planes[p].usc_sampled));
+      memset(&view.planes[p].usc_input, 0x41 + p,
+             sizeof(view.planes[p].usc_input));
    }
    for (unsigned p = 0; p < 2; ++p)
-      memset(&sampler.planes[p].apple9, 0x51 + p,
-             sizeof(sampler.planes[p].apple9));
+      memset(&sampler.planes[p].usc, 0x51 + p,
+             sizeof(sampler.planes[p].usc));
    VkDescriptorImageInfo info = {.imageView = hk_image_view_to_handle(&view),
                                  .sampler = hk_sampler_to_handle(&sampler)};
    struct hk_image_view saved = view;
    for (unsigned pass = 0; pass < 2; ++pass) {
       /* Binding residency after view creation must affect the next write. */
       if (pass)
-         image.planes[2].apple9_residency = NULL;
+         image.planes[2].residency_table = NULL;
       for (unsigned kind = 0; kind < 3; ++kind) {
          VkDescriptorType type =
             kind == 0   ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
@@ -161,16 +161,16 @@ check(void)
          uint8_t expected[HK_MAX_SAMPLED_DESCRIPTOR_SIZE];
          size_t size = 0;
          for (unsigned p = 0; p < 3; ++p) {
-            struct hk_apple9_image_part part =
-               kind == 2 ? view.planes[p].apple9_ia
-                         : view.planes[p].apple9_sampled;
+            struct hk_usc_image_part part =
+               kind == 2 ? view.planes[p].usc_input
+                         : view.planes[p].usc_sampled;
             uint64_t addr = pass && !p ? va[0].addr : va[3 - p].addr;
             part.residency_lo = addr;
             part.residency_hi = addr >> 32;
             memcpy(expected + size, &part, sizeof(part));
             size += sizeof(part);
             if (kind == 0) {
-               memcpy(expected + size, &sampler.planes[MIN2(p, 1)].apple9, 128);
+               memcpy(expected + size, &sampler.planes[MIN2(p, 1)].usc, 128);
                size += 128;
             }
          }
@@ -178,33 +178,33 @@ check(void)
          CHECK(!memcmp(&view, &saved, sizeof(view)));
       }
    }
-   struct hk_apple9_sampler_part samplers[2] = {sampler.planes[0].apple9,
-                                                sampler.planes[1].apple9};
+   struct hk_usc_sampler_part samplers[2] = {sampler.planes[0].usc,
+                                                sampler.planes[1].usc};
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_SAMPLER, info, samplers,
                        sizeof(samplers)));
 
    view.plane_count = 1;
-   memset(&view.apple9_storage, 0x61, sizeof(view.apple9_storage));
-   view.apple9_storage.native_ok = AGX_APPLE9_STORAGE_READ_VALID;
-   view.apple9_storage.store_encode = AGX_APPLE9_STORE_ENCODE_UNORM8;
-   view.apple9_store_flags = AGX_APPLE9_STORAGE_LAYER_WRITE_VALID;
-   view.apple9_pbe_index = 0x1234;
-   struct agx_apple9_storage_descriptor storage = view.apple9_storage;
+   memset(&view.usc_storage, 0x61, sizeof(view.usc_storage));
+   view.usc_storage.native_ok = AGX_APPLE9_STORAGE_READ_VALID;
+   view.usc_storage.store_encode = AGX_APPLE9_STORE_ENCODE_UNORM8;
+   view.storage_flags = AGX_APPLE9_STORAGE_LAYER_WRITE_VALID;
+   view.storage_pbe_index = 0x1234;
+   struct agx_apple9_storage_descriptor storage = view.usc_storage;
    storage.metadata.base = va[0].addr;
-   storage.native_ok |= view.apple9_store_flags |
-                        view.apple9_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT;
+   storage.native_ok |= view.storage_flags |
+                        view.storage_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT;
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info, &storage,
                        sizeof(storage)));
-   CHECK(view.apple9_storage.metadata.base == UINT64_C(0x6161616161616161));
+   CHECK(view.usc_storage.metadata.base == UINT64_C(0x6161616161616161));
 
    info.imageView = VK_NULL_HANDLE;
-   struct hk_apple9_image_part null = {.residency_lo = va[0].addr,
+   struct hk_usc_image_part null = {.residency_lo = va[0].addr,
                                        .residency_hi = va[0].addr >> 32};
    struct agx_texture_packed tex;
    agx_set_null_texture(&tex);
    agx_translate_usc_texture(null.texture, &tex);
    agx_translate_usc_texture(null.cube_alias, &tex);
-   hk_apple9_texture_info(null.texture_info, &tex);
+   hk_texture_info(null.texture_info, &tex);
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, info, &null,
                        sizeof(null)));
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, info, &null,
@@ -215,13 +215,13 @@ check(void)
    agx_set_null_usc_texture(native + 1);
    CHECK(native[0] == 0xa5 && native[sizeof(native) - 1] == 0xa5);
    CHECK(!memcmp(native + 1, null.texture, sizeof(null.texture)));
-   uint8_t combined[2 * (sizeof(null) + sizeof(sampler.planes[0].apple9))];
+   uint8_t combined[2 * (sizeof(null) + sizeof(sampler.planes[0].usc))];
    for (unsigned p = 0; p < 2; ++p) {
       uint8_t *record =
-         combined + p * (sizeof(null) + sizeof(sampler.planes[p].apple9));
+         combined + p * (sizeof(null) + sizeof(sampler.planes[p].usc));
       memcpy(record, &null, sizeof(null));
-      memcpy(record + sizeof(null), &sampler.planes[p].apple9,
-             sizeof(sampler.planes[p].apple9));
+      memcpy(record + sizeof(null), &sampler.planes[p].usc,
+             sizeof(sampler.planes[p].usc));
    }
    CHECK(check_writers(dev, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, info,
                        combined, sizeof(combined)));

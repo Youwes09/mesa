@@ -459,37 +459,37 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail_dev;
 
    if (agx_is_apple9(&dev->dev)) {
-      dev->apple9_fetch_sampler =
+      dev->fetch_sampler =
          agx_bo_create(&dev->dev, 64 + AGX_USC_SAMPLER_STRIDE, 0,
                        AGX_BO_LOW_VA, "Apple9 immutable samplers");
-      if (!dev->apple9_fetch_sampler) {
+      if (!dev->fetch_sampler) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
       }
-      uint8_t *samplers = agx_bo_map(dev->apple9_fetch_sampler);
+      uint8_t *samplers = agx_bo_map(dev->fetch_sampler);
       memset(samplers, 0, 64 + AGX_USC_SAMPLER_STRIDE);
       agx_pack_usc_fetch_sampler(samplers);
       agx_pack_basic_usc_sampler(samplers + 64, false, false, 1, 0, 14,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE,
                               PIPE_TEX_WRAP_CLAMP_TO_EDGE, 1);
 
-      dev->apple9_compute_sysvals =
+      dev->compute_sysvals =
          agx_bo_create(&dev->dev, AGX_APPLE9_RUNTIME_SYSVAL_SIZE, 0, 0,
                        "Apple9 compute sysvals");
-      if (!dev->apple9_compute_sysvals) {
+      if (!dev->compute_sysvals) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
       }
-      hk_apple9_compute_sysvals(dev, agx_bo_map(dev->apple9_compute_sysvals));
+      hk_init_compute_sysvals(dev, agx_bo_map(dev->compute_sysvals));
 
-      dev->apple9_resident =
+      dev->resident_table =
          agx_bo_create(&dev->dev, sizeof(struct agx_apple9_residency) + 4, 0, 0,
                        "Apple9 resident table");
-      if (!dev->apple9_resident) {
+      if (!dev->resident_table) {
          result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
          goto fail_samplers;
       }
-      struct agx_apple9_residency *resident = agx_bo_map(dev->apple9_resident);
+      struct agx_apple9_residency *resident = agx_bo_map(dev->resident_table);
       memset(resident, 0, sizeof(*resident) + 4);
       resident->pages = 1;
       for (unsigned l = 0; l < AIL_MAX_MIP_LEVELS; ++l)
@@ -535,7 +535,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    }
 
    simple_mtx_init(&dev->heap_lock, mtx_plain);
-   dev->dev.pin_entry = hk_apple9_pin_entry;
+   dev->dev.pin_entry = hk_pin_entry;
    result = hk_device_init_meta(dev);
    if (result != VK_SUCCESS)
       goto fail_mem_cache;
@@ -589,12 +589,12 @@ fail_bg_eot:
 fail_rodata:
    agx_bo_unreference(&dev->dev, dev->rodata.bo);
 fail_samplers:
-   if (dev->apple9_fetch_sampler)
-      agx_bo_unreference(&dev->dev, dev->apple9_fetch_sampler);
-   if (dev->apple9_compute_sysvals)
-      agx_bo_unreference(&dev->dev, dev->apple9_compute_sysvals);
-   if (dev->apple9_resident)
-      agx_bo_unreference(&dev->dev, dev->apple9_resident);
+   if (dev->fetch_sampler)
+      agx_bo_unreference(&dev->dev, dev->fetch_sampler);
+   if (dev->compute_sysvals)
+      agx_bo_unreference(&dev->dev, dev->compute_sysvals);
+   if (dev->resident_table)
+      agx_bo_unreference(&dev->dev, dev->resident_table);
    hk_destroy_sampler_heap(dev, &dev->samplers);
 fail_dev:
    hk_device_finish_usc_heap(dev);
@@ -640,12 +640,12 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
       hk_api_shader_destroy(&dev->vk, &dev->null_fs->vk, pAllocator);
    }
 
-   if (dev->apple9_fetch_sampler)
-      agx_bo_unreference(&dev->dev, dev->apple9_fetch_sampler);
-   if (dev->apple9_compute_sysvals)
-      agx_bo_unreference(&dev->dev, dev->apple9_compute_sysvals);
-   if (dev->apple9_resident)
-      agx_bo_unreference(&dev->dev, dev->apple9_resident);
+   if (dev->fetch_sampler)
+      agx_bo_unreference(&dev->dev, dev->fetch_sampler);
+   if (dev->compute_sysvals)
+      agx_bo_unreference(&dev->dev, dev->compute_sysvals);
+   if (dev->resident_table)
+      agx_bo_unreference(&dev->dev, dev->resident_table);
    hk_cmd_bo_cache_finish(dev);
    hk_destroy_sampler_heap(dev, &dev->samplers);
    agx_bo_unreference(&dev->dev, dev->rodata.bo);

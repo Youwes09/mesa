@@ -83,17 +83,17 @@ struct hk_device {
 
    /* G16 private texel-fetch sampler, addressable as a native table entry
     * relative to the USC aperture. */
-   struct agx_bo *apple9_fetch_sampler;
-   /* Last G16 program id handed out, see hk_linked_shader::apple9_stage */
-   uint64_t apple9_last_program_id;
+   struct agx_bo *fetch_sampler;
+   /* Last G16 program id handed out, see hk_linked_shader::draw_stages */
+   uint64_t last_program_id;
    /* USC space charged to shared index aliases, including allocator guards. */
-   uint64_t apple9_index_alias_bytes;
-   /* Runtime sysval block of every kernel, see hk_apple9_upload_textures. */
-   struct agx_bo *apple9_compute_sysvals;
+   uint64_t index_alias_bytes;
+   /* Runtime sysval block of every kernel, see hk_upload_texture_tables. */
+   struct agx_bo *compute_sysvals;
 
    /* G16 residency table of every image without sparse residency: all of
     * its levels and layers resolve to a single resident page. */
-   struct agx_bo *apple9_resident;
+   struct agx_bo *resident_table;
 
    struct {
       simple_mtx_t lock;

@@ -147,7 +147,7 @@ hk_bind_scratch(struct hk_device *dev, struct agx_va *va, unsigned offset_B,
 static void
 hk_buffer_free_va(struct hk_device *dev, struct hk_buffer *buffer)
 {
-   if (!buffer->apple9_index_va && hk_va_has_ro_shadow(dev, buffer->va->addr))
+   if (!buffer->usc_index_va && hk_va_has_ro_shadow(dev, buffer->va->addr))
       agx_bo_bind(&dev->dev, NULL, buffer->va->addr + dev->dev.sparse_ro_offset,
                   buffer->va->size_B, 0, DRM_ASAHI_BIND_UNBIND);
    agx_va_free(&dev->dev, buffer->va, true);
@@ -175,7 +175,7 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
     */
    const bool sparse =
       buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
-   buffer->apple9_index_va =
+   buffer->usc_index_va =
       agx_has_usc_indices(&dev->dev) && !sparse &&
       (buffer->vk.usage & VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
    if (buffer->vk.size > 0 &&
@@ -198,7 +198,7 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
          alignment = MAX2(alignment, 65536);
       uint64_t vma_size_B = align64(buffer->vk.size, alignment);
 
-      enum agx_va_flags flags = buffer->apple9_index_va ? AGX_VA_USC : 0;
+      enum agx_va_flags flags = buffer->usc_index_va ? AGX_VA_USC : 0;
       /* Shaders address descriptor records in the USC aperture. */
       if (agx_has_usc_descriptors(&dev->dev) &&
           (buffer->vk.usage &
@@ -215,8 +215,8 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
       /* The USC aperture is shared with shaders. When it is full, place the
        * buffer like any other and copy its indices at draw time.
        */
-      if (!buffer->va && buffer->apple9_index_va && !bda_fixed_addr) {
-         buffer->apple9_index_va = false;
+      if (!buffer->va && buffer->usc_index_va && !bda_fixed_addr) {
+         buffer->usc_index_va = false;
          flags &= ~AGX_VA_USC;
          if (bda_capture_replay)
             buffer->va =
@@ -238,7 +238,7 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
       buffer->vk.device_address = buffer->va->addr;
 
       /* Bind scratch pages to make read/write across the VA valid */
-      if (!buffer->apple9_index_va &&
+      if (!buffer->usc_index_va &&
           hk_bind_scratch(dev, buffer->va, 0, vma_size_B) != VK_SUCCESS) {
          hk_buffer_free_va(dev, buffer);
          vk_buffer_destroy(&dev->vk, pAllocator, &buffer->vk);
@@ -251,14 +251,14 @@ hk_CreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo,
       if (agx_is_apple9(&dev->dev) &&
           (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT)) {
          size_t pages = DIV_ROUND_UP(vma_size_B, AIL_PAGESIZE);
-         buffer->apple9_residency =
+         buffer->residency_table =
             agx_bo_create(&dev->dev, pages, 0, 0, "Apple9 buffer residency");
-         if (!buffer->apple9_residency) {
+         if (!buffer->residency_table) {
             hk_buffer_free_va(dev, buffer);
             vk_buffer_destroy(&dev->vk, pAllocator, &buffer->vk);
             return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
          }
-         memset(agx_bo_map(buffer->apple9_residency), 0, pages);
+         memset(agx_bo_map(buffer->residency_table), 0, pages);
       }
    }
 
@@ -281,8 +281,8 @@ hk_DestroyBuffer(VkDevice device, VkBuffer _buffer,
    if (buffer->va)
       hk_buffer_free_va(dev, buffer);
 
-   if (buffer->apple9_residency)
-      agx_bo_unreference(&dev->dev, buffer->apple9_residency);
+   if (buffer->residency_table)
+      agx_bo_unreference(&dev->dev, buffer->residency_table);
 
    vk_buffer_destroy(&dev->vk, pAllocator, &buffer->vk);
 }
@@ -310,10 +310,10 @@ hk_GetDeviceBufferMemoryRequirements(
       VK_BUFFER_USAGE_2_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT |
       VK_BUFFER_USAGE_2_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |
       VK_BUFFER_USAGE_2_PUSH_DESCRIPTORS_DESCRIPTOR_BUFFER_BIT_EXT;
-   if (pdev->apple9_descriptor_mem_type != UINT8_MAX &&
+   if (pdev->descriptor_mem_type != UINT8_MAX &&
        (vk_buffer_usage_flags(pInfo->pCreateInfo) & descriptor_usage)) {
       pMemoryRequirements->memoryRequirements.memoryTypeBits =
-         BITFIELD_BIT(pdev->apple9_descriptor_mem_type);
+         BITFIELD_BIT(pdev->descriptor_mem_type);
    }
 
    vk_foreach_struct_const(ext, pMemoryRequirements->pNext) {
@@ -398,8 +398,8 @@ hk_BindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
       if (!buffer->va) {
          assert(buffer->vk.device_address == 0);
          uint64_t addr =
-            buffer->apple9_index_va ? hk_memory_index_address(dev, mem) : 0;
-         if (!addr && buffer->apple9_index_va) {
+            buffer->usc_index_va ? hk_memory_index_address(dev, mem) : 0;
+         if (!addr && buffer->usc_index_va) {
             /* Large allocations and a full shared-alias budget retain the
              * old buffer-sized mapping, avoiding a copy on every draw.
              */
@@ -432,7 +432,7 @@ hk_BindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
 
          /* Apple9 index aliases and USC-aperture buffers need only one
           * read-write mapping. */
-         if (!buffer->apple9_index_va &&
+         if (!buffer->usc_index_va &&
              hk_va_has_ro_shadow(dev, buffer->vk.device_address)) {
             /* Upper mapping: read-only */
             ret = agx_bo_bind(
@@ -478,7 +478,7 @@ hk_buffer_address(const struct hk_buffer *buffer, uint64_t offset,
     * is NULL, the buffer is not sparse resident, so we don't need the fix up...
     * and indeed, there may not be a shadow map available.
     */
-   if (read_only && buffer->va && !buffer->apple9_index_va &&
+   if (read_only && buffer->va && !buffer->usc_index_va &&
        hk_va_has_ro_shadow(dev, addr)) {
       addr = agx_rw_addr_to_ro(&dev->dev, addr);
    }

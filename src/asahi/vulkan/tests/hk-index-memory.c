@@ -99,7 +99,7 @@ main(void)
    struct hk_buffer buffers[2] = {0};
    for (unsigned i = 0; i < 2; i++) {
       buffers[i].vk.base.type = VK_OBJECT_TYPE_BUFFER;
-      buffers[i].apple9_index_va = true;
+      buffers[i].usc_index_va = true;
       VkBindBufferMemoryInfo info = {
          .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
          .buffer = hk_buffer_to_handle(&buffers[i]),
@@ -114,7 +114,7 @@ main(void)
    CHECK(allocations == 1 && binds == 1 && frees == 0);
    puts("shared allocation offsets: one mapping, no buffer-owned VA");
    hk_memory_free_index_va(dev, &mem);
-   CHECK(dev->apple9_index_alias_bytes == 0);
+   CHECK(dev->index_alias_bytes == 0);
 
    /* Concurrent bindings of different buffers to one allocation are legal. */
    thrd_t threads[4];
@@ -131,22 +131,22 @@ main(void)
    CHECK(allocations == before + 1);
    puts("concurrent bindings: one allocation and stable shared address");
    hk_memory_free_index_va(dev, &mem);
-   CHECK(dev->apple9_index_alias_bytes == 0);
+   CHECK(dev->index_alias_bytes == 0);
 
    /* The optimization must not turn USC exhaustion into an API failure. */
    unsigned free_before = frees;
    fail_alloc = true;
    CHECK(hk_memory_index_address(dev, &mem) == 0 && mem.index_va == NULL);
-   CHECK(dev->apple9_index_alias_bytes == 0);
+   CHECK(dev->index_alias_bytes == 0);
    fail_alloc = false;
    fail_bind = true;
    CHECK(hk_memory_index_address(dev, &mem) == 0 && mem.index_va == NULL);
    CHECK(frees == free_before + 1);
-   CHECK(dev->apple9_index_alias_bytes == 0);
+   CHECK(dev->index_alias_bytes == 0);
    fail_bind = false;
    CHECK(hk_memory_index_address(dev, &mem) == alias_base);
    hk_memory_free_index_va(dev, &mem);
-   CHECK(dev->apple9_index_alias_bytes == 0);
+   CHECK(dev->index_alias_bytes == 0);
    puts("alias failures: copy fallback and later retry remain available");
 
    /* The cap is inclusive. A larger allocation must reserve only the
@@ -155,7 +155,7 @@ main(void)
    mem.vk.size = HK_INDEX_ALIAS_ALLOCATION_MAX;
    bo.size = mem.vk.size;
    CHECK(hk_memory_index_address(dev, &mem) == alias_base);
-   CHECK(dev->apple9_index_alias_bytes == mem.vk.size + dev->dev.guard_size);
+   CHECK(dev->index_alias_bytes == mem.vk.size + dev->dev.guard_size);
    hk_memory_free_index_va(dev, &mem);
    mem.vk.size += AIL_PAGESIZE;
    bo.size = mem.vk.size;
@@ -163,15 +163,15 @@ main(void)
       if (limit) {
          mem.vk.size = 49152;
          /* Less than size + guard is left in the shared-alias budget. */
-         dev->apple9_index_alias_bytes = HK_INDEX_ALIAS_BUDGET - mem.vk.size;
+         dev->index_alias_bytes = HK_INDEX_ALIAS_BUDGET - mem.vk.size;
       }
-      uint64_t charged_before = dev->apple9_index_alias_bytes;
+      uint64_t charged_before = dev->index_alias_bytes;
       before = allocations;
       CHECK(hk_memory_index_address(dev, &mem) == 0);
       CHECK(allocations == before && mem.index_va == NULL);
       struct hk_buffer fallback = {
          .vk = {.base = {.type = VK_OBJECT_TYPE_BUFFER}, .size = 128},
-         .apple9_index_va = true,
+         .usc_index_va = true,
       };
       VkBindBufferMemoryInfo info = {
          .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
@@ -185,9 +185,9 @@ main(void)
       CHECK(mapped_offset == info.memoryOffset);
       CHECK(mapped_size == 2 * AIL_PAGESIZE);
       CHECK(mem.index_va == NULL &&
-            dev->apple9_index_alias_bytes == charged_before);
+            dev->index_alias_bytes == charged_before);
       __wrap_agx_va_free(&dev->dev, fallback.va, true);
-      dev->apple9_index_alias_bytes = 0;
+      dev->index_alias_bytes = 0;
    }
    puts("allocation cap and guard-inclusive budget: buffer-sized fallback");
 
@@ -195,14 +195,14 @@ main(void)
     * Existing aliases remain reusable, and freeing one returns its charge.
     */
    CHECK(hk_memory_index_address(dev, &mem) == alias_base);
-   uint64_t own_charge = dev->apple9_index_alias_bytes;
-   dev->apple9_index_alias_bytes = HK_INDEX_ALIAS_BUDGET;
+   uint64_t own_charge = dev->index_alias_bytes;
+   dev->index_alias_bytes = HK_INDEX_ALIAS_BUDGET;
    before = allocations;
    CHECK(hk_memory_index_address(dev, &mem) == alias_base);
    CHECK(allocations == before);
    hk_memory_free_index_va(dev, &mem);
-   CHECK(dev->apple9_index_alias_bytes == HK_INDEX_ALIAS_BUDGET - own_charge);
-   dev->apple9_index_alias_bytes = 0;
+   CHECK(dev->index_alias_bytes == HK_INDEX_ALIAS_BUDGET - own_charge);
+   dev->index_alias_bytes = 0;
    puts(
       "existing aliases reuse a full budget; destruction releases the charge");
 

@@ -57,8 +57,8 @@ main(void)
 
    struct agx_draw draw = agx_draw_indexed(3, 1, 0, 0, 0, end + 0x4000, 64,
                                            AGX_INDEX_SIZE_U32, false);
-   CHECK(hk_apple9_needs_index_copy(cmd, draw));
-   struct agx_draw copied = hk_apple9_robust_index(cmd, draw);
+   CHECK(hk_needs_index_copy(cmd, draw));
+   struct agx_draw copied = hk_robust_index_copy(cmd, draw);
    CHECK(copies == 1 && copied.indexed && agx_is_indirect(copied.b));
    CHECK(resets == 1);
    CHECK(copied.index_buffer == va.addr &&
@@ -67,19 +67,19 @@ main(void)
    puts("high-VA binding: existing robust copy returns a reachable heap draw");
 
    draw.index_buffer = base - 64;
-   CHECK(hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(hk_needs_index_copy(cmd, draw));
    draw.index_buffer = end - 16;
    draw.start = 8;
-   CHECK(hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(hk_needs_index_copy(cmd, draw));
    puts("binding starts in aperture, firstIndex crosses its end: must copy");
    draw.start = 0;
-   CHECK(hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(hk_needs_index_copy(cmd, draw));
    draw.b = agx_grid_indirect(0x40000000);
-   CHECK(hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(hk_needs_index_copy(cmd, draw));
    draw.index_buffer = base + 0x4000;
-   CHECK(!hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(!hk_needs_index_copy(cmd, draw));
    draw.index_buffer_range_B = 0;
-   CHECK(!hk_apple9_needs_index_copy(cmd, draw));
+   CHECK(!hk_needs_index_copy(cmd, draw));
 
    if (cmd->current_cs.post_gfx) {
       util_dynarray_fini(&cmd->current_cs.post_gfx->imm_writes);

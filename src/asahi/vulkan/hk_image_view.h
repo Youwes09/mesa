@@ -24,15 +24,15 @@ struct hk_image_view {
    struct vk_image_view vk;
 
    /* A suballocation in the device's immutable native PBE table. */
-   uint32_t apple9_store_flags, apple9_pbe_index;
-   struct hk_descriptor_allocation apple9_pbes;
+   uint32_t storage_flags, storage_pbe_index;
+   struct hk_descriptor_allocation storage_pbes;
 
    struct hk_apple9_render_view {
       uint8_t texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
       uint8_t store[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
       uint32_t dimensions[4];
       bool array, texture_valid, store_valid;
-   } apple9_render[2]; /* single layer, layered */
+   } render_descriptors[2]; /* single layer, layered */
 
    uint8_t plane_count;
    struct {
@@ -50,30 +50,30 @@ struct hk_image_view {
 
       /* Immutable descriptor bodies. Residency is resolved at the write,
        * since image memory can be bound after creating a view. */
-      struct hk_apple9_image_part apple9_sampled, apple9_ia;
+      struct hk_usc_image_part usc_sampled, usc_input;
    } planes[3];
-   struct agx_apple9_storage_descriptor apple9_storage;
+   struct agx_apple9_storage_descriptor usc_storage;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_image_view, vk.base, VkImageView,
                                VK_OBJECT_TYPE_IMAGE_VIEW)
 
 /* Address of the struct agx_apple9_residency table for a plane of the view. */
-uint64_t hk_apple9_view_residency(const struct hk_device *dev,
+uint64_t hk_view_residency(const struct hk_device *dev,
                                   const struct hk_image_view *view,
                                   unsigned plane);
 
 /* Encode an uncompressed native tile-store view for render submission. */
-bool hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered,
+bool hk_image_view_eot(const struct hk_image_view *view, bool layered,
                               bool raw, void *out);
 
 /* Image memory must be dense and uncompressed for native storage writes. */
-bool hk_apple9_native_store_image(const struct hk_image *image, unsigned plane);
-bool hk_apple9_native_store_view_layout(const struct ail_layout *layout,
+bool hk_pbe_store_image(const struct hk_image *image, unsigned plane);
+bool hk_pbe_store_view_layout(const struct ail_layout *layout,
                                         enum pipe_format view_format);
 
 /* Native writes address an individual 2D plane of the storage PBE. */
-bool hk_apple9_translate_storage_pbe(void *out,
+bool hk_translate_storage_pbe(void *out,
                                      const struct agx_pbe_packed *state,
                                      enum pipe_format format,
                                      const struct ail_layout *layout,

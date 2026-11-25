@@ -60,7 +60,7 @@ write_desc(struct hk_descriptor_set *set, uint32_t binding, uint32_t elem,
  * sampler plane when the image has more planes than the hardware sampler.
  */
 static size_t
-hk_apple9_pack_sampled_image(struct hk_device *dev, void *out,
+hk_pack_usc_sampled_image(struct hk_device *dev, void *out,
                              VkDescriptorType type,
                              const VkDescriptorImageInfo *info,
                              const struct hk_sampler *sampler)
@@ -74,37 +74,37 @@ hk_apple9_pack_sampled_image(struct hk_device *dev, void *out,
    unsigned planes = view ? view->plane_count : 1;
    if (sampled)
       planes = MAX2(planes, sampler->plane_count);
-   const size_t record = (image ? sizeof(struct hk_apple9_image_part) : 0) +
-                         (sampled ? sizeof(struct hk_apple9_sampler_part) : 0);
+   const size_t record = (image ? sizeof(struct hk_usc_image_part) : 0) +
+                         (sampled ? sizeof(struct hk_usc_sampler_part) : 0);
    for (unsigned p = 0; p < planes; ++p) {
       uint8_t *dst = (uint8_t *)out + p * record;
       if (image) {
-         struct hk_apple9_image_part *part = (void *)dst;
+         struct hk_usc_image_part *part = (void *)dst;
          if (view && p < view->plane_count) {
-            *part = input ? view->planes[p].apple9_ia
-                          : view->planes[p].apple9_sampled;
+            *part = input ? view->planes[p].usc_input
+                          : view->planes[p].usc_sampled;
          } else {
-            *part = (struct hk_apple9_image_part){0};
+            *part = (struct hk_usc_image_part){0};
             struct agx_texture_packed null;
             agx_set_null_texture(&null);
             agx_set_null_usc_texture(part->texture);
             agx_set_null_usc_texture(part->cube_alias);
-            hk_apple9_texture_info(part->texture_info, &null);
+            hk_texture_info(part->texture_info, &null);
             if (view) {
                part->base_level = view->vk.base_mip_level;
                part->base_layer = view->vk.base_array_layer;
             }
          }
-         uint64_t residency = view ? hk_apple9_view_residency(dev, view, p)
-                                   : dev->apple9_resident->va->addr;
+         uint64_t residency = view ? hk_view_residency(dev, view, p)
+                                   : dev->resident_table->va->addr;
          part->residency_lo = residency;
          part->residency_hi = residency >> 32;
          dst += sizeof(*part);
       }
       if (sampled) {
          unsigned plane = MIN2(p, sampler->plane_count - 1);
-         memcpy(dst, &sampler->planes[plane].apple9,
-                sizeof(struct hk_apple9_sampler_part));
+         memcpy(dst, &sampler->planes[plane].usc,
+                sizeof(struct hk_usc_sampler_part));
       }
    }
    return record * planes;
@@ -119,7 +119,7 @@ hk_pack_sampled_image(struct hk_device *dev, void *out,
                       struct hk_sampler *sampler)
 {
    if (agx_has_usc_descriptors(&dev->dev))
-      return hk_apple9_pack_sampled_image(dev, out, descriptor_type, info,
+      return hk_pack_usc_sampled_image(dev, out, descriptor_type, info,
                                           sampler);
 
    struct hk_sampled_image_descriptor desc[3] = {};
@@ -229,16 +229,16 @@ hk_pack_storage_image(struct hk_device *dev, void *out,
    if (agx_has_usc_descriptors(&dev->dev)) {
       struct agx_apple9_storage_descriptor *ext = out;
       if (view) {
-         *ext = view->apple9_storage;
-         ext->metadata.base = hk_apple9_view_residency(dev, view, 0);
+         *ext = view->usc_storage;
+         ext->metadata.base = hk_view_residency(dev, view, 0);
          ext->native_ok |=
-            view->apple9_store_flags |
-            (view->apple9_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT);
+            view->storage_flags |
+            (view->storage_pbe_index << AGX_APPLE9_STORAGE_PBE_SHIFT);
       } else {
          *ext = (struct agx_apple9_storage_descriptor){0};
          agx_set_null_texture(&ext->common.tex);
          agx_set_null_pbe(&ext->common.pbe);
-         ext->metadata.base = dev->apple9_resident->va->addr;
+         ext->metadata.base = dev->resident_table->va->addr;
       }
       return sizeof(*ext);
    }
@@ -314,7 +314,7 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
                           const struct agx_texture_packed *tex,
                           const struct agx_pbe_packed *pbe,
                           const struct agx_apple9_texel_metadata *m,
-                          const uint8_t *apple9_texture)
+                          const uint8_t *usc_texture)
 {
    /* G16 uniform texel buffers carry load metadata, also in mutable bindings. */
    if (agx_has_usc_descriptors(&dev->dev) &&
@@ -323,7 +323,7 @@ hk_pack_texel_buffer_desc(struct hk_device *dev, void *out,
       if (tex) {
          desc.tex = *tex;
          desc.metadata = *m;
-         memcpy(desc.texture, apple9_texture, sizeof(desc.texture));
+         memcpy(desc.texture, usc_texture, sizeof(desc.texture));
       } else {
          agx_set_null_texture(&desc.tex);
          agx_set_null_usc_texture(desc.texture);
@@ -366,7 +366,7 @@ write_buffer_view_desc(struct hk_descriptor_set *set,
    uint8_t out[HK_MAX_DESCRIPTOR_SIZE];
    size_t size = hk_pack_texel_buffer_desc(
       dev, out, type, view ? &view->tex : NULL, view ? &view->pbe : NULL,
-      view ? &view->apple9 : NULL, view ? view->apple9_texture : NULL);
+      view ? &view->texel_metadata : NULL, view ? view->usc_texture : NULL);
    write_desc(set, binding, elem, out, size);
 }
 
@@ -1088,7 +1088,7 @@ hk_get_texel_buffer_descriptor(struct hk_device *dev, VkDescriptorType type,
       uint32_t elements = info->range / util_format_get_blocksize(format);
       hk_pack_texel_buffer(
          dev, format, info->address, info->address, elements,
-         agx_is_apple9(&dev->dev) ? dev->apple9_resident->va->addr : 0, &tex,
+         agx_is_apple9(&dev->dev) ? dev->resident_table->va->addr : 0, &tex,
          &pbe, &m, texture);
       size = hk_pack_texel_buffer_desc(dev, out, type, &tex, &pbe, &m, texture);
    } else {

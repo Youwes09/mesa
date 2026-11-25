@@ -57,7 +57,7 @@ hk_get_buffer_format_features(struct hk_physical_device *pdev,
        * addition. */
       if (p_format == PIPE_FORMAT_R32_FLOAT)
          features |= VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_ATOMIC_BIT;
-      if (!hk_apple9_storage_format_supported(vk_format))
+      if (!hk_usc_storage_format_supported(vk_format))
          features &= ~(VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_BIT |
                        VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_ATOMIC_BIT |
                        VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
@@ -76,7 +76,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
                      uint64_t residency, struct agx_texture_packed *tex,
                      struct agx_pbe_packed *pbe,
                      struct agx_apple9_texel_metadata *m,
-                     uint8_t *apple9_texture)
+                     uint8_t *usc_texture)
 {
    const struct util_format_description *desc = util_format_description(format);
 
@@ -138,7 +138,7 @@ hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
    texture.stride = (texture.width * util_format_get_blocksize(format)) - 16;
 
    if (usc_descriptors) {
-      bool packed = agx_pack_usc_texture(apple9_texture, &texture);
+      bool packed = agx_pack_usc_texture(usc_texture, &texture);
       assert(packed);
       (void)packed;
       /* The common prefix is software query state on G16. Storage accesses
@@ -207,8 +207,8 @@ hk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
       device, hk_format_to_pipe_format(view->vk.format),
       hk_buffer_address_ro(buffer, view->vk.offset),
       hk_buffer_address_rw(buffer, view->vk.offset), view->vk.elements,
-      agx_is_apple9(&device->dev) ? hk_buffer_apple9_residency(buffer) : 0,
-      &view->tex, &view->pbe, &view->apple9, view->apple9_texture);
+      agx_is_apple9(&device->dev) ? hk_buffer_residency(buffer) : 0,
+      &view->tex, &view->pbe, &view->texel_metadata, view->usc_texture);
 
    *pBufferView = hk_buffer_view_to_handle(view);
 

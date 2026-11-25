@@ -24,7 +24,7 @@ static int
 test_image_storage(void)
 {
    struct hk_image image = {0};
-   CHECK(hk_apple9_native_store_image(&image, 0));
+   CHECK(hk_pbe_store_image(&image, 0));
 
    /* Each sparse flag must independently rule out native stores, even when
     * there is no legacy sparse_map. This includes binding without residency.
@@ -35,40 +35,40 @@ test_image_storage(void)
          ((flags & 2) ? VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT : 0) |
          ((flags & 4) ? VK_IMAGE_CREATE_SPARSE_ALIASED_BIT : 0);
       CHECK(!image.planes[0].sparse_map);
-      CHECK(!hk_apple9_native_store_image(&image, 0));
+      CHECK(!hk_pbe_store_image(&image, 0));
    }
 
    /* G16's residency table does not make its sparse layout native-addressable. */
    struct agx_bo residency = {0};
-   image.planes[0].apple9_residency = &residency;
+   image.planes[0].residency_table = &residency;
    image.vk.create_flags =
       VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT;
    CHECK(!image.planes[0].sparse_map);
-   CHECK(!hk_apple9_native_store_image(&image, 0));
+   CHECK(!hk_pbe_store_image(&image, 0));
 
    /* Ordinary aliasing, mutable formats and cube compatibility remain eligible;
     * compressed storage still takes the existing software fallback.
     */
-   image.planes[0].apple9_residency = NULL;
+   image.planes[0].residency_table = NULL;
    image.vk.create_flags = VK_IMAGE_CREATE_ALIAS_BIT |
                            VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
                            VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-   CHECK(hk_apple9_native_store_image(&image, 0));
+   CHECK(hk_pbe_store_image(&image, 0));
    image.planes[0].layout.compressed = true;
-   CHECK(!hk_apple9_native_store_image(&image, 0));
+   CHECK(!hk_pbe_store_image(&image, 0));
    /* Block-texel views of compressed images address blocks, not the layout's
     * texels; same-size reinterpretations of uncompressed images stay native. */
    struct ail_layout bc1 = {.format = PIPE_FORMAT_DXT1_RGB};
-   CHECK(!hk_apple9_native_store_view_layout(&bc1,
+   CHECK(!hk_pbe_store_view_layout(&bc1,
                                              PIPE_FORMAT_R16G16B16A16_FLOAT));
    struct ail_layout astc = {.format = PIPE_FORMAT_ASTC_4x4};
-   CHECK(!hk_apple9_native_store_view_layout(&astc,
+   CHECK(!hk_pbe_store_view_layout(&astc,
                                              PIPE_FORMAT_R32G32B32A32_FLOAT));
    struct ail_layout rgba8 = {.format = PIPE_FORMAT_R8G8B8A8_UNORM};
    CHECK(
-      hk_apple9_native_store_view_layout(&rgba8, PIPE_FORMAT_R8G8B8A8_UNORM));
-   CHECK(hk_apple9_native_store_view_layout(&rgba8, PIPE_FORMAT_R32_FLOAT));
-   CHECK(!hk_apple9_native_store_view_layout(&rgba8,
+      hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R8G8B8A8_UNORM));
+   CHECK(hk_pbe_store_view_layout(&rgba8, PIPE_FORMAT_R32_FLOAT));
+   CHECK(!hk_pbe_store_view_layout(&rgba8,
                                              PIPE_FORMAT_R16G16B16A16_FLOAT));
    puts("native storage: sparse layouts and VA use software stores");
    return 0;
@@ -97,7 +97,7 @@ main(void)
    for (unsigned i = 0; i < ARRAY_SIZE(fallback); ++i)
       CHECK(!agx_apple9_native_store_format(fallback[i]));
    CHECK(sizeof(struct agx_apple9_storage_descriptor) == 128);
-   CHECK(HK_APPLE9_DB_STORAGE_SIZE == 128);
+   CHECK(HK_DB_STORAGE_SIZE == 128);
    CHECK(offsetof(struct agx_apple9_storage_descriptor, native_ok) == 88);
    CHECK(offsetof(struct agx_apple9_storage_descriptor, store_encode) == 92);
    const uint32_t indices[] = {0, 1, 2048, AGX_APPLE9_STORAGE_PBE_MASK};
@@ -107,9 +107,9 @@ main(void)
       CHECK(((packed >> AGX_APPLE9_STORAGE_PBE_SHIFT) &
              AGX_APPLE9_STORAGE_PBE_MASK) == indices[i]);
    }
-   CHECK(HK_APPLE9_DB_STORAGE_SIZE >=
+   CHECK(HK_DB_STORAGE_SIZE >=
          sizeof(struct agx_apple9_storage_descriptor));
-   CHECK(util_is_power_of_two_nonzero(HK_APPLE9_DB_STORAGE_SIZE));
+   CHECK(util_is_power_of_two_nonzero(HK_DB_STORAGE_SIZE));
    CHECK(!(AGX_APPLE9_STORAGE_READ_VALID & AGX_APPLE9_STORAGE_WRITE_VALID));
    CHECK(
       !(AGX_APPLE9_STORAGE_READ_VALID & AGX_APPLE9_STORAGE_LAYER_WRITE_VALID));
@@ -133,7 +133,7 @@ main(void)
    for (unsigned i = 0; i < 12; ++i) {
       uint64_t base =
          UINT64_C(0x2ffff00000) + ail_get_layer_offset_B(&layout, 3 + i);
-      CHECK(hk_apple9_translate_storage_pbe(entries[i], &legacy, layout.format,
+      CHECK(hk_translate_storage_pbe(entries[i], &legacy, layout.format,
                                             &layout, base, 0));
       CHECK((entries[i][0] & 0xf) == AGX_TEXTURE_DIMENSION_2D);
       uint64_t address;

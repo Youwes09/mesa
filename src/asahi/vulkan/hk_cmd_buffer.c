@@ -72,8 +72,8 @@ hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd)
    for (unsigned i = 0; i < HK_TESS_BATCH_LANES; ++i)
       util_dynarray_fini(&cmd->tess_batch.lane[i]);
    util_dynarray_fini(&cmd->tess_batch.fold);
-   _mesa_set_destroy(cmd->apple9_pinned, NULL);
-   cmd->apple9_pinned = NULL;
+   _mesa_set_destroy(cmd->pinned_entries, NULL);
+   cmd->pinned_entries = NULL;
    free(cmd->merge_empty_render);
    cmd->merge_empty_render = NULL;
 }
@@ -86,9 +86,9 @@ hk_free_resettable_cmd_buffer(struct hk_cmd_buffer *cmd, bool release)
 
    for (unsigned i = 0; i < HK_UPLOAD_LAST_COUNT; ++i)
       cmd->upload_last[i].gpu = 0;
-   cmd->apple9_prev_cs = NULL;
-   cmd->apple9_draw_state.valid = false;
-   cmd->apple9_linked_id[0] = cmd->apple9_linked_id[1] = 0;
+   cmd->draw_record_cs = NULL;
+   cmd->draw_cache.valid = false;
+   cmd->draw_pipeline_ids[0] = cmd->draw_pipeline_ids[1] = 0;
    hk_descriptor_state_fini(cmd, &cmd->state.gfx.descriptors);
    hk_descriptor_state_fini(cmd, &cmd->state.cs.descriptors);
 
@@ -104,7 +104,7 @@ hk_free_resettable_cmd_buffer(struct hk_cmd_buffer *cmd, bool release)
       agx_bo_unreference(&dev->dev, *bo);
    }
 
-   hk_apple9_unpin_entries(cmd);
+   hk_unpin_entries(cmd);
 
    util_dynarray_clear(&cmd->large_bos);
    util_dynarray_clear(&cmd->implicit_sync_res);
@@ -121,47 +121,47 @@ hk_free_resettable_cmd_buffer(struct hk_cmd_buffer *cmd, bool release)
 }
 
 void
-hk_apple9_unpin_entries(struct hk_cmd_buffer *cmd)
+hk_unpin_entries(struct hk_cmd_buffer *cmd)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   if (cmd->apple9_pinned) {
+   if (cmd->pinned_entries) {
       simple_mtx_lock(&dev->dev.entry_lock);
-      set_foreach(cmd->apple9_pinned, entry) {
+      set_foreach(cmd->pinned_entries, entry) {
          struct agx_shader_body *body = (void *)entry->key;
          assert(body->entry_pins > 0);
          body->entry_pins--;
       }
       simple_mtx_unlock(&dev->dev.entry_lock);
-      set_foreach(cmd->apple9_pinned, entry)
+      set_foreach(cmd->pinned_entries, entry)
          agx_shader_body_unreference(&dev->dev, (void *)entry->key);
-      _mesa_set_clear(cmd->apple9_pinned, NULL);
+      _mesa_set_clear(cmd->pinned_entries, NULL);
    }
-   cmd->apple9_last_pin[0] = cmd->apple9_last_pin[1] = NULL;
+   cmd->last_pinned[0] = cmd->last_pinned[1] = NULL;
 }
 
 /* agx_device::pin_entry. Every Apple9 entry is requested while
  * recording a command buffer, which passes itself as the allocator. */
 bool
-hk_apple9_pin_entry(void *allocator, struct agx_shader_body *body)
+hk_pin_entry(void *allocator, struct agx_shader_body *body)
 {
    struct hk_cmd_buffer *cmd = allocator;
-   if (cmd->apple9_last_pin[0] == body || cmd->apple9_last_pin[1] == body)
+   if (cmd->last_pinned[0] == body || cmd->last_pinned[1] == body)
       return true;
 
-   if (!cmd->apple9_pinned) {
-      cmd->apple9_pinned = _mesa_pointer_set_create(NULL);
-      if (!cmd->apple9_pinned)
+   if (!cmd->pinned_entries) {
+      cmd->pinned_entries = _mesa_pointer_set_create(NULL);
+      if (!cmd->pinned_entries)
          return false;
    }
    bool found;
-   if (!_mesa_set_search_or_add(cmd->apple9_pinned, body, &found))
+   if (!_mesa_set_search_or_add(cmd->pinned_entries, body, &found))
       return false;
    if (!found) {
       agx_shader_body_reference(body);
       body->entry_pins++;
    }
-   cmd->apple9_last_pin[1] = cmd->apple9_last_pin[0];
-   cmd->apple9_last_pin[0] = body;
+   cmd->last_pinned[1] = cmd->last_pinned[0];
+   cmd->last_pinned[0] = body;
    return true;
 }
 
@@ -173,7 +173,7 @@ hk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
    struct hk_cmd_pool *pool = hk_cmd_buffer_pool(cmd);
 
    hk_free_resettable_cmd_buffer(cmd, false);
-   _mesa_set_destroy(cmd->apple9_pinned, NULL);
+   _mesa_set_destroy(cmd->pinned_entries, NULL);
    util_dynarray_fini(&cmd->large_bos);
    util_dynarray_fini(&cmd->implicit_sync_res);
    util_dynarray_fini(&cmd->query_adds);
@@ -713,12 +713,12 @@ hk_image_overlaps(const struct hk_image *a, const struct hk_image *b)
 }
 
 /* Whether the image barrier being recorded may leave the open render R open
- * (HK_APPLE9_MERGE_HOIST_BARRIERS, default on). Its image is none of R's
+ * (barrier hoisting). Its image is none of R's
  * attachments nor shares memory with them, and R's stream has not written
  * memory from a shader, so every write to the image precedes R in recording
  * order: placing the barrier ahead of R orders those writes before R, and
  * reads after the barrier in R see them. Later draws in R that write memory
- * end it first (hk_apple9_prepare_draw). A barrier from R's shader stages
+ * end it first (hk_launch_prepare_draw). A barrier from R's shader stages
  * also orders R's reads before later writes, so it ends R instead. */
 static bool
 hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd,
@@ -1688,7 +1688,7 @@ hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
 
    if (prog->launched) {
       uint64_t args = hk_pool_upload(cmd, data, data_size, 8);
-      hk_apple9_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
+      hk_launch_dispatch(cmd, cs, &prog->bo->shader_body, &prog->profile,
                          grid, args, 0, NULL);
       return;
    }

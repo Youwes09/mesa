@@ -122,7 +122,7 @@ hk_get_image_plane_format_features(struct hk_physical_device *pdev,
                        VK_FORMAT_FEATURE_2_BLIT_DST_BIT);
       /* Storage descriptors carry the format for loads and stores, so
        * access without a shader format needs no extra support. */
-      if (!hk_apple9_storage_format_supported(vk_format))
+      if (!hk_usc_storage_format_supported(vk_format))
          features &= ~(VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT |
                        VK_FORMAT_FEATURE_2_STORAGE_IMAGE_ATOMIC_BIT |
                        VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
@@ -1053,7 +1053,7 @@ hk_image_init(struct hk_device *dev, struct hk_image *image,
 }
 
 void
-hk_apple9_residency_init(struct agx_apple9_residency *r,
+hk_residency_init(struct agx_apple9_residency *r,
                          const struct ail_layout *layout)
 {
    const unsigned block_w = util_format_get_blockwidth(layout->format);
@@ -1137,10 +1137,10 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
       enum agx_va_flags va_flags =
          capture_replay ? AGX_VA_REPLAY | (replay_residency ? AGX_VA_FIXED : 0)
                         : 0;
-      plane->apple9_residency =
+      plane->residency_table =
          agx_bo_create_va(&dev->dev, size_B, 0, 0, va_flags, replay_residency,
                           "Apple9 residency");
-      if (!plane->apple9_residency) {
+      if (!plane->residency_table) {
          return vk_errorf(dev,
                           replay_residency
                              ? VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS
@@ -1148,9 +1148,9 @@ hk_image_plane_alloc_vma(struct hk_device *dev, struct hk_image_plane *plane,
                           "Residency table allocation failed");
       }
 
-      struct agx_apple9_residency *r = agx_bo_map(plane->apple9_residency);
+      struct agx_apple9_residency *r = agx_bo_map(plane->residency_table);
       memset(r, 0, size_B);
-      hk_apple9_residency_init(r, layout);
+      hk_residency_init(r, layout);
    } else if (sparse_resident) {
       plane->sparse_map =
          agx_bo_create(&dev->dev, plane->layout.sparse_table_size_B,
@@ -1176,7 +1176,7 @@ hk_image_plane_finish(struct hk_device *dev, struct hk_image_plane *plane,
    }
 
    agx_bo_unreference(&dev->dev, plane->sparse_map);
-   agx_bo_unreference(&dev->dev, plane->apple9_residency);
+   agx_bo_unreference(&dev->dev, plane->residency_table);
 }
 
 static void
@@ -2104,9 +2104,9 @@ hk_GetImageOpaqueCaptureDescriptorDataEXT(
       const struct hk_image_plane *plane = &image->planes[p];
       if (plane->va && (plane->va->flags & AGX_VA_REPLAY))
          data.planes[p].va = plane->va->addr;
-      if (plane->apple9_residency &&
-          (plane->apple9_residency->va->flags & AGX_VA_REPLAY))
-         data.planes[p].residency = plane->apple9_residency->va->addr;
+      if (plane->residency_table &&
+          (plane->residency_table->va->flags & AGX_VA_REPLAY))
+         data.planes[p].residency = plane->residency_table->va->addr;
    }
 
    memcpy(pData, &data, sizeof(data));

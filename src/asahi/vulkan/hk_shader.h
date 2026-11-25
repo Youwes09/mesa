@@ -71,7 +71,7 @@ hk_tess_info_merge(struct hk_tess_info a, struct hk_tess_info b)
 
 /* Texture operations whose descriptors may change after binding, or be
  * partially bound, must read them at execution time on G16. */
-#define HK_APPLE9_TEX_DESCRIPTOR_HANDLE (1u << 30)
+#define HK_TEX_DESCRIPTOR_HANDLE (1u << 30)
 
 /* On a nir_texop_lod_bias query: load the sampler's explicit-LOD nudge
  * instead of its LOD bias, see hk_lower_d3d_txl_rounding. */
@@ -259,7 +259,7 @@ struct hk_shader {
    struct agx_bo *bo;
 
    /* Apple9 compute launch template, patched per dispatch, or NULL */
-   struct agx_launch_template *apple9_launch;
+   struct agx_launch_template *stage_launch_cache;
 
    /* Cache of fast linked variants */
    struct {
@@ -393,7 +393,7 @@ struct hk_api_shader {
 };
 
 bool hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault,
-                                   bool apple9);
+                                   bool per_component);
 
 #define hk_foreach_variant(api_shader, var)                                    \
    for (struct hk_shader *var = api_shader->variants;                          \
@@ -489,9 +489,9 @@ hk_pre_gs_variant(struct hk_api_shader *obj)
 struct hk_linked_shader {
    struct agx_linked_shader b;
 
-   /* Apple9: the program as draws launch it, see hk_cmd_apple9.c */
-   struct agx_draw_stage apple9_stage;
-   struct agx_stage_launch_cache apple9_launch;
+   /* The program as launched draws see it, see hk_cmd_draw.c */
+   struct agx_draw_stage draw_stages;
+   struct agx_stage_launch_cache stage_launch_cache;
 
    /* True if the VS prolog uses software indexing, either for geom/tess or
     * adjacency primitives.

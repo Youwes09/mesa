@@ -963,34 +963,34 @@ hk_get_device_properties(const struct agx_device *dev,
       /* VK_KHR_push_descriptor */
       .maxPushDescriptors = HK_MAX_PUSH_DESCRIPTORS,
 
-      /* VK_EXT_descriptor_buffer (G16; HK_APPLE9_DESCRIPTOR_BUFFER=0 hides it) */
+      /* VK_EXT_descriptor_buffer (USC descriptors only) */
       .combinedImageSamplerDescriptorSingleArray = true,
       .bufferlessPushDescriptors = true,
       .allowSamplerImageViewPostSubmitCreation = false,
-      .descriptorBufferOffsetAlignment = HK_APPLE9_DB_ALIGNMENT,
+      .descriptorBufferOffsetAlignment = HK_DB_ALIGNMENT,
       .maxDescriptorBufferBindings = HK_MAX_SETS,
       .maxResourceDescriptorBufferBindings = HK_MAX_SETS,
       .maxSamplerDescriptorBufferBindings = HK_MAX_SETS,
       .maxEmbeddedImmutableSamplerBindings = HK_MAX_SETS,
       .maxEmbeddedImmutableSamplers = 2048,
-      .EDBsamplerDescriptorSize = HK_APPLE9_DB_SAMPLER_SIZE,
-      .combinedImageSamplerDescriptorSize = HK_APPLE9_DB_COMBINED_SIZE,
-      .sampledImageDescriptorSize = HK_APPLE9_DB_SAMPLED_SIZE,
-      .storageImageDescriptorSize = HK_APPLE9_DB_STORAGE_SIZE,
-      .uniformTexelBufferDescriptorSize = HK_APPLE9_DB_TEXEL_SIZE,
-      .robustUniformTexelBufferDescriptorSize = HK_APPLE9_DB_TEXEL_SIZE,
-      .storageTexelBufferDescriptorSize = HK_APPLE9_DB_STORAGE_SIZE,
-      .robustStorageTexelBufferDescriptorSize = HK_APPLE9_DB_STORAGE_SIZE,
-      .uniformBufferDescriptorSize = HK_APPLE9_DB_BUFFER_SIZE,
-      .robustUniformBufferDescriptorSize = HK_APPLE9_DB_BUFFER_SIZE,
-      .storageBufferDescriptorSize = HK_APPLE9_DB_BUFFER_SIZE,
-      .robustStorageBufferDescriptorSize = HK_APPLE9_DB_BUFFER_SIZE,
-      .inputAttachmentDescriptorSize = HK_APPLE9_DB_SAMPLED_SIZE,
-      .maxSamplerDescriptorBufferRange = HK_APPLE9_DB_RANGE,
-      .maxResourceDescriptorBufferRange = HK_APPLE9_DB_RANGE,
-      .samplerDescriptorBufferAddressSpaceSize = HK_APPLE9_DB_ADDRESS_SPACE,
-      .resourceDescriptorBufferAddressSpaceSize = HK_APPLE9_DB_ADDRESS_SPACE,
-      .descriptorBufferAddressSpaceSize = HK_APPLE9_DB_ADDRESS_SPACE,
+      .EDBsamplerDescriptorSize = HK_DB_SAMPLER_SIZE,
+      .combinedImageSamplerDescriptorSize = HK_DB_COMBINED_SIZE,
+      .sampledImageDescriptorSize = HK_DB_SAMPLED_SIZE,
+      .storageImageDescriptorSize = HK_DB_STORAGE_SIZE,
+      .uniformTexelBufferDescriptorSize = HK_DB_TEXEL_SIZE,
+      .robustUniformTexelBufferDescriptorSize = HK_DB_TEXEL_SIZE,
+      .storageTexelBufferDescriptorSize = HK_DB_STORAGE_SIZE,
+      .robustStorageTexelBufferDescriptorSize = HK_DB_STORAGE_SIZE,
+      .uniformBufferDescriptorSize = HK_DB_BUFFER_SIZE,
+      .robustUniformBufferDescriptorSize = HK_DB_BUFFER_SIZE,
+      .storageBufferDescriptorSize = HK_DB_BUFFER_SIZE,
+      .robustStorageBufferDescriptorSize = HK_DB_BUFFER_SIZE,
+      .inputAttachmentDescriptorSize = HK_DB_SAMPLED_SIZE,
+      .maxSamplerDescriptorBufferRange = HK_DB_RANGE,
+      .maxResourceDescriptorBufferRange = HK_DB_RANGE,
+      .samplerDescriptorBufferAddressSpaceSize = HK_DB_ADDRESS_SPACE,
+      .resourceDescriptorBufferAddressSpaceSize = HK_DB_ADDRESS_SPACE,
+      .descriptorBufferAddressSpaceSize = HK_DB_ADDRESS_SPACE,
       .bufferCaptureReplayDescriptorDataSize = sizeof(uint64_t),
       .imageCaptureReplayDescriptorDataSize =
          sizeof(struct hk_image_capture_data),
@@ -1275,7 +1275,7 @@ hk_get_sysmem_heap_available(struct hk_physical_device *pdev)
  * new Apple8 capability never silently exposes it on Apple9.
  */
 static void
-hk_apple9_restrict_caps(struct vk_device_extension_table *ext,
+hk_restrict_launch_features(struct vk_device_extension_table *ext,
                         struct vk_features *feat, struct vk_properties *props)
 {
    const struct vk_device_extension_table all = *ext;
@@ -1995,7 +1995,7 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    hk_get_device_properties(&pdev->dev, instance, &properties);
 
    if (agx_is_apple9(&pdev->dev)) {
-      hk_apple9_restrict_caps(&supported_extensions, &supported_features,
+      hk_restrict_launch_features(&supported_extensions, &supported_features,
                               &properties);
       /* Sample positions are per render and a change splits the render, so
        * they can vary within a subpass, but DXVK would centre samples for
@@ -2034,11 +2034,11 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    if (result != VK_SUCCESS)
       goto fail_agx_device;
 
-   /* Set by driconf for vkd3d-proton, see hk_apple9_arrayed_2d_views. */
-   pdev->apple9_layered_2d =
-      agx_is_apple9(&pdev->dev) && instance->drirc.misc.apple9_arrayed_2d_views;
-   pdev->apple9_d3d_mip_rounding =
-      agx_is_apple9(&pdev->dev) && instance->drirc.misc.apple9_d3d_mip_rounding;
+   /* Set by driconf for vkd3d-proton, see hk_arrayed_2d_views. */
+   pdev->layered_2d_views =
+      agx_is_apple9(&pdev->dev) && instance->drirc.misc.arrayed_2d_views;
+   pdev->d3d_mip_rounding =
+      agx_is_apple9(&pdev->dev) && instance->drirc.misc.d3d_mip_rounding;
 
    hk_physical_device_init_pipeline_cache(pdev);
 
@@ -2078,9 +2078,9 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       .heapIndex = sysmem_heap_idx,
    };
 
-   pdev->apple9_descriptor_mem_type = UINT8_MAX;
+   pdev->descriptor_mem_type = UINT8_MAX;
    if (agx_is_apple9(&pdev->dev)) {
-      pdev->apple9_descriptor_mem_type = pdev->mem_type_count;
+      pdev->descriptor_mem_type = pdev->mem_type_count;
       pdev->mem_types[pdev->mem_type_count++] = (VkMemoryType){
          .propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |

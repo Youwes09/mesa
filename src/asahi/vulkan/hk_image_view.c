@@ -316,12 +316,12 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
       /* Apple9 texture instructions must match the descriptor's arrayness:
        * a mismatch drops the layer and level coordinates. D3D12 binds 2D
        * views to array declarations and the reverse, so with the
-       * hk_apple9_arrayed_2d_views driconf option sampled 1D/2D views are
-       * one-layer arrays, and hk_apple9_lower_tex_2d_as_array samples every
+       * hk_arrayed_2d_views driconf option sampled 1D/2D views are
+       * one-layer arrays, and hk_lower_tex_2d_as_array samples every
        * 2D texture as one. */
       struct hk_device *dev =
          container_of(view->vk.base.device, struct hk_device, vk);
-      if (hk_device_physical(dev)->apple9_layered_2d &&
+      if (hk_device_physical(dev)->layered_2d_views &&
           usage == HK_DESC_USAGE_SAMPLED) {
          if (cfg.dimension == AGX_TEXTURE_DIMENSION_2D)
             cfg.dimension = AGX_TEXTURE_DIMENSION_2D_ARRAY;
@@ -596,14 +596,14 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
  * initialization (internal views do not allocate native storage PBEs).
  */
 static void
-hk_apple9_init_view_descriptors(struct hk_image_view *view)
+hk_init_usc_view_descriptors(struct hk_image_view *view)
 {
    float min_lod = MAX2(view->vk.min_lod - view->vk.base_mip_level, 0.0);
    for (unsigned p = 0; p < view->plane_count; ++p) {
       for (unsigned input = 0; input < 2; ++input) {
-         struct hk_apple9_image_part *part =
-            input ? &view->planes[p].apple9_ia
-                  : &view->planes[p].apple9_sampled;
+         struct hk_usc_image_part *part =
+            input ? &view->planes[p].usc_input
+                  : &view->planes[p].usc_sampled;
          const struct agx_texture_packed *tex =
             input ? &view->planes[p].ia : &view->planes[p].sampled;
          part->base_level = view->vk.base_mip_level;
@@ -611,7 +611,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
          part->min_lod_fp16 = _mesa_float_to_half(min_lod);
          part->min_lod_uint16 = min_lod;
          agx_translate_usc_texture(part->texture, tex);
-         hk_apple9_texture_info(part->texture_info, tex);
+         hk_texture_info(part->texture_info, tex);
       }
 
       /* Seamful samples of cubes read the faces as layers of the alias */
@@ -619,7 +619,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
           view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
          struct agx_texture_packed alias;
          pack_texture(view, p, HK_DESC_USAGE_CUBE_ALIAS, &alias);
-         agx_translate_usc_texture(view->planes[p].apple9_sampled.cube_alias,
+         agx_translate_usc_texture(view->planes[p].usc_sampled.cube_alias,
                                       &alias);
       }
    }
@@ -627,7 +627,7 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
    if (view->plane_count != 1)
       return;
 
-   struct agx_apple9_storage_descriptor *storage = &view->apple9_storage;
+   struct agx_apple9_storage_descriptor *storage = &view->usc_storage;
    storage->common.tex = view->planes[0].ro_storage;
    storage->common.pbe = view->planes[0].storage;
    enum pipe_format format = vk_format_to_pipe_format(view->vk.format);
@@ -675,10 +675,10 @@ hk_apple9_init_view_descriptors(struct hk_image_view *view)
 }
 
 static void
-hk_apple9_init_render_view(struct hk_image_view *view)
+hk_init_render_descriptors(struct hk_image_view *view)
 {
    for (unsigned layered = 0; layered < 2; ++layered) {
-      struct hk_apple9_render_view *out = &view->apple9_render[layered];
+      struct hk_apple9_render_view *out = &view->render_descriptors[layered];
       const struct agx_texture_packed *texture =
          layered ? &view->planes[0].layered_background
                  : &view->planes[0].background;
@@ -698,7 +698,7 @@ hk_apple9_init_render_view(struct hk_image_view *view)
       }
       out->texture_valid = agx_translate_usc_texture(out->texture, &packed);
       out->store_valid =
-         hk_apple9_image_view_eot(view, layered, false, out->store);
+         hk_image_view_eot(view, layered, false, out->store);
    }
 }
 
@@ -752,10 +752,10 @@ hk_image_view_init(struct hk_device *dev, struct hk_image_view *view,
    }
 
    if (agx_has_usc_descriptors(&dev->dev))
-      hk_apple9_init_view_descriptors(view);
+      hk_init_usc_view_descriptors(view);
    if (agx_has_usc_descriptors(&dev->dev) &&
        (view->vk.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
-      hk_apple9_init_render_view(view);
+      hk_init_render_descriptors(view);
 
    return VK_SUCCESS;
 }
@@ -771,14 +771,14 @@ hk_DestroyImageView(VkDevice _device, VkImageView imageView,
       return;
 
    simple_mtx_lock(&dev->usc_heap_lock);
-   hk_usc_heap_free(&dev->usc_heap, &view->apple9_pbes);
+   hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
    simple_mtx_unlock(&dev->usc_heap_lock);
    vk_image_view_finish(&view->vk);
    vk_free2(&dev->vk.alloc, pAllocator, view);
 }
 
 bool
-hk_apple9_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
+hk_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
                                 enum pipe_format format,
                                 const struct ail_layout *layout, uint64_t base,
                                 unsigned level)
@@ -788,11 +788,11 @@ hk_apple9_translate_storage_pbe(void *out, const struct agx_pbe_packed *state,
 }
 
 bool
-hk_apple9_native_store_image(const struct hk_image *image, unsigned plane)
+hk_pbe_store_image(const struct hk_image *image, unsigned plane)
 {
    /* Sparse images use remapped VA and mip tails; native PBE stores have not
     * been qualified for that storage. Check creation flags, not sparse_map:
-    * G16 sparse residency uses apple9_residency instead, and sparse binding
+    * G16 sparse residency uses residency_table instead, and sparse binding
     * alone has neither residency table. Keep all sparse writes in software.
     */
    const VkImageCreateFlags sparse = VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
@@ -808,7 +808,7 @@ hk_apple9_native_store_image(const struct hk_image *image, unsigned plane)
  * the layout's texels, and would write outside them; they keep the software
  * converter, which addresses the view's elements. */
 bool
-hk_apple9_native_store_view_layout(const struct ail_layout *layout,
+hk_pbe_store_view_layout(const struct ail_layout *layout,
                                    enum pipe_format view_format)
 {
    return !util_format_is_compressed(layout->format) &&
@@ -820,11 +820,11 @@ hk_apple9_native_store_view_layout(const struct ail_layout *layout,
  * Per-layer 2D entries keep layer selection in descriptor addressing. The
  * shader never modifies descriptors, so divergent layers cannot race. */
 static void
-hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
+hk_init_storage_pbes(struct hk_device *dev, struct hk_image_view *view)
 {
-   view->apple9_store_flags = 0;
-   view->apple9_pbes = (struct hk_descriptor_allocation){0};
-   view->apple9_pbe_index = 0;
+   view->storage_flags = 0;
+   view->storage_pbes = (struct hk_descriptor_allocation){0};
+   view->storage_pbe_index = 0;
    if (!agx_has_usc_descriptors(&dev->dev) || view->plane_count != 1 ||
        !(view->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) ||
        !agx_apple9_native_store_format(format_for_plane(view, 0)) ||
@@ -851,8 +851,8 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
       container_of(view->vk.image, struct hk_image, vk);
    unsigned plane = view->planes[0].image_plane;
    const struct ail_layout *layout = &image->planes[plane].layout;
-   if (!hk_apple9_native_store_image(image, plane) ||
-       !hk_apple9_native_store_view_layout(layout, format_for_plane(view, 0)))
+   if (!hk_pbe_store_image(image, plane) ||
+       !hk_pbe_store_view_layout(layout, format_for_plane(view, 0)))
       return;
    /* Integer native stores are qualified only on views of their image's own
     * format, not on raw reinterpretations such as meta copies. */
@@ -868,34 +868,34 @@ hk_apple9_init_storage_pbe(struct hk_device *dev, struct hk_image_view *view)
    simple_mtx_lock(&dev->usc_heap_lock);
    bool allocated = hk_usc_heap_alloc(
       &dev->usc_heap, (uint64_t)count * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-      AGX_APPLE9_TEXTURE_TABLE_STRIDE, &view->apple9_pbes);
+      AGX_APPLE9_TEXTURE_TABLE_STRIDE, &view->storage_pbes);
    simple_mtx_unlock(&dev->usc_heap_lock);
    if (!allocated)
       return;
-   uint64_t index = (view->apple9_pbes.addr - dev->dev.shader_base) /
+   uint64_t index = (view->storage_pbes.addr - dev->dev.shader_base) /
                     AGX_APPLE9_TEXTURE_TABLE_STRIDE;
    if (index + count - 1 > AGX_APPLE9_STORAGE_PBE_MASK) {
       simple_mtx_lock(&dev->usc_heap_lock);
-      hk_usc_heap_free(&dev->usc_heap, &view->apple9_pbes);
+      hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
       simple_mtx_unlock(&dev->usc_heap_lock);
       return;
    }
-   uint8_t *entries = view->apple9_pbes.map;
+   uint8_t *entries = view->storage_pbes.map;
    for (unsigned i = 0; i < count; ++i) {
       uint64_t base = hk_image_base_address(image, plane) +
                       ail_get_layer_level_B(layout, first + i, 0);
-      if (!hk_apple9_translate_storage_pbe(
+      if (!hk_translate_storage_pbe(
              entries + i * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
              &view->planes[0].storage, format_for_plane(view, 0), layout, base,
              view->vk.base_mip_level)) {
          simple_mtx_lock(&dev->usc_heap_lock);
-         hk_usc_heap_free(&dev->usc_heap, &view->apple9_pbes);
+         hk_usc_heap_free(&dev->usc_heap, &view->storage_pbes);
          simple_mtx_unlock(&dev->usc_heap_lock);
          return;
       }
    }
-   view->apple9_pbe_index = index;
-   view->apple9_store_flags = array || slices
+   view->storage_pbe_index = index;
+   view->storage_flags = array || slices
                                  ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID
                                  : AGX_APPLE9_STORAGE_WRITE_VALID;
 }
@@ -913,21 +913,21 @@ hk_CreateImageView(VkDevice _device, const VkImageViewCreateInfo *pCreateInfo,
    if (!view)
       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   view->apple9_pbes = (struct hk_descriptor_allocation){0};
+   view->storage_pbes = (struct hk_descriptor_allocation){0};
    result = hk_image_view_init(dev, view, pCreateInfo);
    if (result != VK_SUCCESS) {
       hk_DestroyImageView(_device, hk_image_view_to_handle(view), pAllocator);
       return result;
    }
 
-   hk_apple9_init_storage_pbe(dev, view);
+   hk_init_storage_pbes(dev, view);
    *pView = hk_image_view_to_handle(view);
 
    return VK_SUCCESS;
 }
 
 bool
-hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered,
+hk_image_view_eot(const struct hk_image_view *view, bool layered,
                          bool raw, void *out)
 {
    if (view->plane_count != 1)
@@ -958,15 +958,15 @@ hk_apple9_image_view_eot(const struct hk_image_view *view, bool layered,
 }
 
 uint64_t
-hk_apple9_view_residency(const struct hk_device *dev,
+hk_view_residency(const struct hk_device *dev,
                          const struct hk_image_view *view, unsigned plane)
 {
    const struct hk_image *image =
       container_of(view->vk.image, struct hk_image, vk);
    struct agx_bo *table =
-      image->planes[view->planes[plane].image_plane].apple9_residency;
+      image->planes[view->planes[plane].image_plane].residency_table;
 
-   return (table ? table : dev->apple9_resident)->va->addr;
+   return (table ? table : dev->resident_table)->va->addr;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

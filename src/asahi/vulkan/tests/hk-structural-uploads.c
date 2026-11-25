@@ -129,7 +129,7 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
          VK_SUCCESS);
    struct hk_image_view *view = hk_image_view_from_handle(handle);
    for (unsigned layered = 0; layered < 2; ++layered) {
-      const struct hk_apple9_render_view *owned = &view->apple9_render[layered];
+      const struct hk_apple9_render_view *owned = &view->render_descriptors[layered];
       agx_unpack(stderr,
                  layered ? &view->planes[0].layered_background
                          : &view->planes[0].background,
@@ -152,7 +152,7 @@ check_view(struct hk_device *dev, VkFormat format, unsigned samples,
       CHECK(owned->texture_valid == valid);
       if (valid)
          CHECK(!memcmp(owned->texture, expected, sizeof(expected)));
-      valid = hk_apple9_image_view_eot(view, layered, false, expected);
+      valid = hk_image_view_eot(view, layered, false, expected);
       CHECK(owned->store_valid == valid);
       if (valid)
          CHECK(!memcmp(owned->store, expected, sizeof(expected)));

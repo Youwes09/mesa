@@ -75,7 +75,7 @@ bool agx_cdm_prepare_dispatch_alloc(
 /* As agx_cdm_prepare_dispatch_alloc, emitting the launch program
  * from tmpl (agx_cdm_launch_template of the same profile and
  * preamble) when it is non-NULL and valid. Graphics ABI programs read their
- * push words from push. HK_APPLE9_LAUNCH_CHECK=1 checks against a full build.
+ * push words from push.
  */
 bool agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_device *dev, void *allocator,

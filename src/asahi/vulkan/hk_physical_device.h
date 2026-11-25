@@ -34,12 +34,12 @@ extern uint64_t hk_process_heap_used[VK_MAX_MEMORY_HEAPS];
 struct hk_physical_device {
    struct vk_physical_device vk;
 
-   /* Apple9 with hk_apple9_arrayed_2d_views (driconf, vkd3d-proton): sampled
+   /* Apple9 with hk_arrayed_2d_views (driconf, vkd3d-proton): sampled
     * 1D/2D views are one-layer arrays and 2D textures are sampled as arrays
     * (see pack_texture). */
-   bool apple9_layered_2d;
-   /* Apple9 with hk_apple9_d3d_mip_rounding (driconf, vkd3d-proton). */
-   bool apple9_d3d_mip_rounding;
+   bool layered_2d_views;
+   /* Apple9 with hk_d3d_mip_rounding (driconf, vkd3d-proton). */
+   bool d3d_mip_rounding;
    dev_t render_dev;
    int master_fd;
 
@@ -59,7 +59,7 @@ struct hk_physical_device {
     * relative to the USC aperture, so this type allocates there (write-back,
     * as descriptor pools). UINT8_MAX when absent. Only buffers with a
     * descriptor-buffer usage may (and must) use it. */
-   uint8_t apple9_descriptor_mem_type;
+   uint8_t descriptor_mem_type;
    uint64_t sysmem;
 
    struct hk_queue_family queue_families[3];
@@ -86,8 +86,8 @@ static inline uint32_t
 hk_general_memory_types(const struct hk_physical_device *pdev)
 {
    uint32_t types = BITFIELD_MASK(pdev->mem_type_count);
-   if (pdev->apple9_descriptor_mem_type != UINT8_MAX)
-      types &= ~BITFIELD_BIT(pdev->apple9_descriptor_mem_type);
+   if (pdev->descriptor_mem_type != UINT8_MAX)
+      types &= ~BITFIELD_BIT(pdev->descriptor_mem_type);
    return types;
 }
 

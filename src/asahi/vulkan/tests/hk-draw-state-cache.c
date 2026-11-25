@@ -33,16 +33,16 @@ main(void)
       .end = emitted + sizeof(emitted),
    };
    struct hk_cs other = {0};
-   cmd->current_cs.gfx = cmd->apple9_prev_cs = &cs;
+   cmd->current_cs.gfx = cmd->draw_record_cs = &cs;
    cmd->vk.dynamic_graphics_state.ia.primitive_topology =
       VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
    struct agx_draw draw = {.b = agx_3d(3, 1, 1)};
    struct hk_shader fragment = {0};
    static const uint8_t binary[] = {0};
    struct agx_draw_stage stage = {.binary = binary, .binary_size = 1};
-   cmd->apple9_draw_state.valid = true;
-   cmd->apple9_draw_state.shader[1] = &fragment;
-   cmd->apple9_draw_state.pipeline = (struct agx_draw_pipeline){
+   cmd->draw_cache.valid = true;
+   cmd->draw_cache.shader[1] = &fragment;
+   cmd->draw_cache.pipeline = (struct agx_draw_pipeline){
       .vertex = &stage,
       .fragment = &stage,
       .ppp = 0x100,
@@ -51,17 +51,17 @@ main(void)
       .vertex_launch = 0x100,
       .output_count = 4,
    };
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(hk_draw_record_reusable(cmd, draw));
 
    /* Replay an already prepared draw through the real fast path. It must
     * still emit both draws and declare the normal graphics execution scope.
     * No shader compilation or allocator is available in this host fixture. */
    uint8_t *end = expected;
    for (unsigned i = 0; i < 2; ++i) {
-      end = agx_emit_direct_draw(end, &cmd->apple9_draw_state.pipeline,
+      end = agx_emit_direct_draw(end, &cmd->draw_cache.pipeline,
                                         3, 1, 0) -
             4;
-      hk_apple9_draw(cmd, 0, draw);
+      hk_launch_draw(cmd, 0, draw);
    }
    CHECK((uint8_t *)cs.current - emitted == end - expected);
    CHECK(!memcmp(emitted, expected, end - expected));
@@ -77,11 +77,11 @@ main(void)
    do {                                                                        \
       __typeof__(field) saved = field;                                         \
       field = value;                                                           \
-      CHECK(!hk_apple9_draw_state_reusable(cmd, draw));                        \
+      CHECK(!hk_draw_record_reusable(cmd, draw));                        \
       field = saved;                                                           \
-      CHECK(hk_apple9_draw_state_reusable(cmd, draw));                         \
+      CHECK(hk_draw_record_reusable(cmd, draw));                         \
    } while (0)
-   INVALIDATE(cmd->apple9_draw_state.valid, false);
+   INVALIDATE(cmd->draw_cache.valid, false);
    INVALIDATE(cmd->current_cs.gfx, &other);
    INVALIDATE(cmd->merge_cs, &cs);
    INVALIDATE(cmd->state.gfx.render_gen, 1);
@@ -89,7 +89,7 @@ main(void)
    INVALIDATE(cmd->state.gfx.shaders_dirty, BITFIELD_BIT(MESA_SHADER_VERTEX));
    BITSET_SET(cmd->vk.dynamic_graphics_state.dirty,
               MESA_VK_DYNAMIC_VP_SCISSORS);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(!hk_draw_record_reusable(cmd, draw));
    vk_dynamic_graphics_state_clear_dirty(&cmd->vk.dynamic_graphics_state);
    INVALIDATE(cmd->state.gfx.render.view_mask, 3);
    INVALIDATE(cmd->state.gfx.xfb_enabled, true);
@@ -101,12 +101,12 @@ main(void)
    INVALIDATE(cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY], (void *)1);
    INVALIDATE(cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL], (void *)1);
    INVALIDATE(cmd->state.gfx.shaders[MESA_SHADER_MESH], (void *)1);
-   INVALIDATE(cmd->state.gfx.apple9_fan_unrolled, true);
+   INVALIDATE(cmd->state.gfx.fan_unrolled, true);
    INVALIDATE(cmd->in_meta, true);
    INVALIDATE(draw.start, 3);
    INVALIDATE(draw.start_instance, 1);
    INVALIDATE(draw.indexed, true);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, agx_draw_indirect(0x2000)));
+   CHECK(!hk_draw_record_reusable(cmd, agx_draw_indirect(0x2000)));
 
    /* Index offsets, buffers, sizes, counts and indexed/non-indexed mode
     * feed only command emission. Vary them through the actual cache hit path
@@ -120,9 +120,9 @@ main(void)
                                            : AGX_INDEX_SIZE_U32,
                               false);
       cmd->state.gfx.index.restart = BITFIELD_MASK(bytes * 8);
-      CHECK(hk_apple9_draw_state_reusable(cmd, draw));
+      CHECK(hk_draw_record_reusable(cmd, draw));
       struct agx_draw_pipeline pipeline =
-         cmd->apple9_draw_state.pipeline;
+         cmd->draw_cache.pipeline;
       pipeline.index_size = bytes;
       pipeline.index_buffer = draw.index_buffer + draw.start * bytes;
       pipeline.index_extent =
@@ -131,14 +131,14 @@ main(void)
       end = agx_emit_direct_draw(end, &pipeline, draw.b.count[0],
                                         draw.b.count[1], draw.index_bias) -
             4;
-      hk_apple9_draw(cmd, 0, draw);
+      hk_launch_draw(cmd, 0, draw);
    }
    draw = (struct agx_draw){.b = agx_3d(6, 2, 1)};
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
-   struct agx_draw_pipeline pipeline = cmd->apple9_draw_state.pipeline;
+   CHECK(hk_draw_record_reusable(cmd, draw));
+   struct agx_draw_pipeline pipeline = cmd->draw_cache.pipeline;
    pipeline.index_size = 0;
    end = agx_emit_direct_draw(end, &pipeline, 6, 2, 0) - 4;
-   hk_apple9_draw(cmd, 0, draw);
+   hk_launch_draw(cmd, 0, draw);
    CHECK((uint8_t *)cs.current - emitted == end - expected);
    CHECK(!memcmp(emitted, expected, end - expected));
    CHECK(cs.stats.cmds == 27);
@@ -147,15 +147,15 @@ main(void)
     * must not force rebuilding the unchanged raster state. */
    cmd->state.gfx.descriptors.root_dirty = true;
    cmd->state.gfx.descriptors.push_dirty = 1;
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(hk_draw_record_reusable(cmd, draw));
 
    /* A null index binding needs its existing fresh zero-range allocation. */
    draw = agx_draw_indexed(3, 1, 0, 0, 0, 0, 0, AGX_INDEX_SIZE_U16, false);
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(!hk_draw_record_reusable(cmd, draw));
    draw.index_buffer_range_B = 16;
-   CHECK(hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(hk_draw_record_reusable(cmd, draw));
    draw.start = 8;
-   CHECK(!hk_apple9_draw_state_reusable(cmd, draw));
+   CHECK(!hk_draw_record_reusable(cmd, draw));
 
    util_dynarray_fini(&cmd->sync_events);
    util_dynarray_fini(&cmd->sync_remap);

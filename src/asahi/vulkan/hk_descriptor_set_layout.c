@@ -41,28 +41,28 @@ hk_descriptor_stride_align_for_type(
    if (descriptor_buffer && agx_has_usc_descriptors(&pdev->dev) &&
        type != VK_DESCRIPTOR_TYPE_MUTABLE_EXT &&
        type != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
-      *alignment = HK_APPLE9_DB_ALIGNMENT;
+      *alignment = HK_DB_ALIGNMENT;
       switch (type) {
       case VK_DESCRIPTOR_TYPE_SAMPLER:
-         *stride = HK_APPLE9_DB_SAMPLER_SIZE;
+         *stride = HK_DB_SAMPLER_SIZE;
          return;
       case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-         *stride = HK_APPLE9_DB_COMBINED_SIZE;
+         *stride = HK_DB_COMBINED_SIZE;
          return;
       case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
       case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-         *stride = HK_APPLE9_DB_SAMPLED_SIZE;
+         *stride = HK_DB_SAMPLED_SIZE;
          return;
       case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
       case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-         *stride = HK_APPLE9_DB_STORAGE_SIZE;
+         *stride = HK_DB_STORAGE_SIZE;
          return;
       case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         *stride = HK_APPLE9_DB_TEXEL_SIZE;
+         *stride = HK_DB_TEXEL_SIZE;
          return;
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
       case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-         *stride = HK_APPLE9_DB_BUFFER_SIZE;
+         *stride = HK_DB_BUFFER_SIZE;
          return;
       default:
          /* Dynamic buffers are not allowed in descriptor-buffer layouts. */
@@ -80,10 +80,10 @@ hk_descriptor_stride_align_for_type(
       if (agx_has_usc_descriptors(&pdev->dev)) {
          /* Image part, sampler part, or both for a combined image sampler. */
          *stride = type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                      ? HK_APPLE9_COMBINED_DESCRIPTOR_SIZE
+                      ? HK_USC_COMBINED_DESCRIPTOR_SIZE
                    : type == VK_DESCRIPTOR_TYPE_SAMPLER
-                      ? sizeof(struct hk_apple9_sampler_part)
-                      : sizeof(struct hk_apple9_image_part);
+                      ? sizeof(struct hk_usc_sampler_part)
+                      : sizeof(struct hk_usc_image_part);
          *alignment = AGX_APPLE9_TEXTURE_TABLE_STRIDE;
          break;
       }
@@ -373,7 +373,7 @@ hk_CreateDescriptorSetLayout(VkDevice device,
        VK_DESCRIPTOR_SET_LAYOUT_CREATE_EMBEDDED_IMMUTABLE_SAMPLERS_BIT_EXT) {
       /* Shaders address it like any descriptor buffer: in the USC aperture. */
       layout->embedded_samplers = agx_bo_create(
-         &dev->dev, MAX2(buffer_size, HK_APPLE9_DB_ALIGNMENT), 0,
+         &dev->dev, MAX2(buffer_size, HK_DB_ALIGNMENT), 0,
          agx_has_usc_descriptors(&dev->dev) ? AGX_BO_LOW_VA | AGX_BO_WRITEBACK
                                             : 0,
          "Embedded samplers");
@@ -535,7 +535,7 @@ hk_GetDescriptorSetLayoutSizeEXT(VkDevice device, VkDescriptorSetLayout _layout,
       if (bl->flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
          size = MAX2(size, bl->offset + (uint64_t)bl->stride * bl->array_size);
    }
-   *pLayoutSizeInBytes = align64(size, HK_APPLE9_DB_ALIGNMENT);
+   *pLayoutSizeInBytes = align64(size, HK_DB_ALIGNMENT);
 }
 
 VKAPI_ATTR void VKAPI_CALL

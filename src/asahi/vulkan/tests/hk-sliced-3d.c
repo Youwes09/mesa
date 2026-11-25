@@ -324,14 +324,14 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
                  sizeof(f->planes[0].layered_eot)));
    CHECK(!memcmp(&f->planes[0].emrt_pbe, &s->planes[0].emrt_pbe,
                  sizeof(f->planes[0].emrt_pbe)));
-   struct hk_apple9_image_part full_sampled, sliced_sampled;
+   struct hk_usc_image_part full_sampled, sliced_sampled;
    get_descriptor(dev, full, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &full_sampled);
    get_descriptor(dev, sliced, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                   &sliced_sampled);
    CHECK(!memcmp(&full_sampled, &sliced_sampled, sizeof(full_sampled)));
    struct agx_apple9_storage_descriptor desc;
    get_descriptor(dev, sliced, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &desc);
-   CHECK(sizeof(desc) == HK_APPLE9_DB_STORAGE_SIZE);
+   CHECK(sizeof(desc) == HK_DB_STORAGE_SIZE);
    /* Native stores get one 2D PBE per slice of the view, from its slice
     * offset, at the base level only; block views, sparse images and capture
     * replay keep the converter. */
@@ -342,15 +342,15 @@ check_view(struct hk_device *dev, VkExtent3D extent, unsigned levels,
    CHECK((desc.native_ok & BITFIELD_MASK(AGX_APPLE9_STORAGE_PBE_SHIFT)) ==
          ((alias ? 0 : AGX_APPLE9_STORAGE_READ_VALID) |
           (pbes ? AGX_APPLE9_STORAGE_LAYER_WRITE_VALID : 0)));
-   CHECK(!!s->apple9_pbes.map == pbes);
+   CHECK(!!s->storage_pbes.map == pbes);
    if (pbes) {
-      CHECK(s->apple9_pbes.size >=
+      CHECK(s->storage_pbes.size >=
             (uint64_t)slices * AGX_APPLE9_TEXTURE_TABLE_STRIDE);
       const unsigned probe[] = {0, slices - 1};
       for (unsigned i = 0; i < ARRAY_SIZE(probe); ++i) {
          uint64_t entry_address;
          memcpy(&entry_address,
-                (uint8_t *)s->apple9_pbes.map +
+                (uint8_t *)s->storage_pbes.map +
                    probe[i] * AGX_APPLE9_TEXTURE_TABLE_STRIDE + 8,
                 8);
          CHECK((entry_address & ((UINT64_C(1) << 40) - 1)) ==
@@ -430,7 +430,7 @@ main(void)
    hk_device_init_usc_heap(dev);
    struct agx_va resident_va = {.addr = UINT64_C(0x3000000000)};
    struct agx_bo resident = {.va = &resident_va};
-   dev->apple9_resident = &resident;
+   dev->resident_table = &resident;
    const VkExtent3D extents[] = {{127, 65, 33},
                                  {8, 4, 129},
                                  {2048, 8, 1},

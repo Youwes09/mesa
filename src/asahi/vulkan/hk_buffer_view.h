@@ -22,8 +22,8 @@ struct hk_buffer_view {
    struct vk_buffer_view vk;
    struct agx_texture_packed tex;
    struct agx_pbe_packed pbe;
-   struct agx_apple9_texel_metadata apple9;
-   uint8_t apple9_texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
+   struct agx_apple9_texel_metadata texel_metadata;
+   uint8_t usc_texture[AGX_APPLE9_TEXTURE_TABLE_STRIDE];
 };
 
 struct hk_device;
@@ -32,7 +32,7 @@ void hk_pack_texel_buffer(struct hk_device *dev, enum pipe_format format,
                           uint64_t residency, struct agx_texture_packed *tex,
                           struct agx_pbe_packed *pbe,
                           struct agx_apple9_texel_metadata *m,
-                          uint8_t *apple9_texture);
+                          uint8_t *usc_texture);
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_buffer_view, vk.base, VkBufferView,
                                VK_OBJECT_TYPE_BUFFER_VIEW)

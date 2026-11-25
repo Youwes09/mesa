@@ -126,13 +126,13 @@ main(void)
          CHECK(descriptors[i] == descriptors[render]);
 
       struct agx_draw direct = {.b = agx_3d(12, 1, 1)};
-      check_draw("adjacency", render, hk_apple9_draw_without_adj(cmd, direct),
+      check_draw("adjacency", render, hk_draw_without_adj(cmd, direct),
                  selected, descriptors[render]);
       struct agx_draw indexed = agx_draw_indexed(12, 1, 0, 0, 0, 0x40000000, 48,
                                                  AGX_INDEX_SIZE_U32, false);
-      check_draw("robust-copy", render, hk_apple9_robust_index(cmd, indexed),
+      check_draw("robust-copy", render, hk_robust_index_copy(cmd, indexed),
                  selected, descriptors[render]);
-      check_draw("fan", render, hk_apple9_unroll_fan(cmd, direct), selected,
+      check_draw("fan", render, hk_unroll_fan(cmd, direct), selected,
                  descriptors[render]);
       indexed = agx_draw_indexed_indirect((uintptr_t)pool, 0x40000000, 48,
                                           AGX_INDEX_SIZE_U32, true);

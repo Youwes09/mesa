@@ -29,10 +29,10 @@ struct hk_buffer {
     * share an allocation alias within its size and device budget limits.
     */
    struct agx_va *va;
-   bool apple9_index_va;
+   bool usc_index_va;
 
    /* Apple9 sparse residency: one byte per page, nonzero if bound. */
-   struct agx_bo *apple9_residency;
+   struct agx_bo *residency_table;
 
    /* Virtio resource id of bound implicit-sync (WSI) memory, or 0. */
    uint32_t implicit_sync_res;
@@ -42,12 +42,12 @@ struct hk_buffer {
  * byte of the page holding address A is at the result + (A >> page shift).
  */
 static inline uint64_t
-hk_buffer_apple9_residency(const struct hk_buffer *buffer)
+hk_buffer_residency(const struct hk_buffer *buffer)
 {
-   if (!buffer->apple9_residency)
+   if (!buffer->residency_table)
       return 0;
 
-   return buffer->apple9_residency->va->addr -
+   return buffer->residency_table->va->addr -
           (buffer->va->addr / AIL_PAGESIZE);
 }
 

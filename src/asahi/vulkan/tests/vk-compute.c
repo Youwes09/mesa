@@ -8,8 +8,8 @@
 #include <string.h>
 #include <vulkan/vulkan.h>
 #include "vk-test-device.h"
-#ifndef APPLE9_PROBE_COUNT
-#define APPLE9_PROBE_COUNT 257
+#ifndef PROBE_COUNT
+#define PROBE_COUNT 257
 #endif
 #define CHECK(x)                                                               \
    do {                                                                        \
@@ -84,7 +84,7 @@ main(int argc, char **argv)
    VkQueue queue;
    vkGetDeviceQueue(dev, qi, 0, &queue);
    enum {
-      COUNT = APPLE9_PROBE_COUNT,
+      COUNT = PROBE_COUNT,
       WORDS = (COUNT + 63) & ~63,
       BYTES = WORDS * 4
    };

@@ -298,14 +298,14 @@ is_attachment_stored(const VkRenderingAttachmentInfo *att)
 }
 
 static struct agx_ptr
-hk_apple9_usc_alloc(void *data, size_t size, size_t alignment)
+hk_usc_alloc_cb(void *data, size_t size, size_t alignment)
 {
    return hk_pool_usc_alloc(data, size, alignment);
 }
 
 /* Bytes of the tile allocation of a layout, before its alignment */
 static unsigned
-hk_apple9_tile_bytes(const struct agx_tilebuffer_layout *tib)
+hk_raw_tile_bytes(const struct agx_tilebuffer_layout *tib)
 {
    unsigned bytes = 0;
    for (unsigned rt = 0; rt < ARRAY_SIZE(tib->logical_format); ++rt) {
@@ -317,14 +317,14 @@ hk_apple9_tile_bytes(const struct agx_tilebuffer_layout *tib)
 
 /* Attachment textures for the background program, rt at texture 2 * rt */
 static uint64_t
-hk_apple9_render_sysvals(struct hk_cmd_buffer *cmd, bool layered)
+hk_bg_sysvals(struct hk_cmd_buffer *cmd, bool layered)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_rendering_state *render = &cmd->state.gfx.render;
    unsigned samples = MAX2(render->tilebuffer.nr_samples, 1);
 
    alignas(64) uint8_t sysvals[AGX_APPLE9_RUNTIME_SYSVAL_SIZE];
-   hk_apple9_compute_sysvals(dev, sysvals);
+   hk_init_compute_sysvals(dev, sysvals);
 
    for (unsigned rt = 0; rt < render->color_att_count; ++rt) {
       const struct hk_image_view *view = render->color_att[rt].iview;
@@ -332,7 +332,7 @@ hk_apple9_render_sysvals(struct hk_cmd_buffer *cmd, bool layered)
          continue;
 
       uint32_t info[5];
-      memcpy(info, view->apple9_render[layered].dimensions, 16);
+      memcpy(info, view->render_descriptors[layered].dimensions, 16);
       info[4] = samples;
       memcpy(sysvals + AGX_APPLE9_TEXTURE_INFO_OFFSET +
                 (2 * rt) * AGX_APPLE9_TEXTURE_INFO_STRIDE,
@@ -344,7 +344,7 @@ hk_apple9_render_sysvals(struct hk_cmd_buffer *cmd, bool layered)
 
 /* Target rt: texture 2 * rt, image rt, clear colour in push words 4 + 8 * rt */
 static struct hk_bg_eot
-hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
+hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
                         struct agx_bg_eot_key *key)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
@@ -367,11 +367,11 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
       uint8_t *entry = textures.cpu;
 
       if (key->op[rt] == AGX_BG_LOAD) {
-         if (!view || !view->apple9_render[layered].texture_valid)
+         if (!view || !view->render_descriptors[layered].texture_valid)
             goto unsupported;
 
          memcpy(entry + (2 * rt) * AGX_APPLE9_TEXTURE_TABLE_STRIDE,
-                view->apple9_render[layered].texture,
+                view->render_descriptors[layered].texture,
                 AGX_APPLE9_TEXTURE_TABLE_STRIDE);
       } else if (key->op[rt] == AGX_BG_CLEAR) {
          memcpy(push + 2 * (4 + 8 * rt),
@@ -382,10 +382,10 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
 
          /* Feedback-raw attachments store uncompressed, unlike the prepacked */
          if (view && (render->raw_color_mask & BITFIELD_BIT(rt))) {
-            if (!hk_apple9_image_view_eot(view, layered, true, store))
+            if (!hk_image_view_eot(view, layered, true, store))
                goto unsupported;
-         } else if (view && view->apple9_render[layered].store_valid) {
-            memcpy(store, view->apple9_render[layered].store,
+         } else if (view && view->render_descriptors[layered].store_valid) {
+            memcpy(store, view->render_descriptors[layered].store,
                    AGX_APPLE9_TEXTURE_TABLE_STRIDE);
          } else {
             goto unsupported;
@@ -421,7 +421,7 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
           p->resource_binding[i] != AGX_APPLE9_GRAPHICS_SYSVAL_BINDING)
          goto unsupported;
 
-      resources[i] = hk_apple9_render_sysvals(cmd, layered);
+      resources[i] = hk_bg_sysvals(cmd, layered);
       if (!resources[i])
          goto fail;
    }
@@ -441,9 +441,9 @@ hk_apple9_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    unsigned samples = key->tib.nr_samples;
    uint32_t launch;
    if (!agx_prepare_stage_launch(
-          &dev->dev, cmd, hk_apple9_usc_alloc, &stage, true, table,
-          textures.gpu, dev->apple9_fetch_sampler->va->addr, push_addr,
-          agx_launch_tile_bytes(hk_apple9_tile_bytes(&key->tib),
+          &dev->dev, cmd, hk_usc_alloc_cb, &stage, true, table,
+          textures.gpu, dev->fetch_sampler->va->addr, push_addr,
+          agx_launch_tile_bytes(hk_raw_tile_bytes(&key->tib),
                                        samples),
           samples, &launch))
       goto fail;
@@ -549,7 +549,7 @@ hk_build_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    }
 
    if (agx_has_launch_programs(&dev->dev))
-      return hk_apple9_launch_bg_eot(cmd, info, &key);
+      return hk_launch_bg_eot(cmd, info, &key);
 
    /* Begin building the pipeline */
    size_t usc_size = agx_usc_size(3 + HK_MAX_RTS);
@@ -753,7 +753,7 @@ hk_zls_control_make_raw(struct agx_zls_control_packed *packed)
       packed->opaque[i] &= ~compress.opaque[i];
 }
 
-/* HK_APPLE9_MERGE_RENDERS (default on; =0 disables): continue the hardware
+/* Render merging: continue the hardware
  * render of a render pass in the next render pass when nothing but attachment
  * barriers separates them and both use the same colour attachments. The render
  * covers the whole attachment whatever the render area, and tiles keep their
@@ -917,7 +917,7 @@ hk_render_merge_begin(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info)
           !memcmp(&key, &cmd->merge_key, sizeof(key));
 }
 
-/* HK_APPLE9_MERGE_RESUME (default on): a suspended render pass keeps its
+/* Resumed render merging: a suspended render pass keeps its
  * render open for the resuming one. Only state commands may come between
  * them, so the resuming pass continues the same render pass instance in one
  * hardware render: loads from the first pass, stores from the last. */
@@ -2585,7 +2585,7 @@ hk_draw_without_restart(struct hk_cmd_buffer *cmd, struct agx_draw draw,
  * fragment shader's layer reads zero unless the vertex shader writes it. A
  * vertex-written primitive shading rate would observe it too, once supported. */
 static bool
-hk_apple9_provoking_observed(struct hk_cmd_buffer *cmd)
+hk_provoking_observed(struct hk_cmd_buffer *cmd)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
@@ -2611,7 +2611,7 @@ hk_apple9_provoking_observed(struct hk_cmd_buffer *cmd)
  * Draw fans with an observable last provoking vertex as an unrolled triangle
  * list. */
 static struct agx_draw
-hk_apple9_unroll_fan(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_unroll_fan(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
 
@@ -2794,13 +2794,13 @@ static_assert(HK_MAX_VIEWPORTS == AGX_PPP_MAX_VIEWPORTS,
               "Vulkan viewport limit matches the PPP viewport block");
 
 static struct agx_ptr
-hk_apple9_context_alloc(void *data, size_t size, size_t alignment)
+hk_context_alloc_cb(void *data, size_t size, size_t alignment)
 {
    return hk_pool_context_alloc(data, size, alignment);
 }
 
 static enum agx_primitive
-hk_apple9_rast_primitive(enum mesa_prim prim)
+hk_rast_primitive(enum mesa_prim prim)
 {
    switch (prim) {
    case MESA_PRIM_POINTS:
@@ -2819,7 +2819,7 @@ hk_apple9_rast_primitive(enum mesa_prim prim)
 /* Sample positions for a draw: the application's when enabled for this
  * sample count, the standard ones otherwise. */
 static uint32_t
-hk_apple9_draw_sample_positions(const struct vk_dynamic_graphics_state *dyn,
+hk_draw_sample_positions(const struct vk_dynamic_graphics_state *dyn,
                                 unsigned samples)
 {
    return dyn->ms.sample_locations_enable && dyn->ms.sample_locations &&
@@ -2836,7 +2836,7 @@ hk_apple9_draw_sample_positions(const struct vk_dynamic_graphics_state *dyn,
  * indirect arguments).
  */
 static bool
-hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
+hk_launch_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
 {
    if (vk_command_buffer_has_error(&cmd->vk))
       return false;
@@ -2875,7 +2875,7 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
    if (!cmd->in_meta) {
       unsigned samples = MAX2(
          render->tilebuffer.nr_samples ?: dyn->ms.rasterization_samples, 1);
-      uint32_t positions = hk_apple9_draw_sample_positions(dyn, samples);
+      uint32_t positions = hk_draw_sample_positions(dyn, samples);
       if (cs->has_sample_locations && cs->ppp_multisamplectl != positions) {
          perf_debug(cmd, "Splitting Apple9 render: sample positions changed");
          hk_cmd_buffer_end_graphics(cmd);
@@ -2976,7 +2976,7 @@ hk_apple9_prepare_draw(struct hk_cmd_buffer *cmd, bool reads_buffers)
  * shader bindings or launch records. Callers resolve null bindings and check
  * the aperture before using this for either the full or cached draw path. */
 static void
-hk_apple9_set_index_fetch(struct agx_draw_pipeline *pipeline,
+hk_launch_set_index_fetch(struct agx_draw_pipeline *pipeline,
                           struct agx_draw draw, uint64_t buffer, uint64_t range,
                           uint64_t offset)
 {
@@ -2989,7 +2989,7 @@ hk_apple9_set_index_fetch(struct agx_draw_pipeline *pipeline,
 }
 
 static void
-hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
+hk_launch_emit_draw(struct hk_cs *cs,
                              const struct agx_draw_pipeline *pipeline,
                              struct agx_draw draw)
 {
@@ -3005,15 +3005,15 @@ hk_apple9_emit_ordinary_draw(struct hk_cs *cs,
 
 /* Record the final draw packet after its resources and pipeline are prepared. */
 static void
-hk_apple9_record_draw(struct hk_cs *cs,
+hk_launch_record_draw(struct hk_cs *cs,
                       const struct agx_draw_pipeline *pipeline,
                       struct agx_draw draw)
 {
-   hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
+   hk_launch_emit_draw(cs, pipeline, draw);
 }
 
 static void
-hk_apple9_account_draw(struct hk_cs *cs,
+hk_launch_account_draw(struct hk_cs *cs,
                        const struct agx_draw_pipeline *pipeline,
                        struct agx_draw draw, bool emulated)
 {
@@ -3033,7 +3033,7 @@ hk_apple9_account_draw(struct hk_cs *cs,
  * draws leave the root's draw_id unchanged: a multi-draw's identical draws
  * then reuse one root upload instead of uploading it per draw. */
 static bool
-hk_apple9_reads_draw_id(const struct hk_graphics_state *gfx)
+hk_stages_read_draw_id(const struct hk_graphics_state *gfx)
 {
    for (unsigned s = 0; s < ARRAY_SIZE(gfx->shaders); ++s) {
       if (s != MESA_SHADER_COMPUTE && gfx->shaders[s] &&
@@ -3051,7 +3051,7 @@ hk_put_push(uint16_t *push, unsigned uniform, const void *data, size_t size)
 
 /* Push words mirroring Apple8's reserved uniforms; draw params by address */
 uint64_t
-hk_apple9_push_words(struct hk_cmd_buffer *cmd, const struct hk_shader *s,
+hk_launch_push_words(struct hk_cmd_buffer *cmd, const struct hk_shader *s,
                      const struct hk_linked_shader *linked, uint64_t root)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
@@ -3100,7 +3100,7 @@ hk_apple9_push_words(struct hk_cmd_buffer *cmd, const struct hk_shader *s,
 
 /* Link a draw's stage pair: varying layout and per-provoking-vertex tables */
 static bool
-hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
+hk_launch_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
                       const struct hk_linked_shader *vs_linked,
                       const struct hk_shader *fs,
                       const struct hk_linked_shader *fs_linked)
@@ -3108,11 +3108,11 @@ hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    const struct agx_unlinked_uvs_layout *uvs = &vs->info.uvs;
-   struct agx_draw_stage *vertex = &cmd->apple9_stage[0];
-   struct agx_draw_stage *fragment = &cmd->apple9_stage[1];
+   struct agx_draw_stage *vertex = &cmd->draw_stages[0];
+   struct agx_draw_stage *fragment = &cmd->draw_stages[1];
 
-   *vertex = vs_linked->apple9_stage;
-   *fragment = fs_linked->apple9_stage;
+   *vertex = vs_linked->draw_stages;
+   *fragment = fs_linked->draw_stages;
 
    /* Varying groups as agx_assign_uvs orders them */
    uint64_t flat =
@@ -3163,7 +3163,7 @@ hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
    fragment->reads_primitive_id = primitive_id;
    fragment->reads_z = fs_linked->b.cf.reads_z;
 
-   return agx_link_draw_pipeline(&cmd->apple9_linked, vertex,
+   return agx_link_draw_pipeline(&cmd->draw_pipeline, vertex,
                                           fragment);
 }
 
@@ -3172,17 +3172,17 @@ hk_apple9_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
  * order and rebuild only the tables/launches that bind the changed root.
  */
 static bool
-hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+hk_launch_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                           struct agx_draw draw)
 {
-   if (!hk_apple9_draw_state_reusable(cmd, draw))
+   if (!hk_draw_record_reusable(cmd, draw))
       return false;
 
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct agx_draw_pipeline *pipeline =
-      &cmd->apple9_draw_state.pipeline;
+      &cmd->draw_cache.pipeline;
    if (draw.indexed) {
       uint64_t offset =
          (uint64_t)draw.start * agx_index_size_to_B(draw.index_size);
@@ -3190,7 +3190,7 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       if (address < dev->dev.shader_base ||
           address >= dev->dev.shader_base + (1ull << 32))
          return false;
-      hk_apple9_set_index_fetch(pipeline, draw, draw.index_buffer,
+      hk_launch_set_index_fetch(pipeline, draw, draw.index_buffer,
                                 draw.index_buffer_range_B, offset);
       pipeline->primitive_restart =
          cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
@@ -3200,9 +3200,9 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       pipeline->primitive_restart = false;
    }
    struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, false);
-   assert(cs && cs == cmd->apple9_prev_cs);
+   assert(cs && cs == cmd->draw_record_cs);
 
-   if (hk_apple9_reads_draw_id(gfx) && desc->root.draw.draw_id != draw_id) {
+   if (hk_stages_read_draw_id(gfx) && desc->root.draw.draw_id != draw_id) {
       desc->root.draw.draw_id = draw_id;
       desc->root_dirty = true;
    }
@@ -3216,23 +3216,23 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       if (root != gfx->root) {
          gfx->root = root;
          struct agx_draw_record *record =
-            &cmd->apple9_draw[!cmd->apple9_draw_current];
+            &cmd->draw_records[!cmd->draw_record_current];
 
          /* The push words hold the root address */
          const uint64_t tables[2] = {record->vertex_table,
                                      record->fragment_table};
          const uint64_t push[2] = {
-            hk_apple9_push_words(cmd, cmd->apple9_draw_state.shader[0],
-                                 cmd->apple9_draw_state.linked[0], root),
-            hk_apple9_push_words(cmd, cmd->apple9_draw_state.shader[1],
-                                 cmd->apple9_draw_state.linked[1], root),
+            hk_launch_push_words(cmd, cmd->draw_cache.shader[0],
+                                 cmd->draw_cache.linked[0], root),
+            hk_launch_push_words(cmd, cmd->draw_cache.shader[1],
+                                 cmd->draw_cache.linked[1], root),
          };
          if (!push[0] || !push[1])
             return true; /* The pool recorded the allocation failure. */
 
          if (!agx_update_draw_tables_alloc(
-                &dev->dev, cmd, hk_apple9_usc_alloc, cmd,
-                hk_apple9_context_alloc, pipeline, record, tables, push)) {
+                &dev->dev, cmd, hk_usc_alloc_cb, cmd,
+                hk_context_alloc_cb, pipeline, record, tables, push)) {
             vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
             return true;
          }
@@ -3245,13 +3245,13 @@ hk_apple9_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    }
 
    hk_ensure_cs_has_space(cmd, cs, 256);
-   hk_apple9_emit_ordinary_draw(cs, pipeline, draw);
-   hk_apple9_account_draw(cs, pipeline, draw, false);
+   hk_launch_emit_draw(cs, pipeline, draw);
+   hk_launch_account_draw(cs, pipeline, draw, false);
    return true;
 }
 
 static void
-hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     struct agx_draw draw)
 {
    if (vk_command_buffer_has_error(&cmd->vk))
@@ -3259,9 +3259,9 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    /* Geometry shaders can produce empty rasterization draws. */
    if (!agx_is_indirect(draw.b) && (!draw.b.count[0] || !draw.b.count[1]))
       return;
-   if (hk_apple9_try_cached_draw(cmd, draw_id, draw))
+   if (hk_launch_try_cached_draw(cmd, draw_id, draw))
       return;
-   cmd->apple9_draw_state.valid = false;
+   cmd->draw_cache.valid = false;
    const char *failure = NULL;
    VkResult failure_result = VK_ERROR_FEATURE_NOT_PRESENT;
    struct hk_shader *shaders[2] = {NULL, NULL};
@@ -3331,20 +3331,20 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          ? (gs_prim == MESA_PRIM_LINES || gs_prim == MESA_PRIM_LINE_STRIP)
          : (dyn->ia.primitive_topology >= VK_PRIMITIVE_TOPOLOGY_LINE_LIST &&
             dyn->ia.primitive_topology <= VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
-   if (cmd->apple9_linked_id[0] != linked[0]->apple9_stage.program_id ||
-       cmd->apple9_linked_id[1] != linked[1]->apple9_stage.program_id) {
-      if (!hk_apple9_link_stages(cmd, shaders[0], linked[0], shaders[1],
+   if (cmd->draw_pipeline_ids[0] != linked[0]->draw_stages.program_id ||
+       cmd->draw_pipeline_ids[1] != linked[1]->draw_stages.program_id) {
+      if (!hk_launch_link_stages(cmd, shaders[0], linked[0], shaders[1],
                                  linked[1])) {
-         cmd->apple9_linked_id[0] = cmd->apple9_linked_id[1] = 0;
+         cmd->draw_pipeline_ids[0] = cmd->draw_pipeline_ids[1] = 0;
          UNSUPPORTED("the vertex and fragment programs cannot be linked");
       }
-      cmd->apple9_linked_id[0] = linked[0]->apple9_stage.program_id;
-      cmd->apple9_linked_id[1] = linked[1]->apple9_stage.program_id;
-      agx_build_ppp_static(&cmd->apple9_linked, cmd->apple9_ppp_static);
-      cmd->apple9_linked.ppp_static = cmd->apple9_ppp_static;
+      cmd->draw_pipeline_ids[0] = linked[0]->draw_stages.program_id;
+      cmd->draw_pipeline_ids[1] = linked[1]->draw_stages.program_id;
+      agx_build_ppp_static(&cmd->draw_pipeline, cmd->draw_ppp_static);
+      cmd->draw_pipeline.ppp_static = cmd->draw_ppp_static;
    }
-   const struct agx_draw_stage *fragment = &cmd->apple9_stage[1];
-   struct agx_draw_pipeline pipeline = cmd->apple9_linked;
+   const struct agx_draw_stage *fragment = &cmd->draw_stages[1];
+   struct agx_draw_pipeline pipeline = cmd->draw_pipeline;
    /* Attachmentless render passes acquire their sample count from the first
     * drawing pipeline. Keep the native tile layout and submission state in
     * agreement with the fragment launch, including a pre-existing query CS.
@@ -3356,11 +3356,11 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    pipeline.samples = MAX2(gfx->render.tilebuffer.nr_samples, 1);
 
    /* The draw allocates the render's tile: its target formats, in order */
-   cmd->apple9_stage[1].render_targets = 0;
+   cmd->draw_stages[1].render_targets = 0;
    for (unsigned rt = 0; rt < ARRAY_SIZE(pipeline.color_formats); ++rt) {
       enum pipe_format format = gfx->render.tilebuffer.logical_format[rt];
       if (format != PIPE_FORMAT_NONE && !gfx->render.tilebuffer.spilled[rt])
-         pipeline.color_formats[cmd->apple9_stage[1].render_targets++] = format;
+         pipeline.color_formats[cmd->draw_stages[1].render_targets++] = format;
    }
    static const uint8_t primitives[] = {
       AGX_PRIMITIVE_POINTS,         AGX_PRIMITIVE_LINES,
@@ -3368,10 +3368,10 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       AGX_PRIMITIVE_TRIANGLE_STRIP, AGX_PRIMITIVE_TRIANGLE_FAN,
    };
    /* Mesa meta rectangles are already expanded to two ordinary triangles. */
-   pipeline.primitive = emulated ? hk_apple9_rast_primitive(gs_prim)
+   pipeline.primitive = emulated ? hk_rast_primitive(gs_prim)
                         : dyn->ia.primitive_topology ==
                                  VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA ||
-                              gfx->apple9_fan_unrolled
+                              gfx->fan_unrolled
                            ? AGX_PRIMITIVE_TRIANGLES
                            : primitives[dyn->ia.primitive_topology];
    /* Emulated stages emit their primitives for the same provoking mode.
@@ -3380,7 +3380,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    const bool native_fan =
       !mesh && !gs && !tes &&
       dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
-      !gfx->apple9_fan_unrolled;
+      !gfx->fan_unrolled;
    pipeline.flatshade_first =
       dyn->rs.provoking_vertex != VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ||
       native_fan;
@@ -3408,7 +3408,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       if (pipeline.index_buffer < dev->dev.shader_base ||
           pipeline.index_buffer >= dev->dev.shader_base + (1ull << 32))
          UNSUPPORTED("the index buffer is outside the shader window");
-      hk_apple9_set_index_fetch(&pipeline, draw, index_buffer, index_range,
+      hk_launch_set_index_fetch(&pipeline, draw, index_buffer, index_range,
                                 offset);
       pipeline.primitive_restart =
          emulated ? draw.restart : dyn->ia.primitive_restart_enable;
@@ -3424,16 +3424,16 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    cs->tib = gfx->render.tilebuffer;
    const struct vk_dynamic_graphics_state *ms_dyn =
       &cmd->vk.dynamic_graphics_state;
-   gfx->apple9_sample_positions =
-      hk_apple9_draw_sample_positions(ms_dyn, pipeline.samples);
-   /* hk_apple9_prepare_draw committed the render's positions; meta draws
+   gfx->sample_positions =
+      hk_draw_sample_positions(ms_dyn, pipeline.samples);
+   /* hk_launch_prepare_draw committed the render's positions; meta draws
     * only fill them in for a render that has none yet. */
    if (!cs->has_sample_locations)
-      cs->ppp_multisamplectl = gfx->apple9_sample_positions;
+      cs->ppp_multisamplectl = gfx->sample_positions;
    hk_reserve_scratch(cmd, cs, shaders[0]);
    hk_reserve_scratch(cmd, cs, shaders[1]);
    struct agx_draw_record *record =
-      &cmd->apple9_draw[cmd->apple9_draw_current];
+      &cmd->draw_records[cmd->draw_record_current];
    agx_draw_record_reset(record);
    /* Rasterizer discard pipelines may omit viewport/scissor state entirely.
     * Supply harmless hardware state without consulting those ignored API
@@ -3514,7 +3514,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          cfg.max_z = dyn->rs.depth_clamp_enable ? clamp_max : 1;
       }
       /* The scissor range bounds fixed-function depth only; shaders clamp
-       * their own depth exports (hk_apple9_clamp_depth_export). */
+       * their own depth exports (hk_clamp_depth_export). */
       if (v == 0) {
          gfx->descriptors.root.draw.depth_clamp[0] =
             dyn->rs.depth_clamp_enable ? clamp_min : 0;
@@ -3604,7 +3604,7 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       !shaders[1]->b.info.early_fragment_tests;
    gfx->descriptors.root.draw.force_never_in_shader = force_never_in_shader;
    /* The shader fails a forced NEVER test itself
-    * (hk_apple9_clamp_depth_export). */
+    * (hk_clamp_depth_export). */
    VkCompareOp depth_compare = !depth_test ? VK_COMPARE_OP_ALWAYS
                                : force_never_in_shader
                                   ? VK_COMPARE_OP_LESS
@@ -3656,23 +3656,23 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    record->pixel_interlock = fragment->pixel_interlock;
    record->flatshade_first = pipeline.flatshade_first;
    gfx->descriptors.root.draw.api_sample_mask = dyn->ms.sample_mask;
-   gfx->descriptors.root.draw.ppp_multisamplectl = gfx->apple9_sample_positions;
+   gfx->descriptors.root.draw.ppp_multisamplectl = gfx->sample_positions;
    gfx->descriptors.root.draw.samples_log2 = util_logbase2(pipeline.samples);
    gfx->descriptors.root.draw.clip_z_coeff =
       dyn->vp.depth_clip_negative_one_to_one ? 0.5f : 0.0f;
-   if (hk_apple9_reads_draw_id(gfx))
+   if (hk_stages_read_draw_id(gfx))
       gfx->descriptors.root.draw.draw_id = draw_id;
    gfx->descriptors.root_dirty = true;
    hk_cmd_buffer_flush_push_descriptors(cmd, &gfx->descriptors);
    gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
    for (unsigned stage = 0; stage < 2; ++stage) {
-      const struct agx_draw_stage *s = &cmd->apple9_stage[stage];
+      const struct agx_draw_stage *s = &cmd->draw_stages[stage];
       uint64_t sysvals = 0;
-      hk_apple9_upload_textures(cmd, &record->texture_table[stage],
+      hk_upload_texture_tables(cmd, &record->texture_table[stage],
                                 &record->sampler_table[stage], &sysvals);
 
       record->push[stage] =
-         hk_apple9_push_words(cmd, shaders[stage], linked[stage], gfx->root);
+         hk_launch_push_words(cmd, shaders[stage], linked[stage], gfx->root);
       if (!record->push[stage])
          FAIL(VK_ERROR_OUT_OF_DEVICE_MEMORY, "out of memory");
 
@@ -3692,41 +3692,41 @@ hk_apple9_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          record->vertex_table = table;
    }
    const struct agx_draw_record *previous =
-      cmd->apple9_prev_cs == cs ? &cmd->apple9_draw[!cmd->apple9_draw_current]
+      cmd->draw_record_cs == cs ? &cmd->draw_records[!cmd->draw_record_current]
                                 : NULL;
    bool prepared = agx_prepare_draw_record_alloc(
-      &dev->dev, cmd, hk_apple9_usc_alloc, cmd, hk_apple9_context_alloc,
+      &dev->dev, cmd, hk_usc_alloc_cb, cmd, hk_context_alloc_cb,
       &pipeline, record, previous);
    if (!prepared)
       UNSUPPORTED("the draw state cannot be prepared");
-   cmd->apple9_draw_current = !cmd->apple9_draw_current;
-   cmd->apple9_prev_cs = cs;
+   cmd->draw_record_current = !cmd->draw_record_current;
+   cmd->draw_record_cs = cs;
    pipeline.ppp = record->ppp;
    pipeline.ppp_viewport_offset = record->ppp_viewport_offset;
    pipeline.ppp_viewport_words = record->ppp_viewport_words;
    pipeline.vertex_launch = record->launch[0] / 0x40;
    pipeline.pipeline_word = 0x01000000;
    hk_ensure_cs_has_space(cmd, cs, 256);
-   hk_apple9_record_draw(cs, &pipeline, draw);
-   hk_apple9_account_draw(cs, &pipeline, draw, gs || tes || mesh);
+   hk_launch_record_draw(cs, &pipeline, draw);
+   hk_launch_account_draw(cs, &pipeline, draw, gs || tes || mesh);
    /* Only ordinary single-view draws reuse prepared state. Other paths
     * still consume dynamic state in their software-stage lowering. */
-   if (hk_apple9_draw_cache_supported(cmd, draw)) {
-      cmd->apple9_draw_state.valid = true;
-      cmd->apple9_draw_state.render_gen = gfx->render_gen;
-      cmd->apple9_draw_state.first_vertex =
+   if (hk_launch_draw_cache_supported(cmd, draw)) {
+      cmd->draw_cache.valid = true;
+      cmd->draw_cache.render_gen = gfx->render_gen;
+      cmd->draw_cache.first_vertex =
          draw.indexed ? draw.index_bias : draw.start;
-      cmd->apple9_draw_state.base_instance = draw.start_instance;
-      cmd->apple9_draw_state.pipeline = pipeline;
+      cmd->draw_cache.base_instance = draw.start_instance;
+      cmd->draw_cache.pipeline = pipeline;
       for (unsigned stage = 0; stage < 2; ++stage) {
-         cmd->apple9_draw_state.shader[stage] = shaders[stage];
-         cmd->apple9_draw_state.linked[stage] = linked[stage];
+         cmd->draw_cache.shader[stage] = shaders[stage];
+         cmd->draw_cache.linked[stage] = linked[stage];
       }
       /* Every dynamic, hk and shader dirty bit is consumed here, so the
        * next clean draw can reuse this state. G16 has no other dirty-bit
        * readers after this point (only shader resolution and the sysval
        * upload, both above); a new one must read its bits before this or
-       * invalidate apple9_draw_state itself. */
+       * invalidate draw_cache itself. */
       vk_dynamic_graphics_state_clear_dirty(dyn);
       gfx->shaders_dirty = 0;
       gfx->dirty = 0;
@@ -3741,14 +3741,14 @@ fail:
 }
 
 void
-hk_apple9_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+hk_launch_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                struct agx_draw draw)
 {
-   hk_apple9_draw_impl(cmd, draw_id, draw);
+   hk_launch_draw_impl(cmd, draw_id, draw);
 }
 /* Run a software pre-rasterization stage, linked as s, as compute */
 static void
-hk_apple9_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
+hk_launch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
                            struct hk_linked_shader *linked,
                            struct agx_grid grid)
 {
@@ -3763,12 +3763,12 @@ hk_apple9_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
    if (!cs)
       return;
 
-   uint64_t push = hk_apple9_push_words(cmd, s, linked, cmd->state.gfx.root);
+   uint64_t push = hk_launch_push_words(cmd, s, linked, cmd->state.gfx.root);
    if (!push)
       return;
 
    hk_reserve_scratch(cmd, cs, s);
-   hk_apple9_dispatch(cmd, cs, &linked->b.bo->shader_body,
+   hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body,
                       &linked->b.program.profile, grid, cmd->state.gfx.root,
                       push, s);
 }
@@ -3777,7 +3777,7 @@ hk_apple9_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
  * primitive list of the remaining vertices through a generated index buffer.
  */
 static struct agx_draw
-hk_apple9_draw_without_adj(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_draw_without_adj(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
    enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
@@ -3819,7 +3819,7 @@ hk_apple9_draw_without_adj(struct hk_cmd_buffer *cmd, struct agx_draw draw)
  * inside a word.
  */
 static bool
-hk_apple9_needs_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_needs_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
 
@@ -3849,7 +3849,7 @@ hk_apple9_needs_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 }
 
 static struct agx_draw
-hk_apple9_robust_index(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_robust_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    uint64_t in_draw = draw.b.ptr;
    if (!agx_is_indirect(draw.b)) {
@@ -3870,7 +3870,7 @@ hk_apple9_robust_index(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 }
 
 static void
-hk_apple9_merge_tess_info(struct hk_cmd_buffer *cmd)
+hk_merge_tess_info(struct hk_cmd_buffer *cmd)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_api_shader *tcs_api = gfx->shaders[MESA_SHADER_TESS_CTRL];
@@ -3891,7 +3891,7 @@ hk_apple9_merge_tess_info(struct hk_cmd_buffer *cmd)
  * domain.
  */
 static struct agx_draw
-hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_launch_tess_stage(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    /* Largest direct draw, in patches x instances, that is batched. */
    const unsigned max_batch_patches = 2048;
@@ -4000,10 +4000,10 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
 
    HK_TESS_LANE(0);
-   hk_apple9_dispatch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX],
+   hk_launch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX],
                               grid_vs);
    HK_TESS_LANE(1);
-   hk_apple9_dispatch_prerast(cmd, tcs, tcs->only_linked, grid_tcs);
+   hk_launch_prerast(cmd, tcs, tcs->only_linked, grid_tcs);
 
    if (batch) {
       /* The flush runs the count, prefix sum and emit passes of every folded
@@ -4061,7 +4061,7 @@ hk_apple9_launch_tess(struct hk_cmd_buffer *cmd, struct agx_draw draw)
  * returning the draw that rasterizes the geometry shader output.
  */
 static struct agx_draw
-hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+hk_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
@@ -4150,7 +4150,7 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    /* The stage before the GS: the API VS linked with its prolog, or the TES */
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
-   hk_apple9_dispatch_prerast(cmd, vs,
+   hk_launch_prerast(cmd, vs,
                               vs->info.stage == MESA_SHADER_VERTEX
                                  ? gfx->linked[MESA_SHADER_VERTEX]
                                  : vs->only_linked,
@@ -4159,18 +4159,18 @@ hk_apple9_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    if (xfb_or_queries) {
       if (count->info.gs.count_words)
-         hk_apple9_dispatch_prerast(cmd, count, count->only_linked, grid_gs);
+         hk_launch_prerast(cmd, count, count->only_linked, grid_gs);
 
       if (count->info.gs.prefix_sum) {
          libagx_prefix_sum_geom(cmd, agx_1d(1024 * count->info.gs.count_words),
                                 AGX_BARRIER_ALL | AGX_PREGFX, geometry_params);
       }
 
-      hk_apple9_dispatch_prerast(cmd, pre_gs, pre_gs->only_linked, agx_1d(1));
+      hk_launch_prerast(cmd, pre_gs, pre_gs->only_linked, agx_1d(1));
    }
 
    cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[1] : NULL;
-   hk_apple9_dispatch_prerast(cmd, main, main->only_linked, grid_gs);
+   hk_launch_prerast(cmd, main, main->only_linked, grid_gs);
    cmd->tess_batch.capture = NULL;
    if (batch)
       cmd->tess_batch.draws++;
@@ -4387,7 +4387,7 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
       return ent->data;
 
    struct agx_device_key dev_key = agx_gather_device_key(&dev->dev);
-   bool apple9 = dev_key.shader_isa == AGX_SHADER_ISA_APPLE9;
+   bool launch_programs = agx_has_launch_programs(&dev->dev);
 
    nir_builder b = nir_builder_init_simple_shader(
       0, agx_nir_options_for_isa(dev_key.shader_isa), NULL);
@@ -4400,8 +4400,8 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
    struct agx_shader_key backend_key = {
       .dev = dev_key,
       .secondary = true,
-      .no_stop = !stop || apple9,
-      .apple9_graphics_abi = apple9,
+      .no_stop = !stop || launch_programs,
+      .apple9_graphics_abi = launch_programs,
    };
 
    /* We always use dynamic sample shading in the GL driver. Indicate that. */
@@ -4528,7 +4528,7 @@ hk_get_fast_linked_locked_fs(struct hk_device *dev, struct hk_shader *shader,
       hk_fast_link(dev, true, shader, prolog, epilog, key->nr_samples_shaded);
 
    /* The epilog may write depth the main shader does not, see late_zs */
-   linked->apple9_stage.writes_depth |= key->epilog.link.write_z;
+   linked->draw_stages.writes_depth |= key->epilog.link.write_z;
 
    struct hk_fast_link_key *key_clone =
       ralloc_memdup(shader->linked.ht, key, sizeof(*key));
@@ -5364,7 +5364,7 @@ hk_flush_shader_parts(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
       enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
 
-      /* Apple9 unrolls adjacency without GS, see hk_apple9_draw_without_adj */
+      /* Apple9 unrolls adjacency without GS, see hk_draw_without_adj */
       if (mesa_prim_has_adjacency(prim) &&
           !(agx_is_apple9(&dev->dev) && key.prolog.hw)) {
          if (draw.restart) {
@@ -6282,7 +6282,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       if (!hk_feedback_prepare_draw(cmd))
          return;
       /* Index fetch and indirect arguments are buffer reads of tiling. */
-      if (!hk_apple9_prepare_draw(cmd,
+      if (!hk_launch_prepare_draw(cmd,
                                   agx_is_indirect(draw_.b) || draw_.indexed))
          return;
       if (cmd->feedback_raw.size) {
@@ -6312,7 +6312,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
          hk_ia_update(cmd, draw_, ia_verts, ia_prims, vs_inv, c_prims, c_inv);
       }
       if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
-         hk_apple9_merge_tess_info(cmd);
+         hk_merge_tess_info(cmd);
       hk_handle_passthrough_gs(cmd, draw_);
       hk_flush_shaders(cmd);
       if (cmd->state.gfx.descriptors.push_dirty)
@@ -6321,18 +6321,18 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
          return;
       /* Geometry and tessellation emulation decompose fans themselves. When
        * nothing observes the provoking vertex, the fan is drawn natively from
-       * its first vertex, see hk_apple9_draw_impl. */
-      cmd->state.gfx.apple9_fan_unrolled =
+       * its first vertex, see hk_launch_draw_impl. */
+      cmd->state.gfx.fan_unrolled =
          dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
          dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
          !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
          !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-         hk_apple9_provoking_observed(cmd);
-      if (cmd->state.gfx.apple9_fan_unrolled)
-         draw_ = hk_apple9_unroll_fan(cmd, draw_);
+         hk_provoking_observed(cmd);
+      if (cmd->state.gfx.fan_unrolled)
+         draw_ = hk_unroll_fan(cmd, draw_);
       /* Software stages read the draw ID from the root table they upload,
        * when one of the bound stages they run reads it. */
-      if (hk_apple9_reads_draw_id(&cmd->state.gfx) &&
+      if (hk_stages_read_draw_id(&cmd->state.gfx) &&
           cmd->state.gfx.descriptors.root.draw.draw_id != draw_id) {
          cmd->state.gfx.descriptors.root.draw.draw_id = draw_id;
          cmd->state.gfx.descriptors.root_dirty = true;
@@ -6345,16 +6345,16 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
          struct agx_draw draw = draw_;
          hk_flush_shader_parts(cmd, draw_id, draw);
          if (adjacency)
-            draw = hk_apple9_draw_without_adj(cmd, draw);
+            draw = hk_draw_without_adj(cmd, draw);
          else if (!cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
                   !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-                  hk_apple9_needs_index_copy(cmd, draw))
-            draw = hk_apple9_robust_index(cmd, draw);
+                  hk_needs_index_copy(cmd, draw))
+            draw = hk_robust_index_copy(cmd, draw);
          if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
-            draw = hk_apple9_launch_tess(cmd, draw);
+            draw = hk_launch_tess_stage(cmd, draw);
          if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
-            draw = hk_apple9_launch_gs(cmd, draw);
-         hk_apple9_draw(cmd, draw_id, draw);
+            draw = hk_launch_gs(cmd, draw);
+         hk_launch_draw(cmd, draw_id, draw);
       }
       return;
    }
@@ -6551,7 +6551,7 @@ hk_mesh_stat(struct hk_cmd_buffer *cmd, VkQueryPipelineStatisticFlagBits stat)
  * from a count buffer, draws past the count at count_addr are empty.
  */
 static void
-hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
+hk_launch_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     const uint32_t *direct, uint64_t grid_addr,
                     uint64_t count_addr)
 {
@@ -6574,7 +6574,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    if (!mesh)
       return;
 
-   if (!hk_apple9_prepare_draw(cmd, !direct || count_addr))
+   if (!hk_launch_prepare_draw(cmd, !direct || count_addr))
       return;
    struct hk_shader *main = hk_only_variant(mesh);
    struct hk_shader *task_main = task ? hk_only_variant(task) : NULL;
@@ -6665,7 +6665,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       }
 
       if (task_main) {
-         hk_apple9_dispatch_prerast(
+         hk_launch_prerast(
             cmd, task_main, task_main->only_linked,
             agx_grid_indirect(params.gpu + offsetof(struct libagx_mesh_params,
                                                     task_dispatch)));
@@ -6676,13 +6676,13 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 
       struct agx_draw draw;
       if (cpu_setup) {
-         hk_apple9_dispatch_prerast(cmd, main, main->only_linked,
+         hk_launch_prerast(cmd, main, main->only_linked,
                                     agx_3d(direct[0] * profile->local_size[0],
                                            direct[1] * profile->local_size[1],
                                            direct[2] * profile->local_size[2]));
          draw = (struct agx_draw){.b = agx_3d(direct_count * vertices, 1, 1)};
       } else {
-         hk_apple9_dispatch_prerast(
+         hk_launch_prerast(
             cmd, main, main->only_linked,
             agx_grid_indirect(params.gpu + offsetof(struct libagx_mesh_params,
                                                     mesh_dispatch)));
@@ -6691,7 +6691,7 @@ hk_apple9_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       }
 
       hk_flush_shader_parts(cmd, draw_id, draw);
-      hk_apple9_draw(cmd, draw_id, draw);
+      hk_launch_draw(cmd, draw_id, draw);
    }
 }
 
@@ -6702,7 +6702,7 @@ hk_CmdDrawMeshTasksEXT(VkCommandBuffer commandBuffer, uint32_t groupCountX,
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    const uint32_t groups[3] = {groupCountX, groupCountY, groupCountZ};
 
-   hk_apple9_draw_mesh(cmd, 0, groups, 0, 0);
+   hk_launch_draw_mesh(cmd, 0, groups, 0, 0);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -6714,7 +6714,7 @@ hk_CmdDrawMeshTasksIndirectEXT(VkCommandBuffer commandBuffer, VkBuffer _buffer,
    VK_FROM_HANDLE(hk_buffer, buffer, _buffer);
 
    for (uint32_t i = 0; i < drawCount; ++i) {
-      hk_apple9_draw_mesh(cmd, i, NULL,
+      hk_launch_draw_mesh(cmd, i, NULL,
                           hk_buffer_address_ro(buffer, offset + i * stride), 0);
    }
 }
@@ -6732,7 +6732,7 @@ hk_CmdDrawMeshTasksIndirectCountEXT(VkCommandBuffer commandBuffer,
 
    uint64_t count = hk_buffer_address_ro(count_buffer, countBufferOffset);
    for (uint32_t i = 0; i < maxDrawCount; ++i) {
-      hk_apple9_draw_mesh(cmd, i, NULL,
+      hk_launch_draw_mesh(cmd, i, NULL,
                           hk_buffer_address_ro(buffer, offset + i * stride),
                           count);
    }

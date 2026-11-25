@@ -145,7 +145,7 @@ hk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
          flags |= AGX_BO_SHAREABLE;
       if (type->propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
          flags |= AGX_BO_WRITEBACK;
-      if (pAllocateInfo->memoryTypeIndex == pdev->apple9_descriptor_mem_type)
+      if (pAllocateInfo->memoryTypeIndex == pdev->descriptor_mem_type)
          flags |= AGX_BO_LOW_VA;
 
       /* D3D12 places resources in heaps at 64-KiB granularity and
@@ -280,14 +280,14 @@ hk_memory_index_address(struct hk_device *dev, struct hk_device_memory *mem)
    if (!mem->index_va) {
       uint64_t size = align64(mem->vk.size, AIL_PAGESIZE);
       uint64_t charge = size + dev->dev.guard_size;
-      uint64_t used = p_atomic_read(&dev->apple9_index_alias_bytes);
+      uint64_t used = p_atomic_read(&dev->index_alias_bytes);
       for (;;) {
          if (charge > HK_INDEX_ALIAS_BUDGET ||
              used > HK_INDEX_ALIAS_BUDGET - charge) {
             simple_mtx_unlock(&mem->index_va_lock);
             return 0;
          }
-         uint64_t previous = p_atomic_cmpxchg(&dev->apple9_index_alias_bytes,
+         uint64_t previous = p_atomic_cmpxchg(&dev->index_alias_bytes,
                                               used, used + charge);
          if (previous == used)
             break;
@@ -303,7 +303,7 @@ hk_memory_index_address(struct hk_device *dev, struct hk_device_memory *mem)
             agx_va_free(&dev->dev, va, true);
       }
       if (!mem->index_va)
-         p_atomic_add(&dev->apple9_index_alias_bytes, -((int64_t)charge));
+         p_atomic_add(&dev->index_alias_bytes, -((int64_t)charge));
    }
    uint64_t addr = mem->index_va ? mem->index_va->addr : 0;
    simple_mtx_unlock(&mem->index_va_lock);
@@ -320,7 +320,7 @@ hk_memory_free_index_va(struct hk_device *dev, struct hk_device_memory *mem)
 
    uint64_t charge = mem->index_va->size_B;
    agx_va_free(&dev->dev, mem->index_va, true);
-   p_atomic_add(&dev->apple9_index_alias_bytes, -((int64_t)charge));
+   p_atomic_add(&dev->index_alias_bytes, -((int64_t)charge));
    mem->index_va = NULL;
 }
 

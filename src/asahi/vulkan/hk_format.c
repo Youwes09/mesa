@@ -26,7 +26,7 @@
  * https://docs.vulkan.org/spec/latest/chapters/formats.html
  */
 bool
-hk_apple9_storage_format_supported(VkFormat format)
+hk_usc_storage_format_supported(VkFormat format)
 {
    switch (format) {
    case VK_FORMAT_R8_UNORM:

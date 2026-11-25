@@ -444,8 +444,8 @@ hk_flush_bind(struct hk_bind_builder *b)
     * semantics, using the hardware sparse support.
     */
    /* Apple9 shaders instead look up residency by page in the resource. */
-   if (b->buffer && b->buffer->apple9_residency != NULL) {
-      uint8_t *r = agx_bo_map(b->buffer->apple9_residency);
+   if (b->buffer && b->buffer->residency_table != NULL) {
+      uint8_t *r = agx_bo_map(b->buffer->residency_table);
       uint64_t first_page = b->resourceOffset / AIL_PAGESIZE;
       uint64_t end_page =
          MIN2(DIV_ROUND_UP(b->resourceOffset + b->size, AIL_PAGESIZE),
@@ -455,9 +455,9 @@ hk_flush_bind(struct hk_bind_builder *b)
          r[page] = b->mem != NULL;
    }
 
-   if (b->image && b->image->planes[0].apple9_residency != NULL) {
+   if (b->image && b->image->planes[0].residency_table != NULL) {
       struct agx_apple9_residency *r =
-         agx_bo_map(b->image->planes[0].apple9_residency);
+         agx_bo_map(b->image->planes[0].residency_table);
       uint64_t first_page = ail_bytes_to_pages(b->resourceOffset);
       uint64_t end_page =
          MIN2(first_page + ail_bytes_to_pages(b->size), r->pages);

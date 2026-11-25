@@ -120,10 +120,10 @@ hk_physical_device_compiler_flags(const struct hk_physical_device *pdev)
 {
    /* Soft faults follow a kernel parameter, so they can change between
     * boots with the same cache. */
-   return pdev->dev.debug | ((uint64_t)pdev->apple9_layered_2d << 63) |
+   return pdev->dev.debug | ((uint64_t)pdev->layered_2d_views << 63) |
           ((uint64_t)agx_has_soft_fault((struct agx_device *)&pdev->dev)
            << 62) |
-          ((uint64_t)pdev->apple9_d3d_mip_rounding << 61);
+          ((uint64_t)pdev->d3d_mip_rounding << 61);
 }
 
 const nir_shader_compiler_options *
@@ -375,7 +375,7 @@ hk_make_feature_key(const struct vk_features *feats)
  * barycentrics when shading per sample.
  */
 static bool
-hk_apple9_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
+hk_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
                                UNUSED void *data)
 {
    nir_def *sample;
@@ -402,7 +402,7 @@ hk_apple9_lower_bary_to_sample(nir_builder *b, nir_intrinsic_instr *intr,
  * apart.
  */
 static bool
-hk_apple9_interpolates_off_center(nir_shader *nir)
+hk_interpolates_off_center(nir_shader *nir)
 {
    if (nir->info.fs.uses_sample_shading)
       return true;
@@ -428,7 +428,7 @@ hk_apple9_interpolates_off_center(nir_shader *nir)
 }
 
 static void
-hk_apple9_write_primitive_id(nir_shader *s)
+hk_write_primitive_id(nir_shader *s)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(s);
    nir_builder b = nir_builder_at(nir_after_impl(impl));
@@ -651,7 +651,7 @@ lower_load_global_bounded(nir_builder *b, nir_intrinsic_instr *intr,
 
 /* Natural alignment keeps a partly in-bounds merged load within one page */
 static bool
-hk_apple9_vectorize_cb(unsigned align_mul, unsigned align_offset,
+hk_vectorize_cb(unsigned align_mul, unsigned align_offset,
                        unsigned bit_size, unsigned num_components,
                        int64_t hole_size, nir_intrinsic_instr *low,
                        nir_intrinsic_instr *high, void *data)
@@ -767,14 +767,15 @@ lower_load_global_constant_offset_instr(nir_builder *b,
    return true;
 }
 
-/* Lower bounded and offset global loads. Apple9 checks each component of a
- * merged vector separately. */
+/* Lower bounded and offset global loads, checking each component of a merged
+ * vector separately if per_component. */
 bool
-hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault, bool apple9)
+hk_lower_bounded_global_loads(nir_shader *nir, bool soft_fault,
+                              bool per_component)
 {
    struct hk_bounded_lowering bounded = {
       .soft_fault = soft_fault,
-      .per_component = apple9,
+      .per_component = per_component,
    };
    return nir_shader_intrinsics_pass(nir,
                                      lower_load_global_constant_offset_instr,
@@ -1060,7 +1061,7 @@ lower_viewport_fs(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
  * value. The viewport index is an ordinary flat varying.
  */
 static bool
-hk_apple9_lower_layer_viewport_fs(nir_builder *b, nir_intrinsic_instr *intr,
+hk_lower_layer_viewport_fs(nir_builder *b, nir_intrinsic_instr *intr,
                                   UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_input)
@@ -1208,7 +1209,7 @@ hk_lower_per_primitive_input(nir_builder *b, nir_intrinsic_instr *intr,
    return true;
 }
 
-/* With hk_apple9_d3d_mip_rounding (driconf, set for vkd3d-proton), add the
+/* With hk_d3d_mip_rounding (driconf, set for vkd3d-proton), add the
  * sampler's nudge to explicit LODs, so a NEAREST mip selection exactly
  * halfway between levels rounds up as in D3D. The nudge is zero for other
  * mipmap modes, see hk_CreateSampler.
@@ -1234,7 +1235,7 @@ hk_lower_d3d_txl_rounding(nir_builder *b, nir_tex_instr *tex, void *data)
    return true;
 }
 
-/* With hk_apple9_arrayed_2d_views (driconf, set for vkd3d-proton), sampled
+/* With hk_arrayed_2d_views (driconf, set for vkd3d-proton), sampled
  * 1D and 2D views are one-layer 2D arrays on Apple9 (see pack_texture), since
  * its texture instructions must match the descriptor's arrayness. Sample
  * every non-array 2D texture, 1D having been lowered to 2D, as layer 0 of an
@@ -1242,7 +1243,7 @@ hk_lower_d3d_txl_rounding(nir_builder *b, nir_tex_instr *tex, void *data)
  * declaration bound to a 2D view now honours its layer and level.
  */
 static bool
-hk_apple9_lower_tex_2d_as_array(nir_builder *b, nir_tex_instr *tex, void *data)
+hk_lower_tex_2d_as_array(nir_builder *b, nir_tex_instr *tex, void *data)
 {
    if (tex->is_array || (tex->sampler_dim != GLSL_SAMPLER_DIM_2D &&
                          tex->sampler_dim != GLSL_SAMPLER_DIM_MS))
@@ -1335,14 +1336,14 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
     * create lod_bias instructions.
     */
    /* Apple9 bounds-checks buffer images in software against their element
-    * count (hk_apple9_lower_storage_image). */
+    * count (hk_lower_storage_image). */
    NIR_PASS(_, nir, agx_nir_lower_texture_early, true /* support_lod_bias */,
             agx_is_apple9(&dev->dev));
-   if (hk_device_physical(dev)->apple9_d3d_mip_rounding)
+   if (hk_device_physical(dev)->d3d_mip_rounding)
       NIR_PASS(_, nir, nir_shader_tex_pass, hk_lower_d3d_txl_rounding,
                nir_metadata_control_flow, NULL);
-   if (hk_device_physical(dev)->apple9_layered_2d)
-      NIR_PASS(_, nir, nir_shader_tex_pass, hk_apple9_lower_tex_2d_as_array,
+   if (hk_device_physical(dev)->layered_2d_views)
+      NIR_PASS(_, nir, nir_shader_tex_pass, hk_lower_tex_2d_as_array,
                nir_metadata_control_flow, NULL);
 
    struct hk_instance *instance = hk_physical_device_instance(
@@ -1397,7 +1398,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
                &(const nir_load_store_vectorize_options){
                   .modes = nir_var_mem_global,
                   .bounds_checked_modes = nir_var_mem_global,
-                  .callback = hk_apple9_vectorize_cb,
+                  .callback = hk_vectorize_cb,
                });
    }
 
@@ -1477,7 +1478,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       if (agx_is_apple9(&dev->dev)) {
          NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-                  hk_apple9_lower_layer_viewport_fs, nir_metadata_control_flow,
+                  hk_lower_layer_viewport_fs, nir_metadata_control_flow,
                   NULL);
       }
 
@@ -1520,18 +1521,18 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
  * most recently uploaded bodies referenced, so a body may outlive its last
  * shader until evicted.
  */
-#define HK_APPLE9_BODY_CACHE_SIZE 4096
+#define HK_BODY_CACHE_SIZE 4096
 /* Match the old count limit for minimum-size M4 BOs, but do not retain an
  * unbounded number of bytes when shader bodies span several pages. */
-#define HK_APPLE9_BODY_CACHE_BYTES (64ull * 1024 * 1024)
+#define HK_BODY_CACHE_BYTES (64ull * 1024 * 1024)
 
-#define HK_APPLE9_BODY_SLAB_SIZE (64 * 1024)
-#define HK_APPLE9_BODY_ALIGNMENT 64
+#define HK_BODY_SLAB_SIZE (64 * 1024)
+#define HK_BODY_ALIGNMENT 64
 /* USC may prefetch beyond the last instruction. Keep the end of every slab
  * mapped but unallocated so its last body cannot prefetch into the VA guard. */
-#define HK_APPLE9_BODY_TAIL 1024
-#define HK_APPLE9_BODY_SLAB_USABLE                                             \
-   (HK_APPLE9_BODY_SLAB_SIZE - HK_APPLE9_BODY_TAIL)
+#define HK_BODY_TAIL 1024
+#define HK_BODY_SLAB_USABLE                                             \
+   (HK_BODY_SLAB_SIZE - HK_BODY_TAIL)
 
 static VkResult
 hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
@@ -1577,7 +1578,7 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
                      p->preamble_size ? shader->only_linked->b.bo->va->addr +
                                            p->preamble_offset
                                       : 0))
-            shader->apple9_launch = t;
+            shader->stage_launch_cache = t;
          else
             free(t);
       }
@@ -1946,7 +1947,7 @@ hk_nir_pre_raster_reads(const nir_shader *nir)
  * fragment's own write. With a depth/stencil feedback loop, export the
  * interpolated depth at the end instead, so the test follows those reads. */
 static void
-hk_apple9_late_zs(nir_shader *nir)
+hk_late_zs(nir_shader *nir)
 {
    if (nir->info.fs.early_fragment_tests ||
        (nir->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_DEPTH)))
@@ -1967,10 +1968,10 @@ hk_apple9_late_zs(nir_shader *nir)
  *
  * A NEVER depth test skips the fragment shader, which would drop side
  * effects, and a NaN export passes ALWAYS. Such draws therefore test LESS
- * (hk_cmd_apple9.c) against an exported depth above the storable range, so
+ * (hk_cmd_draw.c) against an exported depth above the storable range, so
  * every sample fails depth and still takes its stencil depth-fail op. */
 static bool
-hk_apple9_clamp_depth_export(nir_builder *b, nir_intrinsic_instr *intr,
+hk_clamp_depth_export(nir_builder *b, nir_intrinsic_instr *intr,
                              void *data)
 {
    if (intr->intrinsic != nir_intrinsic_store_output ||
@@ -2049,7 +2050,7 @@ kill_psiz_write(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 static bool
-hk_apple9_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
+hk_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
                              UNUSED void *data)
 {
    if (intr->intrinsic != nir_intrinsic_load_clip_z_coeff)
@@ -2064,7 +2065,7 @@ hk_apple9_lower_clip_z_coeff(nir_builder *b, nir_intrinsic_instr *intr,
 
 /* VK_EXT_depth_clip_control: one final position store with z += c (w - z) */
 static bool
-hk_apple9_lower_clip_z(nir_shader *nir)
+hk_lower_clip_z(nir_shader *nir)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(nir);
    nir_builder b = nir_builder_create(impl);
@@ -2134,8 +2135,8 @@ hk_lower_hw_vs(nir_shader *nir, struct hk_shader *shader, bool kill_psiz)
 {
    /* VK_EXT_depth_clip_control: Apple9 clips depth to [0, w] */
    if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
-      NIR_PASS(_, nir, hk_apple9_lower_clip_z);
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_lower_clip_z_coeff,
+      NIR_PASS(_, nir, hk_lower_clip_z);
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_lower_clip_z_coeff,
                nir_metadata_control_flow, NULL);
    }
 
@@ -2231,7 +2232,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
       NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog,
                &shader->info.fs.epilog_key);
 
-      /* Export depth for draw-time Z/S feedback loops, see hk_apple9_late_zs */
+      /* Export depth for draw-time Z/S feedback loops, see hk_late_zs */
       if (key && key->fs.dynamic_zs_self_dep && !key->fs.zs_self_dep &&
           agx_is_apple9(&dev->dev) && !nir->info.fs.early_fragment_tests &&
           !shader->info.fs.epilog_key.write_z) {
@@ -2278,7 +2279,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
          /* Apple9 counts tessellated primitives per draw: publish patch ID */
          if (agx_is_apple9(&dev->dev) && hw &&
              !(nir->info.outputs_written & VARYING_BIT_PRIMITIVE_ID))
-            hk_apple9_write_primitive_id(nir);
+            hk_write_primitive_id(nir);
 
          /* This destroys info so it needs to happen after the gather */
          NIR_PASS(_, nir, poly_nir_lower_tes, hw);
@@ -2401,7 +2402,7 @@ static void
 hk_destroy_linked_shader(struct hk_device *dev, struct hk_linked_shader *linked)
 {
    if (agx_is_apple9(&dev->dev))
-      agx_stage_launch_cache_finish(&linked->apple9_launch);
+      agx_stage_launch_cache_finish(&linked->stage_launch_cache);
 
    agx_bo_unreference(&dev->dev, linked->b.bo);
    ralloc_free(linked);
@@ -2413,8 +2414,8 @@ hk_shader_destroy(struct hk_device *dev, struct hk_shader *s)
    free((void *)s->code_ptr);
    free((void *)s->data_ptr);
    agx_bo_unreference(&dev->dev, s->bo);
-   free(s->apple9_launch);
-   s->apple9_launch = NULL;
+   free(s->stage_launch_cache);
+   s->stage_launch_cache = NULL;
 
    simple_mtx_destroy(&s->linked.lock);
 
@@ -2457,15 +2458,15 @@ hk_lower_late_division(nir_shader *nir)
 
 /* Apple9 FS lowering for hardware quirks */
 static void
-hk_apple9_lower_fs(nir_shader *nir, struct hk_shader *shader)
+hk_lower_launch_fs(nir_shader *nir, struct hk_shader *shader)
 {
    /* Shading per sample interpolates at the sample */
    if (nir->info.fs.uses_sample_shading) {
       NIR_PASS(_, nir, nir_shader_intrinsics_pass,
-               hk_apple9_lower_bary_to_sample, nir_metadata_control_flow, NULL);
+               hk_lower_bary_to_sample, nir_metadata_control_flow, NULL);
    }
 
-   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_apple9_clamp_depth_export,
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_clamp_depth_export,
             nir_metadata_control_flow, NULL);
 
    shader->info.fs.pixel_interlock = nir->info.fs.pixel_interlock_ordered ||
@@ -2473,7 +2474,7 @@ hk_apple9_lower_fs(nir_shader *nir, struct hk_shader *shader)
 
    /* Merged triangles share interpolation, wrong away from the pixel centre */
    shader->info.fs.disable_tri_merging = nir->info.fs.uses_sample_shading ||
-                                         hk_apple9_interpolates_off_center(nir);
+                                         hk_interpolates_off_center(nir);
 }
 
 VkResult
@@ -2529,7 +2530,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       /* Force late-Z for Z/S self-deps; Apple9 exports depth for that */
       if (key->fs.zs_self_dep && apple9) {
-         hk_apple9_late_zs(nir);
+         hk_late_zs(nir);
       } else if (key->fs.zs_self_dep) {
          /* TODO: There's probably a less silly way to do this. */
          nir_builder b =
@@ -2539,7 +2540,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       }
 
       if (apple9)
-         hk_apple9_lower_fs(nir, hk_only_variant(obj));
+         hk_lower_launch_fs(nir, hk_only_variant(obj));
 
       NIR_PASS(_, nir, agx_nir_lower_sample_intrinsics, false);
    } else if (sw_stage == MESA_SHADER_VERTEX) {
@@ -3117,16 +3118,16 @@ const struct vk_device_shader_ops hk_device_shader_ops = {
 
 /* Apple9 launch state; varyings and coefficients are filled in per draw */
 static void
-hk_apple9_init_linked(struct hk_device *dev, struct hk_linked_shader *s,
+hk_init_launch_linked(struct hk_device *dev, struct hk_linked_shader *s,
                       bool fragment, struct hk_shader *main,
                       struct agx_shader_part *prolog,
                       struct agx_shader_part *epilog)
 {
    const struct agx_linked_program *p = &s->b.program;
-   agx_stage_launch_cache_init(&s->apple9_launch);
+   agx_stage_launch_cache_init(&s->stage_launch_cache);
 
-   s->apple9_stage = (struct agx_draw_stage){
-      .program_id = p_atomic_inc_return(&dev->apple9_last_program_id),
+   s->draw_stages = (struct agx_draw_stage){
+      .program_id = p_atomic_inc_return(&dev->last_program_id),
       .bo = s->b.bo,
       .binary = s->b.bo ? agx_bo_map(s->b.bo) : NULL,
       .binary_size = p->size,
@@ -3137,29 +3138,29 @@ hk_apple9_init_linked(struct hk_device *dev, struct hk_linked_shader *s,
       .publication_count = p->profile.publication_count,
       .publication_count_valid = true,
       .resource_count = p->profile.resource_binding_count,
-      .launch_cache = &s->apple9_launch,
+      .launch_cache = &s->stage_launch_cache,
       .position_components = fragment ? 0 : 4,
    };
 
    for (unsigned i = 0; i < p->profile.resource_binding_count; ++i) {
       assert(p->profile.resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_SSBO &&
              "API shaders reach buffers through descriptors");
-      s->apple9_stage.resource_binding[i] = p->profile.resource_binding[i];
+      s->draw_stages.resource_binding[i] = p->profile.resource_binding[i];
    }
 
    if (fragment) {
       struct agx_shader_part *parts[] = {prolog, &main->b, epilog};
       for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i) {
          if (parts[i]) {
-            s->apple9_stage.reads_tile |= parts[i]->info.apple9_tile_reads;
-            s->apple9_stage.uses_discard |= parts[i]->info.writes_sample_mask;
+            s->draw_stages.reads_tile |= parts[i]->info.apple9_tile_reads;
+            s->draw_stages.uses_discard |= parts[i]->info.writes_sample_mask;
          }
       }
 
-      s->apple9_stage.writes_depth = main->info.fs.epilog_key.write_z;
-      s->apple9_stage.disable_tri_merging =
+      s->draw_stages.writes_depth = main->info.fs.epilog_key.write_z;
+      s->draw_stages.disable_tri_merging =
          main->b.info.disable_tri_merging || main->info.fs.disable_tri_merging;
-      s->apple9_stage.pixel_interlock = main->info.fs.pixel_interlock;
+      s->draw_stages.pixel_interlock = main->info.fs.pixel_interlock;
    }
 }
 
@@ -3172,9 +3173,10 @@ hk_fast_link(struct hk_device *dev, bool fragment, struct hk_shader *main,
    agx_fast_link(&s->b, &dev->dev, fragment, &main->b, prolog, epilog,
                  nr_samples_shaded, NULL);
 
-   /* Apple9 programs are launched from their profile, see hk_cmd_apple9.c */
+   /* Launch programs start the linked program from its profile, see
+    * hk_cmd_draw.c */
    if (agx_is_apple9(&dev->dev)) {
-      hk_apple9_init_linked(dev, s, fragment, main, prolog, epilog);
+      hk_init_launch_linked(dev, s, fragment, main, prolog, epilog);
       return s;
    }
 

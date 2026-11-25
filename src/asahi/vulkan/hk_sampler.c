@@ -246,9 +246,9 @@ hk_CreateSampler(VkDevice device,
        * be applied again here (it is for the emulated path below). */
       VkClearColorValue bc = sampler->vk.border_color_value;
       static_assert(
-         sizeof(sampler->apple9_border) == sizeof(struct agx_border_packed),
+         sizeof(sampler->usc_border) == sizeof(struct agx_border_packed),
          "G13 border layout");
-      agx_pack_border((struct agx_border_packed *)sampler->apple9_border,
+      agx_pack_border((struct agx_border_packed *)sampler->usc_border,
                       bc.uint32, vk_format_to_pipe_format(sampler->vk.format));
    }
 
@@ -264,7 +264,7 @@ hk_CreateSampler(VkDevice device,
     * hk_lower_d3d_txl_rounding. Computed LODs are left alone: the hardware's
     * estimate is not exact to a step, and a step there moves real results.
     */
-   if (pdev->apple9_d3d_mip_rounding &&
+   if (pdev->d3d_mip_rounding &&
        info->mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST)
       sampler->txl_nudge_fp16 = _mesa_float_to_half(1.0f / 64.0f);
 
@@ -351,10 +351,10 @@ hk_CreateSampler(VkDevice device,
 
    if (g16) {
       for (unsigned p = 0; p < sampler->plane_count; ++p) {
-         struct hk_apple9_sampler_part *part = &sampler->planes[p].apple9;
-         hk_apple9_native_sampler(part->sampler, &sampler->planes[p].hw->key,
-                                  false, sampler->apple9_border);
-         hk_apple9_runtime_sampler(part->runtime_sampler,
+         struct hk_usc_sampler_part *part = &sampler->planes[p].usc;
+         hk_usc_sampler(part->sampler, &sampler->planes[p].hw->key,
+                                  false, sampler->usc_border);
+         hk_runtime_sampler(part->runtime_sampler,
                                    &sampler->planes[p].hw->key, false);
          part->lod_bias_fp16 = sampler->lod_bias_fp16;
          part->txl_nudge_fp16 = sampler->txl_nudge_fp16;
