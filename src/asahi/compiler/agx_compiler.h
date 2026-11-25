@@ -594,6 +594,11 @@ agx_opcode_on_isa(enum agx_opcode op, enum agx_shader_isa isa)
                                        : agx_opcodes_info[op].apple8;
 }
 
+struct agx_pending_export {
+   agx_index value;
+   unsigned base;
+};
+
 typedef struct agx_context {
    struct agx_isa_target target;
    /* Static diagnostic set when constrained register allocation fails. */
@@ -692,6 +697,9 @@ typedef struct agx_context {
 
    /* Number of export registers used, in 16-bit units */
    unsigned export_reg_count;
+
+   /* Exports (struct agx_pending_export), placed once the exit block is known */
+   struct util_dynarray exports;
 
    /* Apple9 vertex outputs: each UVS word's value by unlinked index, or null */
    agx_index uvs_exports[AGX_APPLE9_MAX_UVS_SLOTS];

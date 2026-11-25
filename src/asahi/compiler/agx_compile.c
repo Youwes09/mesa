@@ -1882,22 +1882,16 @@ agx_emit_image_load(agx_builder *b, agx_index dst, nir_intrinsic_instr *intr)
    return NULL;
 }
 
+/* Control flow may follow, so exports wait for the exit block */
 static agx_instr *
 agx_emit_export(agx_builder *b, unsigned base, nir_src src)
 {
-   agx_builder b_ = *b;
-   agx_cursor after_cursor = agx_after_block(agx_exit_block(b->shader));
-   b_.cursor = after_cursor;
-
    for (unsigned c = 0; c < nir_src_num_components(src); ++c) {
       agx_index chan = agx_extract_nir_src(b, src, c);
       unsigned stride = agx_size_align_16(chan.size);
+      struct agx_pending_export export = {chan, base + (c * stride)};
 
-      agx_export(&b_, chan, base + (c * stride));
-   }
-
-   if (agx_cursors_equal(b->cursor, after_cursor)) {
-      b->cursor = agx_after_block_logical(b->cursor.block);
+      util_dynarray_append(&b->shader->exports, export);
    }
 
    return NULL;
@@ -4960,8 +4954,14 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       ctx->atomic_frame_B = 16;
 
    ctx->alloc = impl->ssa_alloc;
+   util_dynarray_init(&ctx->exports, ctx);
    emit_cf_list(ctx, &impl->body);
    agx_emit_phis_deferred(ctx);
+
+   agx_builder export_b =
+      agx_init_builder(ctx, agx_after_block(agx_exit_block(ctx)));
+   util_dynarray_foreach(&ctx->exports, struct agx_pending_export, export)
+      agx_export(&export_b, export->value, export->base);
 
    if (agx_is_apple9(ctx) && !ctx->is_preamble &&
        (ctx->stage == MESA_SHADER_VERTEX ||
