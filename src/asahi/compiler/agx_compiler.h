@@ -632,6 +632,11 @@ struct agx_isa_target {
     */
    bool minimal_subgroups;
 
+   /* Shaders find their resources through root pointers at the start of the
+    * uniforms. Nothing is preloaded, so IDs come from system registers.
+    */
+   bool root_uniforms;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };

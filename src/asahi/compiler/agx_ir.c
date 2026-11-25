@@ -70,6 +70,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .mask_stack = true,
    .flushes_denorms = true,
    .minimal_subgroups = true,
+   .root_uniforms = true,
    .scoreboard_slots = 6,
    .shader_sized_frame = true,
    .occupancy_table = false,

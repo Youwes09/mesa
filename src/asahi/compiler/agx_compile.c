@@ -2195,8 +2195,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_get_sr_to(b, dst, AGX_SR_BACKFACING);
 
    case nir_intrinsic_load_samples_log2_agx:
-      /* Apple9 has no such system register */
-      assert(!agx_is_apple9(b->shader) && "lowered by the driver on Apple9");
+      /* Root uniform targets have no such system register */
+      assert(!b->shader->target.root_uniforms && "lowered by the driver");
       return agx_get_sr_to(b, dst, AGX_SR_SAMPLES_LOG2);
 
    case nir_intrinsic_load_sample_mask_in:
@@ -2225,8 +2225,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id_zero_base(b)));
 
    case nir_intrinsic_load_vertex_id:
-      /* Apple9 preloads no IDs. The prolog reads them from system registers */
-      if (agx_is_apple9(b->shader) && b->shader->key->secondary)
+      /* Without preloaded IDs, the prolog reads them from system registers */
+      if (b->shader->target.root_uniforms && b->shader->key->secondary)
          return agx_get_sr_to(b, dst, AGX_SR_VERTEX_ID);
 
       /* We don't assert the HW stage since we use this same ABI with SW VS */
@@ -2237,7 +2237,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return agx_mov_to(b, dst, agx_abs(agx_vertex_id(b)));
 
    case nir_intrinsic_load_instance_id:
-      if (agx_is_apple9(b->shader) && b->shader->key->secondary)
+      if (b->shader->target.root_uniforms && b->shader->key->secondary)
          return agx_get_sr_to(b, dst, AGX_SR_INSTANCE_ID);
 
       return agx_mov_to(b, dst, agx_abs(agx_instance_id(b)));
@@ -2299,7 +2299,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_load_layer_id:
       return agx_get_sr_to(b, dst,
-                           agx_is_apple9(b->shader)
+                           b->shader->target.root_uniforms
                               ? AGX_SR_LAYER_ID
                               : AGX_SR_THREADGROUP_POSITION_IN_GRID_Z);
 
@@ -5030,8 +5030,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       if (!ctx->target.word_registers)
          AGX_PASS(ctx, agx_opt_compact_constants);
 
-      /* After inlining constants, promote what's left. Apple9 preloads none */
-      if (key->promote_constants && !key->secondary && !agx_is_apple9(ctx) &&
+      /* After inlining constants, promote what's left, if anything preloads */
+      if (key->promote_constants && !key->secondary &&
+          !ctx->target.root_uniforms &&
           !(agx_compiler_debug & AGX_DBG_NOPROMOTE)) {
          AGX_PASS(ctx, agx_opt_promote_constants);
       }
@@ -5532,10 +5533,9 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 {
    const struct agx_isa_target *target =
       agx_get_isa_target(key->dev.shader_isa);
-   bool apple9 = key->dev.shader_isa == AGX_SHADER_ISA_APPLE9;
 
    /* The shader must have been prepared for the ISA it is compiled for */
-   assert(apple9 == (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9));
+   assert(target == agx_nir_target(nir));
 
    agx_compiler_debug = agx_get_compiler_debug();
    struct agx_shader_info *info = &out->info;
@@ -5554,12 +5554,12 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    NIR_PASS(_, nir, agx_nir_lower_printf_buffer);
 
-   /* Apple9 uniforms are the roots, then push words, then preamble results */
+   /* Root uniforms come first, then push words, then preamble results */
    unsigned reserved_preamble = key->reserved_preamble;
-   bool graphics_abi =
-      apple9 && (!mesa_shader_stage_is_compute(nir->info.stage) ||
-                 key->apple9_graphics_abi);
-   if (apple9) {
+   bool graphics_abi = target->root_uniforms &&
+                       (!mesa_shader_stage_is_compute(nir->info.stage) ||
+                        key->apple9_graphics_abi);
+   if (target->root_uniforms) {
       NIR_PASS(_, nir, agx_nir_lower_apple9_handles);
 
       unsigned roots =
@@ -5567,15 +5567,17 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
       reserved_preamble =
          roots * 2 + (graphics_abi ? ALIGN_POT(key->reserved_preamble, 2) : 0);
+   }
 
+   if (target->word_registers)
       NIR_PASS(_, nir, agx_nir_lower_apple9_math);
 
-      /* Prolog and epilog builders lower their own parts */
-      if (nir->info.stage == MESA_SHADER_FRAGMENT && !key->secondary) {
-         info->apple9_kills = agx_apple9_may_kill(nir);
-         NIR_PASS(_, nir, agx_nir_lower_apple9_coverage, key->no_stop,
-                  key->no_stop);
-      }
+   /* Prolog and epilog builders lower their own parts */
+   if (target->tile_domains && nir->info.stage == MESA_SHADER_FRAGMENT &&
+       !key->secondary) {
+      info->apple9_kills = agx_apple9_may_kill(nir);
+      NIR_PASS(_, nir, agx_nir_lower_apple9_coverage, key->no_stop,
+               key->no_stop);
    }
 
    NIR_PASS(_, nir, nir_lower_frag_coord_to_pixel_coord);
