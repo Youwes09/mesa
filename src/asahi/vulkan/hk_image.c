@@ -508,10 +508,10 @@ hk_GetPhysicalDeviceImageFormatProperties2(
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
    }
 
-   const uint32_t max_dim =
-      agx_is_apple9(&pdev->dev) && pImageFormatInfo->type == VK_IMAGE_TYPE_3D
-         ? AGX_USC_MAX_3D_DIMENSION
-         : 16384;
+   const uint32_t max_dim = agx_has_usc_descriptors(&pdev->dev) &&
+                                  pImageFormatInfo->type == VK_IMAGE_TYPE_3D
+                               ? AGX_USC_MAX_3D_DIMENSION
+                               : 16384;
    VkExtent3D maxExtent;
    uint32_t maxArraySize;
    switch (pImageFormatInfo->type) {

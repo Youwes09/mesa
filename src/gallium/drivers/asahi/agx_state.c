@@ -3380,7 +3380,7 @@ agx_launch_internal(struct agx_batch *batch, struct agx_grid grid,
    struct agx_context *ctx = batch->ctx;
    struct agx_device *dev = agx_device(ctx->base.screen);
 
-   assert(!agx_is_apple9(dev) && "see agx_launch_compute_program");
+   assert(!agx_has_launch_programs(dev) && "see agx_launch_compute_program");
 
    uint32_t *out = (uint32_t *)batch->cdm.current;
 
