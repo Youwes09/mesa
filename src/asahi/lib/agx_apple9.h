@@ -22,7 +22,7 @@ struct agx_ptr;
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/compiler/agx_nir_texture.h"
 #include "asahi/lib/agx_apple9_color.h"
-#include "asahi/lib/agx_apple9_launch.h"
+#include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_apple9_layout.h"
 
 #ifdef __cplusplus
@@ -53,7 +53,7 @@ struct agx_apple9_stage_launch_cache {
    unsigned count;
    struct {
       uint8_t tile_bytes, samples;
-      struct agx_apple9_launch_template tmpl;
+      struct agx_launch_template tmpl;
    } entry[AGX_APPLE9_STAGE_LAUNCH_TEMPLATES];
 };
 
@@ -374,12 +374,12 @@ bool agx_apple9_prepare_compute_dispatch_alloc_tmpl(
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
    const struct agx_apple9_compute_geometry *geometry,
-   uint64_t preamble_address, const struct agx_apple9_launch_template *tmpl,
+   uint64_t preamble_address, const struct agx_launch_template *tmpl,
    uint64_t *launch_address);
 
 /* Build a compute pipeline's launch template, once at pipeline creation. */
 bool agx_apple9_compute_launch_template(
-   struct agx_apple9_launch_template *tmpl,
+   struct agx_launch_template *tmpl,
    const struct agx_apple9_compute_profile *profile, uint64_t usc_exec_base,
    uint64_t preamble_address);
 

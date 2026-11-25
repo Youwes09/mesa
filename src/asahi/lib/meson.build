@@ -5,8 +5,7 @@
 
 libasahi_lib_files = files(
   'agx_apple9.c',
-  'agx_apple9_geometry.c',
-  'agx_apple9_launch.c',
+  'agx_launch_program.c',
   'agx_bo.c',
   'agx_shader_body.c',
   'agx_border.c',

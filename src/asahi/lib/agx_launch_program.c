@@ -1,7 +1,7 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#include "agx_apple9_launch.h"
+#include "agx_launch_program.h"
 #include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/lib/agx_apple9_layout.h"
@@ -19,19 +19,19 @@ write16(uint8_t *p, uint16_t value)
 }
 
 bool
-agx_apple9_launch_threadgroup_memory_supported(uint32_t bytes)
+agx_launch_threadgroup_memory_supported(uint32_t bytes)
 {
    return bytes == 0 || (bytes >= 128 && bytes <= AGX_APPLE9_MAX_SHARED_BYTES &&
                          !(bytes & (bytes - 1)));
 }
 
 size_t
-agx_apple9_launch_call_offset(enum agx_apple9_launch_stage stage,
+agx_launch_call_offset(enum agx_launch_stage stage,
                               unsigned resource_count)
 {
-   if (stage == AGX_APPLE9_LAUNCH_VERTEX || stage == AGX_APPLE9_LAUNCH_FRAGMENT)
+   if (stage == AGX_LAUNCH_VERTEX || stage == AGX_LAUNCH_FRAGMENT)
       return 68;
-   if (stage != AGX_APPLE9_LAUNCH_COMPUTE || !resource_count ||
+   if (stage != AGX_LAUNCH_COMPUTE || !resource_count ||
        resource_count > AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)
       return 0;
    /* The table address literals, one literal per root word and the
@@ -40,17 +40,17 @@ agx_apple9_launch_call_offset(enum agx_apple9_launch_stage stage,
 }
 
 static void
-encode_allocation(uint8_t out[8], enum agx_apple9_launch_stage stage,
-                  const struct agx_apple9_launch_parameters *params)
+encode_allocation(uint8_t out[8], enum agx_launch_stage stage,
+                  const struct agx_launch_parameters *params)
 {
    memset(out, 0, 8);
    out[0] = 0x77;
    out[2] = 0x2a;
    out[3] = 0x41;
-   if (stage == AGX_APPLE9_LAUNCH_COMPUTE && params->threadgroup_memory_bytes) {
+   if (stage == AGX_LAUNCH_COMPUTE && params->threadgroup_memory_bytes) {
       write16(out + 4, (params->threadgroup_memory_bytes << 2) | 0x80);
       out[6] = params->threadgroup_memory_bytes >> 14;
-   } else if (stage == AGX_APPLE9_LAUNCH_FRAGMENT) {
+   } else if (stage == AGX_LAUNCH_FRAGMENT) {
       unsigned units = (params->tile_bytes + 7) / 8;
       if (params->samples == 4) {
          out[2] = 0xaa;
@@ -64,7 +64,7 @@ encode_allocation(uint8_t out[8], enum agx_apple9_launch_stage stage,
 }
 
 static bool
-encode_target(uint8_t out[10], enum agx_apple9_launch_stage stage,
+encode_target(uint8_t out[10], enum agx_launch_stage stage,
               uint64_t shader_base, uint32_t entry_offset)
 {
    if (entry_offset & 1)
@@ -89,7 +89,7 @@ encode_target(uint8_t out[10], enum agx_apple9_launch_stage stage,
 }
 
 static void
-encode_frame(uint8_t out[10], const struct agx_apple9_launch_parameters *params)
+encode_frame(uint8_t out[10], const struct agx_launch_parameters *params)
 {
    /* A publication unit holds two 32-bit slots. The independent A/B extents
     * support scratch and returned atomics. No further shared setup is needed. */
@@ -102,29 +102,29 @@ encode_frame(uint8_t out[10], const struct agx_apple9_launch_parameters *params)
 }
 
 static bool
-launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
-             const struct agx_apple9_launch_parameters *params,
-             struct agx_apple9_launch_template *tmpl)
+launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
+             const struct agx_launch_parameters *params,
+             struct agx_launch_template *tmpl)
 {
-   if (!out || !params || (unsigned)stage > AGX_APPLE9_LAUNCH_COMPUTE)
+   if (!out || !params || (unsigned)stage > AGX_LAUNCH_COMPUTE)
       return false;
-   bool compute = stage == AGX_APPLE9_LAUNCH_COMPUTE;
-   size_t size = compute ? AGX_APPLE9_COMPUTE_LAUNCH_SIZE
-                         : AGX_APPLE9_GRAPHICS_LAUNCH_SIZE;
+   bool compute = stage == AGX_LAUNCH_COMPUTE;
+   size_t size = compute ? AGX_COMPUTE_LAUNCH_SIZE
+                         : AGX_GRAPHICS_LAUNCH_SIZE;
    if (capacity < size || params->publication_count > 1022 ||
        (params->threadgroup_memory_bytes &&
-        (!compute || !agx_apple9_launch_threadgroup_memory_supported(
+        (!compute || !agx_launch_threadgroup_memory_supported(
                         params->threadgroup_memory_bytes))) ||
        (compute &&
-        !agx_apple9_launch_call_offset(stage, params->resource_count)) ||
-       (stage == AGX_APPLE9_LAUNCH_FRAGMENT &&
+        !agx_launch_call_offset(stage, params->resource_count)) ||
+       (stage == AGX_LAUNCH_FRAGMENT &&
         (params->tile_bytes > 128 ||
          (params->samples != 1 && params->samples != 2 &&
           params->samples != 4))))
       return false;
 
    /* Build privately so even an encoder failure cannot publish partial code. */
-   uint8_t program[AGX_APPLE9_COMPUTE_LAUNCH_SIZE] = {0};
+   uint8_t program[AGX_COMPUTE_LAUNCH_SIZE] = {0};
    const unsigned root = 2, pending = LAUNCH_PENDING_BASE;
    /* Table loads use a full address in a GPR pair. They have no compact
     * USC-relative pointer field or 512-MiB placement restriction. */
@@ -213,25 +213,25 @@ launch_build(uint8_t *out, size_t capacity, enum agx_apple9_launch_stage stage,
 }
 
 bool
-agx_apple9_launch_build(uint8_t *out, size_t capacity,
-                        enum agx_apple9_launch_stage stage,
-                        const struct agx_apple9_launch_parameters *params)
+agx_launch_program_build(uint8_t *out, size_t capacity,
+                        enum agx_launch_stage stage,
+                        const struct agx_launch_parameters *params)
 {
    return launch_build(out, capacity, stage, params, NULL);
 }
 
 bool
-agx_apple9_launch_template_init(
-   struct agx_apple9_launch_template *tmpl, size_t capacity,
-   enum agx_apple9_launch_stage stage,
-   const struct agx_apple9_launch_parameters *params)
+agx_launch_template_init(
+   struct agx_launch_template *tmpl, size_t capacity,
+   enum agx_launch_stage stage,
+   const struct agx_launch_parameters *params)
 {
    memset(tmpl, 0, sizeof(*tmpl));
    if (!params || capacity > sizeof(tmpl->program))
       return false;
    /* Placeholders for the per-launch fields: a valid even entry, and a
     * program address that keeps the preamble branch encodable. */
-   struct agx_apple9_launch_parameters p = *params;
+   struct agx_launch_parameters p = *params;
    p.resource_table = 0;
    p.entry_offset = 0;
    p.launch_address = p.preamble_address ? p.shader_base : 0;
@@ -246,8 +246,8 @@ agx_apple9_launch_template_init(
 }
 
 bool
-agx_apple9_launch_template_set_roots(
-   uint8_t *out, const struct agx_apple9_launch_template *tmpl,
+agx_launch_template_set_roots(
+   uint8_t *out, const struct agx_launch_template *tmpl,
    const uint32_t *root_words)
 {
    if (!tmpl->valid || !tmpl->root_words || !root_words)
@@ -261,8 +261,8 @@ agx_apple9_launch_template_set_roots(
 }
 
 bool
-agx_apple9_launch_template_emit(uint8_t *out,
-                                const struct agx_apple9_launch_template *tmpl,
+agx_launch_template_emit(uint8_t *out,
+                                const struct agx_launch_template *tmpl,
                                 uint64_t resource_table, uint32_t entry_offset,
                                 uint64_t launch_address)
 {

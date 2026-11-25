@@ -1571,7 +1571,7 @@ hk_upload_shader(struct hk_device *dev, struct hk_shader *shader)
 
       if (shader->info.stage == MESA_SHADER_COMPUTE) {
          const struct agx_apple9_program *p = &shader->only_linked->b.apple9;
-         struct agx_apple9_launch_template *t = malloc(sizeof(*t));
+         struct agx_launch_template *t = malloc(sizeof(*t));
          if (t && agx_apple9_compute_launch_template(
                      t, &p->profile, dev->dev.shader_base,
                      p->preamble_size ? shader->only_linked->b.bo->va->addr +

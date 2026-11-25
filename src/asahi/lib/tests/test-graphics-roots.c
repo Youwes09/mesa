@@ -56,12 +56,12 @@ main(void)
                CHECK(agx_apple9_prepare_graphics_stage(
                   dev, &a, allocate, &shader, fragment, 0x30000, 0x40000,
                   0x50000, 0x60000, 16, samples, &launch));
-               CHECK(a.size == 64 + AGX_APPLE9_GRAPHICS_LAUNCH_SIZE);
+               CHECK(a.size == 64 + AGX_GRAPHICS_LAUNCH_SIZE);
                CHECK(launch == a.gpu + 64 - dev->shader_base);
                const uint64_t roots[8] = {0x40000, 0x50000, 0x30000,
                                           0,       0,       0x60000};
                CHECK(!memcmp(a.data, roots, sizeof(roots)));
-               struct agx_apple9_launch_parameters p = {
+               struct agx_launch_parameters p = {
                   .shader_base = dev->shader_base,
                   .entry_offset = bo.apple9_body.entry_offset,
                   .publication_count = shader.publication_count,
@@ -71,11 +71,11 @@ main(void)
                   .samples = fragment ? samples : 0,
                   .preamble_address = preamble ? va.addr + 64 : 0,
                };
-               uint8_t reference[AGX_APPLE9_GRAPHICS_LAUNCH_SIZE];
-               CHECK(agx_apple9_launch_build(reference, sizeof(reference),
+               uint8_t reference[AGX_GRAPHICS_LAUNCH_SIZE];
+               CHECK(agx_launch_program_build(reference, sizeof(reference),
                                              fragment
-                                                ? AGX_APPLE9_LAUNCH_FRAGMENT
-                                                : AGX_APPLE9_LAUNCH_VERTEX,
+                                                ? AGX_LAUNCH_FRAGMENT
+                                                : AGX_LAUNCH_VERTEX,
                                              &p));
                CHECK(!memcmp(reference, a.data + 64, sizeof(reference)));
                for (unsigned i = a.size; i < sizeof(a.data); ++i)

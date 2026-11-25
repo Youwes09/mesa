@@ -1,8 +1,8 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#ifndef AGX_APPLE9_LAUNCH_H
-#define AGX_APPLE9_LAUNCH_H
+#ifndef AGX_LAUNCH_PROGRAM_H
+#define AGX_LAUNCH_PROGRAM_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,18 +12,18 @@
 extern "C" {
 #endif
 
-enum agx_apple9_launch_stage {
-   AGX_APPLE9_LAUNCH_VERTEX,
-   AGX_APPLE9_LAUNCH_FRAGMENT,
-   AGX_APPLE9_LAUNCH_COMPUTE,
+enum agx_launch_stage {
+   AGX_LAUNCH_VERTEX,
+   AGX_LAUNCH_FRAGMENT,
+   AGX_LAUNCH_COMPUTE,
 };
 
 enum {
-   AGX_APPLE9_GRAPHICS_LAUNCH_SIZE = 256,
-   AGX_APPLE9_COMPUTE_LAUNCH_SIZE = 1024,
+   AGX_GRAPHICS_LAUNCH_SIZE = 256,
+   AGX_COMPUTE_LAUNCH_SIZE = 1024,
 };
 
-struct agx_apple9_launch_parameters {
+struct agx_launch_parameters {
    uint64_t shader_base;
    uint64_t resource_table;
    /* Byte offset of the stage entry within the USC heap. */
@@ -43,34 +43,34 @@ struct agx_apple9_launch_parameters {
    uint64_t launch_address;
    /* Compute: the root words (agx_apple9_compute_root_words of them), which
     * the launch materializes as literals instead of loading them from
-    * resource_table. Required for agx_apple9_launch_build; templates leave
-    * patchable slots instead (agx_apple9_launch_template_set_roots). */
+    * resource_table. Required for agx_launch_program_build; templates leave
+    * patchable slots instead (agx_launch_template_set_roots). */
    const uint32_t *root_words;
 };
 
 /* Current T8132 execution evidence covers these allocation sizes. This does
  * not imply that the compiler implements shared load/store/barrier lowering. */
-bool agx_apple9_launch_threadgroup_memory_supported(uint32_t bytes);
+bool agx_launch_threadgroup_memory_supported(uint32_t bytes);
 
 /* Offset of the encoded entry field, for diagnostics and frame inspection. */
-size_t agx_apple9_launch_call_offset(enum agx_apple9_launch_stage stage,
+size_t agx_launch_call_offset(enum agx_launch_stage stage,
                                      unsigned resource_count);
 
 /* Build from stage parameters only; no executable input is read.
  * On invalid input leave the destination untouched; on success zero all unused
  * bytes through capacity. The fixed allocation sizes above include padding. */
-bool agx_apple9_launch_build(uint8_t *out, size_t capacity,
-                             enum agx_apple9_launch_stage stage,
-                             const struct agx_apple9_launch_parameters *params);
+bool agx_launch_program_build(uint8_t *out, size_t capacity,
+                             enum agx_launch_stage stage,
+                             const struct agx_launch_parameters *params);
 
 /* A launch program built once, at pipeline creation, for repeated emission.
  * Only the resource table address, the entry offset and the program's own
  * address (which positions the preamble branch) vary between launches of a
- * pipeline; agx_apple9_launch_template_emit patches exactly those fields.
+ * pipeline; agx_launch_template_emit patches exactly those fields.
  * A plain value: it holds no pointers.
  */
-struct agx_apple9_launch_template {
-   uint8_t program[AGX_APPLE9_COMPUTE_LAUNCH_SIZE];
+struct agx_launch_template {
+   uint8_t program[AGX_COMPUTE_LAUNCH_SIZE];
    uint64_t shader_base;
    uint64_t preamble_address;
    /* Encoded length of the program; emission zero-fills to capacity. */
@@ -82,23 +82,23 @@ struct agx_apple9_launch_template {
    /* Compute: offset and count of the root-word literal slots. */
    uint16_t roots_at;
    uint16_t root_words;
-   enum agx_apple9_launch_stage stage;
+   enum agx_launch_stage stage;
    bool valid;
 };
 
 /* Build a template from stage parameters. resource_table, entry_offset and
  * launch_address are per-launch and ignored. Returns false (and leaves the
- * template invalid) when agx_apple9_launch_build would reject the stage
+ * template invalid) when agx_launch_program_build would reject the stage
  * parameters. */
-bool agx_apple9_launch_template_init(
-   struct agx_apple9_launch_template *tmpl, size_t capacity,
-   enum agx_apple9_launch_stage stage,
-   const struct agx_apple9_launch_parameters *params);
+bool agx_launch_template_init(
+   struct agx_launch_template *tmpl, size_t capacity,
+   enum agx_launch_stage stage,
+   const struct agx_launch_parameters *params);
 
-/* Emit the program for one launch: the same bytes agx_apple9_launch_build
+/* Emit the program for one launch: the same bytes agx_launch_program_build
  * produces with the template's parameters and these per-launch fields. */
-bool agx_apple9_launch_template_emit(
-   uint8_t *out, const struct agx_apple9_launch_template *tmpl,
+bool agx_launch_template_emit(
+   uint8_t *out, const struct agx_launch_template *tmpl,
    uint64_t resource_table, uint32_t entry_offset, uint64_t launch_address);
 
 /* Write a compute launch's root words into the literal slots of a program
@@ -106,8 +106,8 @@ bool agx_apple9_launch_template_emit(
  * load would read them at launch: the resource record is CPU-written once per
  * dispatch, no GPU pass writes it, and the roots are addresses, so
  * update-after-bind descriptor contents are unaffected. */
-bool agx_apple9_launch_template_set_roots(
-   uint8_t *out, const struct agx_apple9_launch_template *tmpl,
+bool agx_launch_template_set_roots(
+   uint8_t *out, const struct agx_launch_template *tmpl,
    const uint32_t *root_words);
 
 #ifdef __cplusplus

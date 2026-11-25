@@ -7,7 +7,7 @@
 #include "asahi/compiler/agx_apple9_encoding.h"
 #include "asahi/lib/pool.h"
 #include "pipe/p_defines.h"
-#include "agx_apple9_launch.h"
+#include "agx_launch_program.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -151,7 +151,7 @@ apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
        (profile->abi == AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS &&
         profile->resource_binding_count >
            AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES) ||
-       !agx_apple9_launch_threadgroup_memory_supported(
+       !agx_launch_threadgroup_memory_supported(
           profile->required_threadgroup_memory_bytes) ||
        (profile->atomic_frame_size != 0 && profile->atomic_frame_size != 4) ||
        profile->scratch_size > AGX_APPLE9_MAX_SCRATCH_BYTES ||
@@ -276,7 +276,7 @@ apple9_build_sentinel_constant_program(uint8_t *out, unsigned slots)
 /* Launch parameters of a compute profile; the caller sets the per-launch
  * entry, resource table and program address. */
 static bool
-apple9_compute_launch_params(struct agx_apple9_launch_parameters *out,
+apple9_compute_launch_params(struct agx_launch_parameters *out,
                              uint64_t usc_exec_base,
                              const struct agx_apple9_compute_profile *profile,
                              uint64_t preamble_address)
@@ -285,7 +285,7 @@ apple9_compute_launch_params(struct agx_apple9_launch_parameters *out,
    if (!abi || !apple9_compute_profile_valid(profile, abi))
       return false;
 
-   struct agx_apple9_launch_parameters params = {
+   struct agx_launch_parameters params = {
       .publication_count = profile->publication_count,
       .preamble_address = preamble_address,
    };
@@ -312,7 +312,7 @@ apple9_build_compute_launch(uint8_t *out, uint64_t usc_exec_base,
                             const struct agx_apple9_compute_profile *profile,
                             uint64_t preamble_address)
 {
-   struct agx_apple9_launch_parameters params;
+   struct agx_launch_parameters params;
    if (main_offset <
           AGX_APPLE9_ENTRY_HEADER_SIZE + AGX_APPLE9_ENTRY_CODE_OFFSET ||
        !apple9_compute_launch_params(&params, usc_exec_base, profile,
@@ -322,30 +322,30 @@ apple9_build_compute_launch(uint8_t *out, uint64_t usc_exec_base,
    params.resource_table = resource_address;
    params.launch_address = launch_address;
    params.root_words = root_words;
-   return agx_apple9_launch_build(out, agx_apple9_compute_launch_size(profile),
-                                  AGX_APPLE9_LAUNCH_COMPUTE, &params);
+   return agx_launch_program_build(out, agx_apple9_compute_launch_size(profile),
+                                  AGX_LAUNCH_COMPUTE, &params);
 }
 
 bool
 agx_apple9_compute_launch_template(
-   struct agx_apple9_launch_template *tmpl,
+   struct agx_launch_template *tmpl,
    const struct agx_apple9_compute_profile *profile, uint64_t usc_exec_base,
    uint64_t preamble_address)
 {
-   struct agx_apple9_launch_parameters params;
+   struct agx_launch_parameters params;
    memset(tmpl, 0, sizeof(*tmpl));
    return apple9_compute_launch_params(&params, usc_exec_base, profile,
                                        preamble_address) &&
-          agx_apple9_launch_template_init(
+          agx_launch_template_init(
              tmpl, agx_apple9_compute_launch_size(profile),
-             AGX_APPLE9_LAUNCH_COMPUTE, &params);
+             AGX_LAUNCH_COMPUTE, &params);
 }
 
 size_t
 agx_apple9_compute_launch_size(const struct agx_apple9_compute_profile *profile)
 {
    const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
-   return abi ? AGX_APPLE9_COMPUTE_LAUNCH_SIZE : 0;
+   return abi ? AGX_COMPUTE_LAUNCH_SIZE : 0;
 }
 
 static size_t
@@ -469,6 +469,53 @@ apple9_shader_entry(struct agx_device *dev, void *allocator,
 }
 
 bool
+agx_apple9_build_compute_geometry_fields(
+   void *record_, size_t record_size, uint64_t record_address,
+   const struct agx_apple9_compute_geometry *geometry)
+{
+   const unsigned offset = AGX_APPLE9_COMPUTE_GEOMETRY_GROUPS_OFFSET;
+   if (!record_ || !geometry || record_size < offset + 12 ||
+       record_address > UINT64_MAX - offset)
+      return false;
+
+   uint64_t local_threads = 1;
+   for (unsigned d = 0; d < 3; ++d) {
+      if (!geometry->local[d] || geometry->local[d] > 1024 / local_threads)
+         return false;
+      local_threads *= geometry->local[d];
+   }
+
+   uint32_t groups[3] = {0};
+   uint64_t pointer;
+   switch (geometry->mode) {
+   case AGX_APPLE9_COMPUTE_GEOMETRY_DIRECT:
+      for (unsigned d = 0; d < 3; ++d) {
+         if (!geometry->threads[d])
+            return false;
+         /* CDM permits a partial final workgroup. Avoid overflowing the
+          * numerator when rounding up on the CPU. */
+         groups[d] = geometry->threads[d] / geometry->local[d] +
+                     (geometry->threads[d] % geometry->local[d] != 0);
+      }
+      pointer = record_address + offset;
+      break;
+   case AGX_APPLE9_COMPUTE_GEOMETRY_INDIRECT:
+      pointer = geometry->group_counts;
+      if (!pointer || (pointer & 3))
+         return false;
+      break;
+   default:
+      return false;
+   }
+
+   uint8_t *record = record_;
+   apple9_put_u64(record, pointer);
+   for (unsigned d = 0; d < 3; ++d)
+      apple9_put_u32(record + offset + d * sizeof(uint32_t), groups[d]);
+   return true;
+}
+
+bool
 agx_apple9_prepare_compute_dispatch_alloc(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
@@ -491,7 +538,7 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
    const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
    unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
    const struct agx_apple9_compute_geometry *geometry,
-   uint64_t preamble_address, const struct agx_apple9_launch_template *tmpl,
+   uint64_t preamble_address, const struct agx_launch_template *tmpl,
    uint64_t *launch_address)
 {
    const struct apple9_compute_abi_desc *abi = apple9_compute_abi(profile);
@@ -507,7 +554,7 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
 
    size_t record_size = apple9_compute_resource_record_size_for_abi(abi);
    /* The launch materializes its root words from the record's head. */
-   struct agx_apple9_launch_parameters lp;
+   struct agx_launch_parameters lp;
    if (!apple9_compute_launch_params(&lp, dev->shader_base, profile,
                                      preamble_address) ||
        4 * agx_apple9_compute_root_words(lp.resource_count) > record_size)
@@ -554,9 +601,9 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
       assert(tmpl->preamble_address == preamble_address &&
              tmpl->shader_base == dev->shader_base);
       if (entry < AGX_APPLE9_ENTRY_HEADER_SIZE + AGX_APPLE9_ENTRY_CODE_OFFSET ||
-          !agx_apple9_launch_template_emit(launch.cpu, tmpl, record.gpu, entry,
+          !agx_launch_template_emit(launch.cpu, tmpl, record.gpu, entry,
                                            launch.gpu) ||
-          !agx_apple9_launch_template_set_roots(launch.cpu, tmpl, record.cpu))
+          !agx_launch_template_set_roots(launch.cpu, tmpl, record.cpu))
          return false;
    } else if (!apple9_build_compute_launch(launch.cpu, dev->shader_base,
                                            launch.gpu, record.gpu, record.cpu,
@@ -1266,13 +1313,13 @@ apple9_stage_body(const struct agx_apple9_render_stage *stage)
 }
 
 static void
-apple9_graphics_launch_params(struct agx_apple9_launch_parameters *params,
+apple9_graphics_launch_params(struct agx_launch_parameters *params,
                               const struct agx_device *dev,
                               const struct agx_apple9_render_stage *shader,
                               bool fragment, unsigned tile_bytes,
                               unsigned samples)
 {
-   *params = (struct agx_apple9_launch_parameters){
+   *params = (struct agx_launch_parameters){
       .preamble_address =
          shader->preamble_size
             ? apple9_stage_body(shader)->addr + shader->preamble_offset
@@ -1287,7 +1334,7 @@ apple9_graphics_launch_params(struct agx_apple9_launch_parameters *params,
 }
 
 /* Linear search of the first count published templates. */
-static const struct agx_apple9_launch_template *
+static const struct agx_launch_template *
 apple9_stage_launch_find(struct agx_apple9_stage_launch_cache *c,
                          unsigned count, unsigned tile_bytes, unsigned samples)
 {
@@ -1303,7 +1350,7 @@ apple9_stage_launch_find(struct agx_apple9_stage_launch_cache *c,
  * it on first use; NULL if the cache is full or the parameters are rejected.
  * Published entries are immutable: lookups read the count with acquire
  * ordering and take no lock; only building locks. */
-static const struct agx_apple9_launch_template *
+static const struct agx_launch_template *
 apple9_stage_launch_template(const struct agx_device *dev,
                              const struct agx_apple9_render_stage *shader,
                              bool fragment, unsigned tile_bytes,
@@ -1312,7 +1359,7 @@ apple9_stage_launch_template(const struct agx_device *dev,
    struct agx_apple9_stage_launch_cache *c = shader->launch_cache;
    if (!fragment)
       tile_bytes = samples = 0;
-   const struct agx_apple9_launch_template *found = apple9_stage_launch_find(
+   const struct agx_launch_template *found = apple9_stage_launch_find(
       c, __atomic_load_n(&c->count, __ATOMIC_ACQUIRE), tile_bytes, samples);
    if (found)
       return found;
@@ -1320,12 +1367,12 @@ apple9_stage_launch_template(const struct agx_device *dev,
    unsigned i = c->count;
    found = apple9_stage_launch_find(c, i, tile_bytes, samples);
    if (!found && i < AGX_APPLE9_STAGE_LAUNCH_TEMPLATES) {
-      struct agx_apple9_launch_parameters params;
+      struct agx_launch_parameters params;
       apple9_graphics_launch_params(&params, dev, shader, fragment, tile_bytes,
                                     samples);
-      if (agx_apple9_launch_template_init(
-             &c->entry[i].tmpl, AGX_APPLE9_GRAPHICS_LAUNCH_SIZE,
-             fragment ? AGX_APPLE9_LAUNCH_FRAGMENT : AGX_APPLE9_LAUNCH_VERTEX,
+      if (agx_launch_template_init(
+             &c->entry[i].tmpl, AGX_GRAPHICS_LAUNCH_SIZE,
+             fragment ? AGX_LAUNCH_FRAGMENT : AGX_LAUNCH_VERTEX,
              &params)) {
          c->entry[i].tile_bytes = tile_bytes;
          c->entry[i].samples = samples;
@@ -1364,8 +1411,8 @@ agx_apple9_prepare_graphics_stage(
     * launch program to 64 bytes; the old 256-byte root reservation copied
     * another 192 bytes of zeros per stage without any consumer. */
    enum { roots_size = ALIGN_POT(AGX_APPLE9_GRAPHICS_ROOT_WORDS * 4, 64) };
-   const unsigned launch_size = AGX_APPLE9_GRAPHICS_LAUNCH_SIZE;
-   struct agx_apple9_launch_parameters params;
+   const unsigned launch_size = AGX_GRAPHICS_LAUNCH_SIZE;
+   struct agx_launch_parameters params;
    apple9_graphics_launch_params(&params, dev, shader, fragment, tile_bytes,
                                  samples);
    params.entry_offset = entry;
@@ -1373,7 +1420,7 @@ agx_apple9_prepare_graphics_stage(
    /* With a template, only the roots address, entry and program address are
     * per launch: emit the program next to fresh roots, without encoding it
     * or hashing it into the upload cache. */
-   const struct agx_apple9_launch_template *tmpl =
+   const struct agx_launch_template *tmpl =
       shader->launch_cache ? apple9_stage_launch_template(dev, shader, fragment,
                                                           tile_bytes, samples)
                            : NULL;
@@ -1387,14 +1434,14 @@ agx_apple9_prepare_graphics_stage(
       apple9_put_u64(roots + 8, samplers);
       apple9_put_u64(roots + 0x10, table);
       apple9_put_u64(roots + 8 * AGX_APPLE9_PUSH_ROOT, push);
-      if (!agx_apple9_launch_template_emit(roots + roots_size, tmpl, state.gpu,
+      if (!agx_launch_template_emit(roots + roots_size, tmpl, state.gpu,
                                            entry, state.gpu + roots_size))
          return false;
       *launch = agx_usc_addr(dev, state.gpu + roots_size);
       return true;
    }
 
-   uint8_t canonical[roots_size + AGX_APPLE9_GRAPHICS_LAUNCH_SIZE] = {0};
+   uint8_t canonical[roots_size + AGX_GRAPHICS_LAUNCH_SIZE] = {0};
    uint8_t *roots = canonical;
    apple9_put_u64(roots, textures);
    apple9_put_u64(roots + 8, samplers);
@@ -1407,9 +1454,9 @@ agx_apple9_prepare_graphics_stage(
    memcpy(roots, canonical, roots_size);
    params.launch_address = state.gpu + roots_size;
    params.resource_table = state.gpu;
-   if (!agx_apple9_launch_build(
+   if (!agx_launch_program_build(
           roots + roots_size, launch_size,
-          fragment ? AGX_APPLE9_LAUNCH_FRAGMENT : AGX_APPLE9_LAUNCH_VERTEX,
+          fragment ? AGX_LAUNCH_FRAGMENT : AGX_LAUNCH_VERTEX,
           &params)) {
       fprintf(
          stderr,

@@ -20,7 +20,7 @@
 #include "hk_descriptor_memory.h"
 
 #include "asahi/lib/agx_apple9.h"
-#include "asahi/lib/agx_apple9_launch.h"
+#include "asahi/lib/agx_launch_program.h"
 #include "hk_device.h"
 #include "hk_device_memory.h"
 #include "hk_private.h"
@@ -257,7 +257,7 @@ struct hk_shader {
    struct agx_bo *bo;
 
    /* Apple9 compute launch template, patched per dispatch, or NULL */
-   struct agx_apple9_launch_template *apple9_launch;
+   struct agx_launch_template *apple9_launch;
 
    /* Cache of fast linked variants */
    struct {

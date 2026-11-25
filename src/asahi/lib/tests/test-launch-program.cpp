@@ -7,13 +7,13 @@
 
 extern "C" {
 #include "asahi/compiler/agx_apple9_profile.h"
-#include "asahi/lib/agx_apple9_launch.h"
+#include "asahi/lib/agx_launch_program.h"
 }
 
-static agx_apple9_launch_parameters
+static agx_launch_parameters
 parameters()
 {
-   agx_apple9_launch_parameters p = {};
+   agx_launch_parameters p = {};
    p.shader_base = 0x10000000000ull;
    p.resource_table = p.shader_base + 0x208000;
    p.entry_offset = 0x12340;
@@ -39,12 +39,12 @@ read16(const uint8_t *p)
 TEST(LaunchProgram, AllStagesUseLiveEntryAndIndependentFrameExtents)
 {
    auto p = parameters();
-   for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
-                      AGX_APPLE9_LAUNCH_COMPUTE}) {
+   for (auto stage : {AGX_LAUNCH_VERTEX, AGX_LAUNCH_FRAGMENT,
+                      AGX_LAUNCH_COMPUTE}) {
       std::array<uint8_t, 1024> out;
       out.fill(0xa5);
-      ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(), stage, &p));
-      unsigned call = agx_apple9_launch_call_offset(stage, p.resource_count);
+      ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(), stage, &p));
+      unsigned call = agx_launch_call_offset(stage, p.resource_count);
       unsigned entry = out[call] | (out[call + 1] << 8) | (out[call + 2] << 16);
       EXPECT_EQ(entry, 0x246aau); /* Entry above the former 64 KiB boundary. */
       EXPECT_EQ(read16(out.data() + call + 11), 0x280u);
@@ -58,14 +58,14 @@ TEST(LaunchProgram, AllStagesUseLiveEntryAndIndependentFrameExtents)
 TEST(LaunchProgram, EntryTargetsCoverCompactArena)
 {
    auto p = parameters();
-   for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
-                      AGX_APPLE9_LAUNCH_COMPUTE}) {
+   for (auto stage : {AGX_LAUNCH_VERTEX, AGX_LAUNCH_FRAGMENT,
+                      AGX_LAUNCH_COMPUTE}) {
       for (unsigned offset : {0x40000u, 0x700000u, 0x7f8000u, 0x7fffeau}) {
          p.entry_offset = offset;
          std::array<uint8_t, 1024> out;
          ASSERT_TRUE(
-            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
-         unsigned call = agx_apple9_launch_call_offset(stage, p.resource_count);
+            agx_launch_program_build(out.data(), out.size(), stage, &p));
+         unsigned call = agx_launch_call_offset(stage, p.resource_count);
          unsigned target =
             out[call] | (out[call + 1] << 8) | (out[call + 2] << 16);
          EXPECT_EQ(target, 2 * offset + 0x2a);
@@ -80,15 +80,15 @@ TEST(LaunchProgram, ResourceCountsRespectAllocationBounds)
    for (unsigned resources = 1; resources <= 18; ++resources) {
       p.resource_count = resources;
       guarded.fill(0xa5);
-      ASSERT_TRUE(agx_apple9_launch_build(guarded.data() + 16, 1024,
-                                          AGX_APPLE9_LAUNCH_COMPUTE, &p));
+      ASSERT_TRUE(agx_launch_program_build(guarded.data() + 16, 1024,
+                                          AGX_LAUNCH_COMPUTE, &p));
       for (unsigned i = 0; i < 16; ++i) {
          EXPECT_EQ(guarded[i], 0xa5);
          EXPECT_EQ(guarded[1040 + i], 0xa5);
       }
       auto *out = guarded.data() + 16;
       unsigned call =
-         agx_apple9_launch_call_offset(AGX_APPLE9_LAUNCH_COMPUTE, resources);
+         agx_launch_call_offset(AGX_LAUNCH_COMPUTE, resources);
       EXPECT_EQ(read16(out + call + 13), p.frame_extent_a);
       EXPECT_EQ(read16(out + call + 15), p.frame_extent_b);
       /* Publish exactly the group-count pointer plus active resource
@@ -119,8 +119,8 @@ TEST(LaunchProgram, ResourceTablesUseFullAddresses)
              ((bytes[5] & 0xcu) << 9) | (uint32_t(bytes[6]) << 13) |
              ((bytes[7] & 0xfu) << 21) | ((bytes[3] & 0xfeu) << 24);
    };
-   for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
-                      AGX_APPLE9_LAUNCH_COMPUTE}) {
+   for (auto stage : {AGX_LAUNCH_VERTEX, AGX_LAUNCH_FRAGMENT,
+                      AGX_LAUNCH_COMPUTE}) {
       for (uint64_t address :
            {p.shader_base - 0x1000, p.shader_base + 0x1fffffc0,
             p.shader_base + 0x20000000, p.shader_base + 0x80000000,
@@ -128,7 +128,7 @@ TEST(LaunchProgram, ResourceTablesUseFullAddresses)
          p.resource_table = address;
          std::array<uint8_t, 1024> out;
          ASSERT_TRUE(
-            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
+            agx_launch_program_build(out.data(), out.size(), stage, &p));
          EXPECT_EQ(literal(out.data()), uint32_t(address));
          EXPECT_EQ(literal(out.data() + 8), uint32_t(address >> 32));
       }
@@ -138,19 +138,19 @@ TEST(LaunchProgram, ResourceTablesUseFullAddresses)
 TEST(LaunchProgram, InvalidParametersCannotPublishPartialCode)
 {
    auto p = parameters();
-   auto reject = [&](agx_apple9_launch_parameters bad,
-                     agx_apple9_launch_stage stage = AGX_APPLE9_LAUNCH_COMPUTE,
+   auto reject = [&](agx_launch_parameters bad,
+                     agx_launch_stage stage = AGX_LAUNCH_COMPUTE,
                      size_t capacity = 1024) {
       std::array<uint8_t, 1024> out;
       out.fill(0xa5);
       const auto saved = out;
-      EXPECT_FALSE(agx_apple9_launch_build(out.data(), capacity, stage, &bad));
+      EXPECT_FALSE(agx_launch_program_build(out.data(), capacity, stage, &bad));
       EXPECT_EQ(out, saved);
    };
-   reject(p, AGX_APPLE9_LAUNCH_COMPUTE, 1023);
-   reject(p, AGX_APPLE9_LAUNCH_VERTEX, 255);
+   reject(p, AGX_LAUNCH_COMPUTE, 1023);
+   reject(p, AGX_LAUNCH_VERTEX, 255);
    reject(p,
-          static_cast<agx_apple9_launch_stage>(AGX_APPLE9_LAUNCH_COMPUTE + 1));
+          static_cast<agx_launch_stage>(AGX_LAUNCH_COMPUTE + 1));
    auto bad = p;
    bad.entry_offset++;
    reject(bad);
@@ -173,17 +173,17 @@ TEST(LaunchProgram, InvalidParametersCannotPublishPartialCode)
       reject(bad);
    }
    bad.threadgroup_memory_bytes = 128;
-   reject(bad, AGX_APPLE9_LAUNCH_VERTEX);
-   reject(bad, AGX_APPLE9_LAUNCH_FRAGMENT);
+   reject(bad, AGX_LAUNCH_VERTEX);
+   reject(bad, AGX_LAUNCH_FRAGMENT);
    bad = p;
    for (unsigned samples : {0u, 3u, 8u}) {
       bad.samples = samples;
-      reject(bad, AGX_APPLE9_LAUNCH_FRAGMENT);
+      reject(bad, AGX_LAUNCH_FRAGMENT);
    }
    bad = p;
    for (unsigned bytes : {129u}) {
       bad.tile_bytes = bytes;
-      reject(bad, AGX_APPLE9_LAUNCH_FRAGMENT);
+      reject(bad, AGX_LAUNCH_FRAGMENT);
    }
 }
 
@@ -195,8 +195,8 @@ TEST(LaunchProgram, PublicationCapacityCoversPairBoundaries)
    std::array<uint8_t, 256> out;
    for (unsigned i = 0; i < 7; ++i) {
       p.publication_count = counts[i];
-      ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(),
-                                          AGX_APPLE9_LAUNCH_VERTEX, &p));
+      ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(),
+                                          AGX_LAUNCH_VERTEX, &p));
       EXPECT_EQ(read16(out.data() + 68 + 11), words[i]);
    }
 }
@@ -205,15 +205,15 @@ TEST(LaunchProgram, ThreadgroupAllocationDoesNotChangeEntryOrFrame)
 {
    auto p = parameters();
    std::array<uint8_t, 1024> initial, out;
-   ASSERT_TRUE(agx_apple9_launch_build(initial.data(), initial.size(),
-                                       AGX_APPLE9_LAUNCH_COMPUTE, &p));
-   unsigned call = agx_apple9_launch_call_offset(AGX_APPLE9_LAUNCH_COMPUTE,
+   ASSERT_TRUE(agx_launch_program_build(initial.data(), initial.size(),
+                                       AGX_LAUNCH_COMPUTE, &p));
+   unsigned call = agx_launch_call_offset(AGX_LAUNCH_COMPUTE,
                                                  p.resource_count);
    for (unsigned bytes : {128, 256, 512, 1024, 2048, 4096, 8192, 16384,
                           AGX_APPLE9_MAX_SHARED_BYTES}) {
       p.threadgroup_memory_bytes = bytes;
-      ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(),
-                                          AGX_APPLE9_LAUNCH_COMPUTE, &p));
+      ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(),
+                                          AGX_LAUNCH_COMPUTE, &p));
       EXPECT_EQ(read16(out.data() + call - 6), ((bytes << 2) | 0x80) & 0xffff);
       EXPECT_EQ(out[call - 4], bytes >> 14);
       EXPECT_EQ(out[call - 3], 0);
@@ -229,8 +229,8 @@ TEST(LaunchProgram, TileModesDoNotChangeEntryOrResources)
 {
    auto p = parameters();
    std::array<uint8_t, 256> initial, out;
-   ASSERT_TRUE(agx_apple9_launch_build(initial.data(), initial.size(),
-                                       AGX_APPLE9_LAUNCH_FRAGMENT, &p));
+   ASSERT_TRUE(agx_launch_program_build(initial.data(), initial.size(),
+                                       AGX_LAUNCH_FRAGMENT, &p));
    struct {
       unsigned samples, bytes, mode, low;
    } cases[] = {{1, 8, 0x4b, 0x43},   {2, 24, 0x4b, 0x46}, {4, 64, 0x43, 16},
@@ -239,8 +239,8 @@ TEST(LaunchProgram, TileModesDoNotChangeEntryOrResources)
    for (auto c : cases) {
       p.samples = c.samples;
       p.tile_bytes = c.bytes;
-      ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(),
-                                          AGX_APPLE9_LAUNCH_FRAGMENT, &p));
+      ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(),
+                                          AGX_LAUNCH_FRAGMENT, &p));
       EXPECT_EQ(out[68 - 7], c.low);
       EXPECT_EQ(out[68 - 6], c.mode);
       memcpy(out.data() + 68 - 10, initial.data() + 68 - 10, 8);
@@ -261,8 +261,8 @@ TEST(LaunchProgram, MultisampledZeroTargetLaunchesKeepTileAllocation)
    for (auto c : cases) {
       p.samples = c.samples;
       p.tile_bytes = c.bytes;
-      ASSERT_TRUE(agx_apple9_launch_build(out.data(), out.size(),
-                                          AGX_APPLE9_LAUNCH_FRAGMENT, &p));
+      ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(),
+                                          AGX_LAUNCH_FRAGMENT, &p));
       EXPECT_EQ(out[68 - 7], c.low);
    }
 }
@@ -271,17 +271,17 @@ TEST(LaunchProgram, PreambleTransferFollowsRootArguments)
 {
    auto p = parameters();
    p.launch_address = p.shader_base + 0x204000;
-   for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
-                      AGX_APPLE9_LAUNCH_COMPUTE}) {
+   for (auto stage : {AGX_LAUNCH_VERTEX, AGX_LAUNCH_FRAGMENT,
+                      AGX_LAUNCH_COMPUTE}) {
       for (uint64_t offset : {0x10000ull, 0xf0000000ull}) {
          p.preamble_address = p.shader_base + offset;
          std::array<uint8_t, 1024> out;
          ASSERT_TRUE(
-            agx_apple9_launch_build(out.data(), out.size(), stage, &p));
-         unsigned words = stage == AGX_APPLE9_LAUNCH_COMPUTE
+            agx_launch_program_build(out.data(), out.size(), stage, &p));
+         unsigned words = stage == AGX_LAUNCH_COMPUTE
                              ? agx_apple9_compute_root_words(p.resource_count)
                              : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
-         unsigned at = agx_apple9_launch_call_offset(stage, p.resource_count) +
+         unsigned at = agx_launch_call_offset(stage, p.resource_count) +
                        18 + 4 * words;
          EXPECT_EQ(read16(out.data() + at), 0x000fu);
          int64_t displacement = 0;
@@ -306,15 +306,15 @@ TEST(LaunchProgram, PreambleBoundsRejectWithoutWriting)
       p.preamble_address = address;
       out.fill(0xa5);
       auto before = out;
-      EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(),
-                                           AGX_APPLE9_LAUNCH_COMPUTE, &p));
+      EXPECT_FALSE(agx_launch_program_build(out.data(), out.size(),
+                                           AGX_LAUNCH_COMPUTE, &p));
       EXPECT_EQ(out, before);
    }
    p.preamble_address = p.shader_base + 0x800000;
    p.launch_address = p.shader_base - 2;
    out.fill(0xa5);
    auto before = out;
-   EXPECT_FALSE(agx_apple9_launch_build(out.data(), out.size(),
-                                        AGX_APPLE9_LAUNCH_COMPUTE, &p));
+   EXPECT_FALSE(agx_launch_program_build(out.data(), out.size(),
+                                        AGX_LAUNCH_COMPUTE, &p));
    EXPECT_EQ(out, before);
 }
