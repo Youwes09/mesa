@@ -616,6 +616,11 @@ struct agx_isa_target {
     */
    bool trailing_preamble;
 
+   /* Control flow pushes and pops execution masks, with a separate loop mask,
+    * rather than counting nesting in r0l.
+    */
+   bool mask_stack;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
@@ -753,11 +758,11 @@ typedef struct agx_context {
    /* Promoted constants. These will be appended to the binary at the end. */
    uint16_t rodata[512];
 
-   /* Apple9 arms to skip when no lane takes them (struct agx_apple9_skip) */
-   struct util_dynarray apple9_skips;
+   /* Arms to skip when no lane takes them (struct agx_skip) */
+   struct util_dynarray skips;
 } agx_context;
 
-struct agx_apple9_skip {
+struct agx_skip {
    /* Mask operation the jump follows */
    agx_instr *after;
 

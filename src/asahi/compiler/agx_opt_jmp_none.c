@@ -138,9 +138,9 @@ try_insert_jmp(agx_context *ctx, agx_block *from, agx_instr *from_I,
 void
 agx_opt_jmp_none(agx_context *ctx)
 {
-   /* Apple9 skips only the arms emit_if chose, see agx_apple9_skip */
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9) {
-      util_dynarray_foreach(&ctx->apple9_skips, struct agx_apple9_skip, skip) {
+   /* Mask stacks skip only the arms emit_if chose, see agx_skip */
+   if (ctx->target.mask_stack) {
+      util_dynarray_foreach(&ctx->skips, struct agx_skip, skip) {
          agx_builder b = agx_init_builder(ctx, agx_after_instr(skip->after));
 
          if (skip->to_end)

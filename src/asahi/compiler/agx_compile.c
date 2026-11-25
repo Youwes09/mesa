@@ -2475,7 +2475,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_read_invocation: {
       /* TODO: Check if we're actually inside divergent control flow */
-      if (!agx_is_apple9(b->shader))
+      if (!b->shader->target.mask_stack)
          b->shader->any_quad_divergent_shuffle |= b->shader->any_cf;
 
       /* Lane ID guaranteed to be uniform */
@@ -3631,7 +3631,7 @@ agx_emit_jump(agx_builder *b, nir_jump_instr *instr)
 {
    if (instr->type == nir_jump_halt) {
       agx_stop(b);
-   } else if (agx_is_apple9(b->shader)) {
+   } else if (b->shader->target.mask_stack) {
       assert(instr->type == nir_jump_break);
       agx_block_add_successor(b->shader->current_block, b->shader->break_block);
 
@@ -3819,7 +3819,7 @@ agx_arm_has_tile_domain_ops(agx_block *from, agx_block *to)
 }
 
 /* Issue cost of an arm, memory operations weighted by their latency */
-#define AGX_APPLE9_SKIP_COST 19
+#define AGX_SKIP_COST 19
 
 static unsigned
 agx_arm_cost(struct exec_list *list)
@@ -3848,7 +3848,7 @@ emit_if(agx_context *ctx, nir_if *nif)
    agx_index cond = agx_src_index(ctx, &nif->condition);
    agx_instr *if_ = NULL;
 
-   if (agx_is_apple9(ctx)) {
+   if (ctx->target.mask_stack) {
       /* Push the execution mask, keeping the lanes with a nonzero condition */
       agx_icmp_pred(&_b, cond, agx_zero(), AGX_ICOND_UEQ, false, 0);
       if_ = agx_if_pred(&_b, 0, true);
@@ -3871,23 +3871,23 @@ emit_if(agx_context *ctx, nir_if *nif)
    /* Insert an else instruction at the beginning of the else block */
    _b.cursor = agx_before_block(else_block);
 
-   if (agx_is_apple9(ctx)) {
+   if (ctx->target.mask_stack) {
       agx_instr *else_ = agx_else_exec(&_b);
 
       /* Arms to skip when no lane takes them, see agx_opt_jmp_none */
-      if (!ctx->apple9_skips.mem_ctx)
-         util_dynarray_init(&ctx->apple9_skips, ctx);
+      if (!ctx->skips.mem_ctx)
+         util_dynarray_init(&ctx->skips, ctx);
 
-      if (agx_arm_cost(&nif->then_list) > AGX_APPLE9_SKIP_COST ||
+      if (agx_arm_cost(&nif->then_list) > AGX_SKIP_COST ||
           agx_arm_has_tile_domain_ops(if_block, end_then)) {
-         struct agx_apple9_skip skip = {if_, else_block, false};
-         util_dynarray_append(&ctx->apple9_skips, skip);
+         struct agx_skip skip = {if_, else_block, false};
+         util_dynarray_append(&ctx->skips, skip);
       }
 
-      if (agx_arm_cost(&nif->else_list) > AGX_APPLE9_SKIP_COST ||
+      if (agx_arm_cost(&nif->else_list) > AGX_SKIP_COST ||
           agx_arm_has_tile_domain_ops(else_block, end_else)) {
-         struct agx_apple9_skip skip = {else_, end_else, true};
-         util_dynarray_append(&ctx->apple9_skips, skip);
+         struct agx_skip skip = {else_, end_else, true};
+         util_dynarray_append(&ctx->skips, skip);
       }
    } else {
       /* If the "if" fails, we fallthrough to the else */
@@ -3934,8 +3934,8 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
     */
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));
    if (ctx->total_nesting > 1) {
-      /* Apple9 has a separate loop mask, implicit outside control flow */
-      if (agx_is_apple9(ctx))
+      /* The loop mask is implicit outside control flow */
+      if (ctx->target.mask_stack)
          agx_begin_loop(&_b);
       else
          agx_push_exec(&_b, 1);
@@ -3952,7 +3952,7 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
    _b.cursor = agx_after_block(ctx->current_block);
    agx_jmp_exec_any(&_b, start_block);
 
-   if (agx_is_apple9(ctx))
+   if (ctx->target.mask_stack)
       agx_end_loop(&_b);
    else
       agx_pop_exec(&_b, 1);
@@ -3982,8 +3982,8 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
 static void
 emit_first_cf(agx_context *ctx)
 {
-   /* Apple9 has no nesting counter */
-   if (ctx->any_cf || agx_is_apple9(ctx))
+   /* Mask stacks have no nesting counter */
+   if (ctx->any_cf || ctx->target.mask_stack)
       return;
 
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));
