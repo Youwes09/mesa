@@ -167,15 +167,14 @@ libagx_unroll_adjacency(global uint32_t *out_draw,
    out_draw[4] = indexed ? in_draw[4] : in_draw[3];
 }
 
-/* Apple9 bounds the hardware index fetch in whole words. Copy the indices of a
+/* The hardware index fetch is bounded in whole words. Copy the indices of a
  * draw whose binding ends inside a word, reading zero past the binding.
  */
 KERNEL(1)
-libagx_robust_index_apple9(global uint32_t *out_draw,
-                           global struct poly_heap *heap,
-                           constant uint32_t *in_draw, uint64_t index_buffer,
-                           uint32_t index_buffer_range_el,
-                           uint32_t index_size_B)
+libagx_copy_robust_index(global uint32_t *out_draw,
+                         global struct poly_heap *heap,
+                         constant uint32_t *in_draw, uint64_t index_buffer,
+                         uint32_t index_buffer_range_el, uint32_t index_size_B)
 {
    uint first = in_draw[2];
    uint range_el = poly_index_buffer_range_el(index_buffer_range_el, first);

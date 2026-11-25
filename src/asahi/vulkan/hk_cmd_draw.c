@@ -3855,10 +3855,10 @@ hk_robust_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    perf_debug(cmd, "copying robust index buffer");
    uint64_t out_draw = hk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4).gpu;
-   libagx_robust_index_apple9(
-      cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw, hk_heap(cmd),
-      in_draw, draw.index_buffer, draw.index_buffer_range_B >> draw.index_size,
-      agx_index_size_to_B(draw.index_size));
+   libagx_copy_robust_index(cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX,
+                            out_draw, hk_heap(cmd), in_draw, draw.index_buffer,
+                            draw.index_buffer_range_B >> draw.index_size,
+                            agx_index_size_to_B(draw.index_size));
 
    return hk_heap_indexed_indirect(cmd, out_draw, draw.index_size,
                                    draw.restart);
