@@ -5148,7 +5148,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    }
 
    unsigned offset = agx_pad_binary(binary, AGX_CODE_ALIGN);
-   agx_pack_binary(ctx, binary);
+   ctx->target.pack(ctx, binary);
 
    unsigned nr_gprs = ctx->max_reg + 1;
 

@@ -45,6 +45,7 @@ static const struct agx_isa_target agx_apple8_target = {
    .spill_swap_regs = {4, 6},
    .scoreboard_slots = 2,
    .occupancy_table = true,
+   .pack = agx2_pack_binary,
    .disassemble = agx2_disassemble,
 };
 
@@ -78,6 +79,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .scoreboard_slots = 6,
    .shader_sized_frame = true,
    .occupancy_table = false,
+   .pack = agx3_pack_binary,
 };
 
 const struct agx_isa_target *

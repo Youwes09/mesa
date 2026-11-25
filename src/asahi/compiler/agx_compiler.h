@@ -542,6 +542,8 @@ typedef struct agx_block {
    uint8_t pass_flags;
 } agx_block;
 
+struct agx_context;
+
 /* Register files of a shader ISA, in 16-bit units like register numbers */
 struct agx_isa_target {
    enum agx_shader_isa isa;
@@ -654,6 +656,9 @@ struct agx_isa_target {
     * exports at its end.
     */
    bool avoid_export_targets;
+
+   /* Packs the shader into machine code */
+   void (*pack)(struct agx_context *ctx, struct util_dynarray *emission);
 
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
@@ -1327,12 +1332,12 @@ void agx_opt_register_cache(agx_context *ctx);
 void agx_compute_postra_liveness(agx_context *ctx);
 void agx_opt_break_if(agx_context *ctx);
 void agx_opt_jmp_none(agx_context *ctx);
-void agx_pack_binary(agx_context *ctx, struct util_dynarray *emission);
+void agx2_pack_binary(agx_context *ctx, struct util_dynarray *emission);
+void agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 
-/* agx_apple9_pack_instr packs one instruction and returns its length */
-void agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission);
-unsigned agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
-                               bool alu_reads_result, uint8_t *bytes);
+/* Packs one instruction and returns its length */
+unsigned agx3_pack_instr(const agx_instr *I, bool load_follows,
+                         bool alu_reads_result, uint8_t *bytes);
 
 /* Encoding form of an allocated instruction, or AGX_APPLE9_ENC_PSEUDO */
 enum agx_apple9_encoding agx_apple9_encoding_for(const agx_instr *I);

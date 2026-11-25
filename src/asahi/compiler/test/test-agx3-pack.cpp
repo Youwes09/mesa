@@ -94,7 +94,7 @@ class Agx3Pack : public testing::Test {
    {
       uint8_t bytes[32];
       unsigned length =
-         agx_apple9_pack_instr(I, load_follows, alu_reads, bytes);
+         agx3_pack_instr(I, load_follows, alu_reads, bytes);
       return std::vector<uint8_t>(bytes, bytes + length);
    }
 
@@ -853,7 +853,7 @@ TEST_F(Agx3Pack, Branches)
 
    struct util_dynarray binary;
    util_dynarray_init(&binary, mem_ctx);
-   agx_pack_binary(ctx, &binary);
+   agx3_pack_binary(ctx, &binary);
 
    const uint8_t *code = (const uint8_t *)binary.data;
    ASSERT_EQ(binary.size, 2 + 10 + 2 + 10 + 4);

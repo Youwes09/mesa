@@ -2891,8 +2891,8 @@ agx_apple9_encoding_for(const agx_instr *I)
 }
 
 unsigned
-agx_apple9_pack_instr(const agx_instr *I, bool load_follows,
-                      bool alu_reads_result, uint8_t *bytes)
+agx3_pack_instr(const agx_instr *I, bool load_follows,
+                bool alu_reads_result, uint8_t *bytes)
 {
    if (is_empty(I))
       return 0;
@@ -2970,7 +2970,7 @@ struct a9_fixup {
 };
 
 void
-agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission)
+agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission)
 {
    struct util_dynarray fixups;
    util_dynarray_init(&fixups, ctx);
@@ -3014,7 +3014,7 @@ agx_pack_binary_apple9(agx_context *ctx, struct util_dynarray *emission)
          }
 
          uint8_t bytes[A9_MAX_BYTES];
-         unsigned length = agx_apple9_pack_instr(I, load_follows, reads, bytes);
+         unsigned length = agx3_pack_instr(I, load_follows, reads, bytes);
          memcpy(util_dynarray_grow_bytes(emission, 1, length), bytes, length);
       }
    }
