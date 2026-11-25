@@ -6,7 +6,7 @@
 #include "agx_linker.h"
 #include <stddef.h>
 #include <stdint.h>
-#include "asahi/compiler/agx_apple9_encoding.h"
+#include "asahi/compiler/agx3_emit.h"
 #include "util/ralloc.h"
 #include "util/u_dynarray.h"
 #include "agx_abi.h"
@@ -117,7 +117,7 @@ static void
 append_tile(struct util_dynarray *d, bool begin, unsigned control)
 {
    uint8_t bytes[6];
-   agx_apple9_encode_tile(bytes, begin, control);
+   agx3_emit_tile(bytes, begin, control);
    append(d, bytes, sizeof(bytes));
 }
 
@@ -125,7 +125,7 @@ static void
 append_halt(struct util_dynarray *d)
 {
    uint8_t bytes[4];
-   agx_apple9_encode_halt(bytes);
+   agx3_emit_halt(bytes);
    append(d, bytes, sizeof(bytes));
 }
 
@@ -228,7 +228,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
    /* No sample is killed yet, unless the prolog says so */
    if (fragment && !prolog) {
       uint8_t bytes[2];
-      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FOUT_KILLED_SAMPLES / 2, 0);
+      agx3_emit_mov_imm7(bytes, AGX_ABI_FOUT_KILLED_SAMPLES / 2, 0);
       append(&d, bytes, sizeof(bytes));
    }
 
@@ -246,7 +246,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
    size_t loop_start = 0;
    if (nr_samples_shaded > 1) {
       uint8_t bytes[2];
-      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
+      agx3_emit_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
       append(&d, bytes, sizeof(bytes));
 
       loop_start = d.size;
@@ -256,7 +256,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
       append(&d, header, sizeof(header));
    } else if (nr_samples_shaded) {
       uint8_t bytes[2];
-      agx_apple9_encode_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
+      agx3_emit_mov_imm7(bytes, AGX_ABI_FIN_SAMPLE_MASK / 2, 1);
       append(&d, bytes, sizeof(bytes));
    }
 
@@ -273,7 +273,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
          if (store) {
             assert(store - 1 + 8 <= parts[i]->info.main_size);
-            ASSERTED bool ok = agx_apple9_relocate_vary_store(
+            ASSERTED bool ok = agx3_relocate_vary_store(
                (uint8_t *)d.data + base + store - 1, uvs_slots[s]);
             assert(ok && "encodable slot");
          }
@@ -285,7 +285,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
       uint8_t jmp[10];
       ASSERTED bool ok =
-         agx_apple9_encode_branch(jmp, true, (int64_t)loop_start - d.size);
+         agx3_emit_branch(jmp, true, (int64_t)loop_start - d.size);
       assert(ok);
       append(&d, jmp, sizeof(jmp));
       append(&d, agx3_pop_loop, sizeof(agx3_pop_loop));

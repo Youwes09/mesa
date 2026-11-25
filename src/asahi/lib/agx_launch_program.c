@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "agx_launch_program.h"
-#include "asahi/compiler/agx_apple9_encoding.h"
+#include "asahi/compiler/agx3_emit.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_launch_abi.h"
 
@@ -139,9 +139,8 @@ launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
    const unsigned root = 2, pending = LAUNCH_PENDING_BASE;
    /* Table loads use a full address in a GPR pair. They have no compact
     * USC-relative pointer field or 512-MiB placement restriction. */
-   agx_apple9_encode_literal32(program, root, params->resource_table);
-   agx_apple9_encode_literal32(program + 8, root + 1,
-                               params->resource_table >> 32);
+   agx3_emit_literal32(program, root, params->resource_table);
+   agx3_emit_literal32(program + 8, root + 1, params->resource_table >> 32);
    unsigned at = 16;
    unsigned words = compute ? agx_compute_root_words(params->resource_count)
                             : AGX_LAUNCH_GRAPHICS_ROOT_WORDS;
@@ -162,14 +161,14 @@ launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
          tmpl->root_words = words;
       }
       for (unsigned i = 0; i < words; ++i) {
-         if (!agx_apple9_encode_literal32(program + at, pending + i, values[i]))
+         if (!agx3_emit_literal32(program + at, pending + i, values[i]))
             return false;
          at += 8;
       }
    } else {
       for (int i = (roots - 1) & ~1; i >= 0; i -= 2) {
-         if (!agx_apple9_encode_pointer_load(program + at, pending + 2 * i,
-                                             root, i, i + 2 <= roots ? 2 : 1))
+         if (!agx3_emit_pointer_load(program + at, pending + 2 * i, root, i,
+                                     i + 2 <= roots ? 2 : 1))
             return false;
          at += 14;
       }
@@ -186,8 +185,8 @@ launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
    at += 10;
    /* Only loaded roots are pending on slot 2. */
    for (unsigned i = 0; i < words; ++i) {
-      if (!agx_apple9_encode_argument_word(program + at, i, pending + i,
-                                           i == 0 && !compute))
+      if (!agx3_emit_argument_word(program + at, i, pending + i,
+                                   i == 0 && !compute))
          return false;
       at += 4;
    }
@@ -203,7 +202,7 @@ launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
       int64_t displacement =
          (int64_t)(params->preamble_address - params->shader_base) -
          (int64_t)(params->launch_address - params->shader_base + at);
-      if (!agx_apple9_encode_branch(program + at, true, displacement))
+      if (!agx3_emit_branch(program + at, true, displacement))
          return false;
       if (tmpl)
          tmpl->branch_at = at;
@@ -262,8 +261,8 @@ agx_launch_template_set_roots(uint8_t *out,
    if (!tmpl->valid || !tmpl->root_words || !root_words)
       return false;
    for (unsigned i = 0; i < tmpl->root_words; ++i) {
-      if (!agx_apple9_encode_literal32(out + tmpl->roots_at + 8 * i,
-                                       LAUNCH_PENDING_BASE + i, root_words[i]))
+      if (!agx3_emit_literal32(out + tmpl->roots_at + 8 * i,
+                               LAUNCH_PENDING_BASE + i, root_words[i]))
          return false;
    }
    return true;
@@ -278,8 +277,8 @@ agx_launch_template_emit(uint8_t *out, const struct agx_launch_template *tmpl,
       return false;
    uint8_t head[16], target[10], branch[10];
    const unsigned root = 2;
-   agx_apple9_encode_literal32(head, root, resource_table);
-   agx_apple9_encode_literal32(head + 8, root + 1, resource_table >> 32);
+   agx3_emit_literal32(head, root, resource_table);
+   agx3_emit_literal32(head + 8, root + 1, resource_table >> 32);
    if (!encode_target(target, tmpl->stage, tmpl->shader_base, entry_offset))
       return false;
    if (tmpl->branch_at) {
@@ -290,7 +289,7 @@ agx_launch_template_emit(uint8_t *out, const struct agx_launch_template *tmpl,
          return false;
       int64_t displacement = (int64_t)(tmpl->preamble_address - base) -
                              (int64_t)(launch_address - base + tmpl->branch_at);
-      if (!agx_apple9_encode_branch(branch, true, displacement))
+      if (!agx3_emit_branch(branch, true, displacement))
          return false;
    }
    memcpy(out, tmpl->program, tmpl->length);

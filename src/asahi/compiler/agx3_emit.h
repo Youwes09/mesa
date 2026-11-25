@@ -1,8 +1,8 @@
 /* Copyright 2026 Asahi Linux Contributors
  * SPDX-License-Identifier: MIT
  */
-#ifndef AGX_APPLE9_ENCODING_H
-#define AGX_APPLE9_ENCODING_H
+#ifndef AGX3_EMIT_H
+#define AGX3_EMIT_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,7 +15,7 @@
 
 /* 32-bit register r0-r63 */
 static inline struct agx3_operand
-agx_apple9_register(unsigned reg)
+agx3_reg32(unsigned reg)
 {
    return (struct agx3_operand){
       .kind = AGX3_KIND_REG,
@@ -25,7 +25,7 @@ agx_apple9_register(unsigned reg)
 }
 
 static inline bool
-agx_apple9_pack(uint8_t *out, agx3_pack_fn pack, struct agx3_fields f)
+agx3_emit(uint8_t *out, agx3_pack_fn pack, struct agx3_fields f)
 {
    uint8_t bytes[AGX3_MAX_LENGTH];
    unsigned length = pack(bytes, &f);
@@ -40,13 +40,13 @@ agx_apple9_pack(uint8_t *out, agx3_pack_fn pack, struct agx3_fields f)
  * bit hung the GPU.
  */
 static inline bool
-agx_apple9_encode_literal32(uint8_t out[8], unsigned dst, uint32_t value)
+agx3_emit_literal32(uint8_t out[8], unsigned dst, uint32_t value)
 {
-   return agx_apple9_pack(out, agx3_pack_mov_imm32,
-                          (struct agx3_fields){
-                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
-                             .value = value,
-                          });
+   return agx3_emit(out, agx3_pack_mov_imm32,
+                    (struct agx3_fields){
+                       .dest = agx3_encode_dst(agx3_reg32(dst)),
+                       .value = value,
+                    });
 }
 
 /* Entry-table loads: base is a full address in a GPR pair, offset is in
@@ -54,21 +54,21 @@ agx_apple9_encode_literal32(uint8_t out[8], unsigned dst, uint32_t value)
  * The established widths are one or two consecutive 64-bit pointers.
  */
 static inline bool
-agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
-                               unsigned offset, unsigned count)
+agx3_emit_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
+                       unsigned offset, unsigned count)
 {
    if ((count != 1 && count != 2) || dst + 2 * count > 64 || base >= 63 ||
        offset > 255)
       return false;
 
-   struct agx3_operand pair = agx_apple9_register(base);
+   struct agx3_operand pair = agx3_reg32(base);
    pair.size32 = false;
    pair.size64 = true;
 
-   return agx_apple9_pack(
+   return agx3_emit(
       out, agx3_pack_device_load,
       (struct agx3_fields){
-         .dest = agx3_encode_reg(agx_apple9_register(dst)),
+         .dest = agx3_encode_reg(agx3_reg32(dst)),
          .src = {agx3_encode_membase(pair),
                  agx3_encode_memindex(
                     (struct agx3_operand){.kind = AGX3_KIND_NONE})},
@@ -84,14 +84,13 @@ agx_apple9_encode_pointer_load(uint8_t out[14], unsigned dst, unsigned base,
  * persistent shader entries. The low bit is reserved for instruction alignment.
  */
 static inline bool
-agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
+agx3_emit_branch(uint8_t out[10], bool any, int64_t displacement)
 {
    if (!out || (displacement & 1))
       return false;
 
-   return agx_apple9_pack(out,
-                          any ? agx3_pack_jmp_exec_any : agx3_pack_jmp_exec_none,
-                          (struct agx3_fields){.offset = displacement});
+   return agx3_emit(out, any ? agx3_pack_jmp_exec_any : agx3_pack_jmp_exec_none,
+                    (struct agx3_fields){.offset = displacement});
 }
 
 /* Transfer one pending word to the main's argument window. A first transfer
@@ -99,20 +98,19 @@ agx_apple9_encode_branch(uint8_t out[10], bool any, int64_t displacement)
  * Argument word 2*i is the low half of pointer i, word 2*i+1 its high half.
  */
 static inline bool
-agx_apple9_encode_argument_word(uint8_t out[4], unsigned dst, unsigned src,
-                                bool wait)
+agx3_emit_argument_word(uint8_t out[4], unsigned dst, unsigned src, bool wait)
 {
-   return agx_apple9_pack(out, agx3_pack_mov_launch,
-                          (struct agx3_fields){
-                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
-                             .src = {agx3_encode_reg(agx_apple9_register(src))},
-                             .wait = wait,
-                          });
+   return agx3_emit(out, agx3_pack_mov_launch,
+                    (struct agx3_fields){
+                       .dest = agx3_encode_dst(agx3_reg32(dst)),
+                       .src = {agx3_encode_reg(agx3_reg32(src))},
+                       .wait = wait,
+                    });
 }
 
 /* Commit export register `word` to varying slot `slot`, without waiting */
 static inline bool
-agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
+agx3_emit_vary_store(uint8_t out[8], unsigned word, unsigned slot)
 {
    if (slot >= 138)
       return false;
@@ -123,18 +121,18 @@ agx_apple9_encode_vary_store(uint8_t out[8], unsigned word, unsigned slot)
       .size32 = true,
    };
 
-   return agx_apple9_pack(out, agx3_pack_st_vary,
-                          (struct agx3_fields){
-                             .src = {agx3_encode_export(value)},
-                             .slot = slot,
-                          });
+   return agx3_emit(out, agx3_pack_st_vary,
+                    (struct agx3_fields){
+                       .src = {agx3_encode_export(value)},
+                       .slot = slot,
+                    });
 }
 
 /* Change the varying slot of an encoded st_vary, keeping its wait. The slot
  * is at bits 37-44.
  */
 static inline bool
-agx_apple9_relocate_vary_store(uint8_t bytes[8], unsigned slot)
+agx3_relocate_vary_store(uint8_t bytes[8], unsigned slot)
 {
    if (slot >= 138)
       return false;
@@ -146,27 +144,27 @@ agx_apple9_relocate_vary_store(uint8_t bytes[8], unsigned slot)
 
 /* Open (begin_tile) or close (end_tile) tile and raster order domains */
 static inline void
-agx_apple9_encode_tile(uint8_t out[6], bool begin, unsigned control)
+agx3_emit_tile(uint8_t out[6], bool begin, unsigned control)
 {
-   agx_apple9_pack(out, begin ? agx3_pack_begin_tile : agx3_pack_end_tile,
-                   (struct agx3_fields){.control = control & 0xffff});
+   agx3_emit(out, begin ? agx3_pack_begin_tile : agx3_pack_end_tile,
+             (struct agx3_fields){.control = control & 0xffff});
 }
 
 /* mov r0..r15 = 0..0x7f */
 static inline bool
-agx_apple9_encode_mov_imm7(uint8_t out[2], unsigned dst, unsigned value)
+agx3_emit_mov_imm7(uint8_t out[2], unsigned dst, unsigned value)
 {
-   return agx_apple9_pack(out, agx3_pack_mov_imm,
-                          (struct agx3_fields){
-                             .dest = agx3_encode_dst(agx_apple9_register(dst)),
-                             .value = value,
-                          });
+   return agx3_emit(out, agx3_pack_mov_imm,
+                    (struct agx3_fields){
+                       .dest = agx3_encode_dst(agx3_reg32(dst)),
+                       .value = value,
+                    });
 }
 
 static inline void
-agx_apple9_encode_halt(uint8_t out[4])
+agx3_emit_halt(uint8_t out[4])
 {
-   agx_apple9_pack(out, agx3_pack_stop, (struct agx3_fields){0});
+   agx3_emit(out, agx3_pack_stop, (struct agx3_fields){0});
 }
 
 #endif

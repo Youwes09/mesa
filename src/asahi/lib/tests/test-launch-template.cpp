@@ -8,7 +8,7 @@
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_shader_body.h"
 extern "C" {
-#include "asahi/compiler/agx_apple9_encoding.h"
+#include "asahi/compiler/agx3_emit.h"
 #include "asahi/lib/agx_apple9_layout.h"
 #include "asahi/lib/agx_launch_abi.h"
 }
@@ -99,7 +99,7 @@ TEST(LaunchTemplate, ComputeRootsAreLiterals)
       const unsigned words = agx_compute_root_words(resources);
       for (unsigned i = 0; i < words; ++i) {
          uint8_t literal[8];
-         ASSERT_TRUE(agx_apple9_encode_literal32(literal, 18 + i, roots[i]));
+         ASSERT_TRUE(agx3_emit_literal32(literal, 18 + i, roots[i]));
          EXPECT_EQ(memcmp(out + 16 + 8 * i, literal, 8), 0) << "word " << i;
       }
       const unsigned call =

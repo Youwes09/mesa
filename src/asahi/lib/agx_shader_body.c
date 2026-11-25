@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "agx_shader_body.h"
-#include "asahi/compiler/agx_apple9_encoding.h"
+#include "asahi/compiler/agx3_emit.h"
 #include "util/u_atomic.h"
 #include "util/u_call_once.h"
 #include "util/vma.h"
@@ -129,7 +129,7 @@ build_body_entry(uint8_t *out, uint64_t entry, uint64_t body)
    if ((entry | body) & 1 || displacement < -(int64_t)UINT32_MAX ||
        displacement > UINT32_MAX)
       return false;
-   if (!agx_apple9_encode_branch(out, true, displacement))
+   if (!agx3_emit_branch(out, true, displacement))
       return false;
    put_u32(out + 10, 0x0e); /* No active lanes: terminate */
    return true;
