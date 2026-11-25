@@ -14,15 +14,15 @@ extern "C" {
 unsigned test_libagx_num_programs(void);
 bool test_libagx_expected_to_fail(unsigned program);
 unsigned test_libagx_fast_clear_4x(void);
-const uint32_t *test_libagx_apple9_binary(unsigned program);
+const uint32_t *test_libagx_binary(unsigned program);
 }
 
-class LibagxApple9 : public testing::TestWithParam<unsigned> {};
+class LibagxBinary : public testing::TestWithParam<unsigned> {};
 
-TEST_P(LibagxApple9, Compiled)
+TEST_P(LibagxBinary, Compiled)
 {
    unsigned program = GetParam();
-   const uint32_t *bin = test_libagx_apple9_binary(program);
+   const uint32_t *bin = test_libagx_binary(program);
 
    if (test_libagx_expected_to_fail(program)) {
       EXPECT_EQ(bin, nullptr);
@@ -54,11 +54,11 @@ TEST_P(LibagxApple9, Compiled)
    }
 }
 
-INSTANTIATE_TEST_SUITE_P(All, LibagxApple9,
+INSTANTIATE_TEST_SUITE_P(All, LibagxBinary,
                          testing::Range(0u, test_libagx_num_programs()));
 
 /* Guard both ends: these sizes are also the command allocator reservation. */
-TEST(Apple9Dispatch, PacketFootprints)
+TEST(DispatchPacket, PacketFootprints)
 {
    agx_apple9_compute_profile profile = {};
    profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
@@ -95,7 +95,7 @@ TEST(Apple9Dispatch, PacketFootprints)
 /* Consecutive draws with the same compiled stages reuse launches and the
  * coefficient table; a stage without a program id never does (hk once left
  * every id at zero, which silently disabled the reuse). */
-TEST(Apple9DrawReuse, StablePairReusesLaunchesAndCoefficients)
+TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
 {
    agx_apple9_uniform_draw a = {}, b = {};
    for (unsigned s = 0; s < 2; ++s) {
@@ -130,7 +130,7 @@ TEST(Apple9DrawReuse, StablePairReusesLaunchesAndCoefficients)
    EXPECT_FALSE(agx_apple9_draw_reuses_coefficients(nullptr, &b));
 }
 
-TEST(Apple9DrawReuse, ZeroProgramIdNeverReuses)
+TEST(DrawReuse, ZeroProgramIdNeverReuses)
 {
    agx_apple9_uniform_draw a = {}, b = {};
    EXPECT_FALSE(agx_apple9_draw_reuses_launch(&a, &b, 0));

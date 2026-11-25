@@ -259,7 +259,7 @@ main(int argc, char **argv)
    const size_t bytes = (size_t)W * H * 4;
 
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                            .pApplicationName = "apple9-sample-rerender",
+                            .pApplicationName = "vk-sample-rerender",
                             .apiVersion = VK_API_VERSION_1_3};
    VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                .pApplicationInfo = &app};

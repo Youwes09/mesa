@@ -88,7 +88,7 @@ TEST(Groups, Decode)
 /* Apple9 keeps VA[47:4] below the sRGB and stride fields. Exercise each of
  * the eight address bits which cannot pass through a legacy descriptor.
  */
-TEST(Apple9Texture, FullAddressDoesNotOverlapFlagsOrStride)
+TEST(TextureDescriptor, FullAddressDoesNotOverlapFlagsOrStride)
 {
    struct AGX_TEXTURE tex = {AGX_TEXTURE_header};
    tex.dimension = AGX_TEXTURE_DIMENSION_2D;
@@ -115,7 +115,7 @@ TEST(Apple9Texture, FullAddressDoesNotOverlapFlagsOrStride)
    EXPECT_FALSE(agx_apple9_pack_texture(words, &tex));
 }
 
-TEST(Apple9Texture, ThreeDimensionalDepthHasElevenBits)
+TEST(TextureDescriptor, ThreeDimensionalDepthHasElevenBits)
 {
    struct AGX_TEXTURE tex = {AGX_TEXTURE_header};
    tex.dimension = AGX_TEXTURE_DIMENSION_3D;
@@ -138,7 +138,7 @@ TEST(Apple9Texture, ThreeDimensionalDepthHasElevenBits)
    EXPECT_TRUE(agx_apple9_pack_texture(words, &tex));
 }
 
-TEST(Apple9Texture, LinearR32fWithHighAddress)
+TEST(TextureDescriptor, LinearR32fWithHighAddress)
 {
    struct AGX_TEXTURE tex = {AGX_TEXTURE_header};
    tex.dimension = AGX_TEXTURE_DIMENSION_2D;

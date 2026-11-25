@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Reproduce the Apple9 libagx compressed 4x-MSAA fast-clear compilation path.
+ * Reproduce the libagx compressed 4x-MSAA fast-clear compilation path.
  * Does not use a window system, shaders, Steam or a game.
  */
 #include <stdint.h>
@@ -20,7 +20,7 @@ main(void)
 {
    setbuf(stdout, NULL);
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                            .pApplicationName = "Apple9 compressed fast-clear",
+                            .pApplicationName = "compressed fast-clear",
                             .apiVersion = VK_API_VERSION_1_0};
    VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                .pApplicationInfo = &app};

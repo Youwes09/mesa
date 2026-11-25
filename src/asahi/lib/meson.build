@@ -71,18 +71,18 @@ libasahi_lib = static_library(
 )
 
 if with_tests
-  test('apple9-draw-tables', executable('apple9-draw-tables',
-    'tests/test-apple9-draw-tables.c',
+  test('draw-tables', executable('draw-tables',
+    'tests/test-draw-tables.c',
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [idep_mesautil, idep_nir, idep_libagx],
     link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
-  test('apple9-coefficients', executable('apple9-coefficients',
-    'tests/test-apple9-coefficients.c',
+  test('coefficients', executable('coefficients',
+    'tests/test-coefficients.c',
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [idep_mesautil, idep_nir, idep_libagx],
     link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
-  test('apple9-graphics-roots', executable('apple9-graphics-roots',
-    'tests/test-apple9-graphics-roots.c',
+  test('graphics-roots', executable('graphics-roots',
+    'tests/test-graphics-roots.c',
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [idep_mesautil, idep_nir, idep_libagx],
     link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
@@ -93,8 +93,10 @@ if with_tests
       files(
         'tests/test-packing.cpp',
         'tests/test-border.cpp',
-        'tests/test-apple9-cdm.cpp',
-        'tests/test-apple9-launch-template.cpp',
+        'tests/test-compute-dispatch.cpp',
+        'tests/test-compute-geometry.cpp',
+        'tests/test-launch-program.cpp',
+        'tests/test-launch-template.cpp',
         'tests/test-tilebuffer.cpp',
         'tests/test-primitive-count.cpp',
         'tests/test-poly-indirect-size.cpp',
@@ -110,11 +112,11 @@ if with_tests
   )
 
   test(
-    'libagx_apple9',
+    'libagx_binaries',
     executable(
-      'libagx_apple9_test',
-      files('tests/test-libagx-apple9.cpp',
-            'tests/libagx-apple9-programs.c'),
+      'libagx_binaries_test',
+      files('tests/test-libagx-binaries.cpp',
+            'tests/libagx-binaries.c'),
       c_args : [c_msvc_compat_args, no_override_init_args],
       gnu_symbol_visibility : 'hidden',
       include_directories : [inc_asahi],

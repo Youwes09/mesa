@@ -36,7 +36,7 @@ read16(const uint8_t *p)
    return p[0] | (p[1] << 8);
 }
 
-TEST(Apple9Launcher, AllStagesUseLiveEntryAndIndependentFrameExtents)
+TEST(LaunchProgram, AllStagesUseLiveEntryAndIndependentFrameExtents)
 {
    auto p = parameters();
    for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
@@ -55,7 +55,7 @@ TEST(Apple9Launcher, AllStagesUseLiveEntryAndIndependentFrameExtents)
    }
 }
 
-TEST(Apple9Launcher, EntryTargetsCoverCompactArena)
+TEST(LaunchProgram, EntryTargetsCoverCompactArena)
 {
    auto p = parameters();
    for (auto stage : {AGX_APPLE9_LAUNCH_VERTEX, AGX_APPLE9_LAUNCH_FRAGMENT,
@@ -73,7 +73,7 @@ TEST(Apple9Launcher, EntryTargetsCoverCompactArena)
    }
 }
 
-TEST(Apple9Launcher, ResourceCountsRespectAllocationBounds)
+TEST(LaunchProgram, ResourceCountsRespectAllocationBounds)
 {
    auto p = parameters();
    std::array<uint8_t, 1056> guarded;
@@ -110,7 +110,7 @@ TEST(Apple9Launcher, ResourceCountsRespectAllocationBounds)
    }
 }
 
-TEST(Apple9Launcher, ResourceTablesUseFullAddresses)
+TEST(LaunchProgram, ResourceTablesUseFullAddresses)
 {
    auto p = parameters();
    /* Decode the two literal operands independently of their emitter. */
@@ -135,7 +135,7 @@ TEST(Apple9Launcher, ResourceTablesUseFullAddresses)
    }
 }
 
-TEST(Apple9Launcher, InvalidParametersCannotPublishPartialCode)
+TEST(LaunchProgram, InvalidParametersCannotPublishPartialCode)
 {
    auto p = parameters();
    auto reject = [&](agx_apple9_launch_parameters bad,
@@ -187,7 +187,7 @@ TEST(Apple9Launcher, InvalidParametersCannotPublishPartialCode)
    }
 }
 
-TEST(Apple9Launcher, PublicationCapacityCoversPairBoundaries)
+TEST(LaunchProgram, PublicationCapacityCoversPairBoundaries)
 {
    auto p = parameters();
    const unsigned counts[] = {0, 1, 2, 8, 9, 36, 1022};
@@ -201,7 +201,7 @@ TEST(Apple9Launcher, PublicationCapacityCoversPairBoundaries)
    }
 }
 
-TEST(Apple9Launcher, ThreadgroupAllocationDoesNotChangeEntryOrFrame)
+TEST(LaunchProgram, ThreadgroupAllocationDoesNotChangeEntryOrFrame)
 {
    auto p = parameters();
    std::array<uint8_t, 1024> initial, out;
@@ -225,7 +225,7 @@ TEST(Apple9Launcher, ThreadgroupAllocationDoesNotChangeEntryOrFrame)
    }
 }
 
-TEST(Apple9Launcher, TileModesDoNotChangeEntryOrResources)
+TEST(LaunchProgram, TileModesDoNotChangeEntryOrResources)
 {
    auto p = parameters();
    std::array<uint8_t, 256> initial, out;
@@ -250,7 +250,7 @@ TEST(Apple9Launcher, TileModesDoNotChangeEntryOrResources)
 
 /* Multisampled fragment launches without colour targets keep a nonempty
  * per-sample tile allocation, as agx_build_tilebuffer_layout does. */
-TEST(Apple9Launcher, MultisampledZeroTargetLaunchesKeepTileAllocation)
+TEST(LaunchProgram, MultisampledZeroTargetLaunchesKeepTileAllocation)
 {
    auto p = parameters();
    std::array<uint8_t, 256> out;
@@ -267,7 +267,7 @@ TEST(Apple9Launcher, MultisampledZeroTargetLaunchesKeepTileAllocation)
    }
 }
 
-TEST(Apple9Launcher, PreambleTransferFollowsRootArguments)
+TEST(LaunchProgram, PreambleTransferFollowsRootArguments)
 {
    auto p = parameters();
    p.launch_address = p.shader_base + 0x204000;
@@ -296,7 +296,7 @@ TEST(Apple9Launcher, PreambleTransferFollowsRootArguments)
    }
 }
 
-TEST(Apple9Launcher, PreambleBoundsRejectWithoutWriting)
+TEST(LaunchProgram, PreambleBoundsRejectWithoutWriting)
 {
    auto p = parameters();
    p.launch_address = p.shader_base + 0x204000;

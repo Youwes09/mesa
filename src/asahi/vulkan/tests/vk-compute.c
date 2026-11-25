@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
-#include "apple9-test-device.h"
+#include "vk-test-device.h"
 #ifndef APPLE9_PROBE_COUNT
 #define APPLE9_PROBE_COUNT 257
 #endif
@@ -34,7 +34,7 @@ main(int argc, char **argv)
    }
    setbuf(stdout, NULL);
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                            .pApplicationName = "Apple9 compute smoke",
+                            .pApplicationName = "compute smoke",
                             .apiVersion = VK_API_VERSION_1_0};
    VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                .pApplicationInfo = &app};
@@ -55,7 +55,7 @@ main(int argc, char **argv)
    printf("device: %s vendor=%04x device=%04x API=%u.%u\n", prop.deviceName,
           prop.vendorID, prop.deviceID, VK_VERSION_MAJOR(prop.apiVersion),
           VK_VERSION_MINOR(prop.apiVersion));
-   if (!apple9_test_native_device(&prop)) {
+   if (!test_native_device(&prop)) {
       fprintf(stderr, "Expected native G16G/G16C/G17P renderer\n");
       return 1;
    }

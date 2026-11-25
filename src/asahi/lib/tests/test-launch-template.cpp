@@ -14,7 +14,7 @@ extern "C" {
 
 /* A template emitted with per-launch fields (and, for compute, its root
  * words) must equal a full build. */
-TEST(Apple9LaunchTemplate, MatchesBuild)
+TEST(LaunchTemplate, MatchesBuild)
 {
    std::mt19937_64 rng(0x1a9e);
    const uint64_t base = 1ull << 40;
@@ -78,7 +78,7 @@ TEST(Apple9LaunchTemplate, MatchesBuild)
 /* Compute launches materialize their root words: no table loads, and the
  * first argument transfer does not wait for one. A build without root words
  * is refused. */
-TEST(Apple9LaunchTemplate, ComputeRootsAreLiterals)
+TEST(LaunchTemplate, ComputeRootsAreLiterals)
 {
    struct agx_apple9_launch_parameters p = {};
    p.shader_base = 1ull << 40;

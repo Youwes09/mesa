@@ -78,7 +78,7 @@ main(int argc, char **argv)
    enum { W = 1024, H = 1024, BYTES = W * H * 4 };
 
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                            .pApplicationName = "apple9-depth-partial",
+                            .pApplicationName = "vk-depth-partial",
                             .apiVersion = VK_API_VERSION_1_0};
    VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                .pApplicationInfo = &app};

@@ -28,7 +28,7 @@ main(int argc, char **argv)
    }
    setbuf(stdout, NULL);
    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                            .pApplicationName = "Apple9 pipeline compile",
+                            .pApplicationName = "pipeline compile",
                             .apiVersion = VK_API_VERSION_1_0};
    VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                .pApplicationInfo = &app};

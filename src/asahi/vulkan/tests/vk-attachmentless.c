@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * Attachmentless 1x/4x rasterization through core Vulkan 1.0 occlusion queries.
- * Pass the procedural fullscreen vertex shader apple9-render-draw.vert.spv.
+ * Pass the procedural fullscreen vertex shader vk-render-draw.vert.spv.
  */
 #include <stdint.h>
 #include <stdio.h>

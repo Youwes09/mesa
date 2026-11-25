@@ -24,7 +24,7 @@ get_u64(const uint8_t *bytes, size_t offset)
    return value;
 }
 
-TEST(Apple9ComputeGeometry, DirectPublishesGroupCounts)
+TEST(ComputeGeometry, DirectPublishesGroupCounts)
 {
    uint8_t record[0x100] = {};
    const uint64_t address = 0x1000200000ull;
@@ -42,7 +42,7 @@ TEST(Apple9ComputeGeometry, DirectPublishesGroupCounts)
    }
 }
 
-TEST(Apple9ComputeGeometry, IndirectPublishesCallerRecord)
+TEST(ComputeGeometry, IndirectPublishesCallerRecord)
 {
    uint8_t record[0x100];
    memset(record, 0xa5, sizeof(record));
@@ -65,7 +65,7 @@ TEST(Apple9ComputeGeometry, IndirectPublishesCallerRecord)
    }
 }
 
-TEST(Apple9ComputeGeometry, RejectsMalformedIndirectGeometry)
+TEST(ComputeGeometry, RejectsMalformedIndirectGeometry)
 {
    uint8_t record[0x100] = {};
    agx_apple9_compute_geometry geometry = {
@@ -84,7 +84,7 @@ TEST(Apple9ComputeGeometry, RejectsMalformedIndirectGeometry)
       record, 0xcb, 0x1000200000ull, &geometry));
 }
 
-TEST(Apple9ComputeGeometry, RejectsMalformedDirectGeometry)
+TEST(ComputeGeometry, RejectsMalformedDirectGeometry)
 {
    uint8_t record[0x100] = {};
    agx_apple9_compute_geometry geometry = {
@@ -106,7 +106,7 @@ TEST(Apple9ComputeGeometry, RejectsMalformedDirectGeometry)
       record, sizeof(record), 0x1000200000ull, &geometry));
 }
 
-TEST(Apple9ComputeGeometry, RoundsPartialGroupsBeyondApiAxisLimit)
+TEST(ComputeGeometry, RoundsPartialGroupsBeyondApiAxisLimit)
 {
    uint8_t record[0x100] = {};
    agx_apple9_compute_geometry geometry = {
@@ -136,7 +136,7 @@ TEST(Apple9ComputeGeometry, RoundsPartialGroupsBeyondApiAxisLimit)
 
 /* As agx_build_tilebuffer_layout, multisampled zero-target renders keep a
  * nonempty per-sample tile allocation. */
-TEST(Apple9Geometry, MultisampledZeroTargetTileAllocation)
+TEST(TileAllocation, MultisampledZeroTargetTileAllocation)
 {
    EXPECT_EQ(agx_apple9_tile_sample_bytes(0, 1), 0u);
    EXPECT_EQ(agx_apple9_tile_sample_bytes(0, 2), 8u);

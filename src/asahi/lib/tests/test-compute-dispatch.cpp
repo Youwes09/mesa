@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 #include "agx_apple9.h"
 
-TEST(Apple9CDM, OptionalBarrierKeepsLaunchAndOutputBounds)
+TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
 {
    agx_apple9_compute_profile profile = {};
    profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
@@ -56,7 +56,7 @@ TEST(Apple9CDM, OptionalBarrierKeepsLaunchAndOutputBounds)
 
 /* The emitters refuse exactly the records agx_apple9_dispatch_reject_reason
  * names, and the reason is what hk prints for "dispatch failed (6)". */
-TEST(Apple9CDM, RejectReasonMatchesEmitters)
+TEST(ComputeDispatch, RejectReasonMatchesEmitters)
 {
    agx_apple9_compute_profile profile = {};
    profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;

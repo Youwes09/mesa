@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * Event page-boundary, independent GPU writes, and freed-slot reuse regression.
- * Build: cc apple9-events.c -lvulkan -o apple9-events
+ * Build: cc vk-events.c -lvulkan -o vk-events
  */
 #include <stdio.h>
 #include <stdlib.h>
