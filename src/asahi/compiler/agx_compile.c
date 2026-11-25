@@ -5184,22 +5184,21 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    bool selftest = false;
 #endif
 
-   /* There is no Apple9 disassembler here */
-   if (agx_is_apple9(ctx))
+   if (!ctx->target.disassemble)
       dump_shaders = selftest = false;
 
    if (dump_shaders || selftest) {
       FILE *fp = selftest ? fopen("/dev/null", "w") : stdout;
-      bool errors =
-         agx2_disassemble(binary->data + offset, binary->size - offset, fp);
+      bool errors = ctx->target.disassemble(binary->data + offset,
+                                            binary->size - offset, fp);
 
       if (errors) {
          /* In a self-test, disassemble again to get something the user can look
           * at to figure out what went wrong.
           */
          if (selftest) {
-            agx2_disassemble(binary->data + offset, binary->size - offset,
-                             stderr);
+            ctx->target.disassemble(binary->data + offset,
+                                    binary->size - offset, stderr);
          }
 
          UNREACHABLE("Disassembly error hit.");

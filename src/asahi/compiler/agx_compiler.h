@@ -577,9 +577,18 @@ struct agx_isa_target {
 
    /* Whether agx_occupancy_for_register_count describes this ISA */
    bool occupancy_table;
+
+   /* Disassembler for shader dumps and self-tests, if there is one */
+   bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
 
 const struct agx_isa_target *agx_get_isa_target(enum agx_shader_isa isa);
+
+static inline const struct agx_isa_target *
+agx_nir_target(const nir_shader *nir)
+{
+   return agx_get_isa_target(agx_nir_shader_isa(nir));
+}
 
 /* Apple9 threadgroup atomics always return the old value */
 #define agx_dest_required(ctx, I)                                              \
