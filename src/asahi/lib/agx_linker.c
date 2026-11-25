@@ -183,7 +183,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
    memset(p, 0, sizeof(*p));
    p->profile = main->info.apple9_compute;
-   assert(p->profile.abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES &&
+   assert(p->profile.abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES &&
           "parts are compiled for the graphics ABI");
 
    unsigned domain = 0;
@@ -194,7 +194,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
          continue;
 
       const struct agx_shader_info *info = &parts[i]->info;
-      const struct agx_apple9_compute_profile *pp = &info->apple9_compute;
+      const struct agx_compute_profile *pp = &info->apple9_compute;
 
       assert((parts[i] == main || !pp->resource_binding_count) &&
              "only the main shader uses the buffer table");
@@ -311,8 +311,7 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
       if (!preambles[i])
          continue;
 
-      const struct agx_apple9_compute_profile *pp =
-         &preambles[i]->info.apple9_compute;
+      const struct agx_compute_profile *pp = &preambles[i]->info.apple9_compute;
 
       if (pp->preamble_size) {
          append(&d, (uint8_t *)preambles[i]->binary + pp->preamble_offset,

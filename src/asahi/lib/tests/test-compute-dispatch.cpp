@@ -7,8 +7,8 @@
 
 TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
 {
-   agx_apple9_compute_profile profile = {};
-   profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
+   agx_compute_profile profile = {};
+   profile.abi = AGX_COMPUTE_ABI_DIRECT_BUFFERS;
    profile.resource_binding_count = 1;
    profile.resource_write_mask = 1;
    profile.local_size[0] = profile.local_size[1] = profile.local_size[2] = 1;
@@ -59,8 +59,8 @@ TEST(ComputeDispatch, OptionalBarrierKeepsLaunchAndOutputBounds)
  * names, and the reason is what hk prints for "dispatch failed (6)". */
 TEST(ComputeDispatch, RejectReasonMatchesEmitters)
 {
-   agx_apple9_compute_profile profile = {};
-   profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
+   agx_compute_profile profile = {};
+   profile.abi = AGX_COMPUTE_ABI_DIRECT_BUFFERS;
    profile.resource_binding_count = 1;
    profile.resource_write_mask = 1;
    profile.local_size[0] = profile.local_size[1] = profile.local_size[2] = 1;

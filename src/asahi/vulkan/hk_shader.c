@@ -3139,7 +3139,7 @@ hk_init_launch_linked(struct hk_device *dev, struct hk_linked_shader *s,
    };
 
    for (unsigned i = 0; i < p->profile.resource_binding_count; ++i) {
-      assert(p->profile.resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_SSBO &&
+      assert(p->profile.resource_kind[i] != AGX_COMPUTE_RESOURCE_SSBO &&
              "API shaders reach buffers through descriptors");
       s->draw_stages.resource_binding[i] = p->profile.resource_binding[i];
    }

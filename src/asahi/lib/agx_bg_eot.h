@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
+#include "asahi/lib/agx_launch_abi.h"
 #include "util/simple_mtx.h"
 #include "agx_tilebuffer.h"
 #include "libagx_dgc.h"
@@ -19,7 +19,7 @@ struct agx_precompiled_shader {
    uint64_t ptr;
    /* Runs through a launch program, described by profile */
    bool launched;
-   struct agx_apple9_compute_profile profile;
+   struct agx_compute_profile profile;
 };
 
 struct agx_bg_eot_cache {

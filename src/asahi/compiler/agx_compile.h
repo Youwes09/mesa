@@ -5,11 +5,11 @@
 
 #pragma once
 
+#include "asahi/lib/agx_launch_abi.h"
 #include "compiler/nir/nir.h"
 #include "util/shader_stats.h"
 #include "util/u_dynarray.h"
 #include "util/u_tristate.h"
-#include "agx_apple9_profile.h"
 #include "shader_enums.h"
 
 /* Shared by the standalone compiler and the driver's device initialization. */
@@ -139,7 +139,7 @@ struct agx_shader_info {
    uint32_t binary_size;
 
    /* How an Apple9 compute shader is launched */
-   struct agx_apple9_compute_profile apple9_compute;
+   struct agx_compute_profile apple9_compute;
 
    /* Apple9: one plus the binary offset of the VARY_STORE of each unlinked
     * UVS index, or zero if unwritten. The linker relocates the slots.
@@ -263,7 +263,7 @@ struct agx_precompiled_kernel_info {
 /* Launch profile ahead of a precompiled Apple9 binary. Padding must be zero */
 struct agx_precompiled_apple9_kernel_info {
    uint32_t binary_size;
-   struct agx_apple9_compute_profile profile;
+   struct agx_compute_profile profile;
 };
 
 static_assert(sizeof(struct agx_precompiled_apple9_kernel_info) % 4 == 0,

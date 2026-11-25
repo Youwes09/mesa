@@ -15,8 +15,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
+#include "asahi/lib/agx_launch_abi.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "asahi/lib/agx_ppp_record.h"
 #include "util/format/u_formats.h"
@@ -139,7 +139,7 @@ struct agx_draw_record {
    uint64_t fragment_table;
    /* Graphics stage indices: vertex = 0, fragment = 1. */
    uint64_t texture_table[2], sampler_table[2];
-   /* Push words of each stage (AGX_APPLE9_PUSH_ROOT) */
+   /* Push words of each stage (AGX_LAUNCH_PUSH_ROOT) */
    uint64_t push[2];
    uint32_t depth_control, depth_face[2], stencil[2];
    uint32_t raster_control;

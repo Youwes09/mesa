@@ -9,8 +9,8 @@
 #include "asahi/lib/agx_shader_body.h"
 extern "C" {
 #include "asahi/compiler/agx_apple9_encoding.h"
-#include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_launch_abi.h"
 }
 
 /* A template emitted with per-launch fields (and, for compute, its root
@@ -49,8 +49,8 @@ TEST(LaunchTemplate, MatchesBuild)
          q.resource_table = rng();
          q.entry_offset = (rng() % (AGX_ENTRY_MAX_OFFSET + 1)) & ~1u;
          q.launch_address = base + ((rng() % (1u << 31)) & ~63ull);
-         uint32_t roots[2 * (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE +
-                             AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)];
+         uint32_t roots[2 * (AGX_COMPUTE_VISIBLE_ARGUMENT_BASE +
+                             AGX_COMPUTE_DIRECT_MAX_RESOURCES)];
          for (auto &w : roots)
             w = rng();
          q.root_words = roots;
@@ -82,11 +82,11 @@ TEST(LaunchTemplate, ComputeRootsAreLiterals)
    struct agx_launch_parameters p = {};
    p.shader_base = 1ull << 40;
    p.entry_offset = 0x1000;
-   for (unsigned resources = 1;
-        resources <= AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES; ++resources) {
+   for (unsigned resources = 1; resources <= AGX_COMPUTE_DIRECT_MAX_RESOURCES;
+        ++resources) {
       p.resource_count = resources;
-      uint32_t roots[2 * (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE +
-                          AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)];
+      uint32_t roots[2 * (AGX_COMPUTE_VISIBLE_ARGUMENT_BASE +
+                          AGX_COMPUTE_DIRECT_MAX_RESOURCES)];
       for (unsigned i = 0; i < sizeof(roots) / sizeof(roots[0]); ++i)
          roots[i] = 0x01020304u * (i + 1);
       uint8_t out[AGX_COMPUTE_LAUNCH_SIZE];
@@ -96,7 +96,7 @@ TEST(LaunchTemplate, ComputeRootsAreLiterals)
       p.root_words = roots;
       ASSERT_TRUE(
          agx_launch_program_build(out, sizeof(out), AGX_LAUNCH_COMPUTE, &p));
-      const unsigned words = agx_apple9_compute_root_words(resources);
+      const unsigned words = agx_compute_root_words(resources);
       for (unsigned i = 0; i < words; ++i) {
          uint8_t literal[8];
          ASSERT_TRUE(agx_apple9_encode_literal32(literal, 18 + i, roots[i]));

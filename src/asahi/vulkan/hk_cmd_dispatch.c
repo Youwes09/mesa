@@ -274,7 +274,7 @@ static void
 hk_report_dispatch_reject(const char *where, struct agx_grid grid,
                           bool indirect_local, uint64_t launch,
                           const uint32_t threads[3], const uint32_t local[3],
-                          const struct agx_apple9_compute_profile *p)
+                          const struct agx_compute_profile *p)
 {
    bool indirect = agx_is_indirect(grid);
    const char *reason =
@@ -296,9 +296,8 @@ hk_report_dispatch_reject(const char *where, struct agx_grid grid,
 void
 hk_launch_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                    struct agx_shader_body *body,
-                   const struct agx_apple9_compute_profile *p,
-                   struct agx_grid grid, uint64_t root, uint64_t push,
-                   const struct hk_shader *shader)
+                   const struct agx_compute_profile *p, struct agx_grid grid,
+                   uint64_t root, uint64_t push, const struct hk_shader *shader)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    /* A command buffer in error is never submitted; emitting more records
@@ -318,14 +317,14 @@ hk_launch_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    uint64_t textures = 0, samplers = 0, sysvals = 0;
    hk_upload_texture_tables(cmd, &textures, &samplers, &sysvals);
 
-   uint64_t resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES] = {0};
+   uint64_t resources[AGX_COMPUTE_MAX_RESOURCES] = {0};
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
-      if (p->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED) {
-         resources[i] = AGX_APPLE9_COMPUTE_SHARED_ROOT;
+      if (p->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED) {
+         resources[i] = AGX_COMPUTE_SHARED_ROOT;
          continue;
       }
       unsigned binding = p->resource_binding[i];
-      if (p->resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_UBO) {
+      if (p->resource_kind[i] != AGX_COMPUTE_RESOURCE_UBO) {
          mesa_loge("hk: Apple9 dispatch failed: unsupported resource kind");
          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_FEATURE_NOT_PRESENT);
          return;
@@ -480,7 +479,7 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
       uint64_t stat = hk_pipeline_stat_addr(
          cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
       const struct hk_linked_shader *linked = s->only_linked;
-      const struct agx_apple9_compute_profile *p = &linked->b.program.profile;
+      const struct agx_compute_profile *p = &linked->b.program.profile;
       if (hk_stat_enabled(stat)) {
          libagx_increment_cs_invocations(
             cmd, agx_1d(1), AGX_BARRIER_ALL,

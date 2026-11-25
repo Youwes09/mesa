@@ -34,16 +34,16 @@ TEST_P(LibagxBinary, Compiled)
    ASSERT_NE(bin, nullptr);
    const agx_precompiled_apple9_kernel_info *info =
       (const agx_precompiled_apple9_kernel_info *)bin;
-   const agx_apple9_compute_profile *p = &info->profile;
+   const agx_compute_profile *p = &info->profile;
 
    EXPECT_GT(info->binary_size, 0u);
-   EXPECT_EQ(p->abi, AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS);
+   EXPECT_EQ(p->abi, AGX_COMPUTE_ABI_DIRECT_BUFFERS);
    EXPECT_LE(p->preamble_offset + p->preamble_size, info->binary_size);
 
    /* Kernel inputs are UBO 0 */
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
-      EXPECT_TRUE(p->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED ||
-                  (p->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
+      EXPECT_TRUE(p->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED ||
+                  (p->resource_kind[i] == AGX_COMPUTE_RESOURCE_UBO &&
                    p->resource_binding[i] == 0));
    }
 
@@ -62,11 +62,11 @@ INSTANTIATE_TEST_SUITE_P(All, LibagxBinary,
 /* Guard both ends: these sizes are also the command allocator reservation. */
 TEST(DispatchPacket, PacketFootprints)
 {
-   agx_apple9_compute_profile profile = {};
-   profile.abi = AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
+   agx_compute_profile profile = {};
+   profile.abi = AGX_COMPUTE_ABI_DIRECT_BUFFERS;
    profile.local_size[0] = profile.local_size[1] = profile.local_size[2] = 1;
    profile.resource_binding_count = 1;
-   profile.resource_kind[0] = AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
+   profile.resource_kind[0] = AGX_COMPUTE_RESOURCE_SSBO;
    profile.resource_write_mask = 1;
    const uint32_t global[] = {3, 5, 7};
    const uint32_t local[] = {1, 1, 1};

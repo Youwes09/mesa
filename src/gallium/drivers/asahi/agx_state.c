@@ -3947,15 +3947,15 @@ agx_upload_launch_push(struct agx_batch *batch,
 /* The buffer table of an Apple9 program, in the order of its profile */
 static void
 agx_upload_launch_buffers(struct agx_batch *batch, struct agx_stage *stage,
-                          const struct agx_apple9_compute_profile *profile,
+                          const struct agx_compute_profile *profile,
                           uint64_t *addresses)
 {
    for (unsigned i = 0; i < profile->resource_binding_count; ++i) {
-      if (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED) {
-         addresses[i] = AGX_APPLE9_COMPUTE_SHARED_ROOT;
+      if (profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED) {
+         addresses[i] = AGX_COMPUTE_SHARED_ROOT;
       } else {
          /* Gallium buffers are global memory, leaving the texture state */
-         assert(profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
+         assert(profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_UBO &&
                 profile->resource_binding[i] ==
                    AGX_APPLE9_GRAPHICS_SYSVAL_BINDING);
          addresses[i] = agx_upload_texture_info(batch, stage);
@@ -3967,7 +3967,7 @@ agx_upload_launch_buffers(struct agx_batch *batch, struct agx_stage *stage,
 static bool
 agx_launch_compute_program(struct agx_batch *batch, struct agx_grid grid,
                            struct agx_workgroup wg, struct agx_bo *bo,
-                           const struct agx_apple9_compute_profile *profile,
+                           const struct agx_compute_profile *profile,
                            const uint64_t *addresses, uint64_t textures,
                            uint64_t samplers, uint64_t push)
 {
@@ -4059,7 +4059,7 @@ agx_dispatch_launched(struct agx_batch *batch, struct agx_grid grid,
 {
    struct agx_context *ctx = batch->ctx;
    struct agx_bo *bo = linked ? linked->bo : cs->bo;
-   struct agx_apple9_compute_profile profile =
+   struct agx_compute_profile profile =
       linked ? linked->program.profile : cs->b.info.apple9_compute;
 
    /* Graphics stages run as compute take the dispatch's workgroup size */
@@ -4073,7 +4073,7 @@ agx_dispatch_launched(struct agx_batch *batch, struct agx_grid grid,
    }
 
    uint64_t textures, samplers;
-   uint64_t addresses[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
+   uint64_t addresses[AGX_COMPUTE_MAX_RESOURCES];
 
    agx_upload_launch_tables(batch, cs, &textures, &samplers);
    agx_upload_launch_buffers(batch, &ctx->stage[cs->stage], &profile,
@@ -4111,14 +4111,13 @@ agx_launch_precomp(struct agx_batch *batch, struct agx_grid grid,
       agx_pool_upload_aligned(&batch->pool, args, arg_size, 8);
 
    if (cs->launched) {
-      const struct agx_apple9_compute_profile *profile = &cs->profile;
-      uint64_t addresses[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
+      const struct agx_compute_profile *profile = &cs->profile;
+      uint64_t addresses[AGX_COMPUTE_MAX_RESOURCES];
       for (unsigned i = 0; i < profile->resource_binding_count; ++i) {
-         if (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED)
-            addresses[i] = AGX_APPLE9_COMPUTE_SHARED_ROOT;
+         if (profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED)
+            addresses[i] = AGX_COMPUTE_SHARED_ROOT;
          else {
-            assert(profile->resource_kind[i] ==
-                      AGX_APPLE9_COMPUTE_RESOURCE_UBO &&
+            assert(profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_UBO &&
                    profile->resource_binding[i] == 0);
             addresses[i] = uploaded_data;
          }
@@ -6879,7 +6878,7 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
       struct agx_compiled_shader *mains[] = {vs, ctx->fs};
       const struct agx_linked_shader *programs[] = {linked_vs, ctx->linked.fs};
       for (unsigned stage = 0; stage < 2; ++stage) {
-         const struct agx_apple9_compute_profile *profile =
+         const struct agx_compute_profile *profile =
             &programs[stage]->program.profile;
          struct agx_stage *shader = &ctx->stage[mains[stage]->stage];
 

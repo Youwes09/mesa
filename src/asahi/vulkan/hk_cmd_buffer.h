@@ -50,7 +50,7 @@
 struct hk_buffer;
 struct hk_cmd_bo;
 struct hk_cmd_pool;
-struct agx_apple9_compute_profile;
+struct agx_compute_profile;
 struct hk_image_view;
 struct hk_push_descriptor_set;
 struct hk_shader;
@@ -1431,7 +1431,7 @@ hk_dispatch_with_local_size(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 /* Native grid counts are threads; indirect grids point to group counts. */
 void hk_launch_dispatch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                         struct agx_shader_body *body,
-                        const struct agx_apple9_compute_profile *profile,
+                        const struct agx_compute_profile *profile,
                         struct agx_grid grid, uint64_t root, uint64_t push,
                         const struct hk_shader *shader);
 

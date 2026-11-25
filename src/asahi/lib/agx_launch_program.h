@@ -42,7 +42,7 @@ struct agx_launch_parameters {
     * Its BO has the same ownership/lifetime as the main shader. */
    uint64_t preamble_address;
    uint64_t launch_address;
-   /* Compute: the root words (agx_apple9_compute_root_words of them), which
+   /* Compute: the root words (agx_compute_root_words of them), which
     * the launch materializes as literals instead of loading them from
     * resource_table. Required for agx_launch_program_build; templates leave
     * patchable slots instead (agx_launch_template_set_roots). */
@@ -146,7 +146,7 @@ agx_launch_tile_bytes(unsigned color_bytes, unsigned samples)
 
 /* Prepare one native stage independently, including background/EOT helpers.
  * The caller retains the shader BO and immutable allocation until completion.
- * push is the address of the stage's push words (AGX_APPLE9_PUSH_ROOT).
+ * push is the address of the stage's push words (AGX_LAUNCH_PUSH_ROOT).
  */
 bool agx_prepare_stage_launch(struct agx_device *dev, void *allocator,
                               struct agx_ptr (*alloc)(void *, size_t, size_t),

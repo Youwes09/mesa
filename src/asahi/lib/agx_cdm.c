@@ -56,10 +56,10 @@ struct cdm_abi_desc {
 };
 
 static const struct cdm_abi_desc *
-cdm_abi(const struct agx_apple9_compute_profile *profile)
+cdm_abi(const struct agx_compute_profile *profile)
 {
    static const struct cdm_abi_desc ssbo8_superset = {
-      .resource_count = AGX_APPLE9_COMPUTE_MAX_RESOURCES,
+      .resource_count = AGX_COMPUTE_MAX_RESOURCES,
       .resource_record_size = AGX_CDM_SUPERSET_RESOURCE_STRIDE,
       .supports_indirect_dispatch = true,
    };
@@ -68,8 +68,8 @@ cdm_abi(const struct agx_apple9_compute_profile *profile)
       return NULL;
 
    switch (profile->abi) {
-   case AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS:
-   case AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES:
+   case AGX_COMPUTE_ABI_DIRECT_BUFFERS:
+   case AGX_COMPUTE_ABI_DESCRIPTOR_TABLES:
       return &ssbo8_superset;
    default:
       return NULL;
@@ -77,21 +77,19 @@ cdm_abi(const struct agx_apple9_compute_profile *profile)
 }
 
 static bool
-cdm_profile_valid(const struct agx_apple9_compute_profile *profile,
+cdm_profile_valid(const struct agx_compute_profile *profile,
                   const struct cdm_abi_desc *abi)
 {
    /* Programs with the graphics argument layout may have no buffer table */
-   bool tables =
-      profile && profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+   bool tables = profile && profile->abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES;
    if (!profile || !abi || (profile->resource_binding_count == 0 && !tables) ||
        profile->resource_binding_count > abi->resource_count ||
-       (profile->abi == AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS &&
-        profile->resource_binding_count >
-           AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES) ||
+       (profile->abi == AGX_COMPUTE_ABI_DIRECT_BUFFERS &&
+        profile->resource_binding_count > AGX_COMPUTE_DIRECT_MAX_RESOURCES) ||
        !agx_launch_threadgroup_memory_supported(
           profile->required_threadgroup_memory_bytes) ||
        (profile->atomic_frame_size != 0 && profile->atomic_frame_size != 4) ||
-       profile->scratch_size > AGX_APPLE9_MAX_SCRATCH_BYTES ||
+       profile->scratch_size > AGX_LAUNCH_MAX_SCRATCH_BYTES ||
        profile->publication_count > 1022 || (profile->scratch_size & 15))
       return false;
 
@@ -117,12 +115,12 @@ cdm_profile_valid(const struct agx_apple9_compute_profile *profile,
    }
 
    for (unsigned i = 0; i < active; ++i) {
-      if (profile->resource_kind[i] > AGX_APPLE9_COMPUTE_RESOURCE_SHARED ||
-          (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED &&
+      if (profile->resource_kind[i] > AGX_COMPUTE_RESOURCE_SHARED ||
+          (profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED &&
            (!profile->required_threadgroup_memory_bytes ||
             ((read_mask | write_mask) & BITFIELD_BIT(i)))) ||
           ((write_mask & BITFIELD_BIT(i)) &&
-           profile->resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_SSBO))
+           profile->resource_kind[i] != AGX_COMPUTE_RESOURCE_SSBO))
          return false;
    }
 
@@ -133,7 +131,7 @@ cdm_profile_valid(const struct agx_apple9_compute_profile *profile,
  * entry, resource table and program address. */
 static bool
 cdm_launch_params(struct agx_launch_parameters *out, uint64_t usc_exec_base,
-                  const struct agx_apple9_compute_profile *profile,
+                  const struct agx_compute_profile *profile,
                   uint64_t preamble_address)
 {
    const struct cdm_abi_desc *abi = cdm_abi(profile);
@@ -145,10 +143,9 @@ cdm_launch_params(struct agx_launch_parameters *out, uint64_t usc_exec_base,
       .preamble_address = preamble_address,
    };
    params.shader_base = usc_exec_base;
-   params.resource_count =
-      profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES
-         ? AGX_APPLE9_GRAPHICS_ROOT_WORDS / 2 - 1
-         : profile->resource_binding_count;
+   params.resource_count = profile->abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES
+                              ? AGX_LAUNCH_GRAPHICS_ROOT_WORDS / 2 - 1
+                              : profile->resource_binding_count;
    params.threadgroup_memory_bytes = profile->required_threadgroup_memory_bytes;
    if (profile->scratch_size) {
       params.frame_extent_a = profile->scratch_size;
@@ -164,7 +161,7 @@ static bool
 cdm_build_launch(uint8_t *out, uint64_t usc_exec_base, uint64_t launch_address,
                  uint64_t resource_address, const uint32_t *root_words,
                  uint32_t main_offset,
-                 const struct agx_apple9_compute_profile *profile,
+                 const struct agx_compute_profile *profile,
                  uint64_t preamble_address)
 {
    struct agx_launch_parameters params;
@@ -181,7 +178,7 @@ cdm_build_launch(uint8_t *out, uint64_t usc_exec_base, uint64_t launch_address,
 
 bool
 agx_cdm_launch_template(struct agx_launch_template *tmpl,
-                        const struct agx_apple9_compute_profile *profile,
+                        const struct agx_compute_profile *profile,
                         uint64_t usc_exec_base, uint64_t preamble_address)
 {
    struct agx_launch_parameters params;
@@ -193,7 +190,7 @@ agx_cdm_launch_template(struct agx_launch_template *tmpl,
 }
 
 size_t
-agx_cdm_launch_size(const struct agx_apple9_compute_profile *profile)
+agx_cdm_launch_size(const struct agx_compute_profile *profile)
 {
    const struct cdm_abi_desc *abi = cdm_abi(profile);
    return abi ? AGX_COMPUTE_LAUNCH_SIZE : 0;
@@ -206,13 +203,13 @@ cdm_resource_record_size(const struct cdm_abi_desc *abi)
                                            : AGX_CDM_RESOURCE_STRIDE;
 }
 
-enum agx_apple9_compute_resource_kind
-agx_cdm_resource_kind(const struct agx_apple9_compute_profile *profile,
+enum agx_compute_resource_kind
+agx_cdm_resource_kind(const struct agx_compute_profile *profile,
                       unsigned argument)
 {
    const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi || argument >= profile->resource_binding_count)
-      return AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
+      return AGX_COMPUTE_RESOURCE_SSBO;
 
    return profile->resource_kind[argument];
 }
@@ -265,16 +262,13 @@ agx_cdm_build_geometry_fields(void *record_, size_t record_size,
 }
 
 bool
-agx_cdm_prepare_dispatch_alloc(struct agx_device *dev, void *allocator,
-                               struct agx_ptr (*alloc)(void *, size_t, size_t),
-                               struct agx_shader_body *body,
-                               const struct agx_apple9_compute_profile *profile,
-                               const uint64_t *resources,
-                               unsigned resource_count, uint64_t textures,
-                               uint64_t samplers,
-                               const struct agx_cdm_geometry *geometry,
-                               uint64_t preamble_address,
-                               uint64_t *launch_address)
+agx_cdm_prepare_dispatch_alloc(
+   struct agx_device *dev, void *allocator,
+   struct agx_ptr (*alloc)(void *, size_t, size_t),
+   struct agx_shader_body *body, const struct agx_compute_profile *profile,
+   const uint64_t *resources, unsigned resource_count, uint64_t textures,
+   uint64_t samplers, const struct agx_cdm_geometry *geometry,
+   uint64_t preamble_address, uint64_t *launch_address)
 {
    return agx_cdm_prepare_dispatch_alloc_tmpl(
       dev, allocator, alloc, body, profile, resources, resource_count, textures,
@@ -285,11 +279,11 @@ bool
 agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
-   struct agx_shader_body *body,
-   const struct agx_apple9_compute_profile *profile, const uint64_t *resources,
-   unsigned resource_count, uint64_t textures, uint64_t samplers, uint64_t push,
-   const struct agx_cdm_geometry *geometry, uint64_t preamble_address,
-   const struct agx_launch_template *tmpl, uint64_t *launch_address)
+   struct agx_shader_body *body, const struct agx_compute_profile *profile,
+   const uint64_t *resources, unsigned resource_count, uint64_t textures,
+   uint64_t samplers, uint64_t push, const struct agx_cdm_geometry *geometry,
+   uint64_t preamble_address, const struct agx_launch_template *tmpl,
+   uint64_t *launch_address)
 {
    const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi || (resource_count && !resources) || !geometry || !launch_address ||
@@ -306,7 +300,7 @@ agx_cdm_prepare_dispatch_alloc_tmpl(
    /* The launch materializes its root words from the record's head. */
    struct agx_launch_parameters lp;
    if (!cdm_launch_params(&lp, dev->shader_base, profile, preamble_address) ||
-       4 * agx_apple9_compute_root_words(lp.resource_count) > record_size)
+       4 * agx_compute_root_words(lp.resource_count) > record_size)
       return false;
    struct agx_ptr record = alloc(allocator, record_size, 64);
    if (!record.cpu)
@@ -315,7 +309,7 @@ agx_cdm_prepare_dispatch_alloc_tmpl(
    if (!agx_cdm_build_geometry_fields(record.cpu, record_size, record.gpu,
                                       geometry))
       return false;
-   if (profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES) {
+   if (profile->abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES) {
       struct agx_ptr table = {0};
       if (resource_count) {
          table = alloc(allocator, resource_count * 8, 64);
@@ -323,21 +317,21 @@ agx_cdm_prepare_dispatch_alloc_tmpl(
             return false;
          memcpy(table.cpu, resources, resource_count * 8);
       }
-      static_assert(AGX_APPLE9_PUSH_ROOT == 5, "last root");
-      uint64_t roots[AGX_APPLE9_GRAPHICS_ROOT_WORDS / 2] = {
+      static_assert(AGX_LAUNCH_PUSH_ROOT == 5, "last root");
+      uint64_t roots[AGX_LAUNCH_GRAPHICS_ROOT_WORDS / 2] = {
          textures,
          samplers,
          table.gpu,
          get_u64(record.cpu),
-         AGX_APPLE9_COMPUTE_SHARED_ROOT,
+         AGX_COMPUTE_SHARED_ROOT,
          push,
       };
       memcpy(record.cpu, roots, sizeof(roots));
    } else {
       for (unsigned i = 0; i < resource_count; i++)
-         put_u64((uint8_t *)record.cpu +
-                    (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE + i) * 8,
-                 resources[i]);
+         put_u64(
+            (uint8_t *)record.cpu + (AGX_COMPUTE_VISIBLE_ARGUMENT_BASE + i) * 8,
+            resources[i]);
    }
 
    struct agx_ptr launch = alloc(allocator, agx_cdm_launch_size(profile), 64);
@@ -371,7 +365,7 @@ pool_alloc(void *pool, size_t size, size_t alignment)
 bool
 agx_cdm_prepare_dispatch(struct agx_device *dev, struct agx_pool *usc_pool,
                          struct agx_bo *body,
-                         const struct agx_apple9_compute_profile *profile,
+                         const struct agx_compute_profile *profile,
                          const uint64_t *resources, unsigned resource_count,
                          uint64_t textures, uint64_t samplers, uint64_t push,
                          const struct agx_cdm_geometry *geometry,
@@ -442,7 +436,7 @@ agx_cdm_dispatch_reject_reason(uint64_t launch, bool indirect,
                                uint64_t indirect_address,
                                const uint32_t global[3],
                                const uint32_t local[3],
-                               const struct agx_apple9_compute_profile *profile)
+                               const struct agx_compute_profile *profile)
 {
    const struct cdm_abi_desc *abi = cdm_abi(profile);
    if (!abi)
@@ -481,7 +475,7 @@ agx_cdm_dispatch_reject_reason(uint64_t launch, bool indirect,
 bool
 agx_cdm_emit_direct_dispatch(void *out, uint64_t launch,
                              const uint32_t global[3], const uint32_t local[3],
-                             const struct agx_apple9_compute_profile *profile,
+                             const struct agx_compute_profile *profile,
                              bool barrier)
 {
    if (!out ||
@@ -514,7 +508,7 @@ agx_cdm_emit_direct_dispatch(void *out, uint64_t launch,
 bool
 agx_cdm_emit_indirect_dispatch(void *out, uint64_t launch, uint64_t indirect,
                                const uint32_t local[3], bool indirect_local,
-                               const struct agx_apple9_compute_profile *profile,
+                               const struct agx_compute_profile *profile,
                                bool barrier)
 {
    if (!out || agx_cdm_dispatch_reject_reason(launch, true, indirect, NULL,

@@ -5644,11 +5644,11 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                                                  : &info->sampler_state_count);
 
    /* Load the push words into the uniforms they are read from */
-   unsigned push_halves = key->secondary ? 2 * AGX_APPLE9_MAX_PUSH_WORDS
+   unsigned push_halves = key->secondary ? 2 * AGX_LAUNCH_MAX_PUSH_WORDS
                                          : ALIGN_POT(key->reserved_preamble, 2);
 
    if (graphics_abi &&
-       agx_nir_preload_push(nir, 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS,
+       agx_nir_preload_push(nir, 2 * AGX_LAUNCH_GRAPHICS_ROOT_WORDS,
                             push_halves)) {
       NIR_PASS(_, nir, agx_nir_lower_address);
       NIR_PASS(_, nir, nir_lower_pack);
@@ -5688,7 +5688,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
          /* Inline a preamble that is too big or spills */
          bool compute = mesa_shader_stage_is_compute(nir->info.stage);
          bool inline_ = info->apple9_compute.preamble_size >
-                           agx_apple9_max_preamble_bytes(compute) ||
+                           agx_launch_max_preamble_bytes(compute) ||
                         info->preamble_scratch_size;
          if (inline_) {
             agx_inline_preamble(main);

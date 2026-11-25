@@ -6,7 +6,7 @@
 #include "gtest/gtest.h"
 
 extern "C" {
-#include "asahi/compiler/agx_apple9_profile.h"
+#include "asahi/lib/agx_launch_abi.h"
 }
 #include "asahi/lib/agx_launch_program.h"
 
@@ -24,8 +24,8 @@ parameters()
    p.samples = 1;
    p.resource_count = 8;
    /* Compute launches materialize their root words. */
-   static uint32_t roots[2 * (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE +
-                              AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)];
+   static uint32_t roots[2 * (AGX_COMPUTE_VISIBLE_ARGUMENT_BASE +
+                              AGX_COMPUTE_DIRECT_MAX_RESOURCES)];
    p.root_words = roots;
    return p;
 }
@@ -94,7 +94,7 @@ TEST(LaunchProgram, ResourceCountsRespectAllocationBounds)
        * pointers, then STOP. No state load or four-word reservation follows. */
       const unsigned words = 2 * (resources + 1);
       const unsigned arguments = call + 18;
-      EXPECT_EQ(agx_apple9_compute_root_words(resources), words);
+      EXPECT_EQ(agx_compute_root_words(resources), words);
       for (unsigned word = 0; word < words; ++word) {
          const uint8_t *transfer = out + arguments + 4 * word;
          EXPECT_EQ(transfer[0] & 0xf, 0xbu);
@@ -166,7 +166,7 @@ TEST(LaunchProgram, InvalidParametersCannotPublishPartialCode)
    }
    bad = p;
    for (unsigned bytes :
-        {1u, 64u, 129u, 384u, 2u * AGX_APPLE9_MAX_SHARED_BYTES, UINT32_MAX}) {
+        {1u, 64u, 129u, 384u, 2u * AGX_LAUNCH_MAX_SHARED_BYTES, UINT32_MAX}) {
       bad.threadgroup_memory_bytes = bytes;
       reject(bad);
    }
@@ -207,7 +207,7 @@ TEST(LaunchProgram, ThreadgroupAllocationDoesNotChangeEntryOrFrame)
                                         AGX_LAUNCH_COMPUTE, &p));
    unsigned call = agx_launch_call_offset(AGX_LAUNCH_COMPUTE, p.resource_count);
    for (unsigned bytes : {128, 256, 512, 1024, 2048, 4096, 8192, 16384,
-                          AGX_APPLE9_MAX_SHARED_BYTES}) {
+                          AGX_LAUNCH_MAX_SHARED_BYTES}) {
       p.threadgroup_memory_bytes = bytes;
       ASSERT_TRUE(agx_launch_program_build(out.data(), out.size(),
                                            AGX_LAUNCH_COMPUTE, &p));
@@ -276,8 +276,8 @@ TEST(LaunchProgram, PreambleTransferFollowsRootArguments)
          ASSERT_TRUE(
             agx_launch_program_build(out.data(), out.size(), stage, &p));
          unsigned words = stage == AGX_LAUNCH_COMPUTE
-                             ? agx_apple9_compute_root_words(p.resource_count)
-                             : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
+                             ? agx_compute_root_words(p.resource_count)
+                             : AGX_LAUNCH_GRAPHICS_ROOT_WORDS;
          unsigned at =
             agx_launch_call_offset(stage, p.resource_count) + 18 + 4 * words;
          EXPECT_EQ(read16(out.data() + at), 0x000fu);

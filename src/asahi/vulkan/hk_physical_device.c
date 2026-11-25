@@ -1796,7 +1796,7 @@ hk_restrict_launch_features(struct vk_device_extension_table *ext,
    props->subgroupQuadOperationsInAllStages = true;
    props->requiredSubgroupSizeStages = VK_SHADER_STAGE_COMPUTE_BIT;
 
-   props->maxComputeSharedMemorySize = AGX_APPLE9_MAX_SHARED_BYTES;
+   props->maxComputeSharedMemorySize = AGX_LAUNCH_MAX_SHARED_BYTES;
 
    /* VK_KHR_maintenance10: the opaque black border of RGBA4 formats is
     * not established. */
@@ -1814,12 +1814,12 @@ hk_restrict_launch_features(struct vk_device_extension_table *ext,
    }
    props->maxTaskWorkGroupInvocations = 128;
    props->maxTaskPayloadSize = 16384;
-   props->maxTaskSharedMemorySize = AGX_APPLE9_MAX_SHARED_BYTES;
-   props->maxTaskPayloadAndSharedMemorySize = AGX_APPLE9_MAX_SHARED_BYTES;
+   props->maxTaskSharedMemorySize = AGX_LAUNCH_MAX_SHARED_BYTES;
+   props->maxTaskPayloadAndSharedMemorySize = AGX_LAUNCH_MAX_SHARED_BYTES;
    props->maxMeshWorkGroupTotalCount = 1 << 22;
    props->maxMeshWorkGroupInvocations = 128;
-   props->maxMeshSharedMemorySize = AGX_APPLE9_MAX_SHARED_BYTES;
-   props->maxMeshPayloadAndSharedMemorySize = AGX_APPLE9_MAX_SHARED_BYTES;
+   props->maxMeshSharedMemorySize = AGX_LAUNCH_MAX_SHARED_BYTES;
+   props->maxMeshPayloadAndSharedMemorySize = AGX_LAUNCH_MAX_SHARED_BYTES;
    props->maxMeshOutputMemorySize = 32768;
    props->maxMeshPayloadAndOutputMemorySize = 48128;
    props->maxMeshOutputComponents = 128;

@@ -24,7 +24,7 @@ struct agx_linked_program {
    uint32_t preamble_offset, preamble_size;
 
    /* How the program is launched: arguments, publications, private frame */
-   struct agx_apple9_compute_profile profile;
+   struct agx_compute_profile profile;
 
    /* 16-bit registers used */
    uint16_t nr_gprs;

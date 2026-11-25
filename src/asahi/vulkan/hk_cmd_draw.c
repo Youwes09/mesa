@@ -402,7 +402,7 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
    if (!shader)
       goto fail;
 
-   const struct agx_apple9_compute_profile *p = &shader->info.apple9_compute;
+   const struct agx_compute_profile *p = &shader->info.apple9_compute;
    struct agx_draw_stage stage = {
       .bo = shader->bo,
       .binary = agx_bo_map(shader->bo),
@@ -415,9 +415,9 @@ hk_launch_bg_eot(struct hk_cmd_buffer *cmd, const VkRenderingInfo *info,
       .atomic_frame_size = p->atomic_frame_size,
    };
 
-   uint64_t resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
+   uint64_t resources[AGX_COMPUTE_MAX_RESOURCES];
    for (unsigned i = 0; i < p->resource_binding_count; ++i) {
-      if (p->resource_kind[i] != AGX_APPLE9_COMPUTE_RESOURCE_UBO ||
+      if (p->resource_kind[i] != AGX_COMPUTE_RESOURCE_UBO ||
           p->resource_binding[i] != AGX_APPLE9_GRAPHICS_SYSVAL_BINDING)
          goto unsupported;
 
@@ -3057,7 +3057,7 @@ hk_launch_push_words(struct hk_cmd_buffer *cmd, const struct hk_shader *s,
    const struct hk_root_descriptor_table *table =
       s->info.stage == MESA_SHADER_COMPUTE ? &cmd->state.cs.descriptors.root
                                            : &gfx->descriptors.root;
-   uint16_t push[AGX_APPLE9_MAX_PUSH_WORDS * 2] = {0};
+   uint16_t push[AGX_LAUNCH_MAX_PUSH_WORDS * 2] = {0};
    unsigned root_unif = 0;
 
    if (s->info.stage == MESA_SHADER_VERTEX) {
@@ -6598,7 +6598,7 @@ hk_launch_draw_mesh(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    hk_flush_shaders(cmd);
    if (desc->push_dirty)
       hk_cmd_buffer_flush_push_descriptors(cmd, desc);
-   const struct agx_apple9_compute_profile *profile =
+   const struct agx_compute_profile *profile =
       &main->only_linked->b.program.profile;
 
    /* Draws without a task shader and with a known grid are set up here */

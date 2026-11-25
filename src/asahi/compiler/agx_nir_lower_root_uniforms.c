@@ -4,8 +4,8 @@
  */
 
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_launch_abi.h"
 #include "compiler/nir/nir_builder.h"
-#include "agx_apple9_profile.h"
 #include "agx_compile.h"
 #include "agx_nir.h"
 #include "agx_nir_texture.h"
@@ -175,15 +175,15 @@ agx_nir_lower_handle_offsets(nir_shader *nir)
 #define DESCRIPTOR_TABLE_BUFFERS_ROOT 2
 
 struct resource {
-   enum agx_apple9_compute_resource_kind kind;
+   enum agx_compute_resource_kind kind;
    uint8_t binding;
    bool read, write;
 };
 
 struct abi {
-   struct agx_apple9_compute_profile *profile;
+   struct agx_compute_profile *profile;
    struct hash_table *ranges;
-   struct resource resources[AGX_APPLE9_COMPUTE_MAX_RESOURCES];
+   struct resource resources[AGX_COMPUTE_MAX_RESOURCES];
    unsigned count;
 };
 
@@ -218,7 +218,7 @@ lower_push_word(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 
    assert(nir_intrinsic_preamble_class(intr) == nir_preamble_class_general);
    nir_intrinsic_set_base(
-      intr, nir_intrinsic_base(intr) + 2 * AGX_APPLE9_GRAPHICS_ROOT_WORDS);
+      intr, nir_intrinsic_base(intr) + 2 * AGX_LAUNCH_GRAPHICS_ROOT_WORDS);
    return true;
 }
 
@@ -245,7 +245,7 @@ binding_of(nir_intrinsic_instr *intr)
 }
 
 static struct resource *
-find_resource(struct abi *abi, enum agx_apple9_compute_resource_kind kind,
+find_resource(struct abi *abi, enum agx_compute_resource_kind kind,
               unsigned binding)
 {
    for (unsigned i = 0; i < abi->count; ++i) {
@@ -276,13 +276,13 @@ gather_resource(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    if (!is_buffer_access(intr, &ubo, &write))
       return false;
 
-   enum agx_apple9_compute_resource_kind kind =
-      ubo ? AGX_APPLE9_COMPUTE_RESOURCE_UBO : AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
+   enum agx_compute_resource_kind kind =
+      ubo ? AGX_COMPUTE_RESOURCE_UBO : AGX_COMPUTE_RESOURCE_SSBO;
    unsigned binding = binding_of(intr);
    struct resource *res = find_resource(abi, kind, binding);
 
    if (!res) {
-      assert(abi->count < AGX_APPLE9_COMPUTE_MAX_RESOURCES);
+      assert(abi->count < AGX_COMPUTE_MAX_RESOURCES);
       res = &abi->resources[abi->count++];
       *res = (struct resource){.kind = kind, .binding = binding};
    }
@@ -313,14 +313,14 @@ load_root(nir_builder *b, unsigned root)
 }
 
 static bool
-tables(const struct agx_apple9_compute_profile *profile)
+tables(const struct agx_compute_profile *profile)
 {
-   return profile->abi == AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+   return profile->abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES;
 }
 
 static nir_def *
 resource_address(nir_builder *b, struct abi *abi,
-                 enum agx_apple9_compute_resource_kind kind, unsigned binding)
+                 enum agx_compute_resource_kind kind, unsigned binding)
 {
    struct resource *res = find_resource(abi, kind, binding);
    unsigned i = res - abi->resources;
@@ -331,7 +331,7 @@ resource_address(nir_builder *b, struct abi *abi,
          b, 1, 64, nir_iadd_imm(b, table, i * 8), .align_mul = 8,
          .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE);
    } else {
-      return load_root(b, AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE + i);
+      return load_root(b, AGX_COMPUTE_VISIBLE_ARGUMENT_BASE + i);
    }
 }
 
@@ -343,7 +343,7 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    b->cursor = nir_before_instr(&intr->instr);
 
    if (intr->intrinsic == nir_intrinsic_load_num_workgroups) {
-      unsigned root = tables(abi->profile) ? AGX_APPLE9_COMPUTE_GROUPS_ROOT : 0;
+      unsigned root = tables(abi->profile) ? AGX_COMPUTE_GROUPS_ROOT : 0;
 
       nir_def *counts = nir_load_global_constant(
          b, 3, 32, load_root(b, root), .align_mul = 4,
@@ -359,8 +359,8 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    if (!is_buffer_access(intr, &ubo, &write))
       return false;
 
-   enum agx_apple9_compute_resource_kind kind =
-      ubo ? AGX_APPLE9_COMPUTE_RESOURCE_UBO : AGX_APPLE9_COMPUTE_RESOURCE_SSBO;
+   enum agx_compute_resource_kind kind =
+      ubo ? AGX_COMPUTE_RESOURCE_UBO : AGX_COMPUTE_RESOURCE_SSBO;
    nir_def *base = resource_address(b, abi, kind, binding_of(intr));
    nir_def *offset = nir_get_io_offset_src(intr)->ssa;
 
@@ -459,13 +459,13 @@ lower_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 /* Returns the uniform word after the roots, where push words may start */
 unsigned
 agx_nir_lower_root_uniforms(nir_shader *nir, bool graphics,
-                            struct agx_apple9_compute_profile *profile)
+                            struct agx_compute_profile *profile)
 {
    struct abi abi = {.profile = profile};
    /* Precompiled profiles are copied byte for byte, padding included */
    memset(profile, 0, sizeof(*profile));
-   profile->abi = graphics ? AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES
-                           : AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS;
+   profile->abi = graphics ? AGX_COMPUTE_ABI_DESCRIPTOR_TABLES
+                           : AGX_COMPUTE_ABI_DIRECT_BUFFERS;
 
    NIR_PASS(_, nir, nir_shader_intrinsics_pass,
             graphics ? lower_push_word : lower_kernel_input,
@@ -481,26 +481,26 @@ agx_nir_lower_root_uniforms(nir_shader *nir, bool graphics,
                 (instr->type == nir_instr_type_intrinsic &&
                  nir_instr_as_intrinsic(instr)->intrinsic ==
                     nir_intrinsic_image_store_pbe_agx))
-               profile->abi = AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+               profile->abi = AGX_COMPUTE_ABI_DESCRIPTOR_TABLES;
          }
       }
    }
    qsort(abi.resources, abi.count, sizeof(abi.resources[0]), compare_resources);
 
    if (nir->info.shared_size) {
-      assert(abi.count < AGX_APPLE9_COMPUTE_MAX_RESOURCES);
-      assert(nir->info.shared_size <= AGX_APPLE9_MAX_SHARED_BYTES);
+      assert(abi.count < AGX_COMPUTE_MAX_RESOURCES);
+      assert(nir->info.shared_size <= AGX_LAUNCH_MAX_SHARED_BYTES);
 
       abi.resources[abi.count++] = (struct resource){
-         .kind = AGX_APPLE9_COMPUTE_RESOURCE_SHARED,
+         .kind = AGX_COMPUTE_RESOURCE_SHARED,
       };
 
       profile->required_threadgroup_memory_bytes =
          util_next_power_of_two(MAX2(nir->info.shared_size, 128));
    }
 
-   if (abi.count > AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)
-      profile->abi = AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES;
+   if (abi.count > AGX_COMPUTE_DIRECT_MAX_RESOURCES)
+      profile->abi = AGX_COMPUTE_ABI_DESCRIPTOR_TABLES;
 
    profile->resource_binding_count = abi.count;
    for (unsigned i = 0; i < abi.count; ++i) {
@@ -525,15 +525,15 @@ agx_nir_lower_root_uniforms(nir_shader *nir, bool graphics,
             nir_metadata_control_flow, &abi);
    _mesa_hash_table_destroy(abi.ranges, NULL);
 
-   return tables(profile) ? AGX_APPLE9_GRAPHICS_ROOT_WORDS
-                          : agx_apple9_compute_preamble_base(abi.count);
+   return tables(profile) ? AGX_LAUNCH_GRAPHICS_ROOT_WORDS
+                          : agx_compute_preamble_base(abi.count);
 }
 
 struct preload {
    /* 32-bit push words read by the shader */
-   BITSET_DECLARE(words, AGX_APPLE9_MAX_PUSH_WORDS);
+   BITSET_DECLARE(words, AGX_LAUNCH_MAX_PUSH_WORDS);
    unsigned first, count;
-   nir_def *values[AGX_APPLE9_MAX_PUSH_WORDS];
+   nir_def *values[AGX_LAUNCH_MAX_PUSH_WORDS];
 };
 
 static bool
@@ -575,7 +575,7 @@ rewrite_push_words(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    b->cursor = nir_before_instr(&intr->instr);
    unsigned start = nir_intrinsic_base(intr) - p->first;
    unsigned halves = intr->def.num_components * intr->def.bit_size / 16;
-   nir_def *words[AGX_APPLE9_MAX_PUSH_WORDS / 4];
+   nir_def *words[AGX_LAUNCH_MAX_PUSH_WORDS / 4];
    unsigned first = start / 2, n = DIV_ROUND_UP(start + halves, 2) - first;
 
    assert(n <= ARRAY_SIZE(words));
@@ -593,7 +593,7 @@ bool
 agx_nir_preload_push(nir_shader *nir, unsigned first, unsigned count)
 {
    assert(first % 2 == 0 && count % 2 == 0);
-   assert(count / 2 <= AGX_APPLE9_MAX_PUSH_WORDS);
+   assert(count / 2 <= AGX_LAUNCH_MAX_PUSH_WORDS);
 
    struct preload *p = rzalloc(NULL, struct preload);
    p->first = first;
@@ -617,11 +617,11 @@ agx_nir_preload_push(nir_shader *nir, unsigned first, unsigned count)
    nir_function_impl *preamble = main->preamble->impl;
    nir_builder b = nir_builder_at(nir_before_impl(preamble));
    nir_def *push =
-      nir_load_preamble(&b, 1, 64, .base = 4 * AGX_APPLE9_PUSH_ROOT);
+      nir_load_preamble(&b, 1, 64, .base = 4 * AGX_LAUNCH_PUSH_ROOT);
 
    /* Load runs of words with vector loads */
    unsigned w;
-   BITSET_FOREACH_SET(w, p->words, AGX_APPLE9_MAX_PUSH_WORDS) {
+   BITSET_FOREACH_SET(w, p->words, AGX_LAUNCH_MAX_PUSH_WORDS) {
       if (p->values[w])
          continue;
 
@@ -647,14 +647,14 @@ agx_nir_preload_push(nir_shader *nir, unsigned first, unsigned count)
 
 /* The root naming threadgroup memory */
 unsigned
-agx_shared_root(const struct agx_apple9_compute_profile *profile)
+agx_shared_root(const struct agx_compute_profile *profile)
 {
    if (tables(profile))
-      return AGX_APPLE9_COMPUTE_SHARED_ARGUMENT;
+      return AGX_COMPUTE_SHARED_ARGUMENT;
 
    for (unsigned i = 0; i < profile->resource_binding_count; ++i) {
-      if (profile->resource_kind[i] == AGX_APPLE9_COMPUTE_RESOURCE_SHARED)
-         return AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE + i;
+      if (profile->resource_kind[i] == AGX_COMPUTE_RESOURCE_SHARED)
+         return AGX_COMPUTE_VISIBLE_ARGUMENT_BASE + i;
    }
 
    UNREACHABLE("no threadgroup memory");

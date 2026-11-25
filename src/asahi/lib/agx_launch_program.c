@@ -3,8 +3,8 @@
  */
 #include "agx_launch_program.h"
 #include "asahi/compiler/agx_apple9_encoding.h"
-#include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/lib/agx_apple9_layout.h"
+#include "asahi/lib/agx_launch_abi.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -35,7 +35,7 @@ write16(uint8_t *p, uint16_t value)
 bool
 agx_launch_threadgroup_memory_supported(uint32_t bytes)
 {
-   return bytes == 0 || (bytes >= 128 && bytes <= AGX_APPLE9_MAX_SHARED_BYTES &&
+   return bytes == 0 || (bytes >= 128 && bytes <= AGX_LAUNCH_MAX_SHARED_BYTES &&
                          !(bytes & (bytes - 1)));
 }
 
@@ -45,11 +45,11 @@ agx_launch_call_offset(enum agx_launch_stage stage, unsigned resource_count)
    if (stage == AGX_LAUNCH_VERTEX || stage == AGX_LAUNCH_FRAGMENT)
       return 68;
    if (stage != AGX_LAUNCH_COMPUTE || !resource_count ||
-       resource_count > AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)
+       resource_count > AGX_COMPUTE_DIRECT_MAX_RESOURCES)
       return 0;
    /* The table address literals, one literal per root word and the
     * allocation, then the entry field inside the target. */
-   return 26 + 8 * agx_apple9_compute_root_words(resource_count);
+   return 26 + 8 * agx_compute_root_words(resource_count);
 }
 
 static void
@@ -143,17 +143,16 @@ launch_build(uint8_t *out, size_t capacity, enum agx_launch_stage stage,
    agx_apple9_encode_literal32(program + 8, root + 1,
                                params->resource_table >> 32);
    unsigned at = 16;
-   unsigned words = compute
-                       ? agx_apple9_compute_root_words(params->resource_count)
-                       : AGX_APPLE9_GRAPHICS_ROOT_WORDS;
+   unsigned words = compute ? agx_compute_root_words(params->resource_count)
+                            : AGX_LAUNCH_GRAPHICS_ROOT_WORDS;
    unsigned roots = words / 2;
    if (compute) {
       /* The root words are known when the launch is emitted: materialize
        * them instead of loading them from the per-dispatch resource record,
        * which would put a dependent memory round trip in front of every
        * dispatch. Templates leave the slots for set_roots. */
-      static const uint32_t zero[2 * (AGX_APPLE9_COMPUTE_VISIBLE_ARGUMENT_BASE +
-                                      AGX_APPLE9_COMPUTE_DIRECT_MAX_RESOURCES)];
+      static const uint32_t zero[2 * (AGX_COMPUTE_VISIBLE_ARGUMENT_BASE +
+                                      AGX_COMPUTE_DIRECT_MAX_RESOURCES)];
       const uint32_t *values = params->root_words;
       if (!values && !tmpl)
          return false;
@@ -410,7 +409,7 @@ agx_prepare_stage_launch(struct agx_device *dev, void *allocator,
    /* The launch loads GRAPHICS_ROOT_WORDS 32-bit words. Align the following
     * launch program to 64 bytes; the old 256-byte root reservation copied
     * another 192 bytes of zeros per stage without any consumer. */
-   enum { roots_size = ALIGN_POT(AGX_APPLE9_GRAPHICS_ROOT_WORDS * 4, 64) };
+   enum { roots_size = ALIGN_POT(AGX_LAUNCH_GRAPHICS_ROOT_WORDS * 4, 64) };
    const unsigned launch_size = AGX_GRAPHICS_LAUNCH_SIZE;
    struct agx_launch_parameters params;
    stage_launch_params(&params, dev, shader, fragment, tile_bytes, samples);
@@ -432,7 +431,7 @@ agx_prepare_stage_launch(struct agx_device *dev, void *allocator,
       put_u64(roots, textures);
       put_u64(roots + 8, samplers);
       put_u64(roots + 0x10, table);
-      put_u64(roots + 8 * AGX_APPLE9_PUSH_ROOT, push);
+      put_u64(roots + 8 * AGX_LAUNCH_PUSH_ROOT, push);
       if (!agx_launch_template_emit(roots + roots_size, tmpl, state.gpu, entry,
                                     state.gpu + roots_size))
          return false;
@@ -445,7 +444,7 @@ agx_prepare_stage_launch(struct agx_device *dev, void *allocator,
    put_u64(roots, textures);
    put_u64(roots + 8, samplers);
    put_u64(roots + 0x10, table);
-   put_u64(roots + 8 * AGX_APPLE9_PUSH_ROOT, push);
+   put_u64(roots + 8 * AGX_LAUNCH_PUSH_ROOT, push);
    struct agx_ptr state = alloc(allocator, sizeof(canonical), 64);
    if (!state.cpu)
       return false;

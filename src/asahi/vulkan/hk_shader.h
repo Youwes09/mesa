@@ -7,9 +7,9 @@
 
 #pragma once
 
-#include "asahi/compiler/agx_apple9_profile.h"
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/lib/agx_draw_table.h"
+#include "asahi/lib/agx_launch_abi.h"
 #include "asahi/lib/agx_launch_program.h"
 #include "poly/nir/poly_nir.h"
 #include "util/macros.h"
