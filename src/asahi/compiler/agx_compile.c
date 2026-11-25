@@ -5317,7 +5317,7 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, agx_lower_front_face,
             nir_metadata_control_flow, NULL);
 
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+   if (agx_nir_target(nir)->minimal_subgroups)
       NIR_PASS(_, nir, agx_nir_lower_apple9_compute_derivatives);
 
    /* Flush FP32 min/max reductions */

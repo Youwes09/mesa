@@ -7,6 +7,7 @@
 #include "compiler/nir/nir_builder.h"
 #include "util/list.h"
 #include "agx_compile.h"
+#include "agx_compiler.h"
 #include "agx_nir.h"
 #include "nir_builder_opcodes.h"
 #include "nir_intrinsics.h"
@@ -209,10 +210,10 @@ lower_subgroup_filter(const nir_intrinsic_instr *intr, UNUSED const void *data)
    }
 }
 
-/* Apple9 only has the exclusive iadd scan and full umax reduction, 32-bit */
+/* Minimal subgroups have an exclusive iadd scan and umax reduction, 32-bit */
 static bool
-lower_subgroup_filter_apple9(const nir_intrinsic_instr *intr,
-                             UNUSED const void *data)
+lower_subgroup_filter_minimal(const nir_intrinsic_instr *intr,
+                              UNUSED const void *data)
 {
    if (intr->intrinsic != nir_intrinsic_exclusive_scan &&
        intr->intrinsic != nir_intrinsic_inclusive_scan &&
@@ -230,9 +231,9 @@ lower_subgroup_filter_apple9(const nir_intrinsic_instr *intr,
    return nir_intrinsic_reduction_op(intr) != nir_op_iadd;
 }
 
-/* Apple9 lacks quad ballots and active-lane registers, so use a full ballot */
+/* Without quad ballots and active-lane registers, use a full ballot */
 static bool
-lower_apple9(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
+lower_minimal(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 {
    b->cursor = nir_before_instr(&intr->instr);
    nir_def *repl;
@@ -270,11 +271,11 @@ lower_apple9(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 bool
 agx_nir_lower_subgroups(nir_shader *s)
 {
-   bool apple9 = agx_nir_shader_isa(s) == AGX_SHADER_ISA_APPLE9;
+   bool minimal = agx_nir_target(s)->minimal_subgroups;
 
    /* First, do as much common lowering as we can */
    nir_lower_subgroups_options opts = {
-      .filter = apple9 ? lower_subgroup_filter_apple9 : lower_subgroup_filter,
+      .filter = minimal ? lower_subgroup_filter_minimal : lower_subgroup_filter,
       .lower_read_first_invocation = true,
       .lower_inverse_ballot = true,
       .lower_to_scalar = true,
@@ -283,8 +284,8 @@ agx_nir_lower_subgroups(nir_shader *s)
       .lower_subgroup_masks = true,
       .lower_reduce = true,
       .lower_vote = true,
-      .lower_quad = apple9,
-      .lower_quad_vote = apple9,
+      .lower_quad = minimal,
+      .lower_quad_vote = minimal,
       .ballot_components = 1,
       .ballot_bit_size = 32,
       .subgroup_size = 32,
@@ -296,8 +297,8 @@ agx_nir_lower_subgroups(nir_shader *s)
    progress |=
       nir_shader_intrinsics_pass(s, lower, nir_metadata_control_flow, NULL);
 
-   if (apple9) {
-      progress |= nir_shader_intrinsics_pass(s, lower_apple9,
+   if (minimal) {
+      progress |= nir_shader_intrinsics_pass(s, lower_minimal,
                                              nir_metadata_control_flow, NULL);
    }
 

@@ -626,6 +626,12 @@ struct agx_isa_target {
     */
    bool flushes_denorms;
 
+   /* Subgroup operations are ballots, shuffles, an exclusive add scan and a
+    * max reduction: no quad operations, active-lane registers or compute
+    * derivatives.
+    */
+   bool minimal_subgroups;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
