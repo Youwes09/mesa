@@ -41,10 +41,10 @@ def_size(nir_def *def, unsigned *size, unsigned *align,
    *class = preamble_class(def);
 }
 
-/* Apple9 stores and reads uniforms as 32-bit words */
+/* Word registers store and read uniforms as 32-bit words */
 static void
-def_size_apple9(nir_def *def, unsigned *size, unsigned *align,
-                nir_preamble_class *class)
+def_size_words(nir_def *def, unsigned *size, unsigned *align,
+               nir_preamble_class *class)
 {
    unsigned bit_size = MAX2(def->bit_size, 32);
 
@@ -444,7 +444,7 @@ agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
    nir_opt_preamble_options options = preamble_options;
    /* Apple9 preambles cannot spill, so keep control flow in the main shader */
    if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
-      options.def_size = def_size_apple9;
+      options.def_size = def_size_words;
       options.straight_line = true;
 
       /* Parameter-form textures cannot take implicit-LOD zero gradients */

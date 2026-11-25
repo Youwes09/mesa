@@ -651,9 +651,9 @@ const_operand(agx_instr **defs, agx_index x, uint32_t *value)
    return true;
 }
 
-/* Fold Apple9 constant bitfield extracts, inserts and bitops into moves */
+/* Fold constant word bitfield extracts, inserts and bitops into moves */
 static void
-agx_optimizer_fold_apple9(agx_instr **defs, agx_instr *I)
+agx_optimizer_fold_constant_bits(agx_instr **defs, agx_instr *I)
 {
    uint32_t a, b, v;
 
@@ -711,8 +711,8 @@ agx_optimizer_forward(agx_context *ctx)
       /* Optimize moves */
       agx_optimizer_copyprop(ctx, defs, I);
 
-      if (ctx->target.isa == AGX_SHADER_ISA_APPLE9)
-         agx_optimizer_fold_apple9(defs, I);
+      if (ctx->target.word_registers)
+         agx_optimizer_fold_constant_bits(defs, I);
 
       /* Propagate fmov down */
       if (info.is_float || I->op == AGX_OPCODE_FCMPSEL ||

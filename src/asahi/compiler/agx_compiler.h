@@ -578,6 +578,12 @@ struct agx_isa_target {
    /* Whether agx_occupancy_for_register_count describes this ISA */
    bool occupancy_table;
 
+   /* Registers hold 32-bit words and narrower values have undefined high bits.
+    * The ALU works on words, with FP16 arithmetic on low halves, and has no
+    * bitfield extracts at register offsets, shifted adds or bitwise not.
+    */
+   bool word_registers;
+
    /* Disassembler for shader dumps and self-tests, if there is one */
    bool (*disassemble)(uint8_t *code, size_t size, FILE *fp);
 };
@@ -771,11 +777,11 @@ agx_size_for_bits(unsigned bits)
    }
 }
 
-/* Apple9 keeps booleans, 8-bit and 16-bit values in 32-bit registers */
+/* Word registers hold booleans, 8-bit and 16-bit values in 32 bits */
 static inline enum agx_size
 agx_size_for_nir_bits(const agx_context *ctx, unsigned bits)
 {
-   if (ctx->target.isa == AGX_SHADER_ISA_APPLE9 && bits < 32)
+   if (ctx->target.word_registers && bits < 32)
       return AGX_SIZE_32;
 
    return agx_size_for_bits(bits);

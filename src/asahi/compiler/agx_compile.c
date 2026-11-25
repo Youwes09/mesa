@@ -596,7 +596,7 @@ agx_bitfield32(agx_builder *b, agx_index x, unsigned offset, unsigned bits)
 
 /* Narrow values have undefined high bits. Extend one to all 32 bits */
 static agx_index
-agx_extend_apple9(agx_builder *b, agx_index x, unsigned bits, bool sign)
+agx_extend(agx_builder *b, agx_index x, unsigned bits, bool sign)
 {
    assert(x.size == AGX_SIZE_32);
 
@@ -625,7 +625,7 @@ agx_emit_load_const(agx_builder *b, nir_load_const_instr *instr)
          uint64_t value = nir_const_value_as_uint(instr->value[c], bit_size);
          channels[c] = agx_temp(b->shader, dst.size);
 
-         if (agx_is_apple9(b->shader) && bit_size == 64) {
+         if (b->shader->target.word_registers && bit_size == 64) {
             agx_emit_collect_to(b, channels[c], 2,
                                 (agx_index[]){
                                    agx_mov_imm(b, 32, value & UINT32_MAX),
@@ -642,8 +642,8 @@ agx_emit_load_const(agx_builder *b, nir_load_const_instr *instr)
 
    uint64_t value = nir_const_value_as_uint(instr->value[0], bit_size);
 
-   /* Apple9 only moves 32-bit constants */
-   if (agx_is_apple9(b->shader) && bit_size == 64) {
+   /* Word registers only move 32-bit constants */
+   if (b->shader->target.word_registers && bit_size == 64) {
       agx_emit_collect_to(b, dst, 2,
                           (agx_index[]){
                              agx_mov_imm(b, 32, value & UINT32_MAX),
@@ -1119,9 +1119,9 @@ static agx_instr *
 agx_emit_sample_mask_apple9(agx_builder *b, nir_intrinsic_instr *instr)
 {
    agx_index affected =
-      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
+      agx_extend(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
    agx_index live =
-      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[1]), 16, false);
+      agx_extend(b, agx_src_index(b->shader, &instr->src[1]), 16, false);
 
    bool tests = agx_apple9_tests_zs(instr);
 
@@ -1150,12 +1150,12 @@ agx_emit_store_zs_apple9(agx_builder *b, nir_intrinsic_instr *instr)
    assert(zs >= 1 && zs <= 3);
 
    agx_index mask =
-      agx_extend_apple9(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
+      agx_extend(b, agx_src_index(b->shader, &instr->src[0]), 16, false);
    agx_index control = agx_coverage_control_apple9(b, mask, mask);
 
    if (zs & 2) {
-      agx_index s = agx_extend_apple9(
-         b, agx_src_index(b->shader, &instr->src[2]), 16, false);
+      agx_index s =
+         agx_extend(b, agx_src_index(b->shader, &instr->src[2]), 16, false);
       control = agx_or(b, control, agx_shl32(b, s, agx_immediate(16)));
    }
 
@@ -1326,8 +1326,8 @@ agx_emit_load_preamble(agx_builder *b, agx_index dst,
    unsigned base = nir_intrinsic_base(instr);
    unsigned stride = agx_size_align_16(dst.size);
 
-   /* Apple9 reads uniform words. Shift a 16-bit value in a high half down */
-   if (agx_is_apple9(b->shader) && instr->def.bit_size == 16) {
+   /* Uniforms are read as words. Shift a 16-bit value in a high half down */
+   if (b->shader->target.word_registers && instr->def.bit_size == 16) {
       for (unsigned i = 0; i < dim; ++i) {
          unsigned half = base + i;
          srcs[i] = agx_uniform(half & ~1, AGX_SIZE_32);
@@ -1344,8 +1344,8 @@ agx_emit_load_preamble(agx_builder *b, agx_index dst,
    for (unsigned i = 0; i < dim; ++i) {
       srcs[i] = agx_uniform(base + i * stride, dst.size);
 
-      /* Few Apple9 operands take uniforms. Copy propagation refolds them */
-      if (agx_is_apple9(b->shader) && dim > 1)
+      /* Few word ALU operands take uniforms. Copy propagation refolds them */
+      if (b->shader->target.word_registers && dim > 1)
          srcs[i] = agx_mov(b, srcs[i]);
    }
 
@@ -1375,8 +1375,8 @@ agx_emit_store_preamble(agx_builder *b, nir_intrinsic_instr *instr)
    unsigned stride = agx_size_align_16(vec.size);
    unsigned nr = nir_src_num_components(instr->src[0]);
 
-   /* Apple9 stores one 32-bit uniform at a time */
-   if (agx_is_apple9(b->shader)) {
+   /* Uniforms are stored one word at a time */
+   if (b->shader->target.word_registers) {
       for (unsigned i = 0; i < nr; ++i) {
          agx_index x = agx_extract_nir_src(b, instr->src[0], i);
          unsigned words = stride / 2;
@@ -2138,8 +2138,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       return NULL;
 
    case nir_intrinsic_load_pixel_coord: {
-      /* Apple9 reads the words, whose low halves are the coordinates */
-      unsigned bits = agx_is_apple9(b->shader) ? 32 : 16;
+      /* The words are read, whose low halves are the coordinates */
+      unsigned bits = b->shader->target.word_registers ? 32 : 16;
 
       return agx_emit_collect_to(
          b, dst, 2,
@@ -2183,8 +2183,8 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    }
 
    case nir_intrinsic_load_back_face_agx:
-      /* Apple9 reads a word, nonzero if back-facing */
-      if (agx_is_apple9(b->shader)) {
+      /* A word, nonzero if back-facing */
+      if (b->shader->target.word_registers) {
          return agx_icmp_to(b, dst, agx_get_sr(b, 32, AGX_SR_BACKFACING),
                             agx_zero(), AGX_ICOND_UEQ, true);
       }
@@ -2702,10 +2702,10 @@ agx_emit_half_special(agx_builder *b, nir_op op, agx_index dst, agx_index s0)
    return I;
 }
 
-/* ALU operations Apple9 implements differently, or NULL for the rest */
+/* ALU operations on word registers that differ, or NULL for the rest */
 static agx_instr *
-agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
-                    agx_index s0, agx_index s1, agx_index s2, agx_index s3)
+agx_emit_word_alu(agx_builder *b, nir_alu_instr *instr, agx_index dst,
+                  agx_index s0, agx_index s1, agx_index s2, agx_index s3)
 {
    unsigned srcs = nir_op_infos[instr->op].num_inputs;
    unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
@@ -2794,7 +2794,7 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
          /* The low bits are the narrower value */
          return agx_mov_to(b, dst, s0);
       } else {
-         return agx_mov_to(b, dst, agx_extend_apple9(b, s0, src_sz, sign));
+         return agx_mov_to(b, dst, agx_extend(b, s0, src_sz, sign));
       }
    }
 
@@ -2821,7 +2821,7 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
       return agx_convert_to(
          b, dst,
          agx_immediate(sign ? AGX_CONVERT_S32_TO_F : AGX_CONVERT_U32_TO_F),
-         agx_extend_apple9(b, s0, src_sz, sign), AGX_ROUND_RTE);
+         agx_extend(b, s0, src_sz, sign), AGX_ROUND_RTE);
    }
 
    case nir_op_inot:
@@ -2872,12 +2872,11 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
                              m);
 
       /* Only constant offsets have a width */
-      return agx_mov_to(b, dst,
-                        agx_extend_apple9(b, agx_ushr(b, s0, s1), m, false));
+      return agx_mov_to(b, dst, agx_extend(b, agx_ushr(b, s0, s1), m, false));
    }
 
    case nir_op_pack_32_2x16_split:
-      return agx_or_to(b, dst, agx_extend_apple9(b, s0, 16, false),
+      return agx_or_to(b, dst, agx_extend(b, s0, 16, false),
                        agx_shl32(b, s1, agx_immediate(16)));
 
    case nir_op_unpack_32_2x16_split_x:
@@ -2894,7 +2893,7 @@ agx_emit_alu_apple9(agx_builder *b, nir_alu_instr *instr, agx_index dst,
          agx_index hi = agx_extract_nir_src(b, instr->src[0].src,
                                             instr->src[0].swizzle[2 * i + 1]);
 
-         words[i] = agx_or(b, agx_extend_apple9(b, lo, 16, false),
+         words[i] = agx_or(b, agx_extend(b, lo, 16, false),
                            agx_shl32(b, hi, agx_immediate(16)));
       }
 
@@ -2914,14 +2913,14 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
    ASSERTED unsigned comps = instr->def.num_components;
 
-   /* Apple9 unpacks normalized values natively, as vectors */
+   /* The word ALU unpacks normalized values natively, as vectors */
    assert(comps == 1 || nir_op_is_vec_or_mov(instr->op) ||
-          (agx_is_apple9(b->shader) &&
+          (b->shader->target.word_registers &&
            nir_op_infos[instr->op].output_size == comps));
    assert(
       sz == 1 ||
       ((nir_op_is_vec_or_mov(instr->op) || is_conversion_to_8bit(instr->op) ||
-        instr->op == nir_op_bcsel || agx_is_apple9(b->shader)) &&
+        instr->op == nir_op_bcsel || b->shader->target.word_registers) &&
        sz == 8) ||
       sz == 16 || sz == 32 || sz == 64);
 
@@ -2934,8 +2933,8 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    agx_index i0 = agx_immediate(0);
    agx_index i1 = agx_immediate(1);
 
-   if (agx_is_apple9(b->shader)) {
-      agx_instr *I = agx_emit_alu_apple9(b, instr, dst, s0, s1, s2, s3);
+   if (b->shader->target.word_registers) {
+      agx_instr *I = agx_emit_word_alu(b, instr, dst, s0, s1, s2, s3);
       if (I)
          return I;
    }
@@ -3006,7 +3005,7 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
                                                        : AGX_FCOND_EQ;
       bool invert = instr->op == nir_op_fneu;
 
-      if (agx_is_apple9(b->shader) && src_sz == 16)
+      if (b->shader->target.word_registers && src_sz == 16)
          return agx_hcmp_to(b, dst, s0, s1, fcond, invert);
       else
          return agx_fcmp_to(b, dst, s0, s1, fcond, invert);
@@ -3045,7 +3044,7 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    case nir_op_fmax:
    case nir_op_fmin_agx:
    case nir_op_fmax_agx:
-      if (agx_is_apple9(b->shader) && sz == 16) {
+      if (b->shader->target.word_registers && sz == 16) {
          assert(!nir_alu_instr_is_signed_zero_preserve(instr) &&
                 "should've been lowered");
 
@@ -3326,7 +3325,7 @@ agx_emit_cube_face_apple9(agx_builder *b, agx_index dst,
    agx_emit_split(b, out, major, 2);
 
    /* Only the low half of the face's register is defined */
-   out[1] = agx_extend_apple9(b, out[1], 16, false);
+   out[1] = agx_extend(b, out[1], 16, false);
 
    for (unsigned i = 0; i < 2; ++i) {
       out[2 + i] = agx_temp(b->shader, AGX_SIZE_32);
@@ -3703,8 +3702,8 @@ agx_emit_undef(agx_builder *b, nir_undef_instr *instr)
    agx_index dst = agx_def_index(b->shader, &instr->def);
    assert(instr->def.num_components <= 4);
 
-   /* Apple9 only moves 32-bit constants */
-   if (agx_is_apple9(b->shader)) {
+   /* Word registers only move 32-bit constants */
+   if (b->shader->target.word_registers) {
       agx_index zero = agx_mov_imm(b, 32, 0);
       bool wide = instr->def.bit_size == 64;
       assert(!wide || instr->def.num_components == 1);
@@ -4095,7 +4094,7 @@ agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, UNUSED void *_)
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    nir_def *x = nir_mov_alu(b, alu->src[0], 1);
 
-   if (agx_nir_shader_isa(b->shader) == AGX_SHADER_ISA_APPLE9) {
+   if (agx_nir_target(b->shader)->word_registers) {
       /* There is no FP16 arithmetic, so reduce in FP32 */
       nir_def *res =
          agx_nir_sincos_apple9(b, nir_f2f32(b, x), alu->op == nir_op_fcos);
@@ -4421,7 +4420,7 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    NIR_PASS(_, nir, agx_nir_fuse_selects);
 
    /* The algebraic passes can form narrow arithmetic again */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9)
+   if (agx_nir_target(nir)->word_registers)
       NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
 
    NIR_PASS(_, nir, nir_opt_constant_folding);
@@ -4885,7 +4884,7 @@ agx_fuse_uniform_stores_apple9(agx_context *ctx)
 
 /* Unfused FP16 compares select 1 or 0, which must be in registers */
 static void
-agx_lower_half_compares_apple9(agx_context *ctx)
+agx_lower_half_compares(agx_context *ctx)
 {
    agx_foreach_instr_global_safe(ctx, I) {
       if (I->op != AGX_OPCODE_HCMP)
@@ -5021,8 +5020,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
       /* After DCE, use counts are right so we can run the optimizer. */
       AGX_PASS(ctx, agx_optimizer_backward);
       AGX_PASS(ctx, agx_optimizer_forward);
-      /* Apple9 has no FP16 sources to compact constants into */
-      if (!agx_is_apple9(ctx))
+      /* Word registers have no FP16 sources to compact constants into */
+      if (!ctx->target.word_registers)
          AGX_PASS(ctx, agx_opt_compact_constants);
 
       /* After inlining constants, promote what's left. Apple9 preloads none */
@@ -5034,7 +5033,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
 
    if (agx_is_apple9(ctx))
       AGX_PASS(ctx, agx_lower_float_moves_apple9);
-   AGX_PASS(ctx, agx_lower_half_compares_apple9);
+   AGX_PASS(ctx, agx_lower_half_compares);
 
    /* For correctness, lower uniform sources after copyprop (for correctness,
     * as copyprop creates uniform sources). To keep register pressure in
@@ -5524,6 +5523,8 @@ void
 agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
                        struct agx_shader_part *out)
 {
+   const struct agx_isa_target *target =
+      agx_get_isa_target(key->dev.shader_isa);
    bool apple9 = key->dev.shader_isa == AGX_SHADER_ISA_APPLE9;
 
    /* The shader must have been prepared for the ISA it is compiled for */
@@ -5614,7 +5615,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
       NIR_PASS(progress, nir, nir_opt_dce);
    } while (progress);
 
-   if (apple9)
+   if (target->word_registers)
       NIR_PASS(_, nir, agx_nir_legalize_apple9_alu);
    else
       NIR_PASS(_, nir, nir_lower_bit_size, lower_bit_size_callback, NULL);
