@@ -40,6 +40,16 @@ void agx_shader_body_unreference(struct agx_device *dev,
 void agx_shader_body_finish(struct agx_device *dev,
                             struct agx_shader_body *body);
 
+/* Write the header of the shader entry arena */
+void agx_init_shader_entries(struct agx_device *dev);
+
+/* The body's offset in the shader entry arena, allocating an entry if it has
+ * none, or 0 if the arena is full. allocator is passed to the device's pin
+ * hook, which ties the entry to the recording's lifetime.
+ */
+uint32_t agx_shader_entry(struct agx_device *dev, void *allocator,
+                          struct agx_shader_body *body, bool compute);
+
 #ifdef __cplusplus
 }
 #endif

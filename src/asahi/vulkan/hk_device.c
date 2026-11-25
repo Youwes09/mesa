@@ -437,7 +437,7 @@ hk_CreateDevice(VkPhysicalDevice physicalDevice,
    hk_device_init_usc_heap(dev);
 
    if (agx_has_launch_programs(&dev->dev))
-      agx_apple9_initialize_entries(&dev->dev);
+      agx_init_shader_entries(&dev->dev);
 
    vk_device_set_drm_fd(&dev->vk, dev->dev.fd);
    dev->vk.command_buffer_ops = &hk_cmd_buffer_ops;

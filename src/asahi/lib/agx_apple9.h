@@ -217,8 +217,6 @@ agx_apple9_uniform_draw_reset(struct agx_apple9_uniform_draw *draw)
       sizeof(*draw) - offsetof(struct agx_apple9_uniform_draw, scissor_index));
 }
 
-void agx_apple9_initialize_entries(struct agx_device *dev);
-
 /* Per-sample tile allocation for a fragment-stage launch or render. As in
  * agx_build_tilebuffer_layout, multisampled renders keep a nonempty
  * allocation even without colour targets: a large G16 2x depth-only render

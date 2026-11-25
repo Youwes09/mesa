@@ -18,7 +18,6 @@
 #include "asahi/libagx/libagx_dgc.h"
 #include "util/compress.h"
 #include "util/list.h"
-#include "util/u_call_once.h"
 #include "util/u_debug.h"
 #include "util/u_math.h"
 #include "agx_device.h"
@@ -98,18 +97,6 @@ agx_apple9_translate_pbe(void *out, const struct agx_pbe_packed *state,
    return true;
 }
 
-/* Immutable source-generated compute helpers. */
-static uint8_t apple9_compute_constant[0x40];
-static void apple9_build_sentinel_constant_program(uint8_t *out,
-                                                   unsigned slots);
-static util_once_flag apple9_compute_helpers_once = UTIL_ONCE_FLAG_INIT;
-
-static void
-apple9_initialize_compute_helpers(void)
-{
-   apple9_build_sentinel_constant_program(apple9_compute_constant, 30);
-}
-
 struct apple9_compute_abi_desc {
    uint8_t resource_count;
    uint16_t resource_record_size;
@@ -131,8 +118,6 @@ apple9_compute_abi(const struct agx_apple9_compute_profile *profile)
    switch (profile->abi) {
    case AGX_APPLE9_COMPUTE_ABI_DIRECT_BUFFERS:
    case AGX_APPLE9_COMPUTE_ABI_DESCRIPTOR_TABLES:
-      util_call_once(&apple9_compute_helpers_once,
-                     apple9_initialize_compute_helpers);
       return &ssbo8_superset;
    default:
       return NULL;
@@ -193,22 +178,6 @@ apple9_compute_profile_valid(const struct agx_apple9_compute_profile *profile,
 }
 
 static inline void
-apple9_put_u16(void *ptr, uint16_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline void
-apple9_put_u24(void *ptr, uint32_t value)
-{
-   assert(value <= 0xffffff);
-   uint8_t *bytes = ptr;
-   bytes[0] = value;
-   bytes[1] = value >> 8;
-   bytes[2] = value >> 16;
-}
-
-static inline void
 apple9_put_u32(void *ptr, uint32_t value)
 {
    memcpy(ptr, &value, sizeof(value));
@@ -242,36 +211,7 @@ apple9_put_f32(void *ptr, float value)
    memcpy(ptr, &value, sizeof(value));
 }
 
-static void
-apple9_fill_helper_table(uint8_t *image, unsigned base, unsigned slots)
-{
-   assert(slots > 0 && slots <= 10);
-   for (unsigned index = 0; index < slots; ++index) {
-      uint8_t *record = image + base + (index * 0x10);
-      memset(record, 0, 0x10);
-      record[0] = 0x0f;
-      record[2] = 0x54;
-      record[3] = (slots - index) * 0x10;
-      record[10] = record[12] = record[14] = 0x06;
-   }
 
-   const uint8_t terminal[0x10] = {
-      0xf7, 0x03, 0xaa, 0x00, 0x8f, 0x02, 0x54, 0x01,
-      0x06, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
-   };
-   memcpy(image + base + slots * 0x10, terminal, sizeof(terminal));
-   memcpy(image + base + (slots + 1) * 0x10, terminal, sizeof(terminal));
-}
-
-static void
-apple9_build_sentinel_constant_program(uint8_t *out, unsigned slots)
-{
-   assert(slots <= 30);
-   memset(out, 0, 0x40);
-   apple9_put_u32(out, 0x0e);
-   for (unsigned index = 0; index < slots; ++index)
-      apple9_put_u16(out + 4 + index * 2, 0x0006);
-}
 
 /* Launch parameters of a compute profile; the caller sets the per-launch
  * entry, resource table and program address. */
@@ -367,106 +307,8 @@ agx_apple9_compute_resource_kind(
    return profile->resource_kind[argument];
 }
 
-static bool apple9_build_body_entry(uint8_t *out, uint64_t entry,
-                                    uint64_t body);
 
-void
-agx_apple9_initialize_entries(struct agx_device *dev)
-{
-   uint8_t header[AGX_APPLE9_ENTRY_HEADER_SIZE];
-   memset(header, 0, AGX_APPLE9_ENTRY_HEADER_SIZE);
-   apple9_put_u32(header, AGX_APPLE9_ENTRY_HEADER_SIZE);
-   for (unsigned offset = 0x40; offset < AGX_APPLE9_ENTRY_HEADER_SIZE;
-        offset += 2)
-      apple9_put_u16(header + offset, 0x0006);
-   apple9_fill_helper_table(header, 0x100, 10);
-   apple9_fill_helper_table(header, 0x200, 10);
-   agx_apple9_entry_write(dev, 0, header, AGX_APPLE9_ENTRY_HEADER_SIZE);
-}
 
-/* The launch target addresses entries in a few megabytes, room for about
- * 43k shader bodies. Draw-time variants can exceed that over a session, so
- * entries are only fixed while a recording that may encode them is alive:
- * the device's pin hook ties the body to the recording's lifetime. When the
- * arena is full, free the least recently pinned unpinned entries. No live
- * recording, and hence no pending batch, encodes them; their bodies get a new
- * entry on their next use. Launch records cached by content cannot alias a
- * recycled entry, since they also encode the body's preamble address.
- */
-static void
-apple9_evict_entries(struct agx_device *dev)
-{
-   const unsigned target =
-      AGX_APPLE9_ENTRY_ARENA_SIZE / AGX_APPLE9_ENTRY_BLOCK_SIZE / 4;
-   unsigned freed = 0;
-   list_for_each_entry_safe(struct agx_shader_body, body,
-                            &dev->apple9_entry_lru, entry_link) {
-      if (freed == target)
-         break;
-      if (body->entry_pins || body->entry_fixed)
-         continue;
-      util_vma_heap_free(&dev->apple9_entry_heap,
-                         body->entry_offset - AGX_APPLE9_ENTRY_CODE_OFFSET,
-                         AGX_APPLE9_ENTRY_BLOCK_SIZE);
-      body->entry_offset = 0;
-      list_del(&body->entry_link);
-      ++freed;
-   }
-}
-
-static uint32_t
-apple9_shader_entry(struct agx_device *dev, void *allocator,
-                    struct agx_shader_body *body, bool compute)
-{
-   simple_mtx_lock(&dev->apple9_entry_lock);
-   if (!allocator || !dev->apple9_pin_entry ||
-       !dev->apple9_pin_entry(allocator, body))
-      body->entry_fixed = true;
-   uint32_t entry = body->entry_offset;
-   if (entry) {
-      list_move_to(&body->entry_link, &dev->apple9_entry_lru);
-   } else {
-      uint32_t block = util_vma_heap_alloc(&dev->apple9_entry_heap,
-                                           AGX_APPLE9_ENTRY_BLOCK_SIZE,
-                                           AGX_APPLE9_ENTRY_ALIGNMENT);
-      if (!block) {
-         apple9_evict_entries(dev);
-         block = util_vma_heap_alloc(&dev->apple9_entry_heap,
-                                     AGX_APPLE9_ENTRY_BLOCK_SIZE,
-                                     AGX_APPLE9_ENTRY_ALIGNMENT);
-      }
-      if (block &&
-          !agx_apple9_entry_back(dev, block + AGX_APPLE9_ENTRY_BLOCK_SIZE)) {
-         util_vma_heap_free(&dev->apple9_entry_heap, block,
-                            AGX_APPLE9_ENTRY_BLOCK_SIZE);
-         block = 0;
-      }
-      if (block) {
-         entry = block + AGX_APPLE9_ENTRY_CODE_OFFSET;
-         uint8_t bytes[AGX_APPLE9_ENTRY_BLOCK_SIZE];
-         memset(bytes, 0, AGX_APPLE9_ENTRY_BLOCK_SIZE);
-         apple9_put_u32(bytes, AGX_APPLE9_ENTRY_BLOCK_SIZE);
-         if (compute) {
-            util_call_once(&apple9_compute_helpers_once,
-                           apple9_initialize_compute_helpers);
-            memcpy(bytes + 0x40, apple9_compute_constant, 0x40);
-         }
-         if (apple9_build_body_entry(bytes + AGX_APPLE9_ENTRY_CODE_OFFSET,
-                                     dev->shader_base + entry, body->addr)) {
-            agx_apple9_entry_write(dev, block, bytes,
-                                   AGX_APPLE9_ENTRY_BLOCK_SIZE);
-            body->entry_offset = entry;
-            list_addtail(&body->entry_link, &dev->apple9_entry_lru);
-         } else {
-            util_vma_heap_free(&dev->apple9_entry_heap, block,
-                               AGX_APPLE9_ENTRY_BLOCK_SIZE);
-            entry = 0;
-         }
-      }
-   }
-   simple_mtx_unlock(&dev->apple9_entry_lock);
-   return entry;
-}
 
 bool
 agx_apple9_build_compute_geometry_fields(
@@ -548,7 +390,7 @@ agx_apple9_prepare_compute_dispatch_alloc_tmpl(
        !!preamble_address != !!profile->preamble_size)
       return false;
 
-   uint32_t entry = apple9_shader_entry(dev, allocator, body, true);
+   uint32_t entry = agx_shader_entry(dev, allocator, body, true);
    if (!entry)
       return false;
 
@@ -1278,20 +1120,6 @@ apple9_build_direct_bind_group(uint8_t *page, unsigned varying_components)
    apple9_put_u32(page + 0x18, varying_components / 8);
 }
 
-static bool
-apple9_build_body_entry(uint8_t *out, uint64_t entry, uint64_t body)
-{
-   int64_t displacement = (int64_t)body - (int64_t)entry;
-   /* Both allocations live within the same 4-GiB USC heap. Wider virtual
-    * placement is outside the current entry ABI's validated domain. */
-   if ((entry | body) & 1 || displacement < -(int64_t)UINT32_MAX ||
-       displacement > UINT32_MAX)
-      return false;
-   if (!agx_apple9_encode_branch(out, true, displacement))
-      return false;
-   apple9_put_u32(out + 10, 0x0e); /* No active lanes: terminate */
-   return true;
-}
 
 void
 agx_apple9_stage_launch_cache_init(struct agx_apple9_stage_launch_cache *c)
@@ -1395,7 +1223,7 @@ agx_apple9_prepare_graphics_stage(
    if (!shader->bo || !shader->publication_count_valid)
       return false;
    unsigned entry =
-      apple9_shader_entry(dev, allocator, apple9_stage_body(shader), false);
+      agx_shader_entry(dev, allocator, apple9_stage_body(shader), false);
    if (!entry)
       return false;
    if (shader->preamble_offset > shader->binary_size ||

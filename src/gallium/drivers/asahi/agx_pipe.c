@@ -2930,7 +2930,7 @@ agx_screen_create(int fd, struct renderonly *ro,
    }
 
    if (agx_has_launch_programs(&agx_screen->dev))
-      agx_apple9_initialize_entries(&agx_screen->dev);
+      agx_init_shader_entries(&agx_screen->dev);
 
    return screen;
 }
