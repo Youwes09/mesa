@@ -241,7 +241,9 @@ hk_preprocess_nir_internal(struct vk_physical_device *vk_pdev, nir_shader *nir)
    NIR_PASS(_, nir, nir_opt_constant_folding);
    NIR_PASS(_, nir, nir_opt_large_constants, NULL, 32);
 
-   const struct agx_isa_target *target = agx_nir_target(nir);
+   struct hk_physical_device *pdev =
+      container_of(vk_pdev, struct hk_physical_device, vk);
+   const struct agx_isa_target *target = agx_device_target(&pdev->dev);
    if (target->word_registers)
       NIR_PASS(_, nir, agx_nir_lower_word_math, target);
    agx_preprocess_nir(nir, target);
@@ -1283,7 +1285,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
              struct vk_descriptor_set_layout *const *set_layouts,
              enum hk_feature_key features)
 {
-   const struct agx_isa_target *target = agx_nir_target(nir);
+   const struct agx_isa_target *target = agx_device_target(&dev->dev);
 
    if (HK_PERF(dev, NOROBUST)) {
       rs = &vk_robustness_disabled;
@@ -2133,8 +2135,8 @@ static void
 hk_lower_hw_vs(struct hk_device *dev, nir_shader *nir, struct hk_shader *shader,
                bool kill_psiz)
 {
-   /* VK_EXT_depth_clip_control: Apple9 clips depth to [0, w] */
-   if (agx_nir_shader_isa(nir) == AGX_SHADER_ISA_APPLE9) {
+   /* VK_EXT_depth_clip_control: launch programs clip depth to [0, w] */
+   if (agx_has_launch_programs(&dev->dev)) {
       NIR_PASS(_, nir, hk_lower_clip_z);
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, hk_lower_clip_z_coeff,
                nir_metadata_control_flow, NULL);
@@ -2214,6 +2216,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
                struct hk_shader *shader, mesa_shader_stage sw_stage, bool hw,
                nir_xfb_info *xfb_info, unsigned set_count)
 {
+   const struct agx_isa_target *target = agx_device_target(&dev->dev);
    unsigned nr_vbos = 0;
    bool kill_psiz = false;
 
@@ -2230,13 +2233,12 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
 
       /* Discards must be lowering before lowering MSAA to handle discards */
       NIR_PASS(_, nir, agx_nir_lower_discard_zs_emit);
-      NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog,
-               agx_device_target(&dev->dev), &shader->info.fs.epilog_key);
+      NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog, target,
+               &shader->info.fs.epilog_key);
 
       /* Export depth for draw-time Z/S feedback loops, see hk_late_zs */
       if (key && key->fs.dynamic_zs_self_dep && !key->fs.zs_self_dep &&
-          agx_nir_target(nir)->tile_domains &&
-          !nir->info.fs.early_fragment_tests &&
+          target->tile_domains && !nir->info.fs.early_fragment_tests &&
           !shader->info.fs.epilog_key.write_z) {
          nir_builder b =
             nir_builder_at(nir_after_impl(nir_shader_get_entrypoint(nir)));
@@ -2244,7 +2246,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
          shader->info.fs.dynamic_late_zs = true;
       }
 
-      NIR_PASS(_, nir, agx_nir_lower_sample_mask, agx_nir_target(nir));
+      NIR_PASS(_, nir, agx_nir_lower_sample_mask, target);
 
       if (nir->info.fs.uses_sample_shading) {
          /* Ensure the sample mask is preserved in register */
@@ -2317,8 +2319,8 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
    shader->info.set_count = set_count;
 
    /* XXX: rename */
-   NIR_PASS(_, nir, hk_lower_uvs_index, sw_stage, nr_vbos);
-   if (agx_nir_target(nir)->root_uniforms)
+   NIR_PASS(_, nir, hk_lower_uvs_index, target, sw_stage, nr_vbos);
+   if (target->root_uniforms)
       hk_assert_final_push_mask(nir, shader);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_uniforms,
             nir_metadata_control_flow, &root);
@@ -2531,7 +2533,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       nir->info.fs.uses_sample_shading |= key->fs.force_sample_shading;
 
       /* Force late-Z for Z/S self-deps; tile domains export depth for that */
-      if (key->fs.zs_self_dep && agx_nir_target(nir)->tile_domains) {
+      if (key->fs.zs_self_dep && agx_device_target(&dev->dev)->tile_domains) {
          hk_late_zs(nir);
       } else if (key->fs.zs_self_dep) {
          /* TODO: There's probably a less silly way to do this. */
@@ -2585,9 +2587,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
                &count_variant->info.gs);
 
-      agx_preprocess_nir(count, agx_nir_target(count));
-      agx_preprocess_nir(rast, agx_nir_target(rast));
-      agx_preprocess_nir(pre_gs, agx_nir_target(pre_gs));
+      agx_preprocess_nir(count, agx_device_target(&dev->dev));
+      agx_preprocess_nir(rast, agx_device_target(&dev->dev));
+      agx_preprocess_nir(pre_gs, agx_device_target(&dev->dev));
 
       struct hk_shader *shader = &obj->variants[HK_GS_VARIANT_RAST];
       hk_lower_hw_vs(dev, rast, shader, false);

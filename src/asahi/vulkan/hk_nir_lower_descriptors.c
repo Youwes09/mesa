@@ -407,6 +407,7 @@ translate_pipeline_stat_bit(enum pipe_statistics_query_index pipe)
 }
 
 struct lower_uvs_args {
+   const struct agx_isa_target *target;
    mesa_shader_stage sw_stage;
    unsigned nr_vbos;
 };
@@ -438,7 +439,7 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
 
    case nir_intrinsic_load_samples_log2_agx:
       /* Without root uniforms, it is read from a system register */
-      if (!agx_nir_target(b->shader)->root_uniforms)
+      if (!args->target->root_uniforms)
          return false;
 
       return lower_sysval_to_root_table(b, intrin, draw.samples_log2);
@@ -509,7 +510,7 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
       }
 
       nir_def *val;
-      if (agx_nir_target(b->shader)->root_uniforms &&
+      if (args->target->root_uniforms &&
           intrin->intrinsic != nir_intrinsic_load_draw_id) {
          val = agx_nir_load_vs_draw_param(
             b, AGX_ABI_VUNI_FIRST_VERTEX(args->nr_vbos),
@@ -574,9 +575,11 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
 }
 
 bool
-hk_lower_uvs_index(nir_shader *s, mesa_shader_stage sw_stage, unsigned nr_vbos)
+hk_lower_uvs_index(nir_shader *s, const struct agx_isa_target *target,
+                   mesa_shader_stage sw_stage, unsigned nr_vbos)
 {
    struct lower_uvs_args args = {
+      .target = target,
       .sw_stage = sw_stage,
       .nr_vbos = nr_vbos,
    };

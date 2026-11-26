@@ -4144,7 +4144,7 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
    builder(&b, agx_device_target(&dev->dev), key->key);
 
    if (preprocess_nir)
-      agx_preprocess_nir(b.shader, agx_nir_target(b.shader));
+      agx_preprocess_nir(b.shader, agx_device_target(&dev->dev));
 
    /* Apple9 parts read push words, and the linker adds the stop */
    struct agx_shader_key backend_key = {
@@ -4245,7 +4245,7 @@ build_fs_prolog(nir_builder *b, const struct agx_isa_target *target,
    agx_nir_fs_prolog(b, target, key);
 
    /* Lower load_stat_query_address_agx, needed for FS statistics */
-   NIR_PASS(_, b->shader, hk_lower_uvs_index, MESA_SHADER_FRAGMENT, 0);
+   NIR_PASS(_, b->shader, hk_lower_uvs_index, target, MESA_SHADER_FRAGMENT, 0);
    NIR_PASS(_, b->shader, nir_shader_intrinsics_pass, lower_fs_root,
             nir_metadata_control_flow, NULL);
 }
