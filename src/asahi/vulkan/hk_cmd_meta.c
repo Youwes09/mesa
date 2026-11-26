@@ -1638,28 +1638,32 @@ hk_meta_resolve_rendering(struct hk_cmd_buffer *cmd,
    hk_meta_end(cmd, &save, VK_PIPELINE_BIND_POINT_GRAPHICS);
 }
 
+/* Grid sizes are 32-bit, so split large copies and fills */
+#define HK_MAX_TRANSFER_DISPATCH_B (1ull << 30)
+
 static void
 hk_cmd_copy(struct hk_cmd_buffer *cmd, uint64_t dst, uint64_t src, size_t size)
 {
    unsigned saved_scope = cmd->sync_scope;
    cmd->sync_scope = HK_SYNC_TRANSFER;
-   /* Use vectorized copies for as much of the buffer as possible. This requires
-    * that dst, src, and size are all properly aligned. Failing to check for
-    * alignment on the buffers causes subtle and hard-to-debug issues!
-    */
-   if (size >= 16 && (dst & 0xf) == 0 && (src & 0xf) == 0) {
-      unsigned uint4s = size / 16;
-      unsigned bytes = uint4s * 16;
+   while (size) {
+      uint64_t bytes = MIN2(size, HK_MAX_TRANSFER_DISPATCH_B);
 
-      libagx_copy_uint4(cmd, agx_1d(uint4s), AGX_BARRIER_ALL, dst, src);
+      /* Use vectorized copies for as much of the buffer as possible. This
+       * requires that dst, src, and size are all properly aligned. Failing to
+       * check for alignment on the buffers causes subtle and hard-to-debug
+       * issues!
+       */
+      if (bytes >= 16 && (dst & 0xf) == 0 && (src & 0xf) == 0) {
+         bytes &= ~0xfull;
+         libagx_copy_uint4(cmd, agx_1d(bytes / 16), AGX_BARRIER_ALL, dst, src);
+      } else {
+         libagx_copy_uchar(cmd, agx_1d(bytes), AGX_BARRIER_ALL, dst, src);
+      }
 
       dst += bytes;
       src += bytes;
       size -= bytes;
-   }
-
-   if (size) {
-      libagx_copy_uchar(cmd, agx_1d(size), AGX_BARRIER_ALL, dst, src);
    }
    cmd->sync_scope = saved_scope;
 }
@@ -1812,11 +1816,18 @@ hk_CmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer dstBuffer,
 
    cmd->sync_scope = HK_SYNC_TRANSFER;
 
-   if (util_is_aligned(addr, 16) && util_is_aligned(range, 16)) {
-      libagx_fill_uint4(cmd, agx_2d(range / 16, 1), AGX_BARRIER_ALL,
-                        addr, 0, data, data, data, data);
-   } else {
-      libagx_fill(cmd, agx_1d(range / 4), AGX_BARRIER_ALL, addr, data);
+   bool vectorized = util_is_aligned(addr, 16) && util_is_aligned(range, 16);
+   while (range) {
+      uint64_t bytes = MIN2(range, HK_MAX_TRANSFER_DISPATCH_B);
+      if (vectorized) {
+         libagx_fill_uint4(cmd, agx_2d(bytes / 16, 1), AGX_BARRIER_ALL, addr, 0,
+                           data, data, data, data);
+      } else {
+         libagx_fill(cmd, agx_1d(bytes / 4), AGX_BARRIER_ALL, addr, data);
+      }
+
+      addr += bytes;
+      range -= bytes;
    }
    cmd->sync_scope = 0;
 }
