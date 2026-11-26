@@ -678,7 +678,7 @@ static void
 bind_hw_tile(struct hk_bind_builder *b, struct hk_device_memory *mem,
              struct ail_layout *layout, unsigned layer, unsigned level,
              VkOffset3D offset, VkExtent3D extent, struct ail_tile std_size_el,
-             unsigned mem_offset, unsigned x, unsigned y, unsigned z)
+             uint64_t mem_offset, unsigned x, unsigned y, unsigned z)
 {
    uint64_t bo_offset_B = ail_get_twiddled_block_B(
       layout, level, offset.x + x, offset.y + y, layer + offset.z + z);
@@ -690,13 +690,13 @@ bind_hw_tile(struct hk_bind_builder *b, struct hk_device_memory *mem,
    unsigned mem_y_stl = y / std_size_el.height_el;
    unsigned extent_w_stl = DIV_ROUND_UP(extent.width, std_size_el.width_el);
    unsigned extent_y_stl = DIV_ROUND_UP(extent.height, std_size_el.height_el);
-   unsigned mem_offs_stl = (extent_y_stl * extent_w_stl * z) +
+   uint64_t mem_offs_stl = (extent_y_stl * extent_w_stl * z) +
                            (extent_w_stl * mem_y_stl) + mem_x_stl;
 
    /* There are 4 hardware tiles per standard tile, so offset
     * accordingly for each hardware tile.
     */
-   unsigned mem_offset_B = mem_offset + (mem_offs_stl * 4 * AIL_PAGESIZE);
+   uint64_t mem_offset_B = mem_offset + (mem_offs_stl * 4 * AIL_PAGESIZE);
 
    if (x % std_size_el.width_el)
       mem_offset_B += AIL_PAGESIZE;
