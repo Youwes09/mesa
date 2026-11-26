@@ -2467,10 +2467,12 @@ pack_fragment(const agx_instr *I, struct a9_packed *p)
       /* Only the measured controls are known to work */
       bool begin = I->op == AGX_OPCODE_BEGIN_TILE;
       uint64_t c = I->imm;
-      pack_assert(I, begin ? (c == 0x700 || c == 0xf00 || c == 0x600 ||
-                              (c & ~0xfcull) == 0x800 || c == 1)
+      pack_assert(I, begin ? (c == AGX_TILE_DOMAIN_PIXELS ||
+                              c == AGX_TILE_DOMAIN_IMAGES ||
+                              c == AGX_TILE_DOMAIN_COORDS ||
+                              (c & ~0xfcull) == 0x800 || c == AGX_TILE_ZS)
                            : (c == 0x300 || (c & ~0xfcull) == 0 ||
-                              (c & ~0xfcull) == 0x200 || c == 1));
+                              (c & ~0xfcull) == 0x200 || c == AGX_TILE_ZS));
 
       emit(I, p, begin ? AGX3_ENC_TILE_ACCESS : AGX3_ENC_TILE_FENCE,
            begin ? agx3_pack_begin_tile : agx3_pack_end_tile,

@@ -138,6 +138,17 @@ agx_varying_group(uint64_t flat, uint64_t linear, unsigned location)
  * slots. */
 #define AGX_MAX_GRAPHICS_BUFFERS 32
 
+/* TILE_ACCESS and TILE_FENCE controls */
+enum agx_tile_control {
+   /* Depth/stencil testing */
+   AGX_TILE_ZS = 1,
+
+   /* Domains held for tile access, each including the previous */
+   AGX_TILE_DOMAIN_PIXELS = 0x600,
+   AGX_TILE_DOMAIN_IMAGES = 0x700,
+   AGX_TILE_DOMAIN_COORDS = 0xf00,
+};
+
 struct agx_shader_info {
    mesa_shader_stage stage;
    uint32_t binary_size;
@@ -151,7 +162,7 @@ struct agx_shader_info {
    uint32_t vary_stores[AGX_MAX_UVS_SLOTS];
 
    /* Fragment parts: the TILE_ACCESS control the linked program holds
-    * throughout (0x600, 0x700 with images, 0xf00 with tile coordinates) or 0.
+    * throughout, an agx_tile_control domain, or 0.
     */
    uint16_t tile_domain;
    bool tile_reads, tile_writes;

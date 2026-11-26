@@ -814,6 +814,13 @@ agx_emit_load_vary(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
    agx_emit_cached_split(b, dest, components);
 }
 
+/* Hold at least the given tile domain for the whole fragment shader */
+static void
+agx_widen_tile_domain(agx_builder *b, enum agx_tile_control domain)
+{
+   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, domain);
+}
+
 static void
 agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
 {
@@ -821,7 +828,7 @@ agx_wait_pixel_mask(agx_builder *b, uint32_t mask)
    if (b->shader->target.tile_domains) {
       b->shader->out->tile_reads |= mask & 0x8;
       b->shader->out->tile_writes |= mask & 0x4;
-      b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
+      agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
       return;
    }
 
@@ -869,7 +876,7 @@ agx_emit_local_store_pixel_words(agx_builder *b, nir_intrinsic_instr *instr)
    unsigned base = nir_intrinsic_base(instr) / 4;
 
    b->shader->out->tile_writes = true;
-   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
+   agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
    b->shader->out->tag_write_disable = false;
 
    u_foreach_bit(i, nir_intrinsic_write_mask(instr)) {
@@ -894,8 +901,8 @@ agx_emit_local_load_pixel_words(agx_builder *b, agx_index dest,
       coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null();
 
    b->shader->out->tile_reads = true;
-   b->shader->out->tile_domain =
-      MAX2(b->shader->out->tile_domain, coords ? 0xf00 : 0x600);
+   agx_widen_tile_domain(
+      b, coords ? AGX_TILE_DOMAIN_COORDS : AGX_TILE_DOMAIN_PIXELS);
 
    agx_index words[4];
    for (unsigned i = 0; i < nr; ++i) {
@@ -980,10 +987,11 @@ agx_hold_tile_domains(agx_context *ctx)
    b = agx_init_builder(ctx, agx_after_block_logical(agx_exit_block(ctx)));
 
    if (info->zs_release)
-      agx_end_tile(&b, 1);
+      agx_end_tile(&b, AGX_TILE_ZS);
 
    if (access)
-      agx_end_tile(&b, info->tile_domain == 0xf00 ? 0x300 : 0x20c);
+      agx_end_tile(&b,
+                   info->tile_domain == AGX_TILE_DOMAIN_COORDS ? 0x300 : 0x20c);
 }
 
 /* VARY_STORE frees its export register, so all outputs fit the export file */
@@ -1076,11 +1084,11 @@ agx_test_zs(agx_builder *b, bool begin)
    agx_context *ctx = b->shader;
 
    if (begin) {
-      agx_begin_tile(b, 1);
+      agx_begin_tile(b, AGX_TILE_ZS);
    } else if (ctx->zs_release_at_end) {
       ctx->out->zs_release = true;
    } else {
-      agx_end_tile(b, 1);
+      agx_end_tile(b, AGX_TILE_ZS);
    }
 }
 
@@ -1094,7 +1102,7 @@ agx_emit_write_coverage(agx_builder *b, nir_intrinsic_instr *instr)
 
    bool tests = agx_tests_zs(instr);
 
-   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
+   agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
 
    agx_index pub = agx_export_word(b, agx_coverage_control(b, affected, live));
 
@@ -1134,7 +1142,7 @@ agx_emit_zs_export(agx_builder *b, nir_intrinsic_instr *instr)
    agx_publication_pair_to(b, pair, control, depth, zs == 2);
 
    b->shader->out->writes_sample_mask = true;
-   b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
+   agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
 
    agx_test_zs(b, true);
    agx_zs_store(b, pair, zs);
@@ -1421,7 +1429,7 @@ static agx_instr *
 agx_emit_block_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->tile_domain = 0x700;
+      b->shader->out->tile_domain = AGX_TILE_DOMAIN_IMAGES;
 
    assert(instr->intrinsic == nir_intrinsic_image_store_block_agx &&
           "exported block stores address the PBE table");
@@ -1952,7 +1960,7 @@ static agx_instr *
 agx_emit_image_store_export(agx_builder *b, nir_intrinsic_instr *instr)
 {
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->tile_domain = 0x700;
+      b->shader->out->tile_domain = AGX_TILE_DOMAIN_IMAGES;
 
    nir_alu_type type = nir_intrinsic_src_type(instr);
    assert(nir_alu_type_get_type_size(type) == 32 && "lowered to 32-bit data");
@@ -3287,7 +3295,7 @@ agx_emit_tex_export(agx_builder *b, nir_tex_instr *instr)
 
    /* Fragment shaders sample within the tile domain */
    if (b->shader->stage == MESA_SHADER_FRAGMENT)
-      b->shader->out->tile_domain = MAX2(b->shader->out->tile_domain, 0x600);
+      agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
 
    /* agx_nir_lower_texture points cubes sampled as arrays at their aliases */
    bool cube_as_array = instr->backend_flags & AGX_TEXTURE_FLAG_CUBE_AS_ARRAY;

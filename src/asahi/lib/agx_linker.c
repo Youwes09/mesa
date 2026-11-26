@@ -208,9 +208,11 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
       /* Image writes and tile coordinates need a wider domain */
       if (info->tile_domain) {
-         assert(!domain || domain == info->tile_domain || domain == 0x600 ||
-                info->tile_domain == 0x600);
-         if (domain != 0x700 && domain != 0xf00)
+         assert(!domain || domain == info->tile_domain ||
+                domain == AGX_TILE_DOMAIN_PIXELS ||
+                info->tile_domain == AGX_TILE_DOMAIN_PIXELS);
+         if (domain != AGX_TILE_DOMAIN_IMAGES &&
+             domain != AGX_TILE_DOMAIN_COORDS)
             domain = info->tile_domain;
       }
 
@@ -293,10 +295,11 @@ agx_link_program(struct agx_linked_program *p, bool fragment,
 
    if (fragment) {
       if (zs_release)
-         append_tile(&d, false, 1);
+         append_tile(&d, false, AGX_TILE_ZS);
 
       if (reads || writes)
-         append_tile(&d, false, domain == 0xf00 ? 0x300 : 0x20c);
+         append_tile(&d, false,
+                     domain == AGX_TILE_DOMAIN_COORDS ? 0x300 : 0x20c);
    }
 
    append_halt(&d);
