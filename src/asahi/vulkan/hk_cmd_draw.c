@@ -1711,6 +1711,11 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
       cmd->merge_reach = hk_merge_graphics_stages() | render->merge_reach;
       cmd->merge_cs = cs;
       cmd->merge_first_cs = cs == render->first_cs;
+      /* Barriers before the next pass go ahead of the stream's first event. */
+      cmd->merge_event =
+         *util_dynarray_element(&cmd->sync_first_event, uint32_t, cs->sync_id);
+      assert(cmd->merge_event != HK_SYNC_NONE &&
+             "a stream with draws has a sync event");
       /* A render without draws yet: keep its state for the empty-render
        * optimization in case nothing continues it. */
       cmd->merge_empty = !cs->stats.cmds;
@@ -1725,11 +1730,6 @@ hk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
             hk_cmd_buffer_end_graphics(cmd);
          }
       }
-      /* Barriers before the next pass go ahead of the stream's first event. */
-      cmd->merge_event =
-         *util_dynarray_element(&cmd->sync_first_event, uint32_t, cs->sync_id);
-      assert(cmd->merge_event != HK_SYNC_NONE &&
-             "a stream with draws has a sync event");
    } else {
       hk_cmd_buffer_end_graphics(cmd);
    }
