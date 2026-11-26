@@ -1459,7 +1459,10 @@
     load follows. Without an index, a register base is a pointer.
   -->
   <ins name="device_load" length="14" form="device_load device_load_indirect device_load_pointer">
-    <template>67 00 44 00 00 00 20 00 11 00 00 40 46 00</template>
+    <exact bit="0:11">000001100111</exact>
+    <exact bit="18:19 21:24">001001</exact>
+    <zero bit="48:52 54:63 73 75:76 93 95:96 100 103:111"/>
+    <exact bit="94">1</exact>
     <rdst/>
     <src kind="membase" bit="32:39 101 74" role="src1"/>
     <src kind="memindex" bit="40:46 47 53 102" role="index"/>
@@ -1472,7 +1475,10 @@
   </ins>
 
   <ins name="device_store" length="14" form="device_store device_store_indirect">
-    <template>e7 00 54 00 00 00 20 00 11 00 00 90 11 00</template>
+    <exact bit="0:11">000011100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="47 49:52 54:63 70:74 91 93:94 98 101:111"/>
+    <exact bit="53 92 100">111</exact>
     <src kind="reg" bit="25:31" role="store_data"/>
     <src kind="membase" bit="32:39 99 =0" role="src1"/>
     <src kind="reg" bit="40:46 =0 48" role="index"/>
@@ -1488,7 +1494,10 @@
     it into the destination, completing on its slot.
   -->
   <ins name="atomic" length="14" form="device_atomic device_atomic_return">
-    <template>67 01 54 00 00 00 00 80 00 40 00 00 40 02</template>
+    <exact bit="0:11">000101100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="25:39 54 62 64:72 74:77 79:96 103:104 106:111"/>
+    <exact bit="63 102 105">111</exact>
     <src kind="reg" bit="47:53" role="atomic_data"/>
     <src kind="uniform64" bit="40:46 =0" role="-"/>
     <src kind="reg" bit="55:61" role="index"/>
@@ -1498,7 +1507,10 @@
   </ins>
 
   <ins name="atomic_indirect" display="atomic" length="14" form="device_atomic_indirect device_atomic_indirect_return">
-    <template>67 01 54 00 00 00 00 80 00 60 00 00 40 03</template>
+    <exact bit="0:11">000101100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="25:39 54 62 64:72 74:76 79:96 103 106:111"/>
+    <exact bit="63 77 102 104:105">11111</exact>
     <src kind="reg" bit="47:53" role="atomic_data"/>
     <src kind="reg64" bit="40:46" role="src1"/>
     <src kind="reg" bit="55:61" role="index"/>
@@ -1508,7 +1520,10 @@
   </ins>
 
   <ins name="atomic_result" length="8" form="device_atomic_result device_atomic_return device_atomic_indirect_return">
-    <template>0c 80 09 07 00 20 00 00</template>
+    <exact bit="0:3">1100</exact>
+    <exact bit="16:18">001</exact>
+    <zero bit="8:14 20:21 27:28 32:44 46:59 61:63"/>
+    <exact bit="15 19 24:26 45">111111</exact>
     <dest kind="dst" bit="4:7 22:23 60 =0 =0" role="src0"/>
     <modifier name="slot" kind="slot" bit="29:31"/>
   </ins>
@@ -1518,21 +1533,30 @@
     counts words. Loads complete on slot 6, atomics on slot 1.
   -->
   <ins name="local_load" length="14" form="shared_load">
-    <template>67 02 54 00 00 00 00 00 44 0d 00 c0 08 00</template>
+    <exact bit="0:11">001001100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 40 48:54 56:65 67:69 71 73 76:93 96:98 100:111"/>
+    <exact bit="66 70 72 74:75 94:95 99">11111111</exact>
     <rdst/>
     <src kind="half" bit="41:47 =0 =0 55"/>
     <immediate name="root" bit="32:39" prefix="root="/>
   </ins>
 
   <ins name="local_store" length="14" form="shared_store">
-    <template>e7 02 54 00 00 00 00 00 44 02 00 30 02 00</template>
+    <exact bit="0:11">001011100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 40 48:54 56:65 67:69 71:72 74:91 94:96 98:111"/>
+    <exact bit="66 70 73 92:93 97">111111</exact>
     <rsrc/>
     <src kind="half" bit="41:47 =0 =0 55"/>
     <immediate name="root" bit="32:39" prefix="root="/>
   </ins>
 
   <ins name="local_atomic" length="12" form="shared_atomic">
-    <template>67 03 54 00 00 00 00 00 12 00 00 48</template>
+    <exact bit="0:11">001101100111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 39 47 55:64 66:67 69:85 92:93 95"/>
+    <exact bit="65 68 91 94">1111</exact>
     <dest kind="reg" bit="24:30"/>
     <src kind="reg" bit="40:46" role="atomic_data"/>
     <src kind="reg" bit="48:54" role="index"/>
@@ -1546,21 +1570,30 @@
     Spills complete on their slot.
   -->
   <ins name="stack_load_indexed" display="stack_load" length="12" form="private_load">
-    <template>6f 00 54 00 00 02 49 01 00 00 03 00</template>
+    <exact bit="0:11">000001101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 32 40 42:47 49:50 52:53 55 57:63 82:95"/>
+    <exact bit="41 48 51 54 56 80:81">1111111</exact>
     <rdst/>
     <src kind="reg" bit="33:39"/>
     <immediate name="offset" bit="64:79" prefix="offset="/>
   </ins>
 
   <ins name="stack_store_indexed" display="stack_store" length="10" form="private_store">
-    <template>ef 00 54 00 00 02 09 03 00 60</template>
+    <exact bit="0:11">000011101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 32 40 42:47 49:50 52:55 58:61 75:76 79"/>
+    <exact bit="41 48 51 56:57 77:78">1111111</exact>
     <rsrc/>
     <src kind="reg" bit="33:39"/>
     <immediate name="offset" bit="62:63 64:71 72:74" prefix="offset="/>
   </ins>
 
   <ins name="stack_load" length="8" form="spill_load">
-    <template>0c 80 01 01 00 00 00 00</template>
+    <exact bit="0:3">1100</exact>
+    <exact bit="16:18">001</exact>
+    <zero bit="8 19:21 25:28 32 37:44 48:59"/>
+    <exact bit="15 24">11</exact>
     <dst8/>
     <immediate name="word" bit="9:14 33:36" prefix="word="/>
     <modifier name="slot" kind="slot" bit="29:31"/>
@@ -1568,7 +1601,11 @@
   </ins>
 
   <ins name="stack_store" length="10" form="spill_store">
-    <template>0b 01 0f 00 22 00 00 00 00 00</template>
+    <exact bit="0:3">1011</exact>
+    <exact bit="16:18">111</exact>
+    <exact bit="32:34">010</exact>
+    <zero bit="15 20:21 24:31 35:36 38:39 41:43 48:49 54:57 64:79"/>
+    <exact bit="8 19 37">111</exact>
     <src kind="reg" bit="9:14 40"/>
     <immediate name="word" bit="4:7 22:23 44 50:53" prefix="word="/>
     <modifier name="slot" kind="slot" bit="58:60"/>
