@@ -9,9 +9,9 @@
   gen-pack.py generates the compiler's instruction packers from the layouts,
   gen-disasm.py the disassembler. Bit n is bit n % 8 of byte n / 8.
 
-  Instructions have a fixed length. Every bit not covered by a field has the
-  value given by the instruction's template, so an instruction only matches
-  when its layout explains all of its bits.
+  Instructions have a fixed length, and every bit is a field or fixed by an
+  exact or zero element, so an instruction only matches when its layout
+  explains all of its bits. Many fixed bits are known only by their value.
 
   Register fields hold 32-bit register numbers, r0-r95, unless they say
   otherwise; some name 16-bit halves. Uniform fields hold 32-bit uniform words,

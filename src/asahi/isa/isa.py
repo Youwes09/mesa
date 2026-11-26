@@ -272,8 +272,6 @@ class Instruction:
                     assert(0)
             elif el.tag == 'ins':
                 assert(xml.tag == 'group')
-            elif el.tag == 'template':
-                pass
             else:
                 print(name)
                 assert(0)
@@ -298,18 +296,6 @@ class Instruction:
         self.immediates = imms
         self.attrib = dict(xml.attrib)
         self.attrib.update(substitutions)
-
-        # A template gives every bit that no field or exact element covers
-        templates = [el for el in xml if el.tag == 'template']
-        if len(templates) > 0:
-            assert(len(templates) == 1 and len(length) == 1)
-            template = bytes.fromhex(templates[0].text)
-            ensure(len(template) == length[0], f'Template length of {name}')
-            value = int.from_bytes(template, 'little')
-            full = (1 << (8 * length[0])) - 1
-            fixed = full & ~self.mask()
-            self.exact.mask |= fixed
-            self.exact.value |= value & fixed
 
     def mask(self):
         mask = self.exact.mask
