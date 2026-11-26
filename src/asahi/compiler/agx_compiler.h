@@ -1218,8 +1218,33 @@ unsigned agx3_pack_instr(const agx_instr *I, uint8_t *bytes);
 bool agx3_float_immediate_ok(agx_index idx, bool wide);
 bool agx3_sr_supported(enum agx_sr sr);
 
+/* What selects the encoding of an AGX3 texture operation */
+struct agx3_texture {
+   enum agx_dim dim;
+   enum agx_lod_mode lod_mode;
+   enum agx_gather gather;
+   unsigned mask;
+   bool load, shadow, offset, query_lod;
+};
+
+static inline struct agx3_texture
+agx3_texture_of(const agx_instr *I)
+{
+   return (struct agx3_texture){
+      .dim = I->dim,
+      .lod_mode = I->lod_mode,
+      .gather = I->gather,
+      .mask = I->mask,
+      .load = I->op == AGX_OPCODE_TEXTURE_LOAD,
+      .shadow = I->shadow,
+      .offset = I->offset,
+      .query_lod = I->query_lod,
+   };
+}
+
 /* Export words an AGX3 texture operation reads, and whether it encodes */
 unsigned agx3_texture_params(const agx_instr *I);
+bool agx3_texture_desc_encodable(const struct agx3_texture *d);
 bool agx3_texture_encodable(const agx_instr *I);
 
 #ifndef NDEBUG

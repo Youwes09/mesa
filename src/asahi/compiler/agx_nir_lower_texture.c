@@ -1408,8 +1408,7 @@ flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    bool min_lod = nir_tex_instr_src_index(tex, nir_tex_src_min_lod) >= 0;
 
    /* The final form, as lower_regular_texture_export and the backend pick it */
-   agx_instr I = {
-      .op = AGX_OPCODE_TEXTURE_SAMPLE,
+   struct agx3_texture desc = {
       .dim = tex->sampler_dim == GLSL_SAMPLER_DIM_3D ? AGX_DIM_3D
              : tex->is_array                         ? AGX_DIM_2D_ARRAY
                                                      : AGX_DIM_2D,
@@ -1421,27 +1420,27 @@ flag_offsets(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 
    switch (tex->op) {
    case nir_texop_txd:
-      I.lod_mode = AGX_LOD_MODE_LOD_GRAD;
+      desc.lod_mode = AGX_LOD_MODE_LOD_GRAD;
       break;
    case nir_texop_txb:
-      I.lod_mode = AGX_LOD_MODE_AUTO_LOD_BIAS;
+      desc.lod_mode = AGX_LOD_MODE_AUTO_LOD_BIAS;
       break;
    case nir_texop_tex:
-      I.lod_mode =
+      desc.lod_mode =
          implicit_2d ? AGX_LOD_MODE_AUTO_LOD : AGX_LOD_MODE_AUTO_LOD_BIAS;
       break;
    case nir_texop_tg4:
-      I.lod_mode = implicit_2d ? AGX_LOD_MODE_AUTO_LOD : AGX_LOD_MODE_LOD_MIN;
+      desc.lod_mode = implicit_2d ? AGX_LOD_MODE_AUTO_LOD : AGX_LOD_MODE_LOD_MIN;
       break;
    case nir_texop_txl:
-      I.lod_mode = AGX_LOD_MODE_LOD_MIN;
+      desc.lod_mode = AGX_LOD_MODE_LOD_MIN;
       break;
    default:
       return false;
    }
 
    if (nir_src_is_const(tex->src[offset].src) && !min_lod &&
-       tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE && agx3_texture_encodable(&I))
+       tex->sampler_dim != GLSL_SAMPLER_DIM_CUBE && agx3_texture_desc_encodable(&desc))
       return false;
 
    tex->backend_flags |= AGX_TEXTURE_FLAG_OFFSET_FALLBACK;

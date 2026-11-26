@@ -2028,9 +2028,9 @@ enum a9_tex_dim {
 };
 
 static enum a9_tex_dim
-a9_tex_dim(const agx_instr *I)
+a9_tex_dim(enum agx_dim dim)
 {
-   switch (I->dim) {
+   switch (dim) {
    case AGX_DIM_2D:
    case AGX_DIM_2D_MS:
       return A9_TEX_2D;
@@ -2080,24 +2080,30 @@ texture_offset_mode(uint16_t mode, uint16_t *offset_mode)
 }
 
 static bool
-texture_gradient(const agx_instr *I)
+texture_gradient(const struct agx3_texture *d)
 {
-   return I->lod_mode == AGX_LOD_MODE_LOD_GRAD ||
-          I->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN;
+   return d->lod_mode == AGX_LOD_MODE_LOD_GRAD ||
+          d->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN;
+}
+
+static unsigned
+texture_params(const struct agx3_texture *d)
+{
+   if (texture_gradient(d))
+      return d->dim == AGX_DIM_3D ? 16 : 8;
+   else if (!d->load && d->lod_mode == AGX_LOD_MODE_AUTO_LOD &&
+            (d->dim == AGX_DIM_2D) && !d->shadow)
+      return 2;
+   else
+      return 4;
 }
 
 /* Words of the parameter bundle a texture operation reads */
 unsigned
 agx3_texture_params(const agx_instr *I)
 {
-   if (texture_gradient(I))
-      return I->dim == AGX_DIM_3D ? 16 : 8;
-   else if (I->op == AGX_OPCODE_TEXTURE_SAMPLE &&
-            I->lod_mode == AGX_LOD_MODE_AUTO_LOD && (I->dim == AGX_DIM_2D) &&
-            !I->shadow)
-      return 2;
-   else
-      return 4;
+   struct agx3_texture d = agx3_texture_of(I);
+   return texture_params(&d);
 }
 
 /* Properties of a texture operation that select its mode */
@@ -2108,28 +2114,29 @@ struct a9_texture {
 };
 
 static struct a9_texture
-a9_texture(const agx_instr *I)
+a9_texture(const struct agx3_texture *d)
 {
    struct a9_texture t = {
-      .gradient = texture_gradient(I),
-      .words = agx3_texture_params(I),
-      .ms = I->dim == AGX_DIM_2D_MS || I->dim == AGX_DIM_2D_MS_ARRAY,
-      .bias = I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS ||
-              I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN,
-      .min_lod = I->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN ||
-                 I->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN,
-      .gather = I->gather != AGX_GATHER_NONE,
-      .dim = a9_tex_dim(I),
+      .gradient = texture_gradient(d),
+      .words = texture_params(d),
+      .ms = d->dim == AGX_DIM_2D_MS || d->dim == AGX_DIM_2D_MS_ARRAY,
+      .bias = d->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS ||
+              d->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN,
+      .min_lod = d->lod_mode == AGX_LOD_MODE_AUTO_LOD_BIAS_MIN ||
+                 d->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN,
+      .gather = d->gather != AGX_GATHER_NONE,
+      .dim = a9_tex_dim(d->dim),
    };
 
    t.lod = !t.gradient && t.words == 4;
-   t.fetch = I->op == AGX_OPCODE_TEXTURE_LOAD && !t.ms;
+   t.fetch = d->load && !t.ms;
    return t;
 }
 
 /* Sample mode without an offset, if measured */
 static bool
-texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
+texture_mode(const struct agx3_texture *d, const struct a9_texture *t,
+             uint16_t *out)
 {
    uint16_t mode = 0;
 
@@ -2150,7 +2157,7 @@ texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
       mode = t->bias ? 0x001c : 0x0308;
 
    if (t->fetch) {
-      if (!t->lod || I->shadow || t->bias || t->dim == A9_TEX_CUBE)
+      if (!t->lod || d->shadow || t->bias || t->dim == A9_TEX_CUBE)
          return false;
 
       mode = t->dim == A9_TEX_2D_ARRAY ? 0x24a0
@@ -2178,42 +2185,49 @@ texture_mode(const agx_instr *I, const struct a9_texture *t, uint16_t *out)
       }
    }
 
-   if (I->shadow)
+   if (d->shadow)
       mode |= 0x20;
 
    if (t->ms) {
       /* Integer X and Y, then a packed layer and sample word */
-      if (I->op != AGX_OPCODE_TEXTURE_LOAD || !t->lod || t->bias)
+      if (!d->load || !t->lod || t->bias)
          return false;
 
       mode = t->dim == A9_TEX_2D_ARRAY ? 0x14a0 : 0x1480;
    }
 
-   if (I->offset && !texture_offset_mode(mode, &mode))
+   if (d->offset && !texture_offset_mode(mode, &mode))
       return false;
 
    *out = mode;
    return true;
 }
 
-/* Whether the texture operation has a measured encoding */
+/* Whether a texture operation has a measured encoding */
+bool
+agx3_texture_desc_encodable(const struct agx3_texture *d)
+{
+   struct a9_texture t = a9_texture(d);
+   uint16_t mode;
+
+   if (d->query_lod && (t.gradient || t.ms || d->shadow || t.fetch ||
+                        (d->mask & ~3u) || d->offset))
+      return false;
+
+   if (t.gather && (t.gradient || t.ms || t.fetch || d->query_lod))
+      return false;
+
+   if (d->offset && (t.fetch || t.ms))
+      return false;
+
+   return texture_mode(d, &t, &mode);
+}
+
 bool
 agx3_texture_encodable(const agx_instr *I)
 {
-   struct a9_texture t = a9_texture(I);
-   uint16_t mode;
-
-   if (I->query_lod && (t.gradient || t.ms || I->shadow || t.fetch ||
-                        (I->mask & ~3u) || I->offset))
-      return false;
-
-   if (t.gather && (t.gradient || t.ms || t.fetch || I->query_lod))
-      return false;
-
-   if (I->offset && (t.fetch || t.ms))
-      return false;
-
-   return texture_mode(I, &t, &mode);
+   struct agx3_texture d = agx3_texture_of(I);
+   return agx3_texture_desc_encodable(&d);
 }
 
 /* Texture or sampler index: a constant or a register */
@@ -2230,7 +2244,8 @@ static void
 pack_texture(const agx_instr *I, struct a9_packed *p)
 {
    agx_index params = I->src[0], texture = I->src[3], sampler = I->src[4];
-   struct a9_texture t = a9_texture(I);
+   struct agx3_texture d = agx3_texture_of(I);
+   struct a9_texture t = a9_texture(&d);
    bool register_texture = is_gpr(texture);
    bool register_sampler = is_gpr(sampler);
    unsigned mask = t.gather ? 0xf : I->mask;
@@ -2238,7 +2253,7 @@ pack_texture(const agx_instr *I, struct a9_packed *p)
    uint16_t mode;
 
    pack_assert(I, agx3_texture_encodable(I));
-   pack_assert(I, texture_mode(I, &t, &mode));
+   pack_assert(I, texture_mode(&d, &t, &mode));
    pack_assert(I, is_export(params) && agx_channels(params) == t.words);
    pack_assert(I, !I->sparse && mask != 0);
    pack_assert(I, agx_channels(I->dest[0]) == comps);
