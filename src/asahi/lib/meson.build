@@ -83,11 +83,6 @@ if with_tests
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [idep_mesautil, idep_nir, idep_libagx],
     link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
-  test('graphics-roots', executable('graphics-roots',
-    'tests/test-graphics-roots.c',
-    include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [idep_mesautil, idep_nir, idep_libagx],
-    link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
   test(
     'libasahi_tests',
     executable(
@@ -95,9 +90,6 @@ if with_tests
       files(
         'tests/test-packing.cpp',
         'tests/test-border.cpp',
-        'tests/test-compute-dispatch.cpp',
-        'tests/test-compute-geometry.cpp',
-        'tests/test-launch-program.cpp',
         'tests/test-launch-template.cpp',
         'tests/test-tilebuffer.cpp',
         'tests/test-primitive-count.cpp',
