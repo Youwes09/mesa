@@ -137,11 +137,19 @@ agx_prepare_draw_record_alloc(
    if (draw->pixel_interlock && samples > 1)
       put_u32(group + 0x50, get_u32(group + 0x50) | (1u << 23));
    /* Native raster packet: cull front/back bits 0/1, provoking vertex
-    * bits 7/8, clipping/clamping bits 10/11, primitive MSAA bit 15, front
-    * winding bit 16, rasterizer discard bit 17. */
-   put_u32(group + 0x70, (get_u32(group + 0x70) & ~0x38d83u) |
-                            ((draw->provoking_vertex + 1u) << 7) |
-                            draw->raster_control);
+    * bits 7/8, depth clip bit 10, depth clamp bit 11, primitive MSAA bit 15,
+    * front winding bit 16, rasterizer discard bit 17. Depth clamping splits
+    * primitives at the far plane, which adds vertices to point-mode
+    * triangles. Points have no depth to interpolate, so the scissor depth
+    * range clamps them alone. */
+   bool point_mode =
+      draw->object_type == AGX_OBJECT_TYPE_TRIANGLE &&
+      ((draw->depth_face[0] >> 18) & 3) == AGX_POLYGON_MODE_POINT &&
+      ((draw->depth_face[1] >> 18) & 3) == AGX_POLYGON_MODE_POINT;
+   put_u32(group + 0x70,
+           (get_u32(group + 0x70) & ~0x38d83u) |
+              ((draw->provoking_vertex + 1u) << 7) |
+              (draw->raster_control & ~(point_mode ? 1u << 11 : 0)));
    put_u32(group + 0x50, get_u32(group + 0x50) | (draw->visibility_mode << 14) |
                             (draw->depth_control & (1u << 21)));
    put_u32(group + 0x48, (uint32_t)draw->occlusion_index << 17);
