@@ -561,16 +561,18 @@ hk_flush_bind(struct hk_bind_builder *b)
    return VK_SUCCESS;
 }
 
-static int
+static VkResult
 hk_bind_builder_finish(struct hk_bind_builder *b)
 {
    hk_flush_bind(b);
 
    /* Submit everything to the kernel at once */
    if (b->binds.size > 0) {
-      b->dev->dev.ops.bo_bind(
+      int ret = b->dev->dev.ops.bo_bind(
          &b->dev->dev, b->binds.data,
          util_dynarray_num_elements(&b->binds, struct drm_asahi_gem_bind_op));
+      if (ret)
+         b->result = vk_error(b->dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
    }
 
    util_dynarray_fini(&b->binds);
