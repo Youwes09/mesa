@@ -796,7 +796,7 @@ hk_render_merge_image_barrier(struct hk_cmd_buffer *cmd,
 void
 hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
                     VkPipelineStageFlags2 dst, VkAccessFlags2 src_access,
-                    VkAccessFlags2 dst_access)
+                    VkAccessFlags2 dst_access, uint32_t group)
 {
    /* No synchronization may come between a suspended render pass and the
     * one resuming it; if any does, end the render as before. */
@@ -847,6 +847,7 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
             .stream = HK_SYNC_NONE,
             .src = hk_sync_stage_mask(src, true),
             .dst = hk_sync_stage_mask(dst, false),
+            .barrier_group = group,
          };
          unsigned count =
             util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event);
@@ -916,6 +917,7 @@ hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
       .stream = HK_SYNC_NONE,
       .src = src_stages,
       .dst = dst_stages,
+      .barrier_group = group,
    };
    util_dynarray_append(&cmd->sync_events, event);
 }
@@ -942,9 +944,8 @@ hk_cmd_empty_barriers_flush(struct hk_cmd_buffer *cmd, bool merge)
    util_dynarray_foreach(&pending, struct hk_empty_barrier, b) {
       unsigned first =
          util_dynarray_num_elements(&cmd->sync_events, struct hk_sync_event);
-      hk_cmd_sync_barrier(cmd, b->src, b->dst, b->src_access, b->dst_access);
-      util_dynarray_top_ptr(&cmd->sync_events, struct hk_sync_event)
-         ->barrier_group = b->group;
+      hk_cmd_sync_barrier(cmd, b->src, b->dst, b->src_access, b->dst_access,
+                          b->group);
       if (merge)
          hk_render_merge_place_events(cmd, first);
    }
@@ -1049,12 +1050,8 @@ hk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
    uint32_t group = ++cmd->sync_next_group;
    assert(group != 0);
 #define BARRIER(b)                                                             \
-   do {                                                                        \
-      hk_cmd_sync_barrier(cmd, (b).srcStageMask, (b).dstStageMask,             \
-                          (b).srcAccessMask, (b).dstAccessMask);               \
-      util_dynarray_top_ptr(&cmd->sync_events, struct hk_sync_event)           \
-         ->barrier_group = group;                                              \
-   } while (0)
+   hk_cmd_sync_barrier(cmd, (b).srcStageMask, (b).dstStageMask,                \
+                       (b).srcAccessMask, (b).dstAccessMask, group)
    for (unsigned i = 0; i < pDependencyInfo->memoryBarrierCount; ++i)
       BARRIER(pDependencyInfo->pMemoryBarriers[i]);
    for (unsigned i = 0; i < pDependencyInfo->bufferMemoryBarrierCount; ++i)

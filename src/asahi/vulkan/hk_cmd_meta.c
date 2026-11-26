@@ -264,7 +264,7 @@ hk_meta_decompress(struct hk_cmd_buffer *cmd, struct hk_image *image,
    hk_cmd_sync_barrier(
       cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, 0);
    struct hk_meta_save save;
    cmd->feedback_decompress = true;
    hk_meta_begin(cmd, &save, VK_PIPELINE_BIND_POINT_GRAPHICS);
@@ -334,7 +334,7 @@ hk_meta_decompress(struct hk_cmd_buffer *cmd, struct hk_image *image,
    hk_cmd_sync_barrier(
       cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, 0);
    return !vk_command_buffer_has_error(&cmd->vk) &&
           hk_feedback_mark_raw(cmd, image, level, layer);
 }

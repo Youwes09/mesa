@@ -980,7 +980,7 @@ void hk_cmd_sync_work(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 bool hk_cmd_sync_before_gfx(struct hk_cmd_buffer *cmd, struct hk_cs *cs);
 void hk_cmd_sync_barrier(struct hk_cmd_buffer *cmd, VkPipelineStageFlags2 src,
                          VkPipelineStageFlags2 dst, VkAccessFlags2 src_access,
-                         VkAccessFlags2 dst_access);
+                         VkAccessFlags2 dst_access, uint32_t group);
 void hk_cdm_cache_flush(struct hk_device *dev, struct hk_cs *cs);
 
 static inline void
