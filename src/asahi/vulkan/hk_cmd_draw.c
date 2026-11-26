@@ -3342,6 +3342,10 @@ hk_launch_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    return true;
 }
 
+static void hk_pack_stencil_face(void *out, struct vk_stencil_test_face_state s,
+                                 bool enabled);
+static void hk_pack_depth_bias(struct hk_cmd_buffer *cmd, void *out);
+
 static void
 hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                     struct agx_draw draw)
@@ -3651,23 +3655,11 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       bool force_unorm =
          dyn->rs.depth_bias.representation ==
          VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-      bool exact = dyn->rs.depth_bias.exact;
-      bool unorm = d16 || force_unorm;
-      /* UNORM representations use a fixed depth unit: 2^-16 for D16 and
-       * 2^-24 when forced, or twice that unless exact. Floating depth uses
-       * the exponent-dependent unit 2^(e - 23) directly. The submission
-       * selects the matching mode.
-       */
-      float scale = d16           ? 1.0f / (exact ? (1 << 16) : (1 << 15))
-                    : force_unorm ? 1.0f / (exact ? (1 << 24) : (1 << 23))
-                                  : 1.0f;
+      /* The submission selects the matching depth bias mode */
+      ASSERTED bool unorm = d16 || force_unorm;
       assert(cs->cr.dbias_is_int == (unorm ? U_TRISTATE_YES : U_TRISTATE_NO));
       struct agx_depth_bias_packed depth_bias;
-      agx_pack(&depth_bias, DEPTH_BIAS, cfg) {
-         cfg.depth_bias = dyn->rs.depth_bias.constant_factor * scale;
-         cfg.slope_scale = dyn->rs.depth_bias.slope_factor;
-         cfg.clamp = dyn->rs.depth_bias.clamp;
-      }
+      hk_pack_depth_bias(cmd, &depth_bias);
       unsigned count = cs->depth_bias.size / AGX_DEPTH_BIAS_LENGTH;
       if (count && !memcmp((uint8_t *)cs->depth_bias.data +
                               (count - 1) * AGX_DEPTH_BIAS_LENGTH,
@@ -3708,14 +3700,7 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       const struct vk_stencil_test_face_state *st =
          face ? &dyn->ds.stencil.back : &dyn->ds.stencil.front;
       record->depth_face[face] |= st->reference & 0xff;
-      agx_pack(&record->stencil[face], FRAGMENT_STENCIL, cfg) {
-         cfg.compare = stencil ? st->op.compare : AGX_ZS_FUNC_ALWAYS;
-         cfg.write_mask = stencil ? st->write_mask : 0xff;
-         cfg.read_mask = stencil ? st->compare_mask : 0xff;
-         cfg.depth_pass = stencil ? st->op.pass : AGX_STENCIL_OP_KEEP;
-         cfg.depth_fail = stencil ? st->op.depth_fail : AGX_STENCIL_OP_KEEP;
-         cfg.stencil_fail = stencil ? st->op.fail : AGX_STENCIL_OP_KEEP;
-      }
+      hk_pack_stencil_face(&record->stencil[face], *st, stencil);
    }
    struct agx_cull_packed cull;
    agx_pack(&cull, CULL, cfg) {
@@ -4401,11 +4386,11 @@ translate_stencil_op(VkStencilOp vk_op)
 }
 
 static void
-hk_ppp_push_stencil_face(struct agx_ppp_update *ppp,
-                         struct vk_stencil_test_face_state s, bool enabled)
+hk_pack_stencil_face(void *out, struct vk_stencil_test_face_state s,
+                     bool enabled)
 {
    if (enabled) {
-      agx_ppp_push(ppp, FRAGMENT_STENCIL, cfg) {
+      agx_pack(out, FRAGMENT_STENCIL, cfg) {
          cfg.compare = translate_compare_op(s.op.compare);
          cfg.write_mask = s.write_mask;
          cfg.read_mask = s.compare_mask;
@@ -4415,7 +4400,7 @@ hk_ppp_push_stencil_face(struct agx_ppp_update *ppp,
          cfg.stencil_fail = translate_stencil_op(s.op.fail);
       }
    } else {
-      agx_ppp_push(ppp, FRAGMENT_STENCIL, cfg) {
+      agx_pack(out, FRAGMENT_STENCIL, cfg) {
          cfg.compare = AGX_ZS_FUNC_ALWAYS;
          cfg.write_mask = 0xFF;
          cfg.read_mask = 0xFF;
@@ -4425,6 +4410,15 @@ hk_ppp_push_stencil_face(struct agx_ppp_update *ppp,
          cfg.stencil_fail = AGX_STENCIL_OP_KEEP;
       }
    }
+}
+
+static void
+hk_ppp_push_stencil_face(struct agx_ppp_update *ppp,
+                         struct vk_stencil_test_face_state s, bool enabled)
+{
+   struct agx_fragment_stencil_packed packed;
+   hk_pack_stencil_face(&packed, s, enabled);
+   agx_ppp_push_packed(ppp, &packed, FRAGMENT_STENCIL);
 }
 
 static bool
@@ -4976,6 +4970,25 @@ hk_depth_bias_factor(VkFormat format, bool exact, bool force_unorm)
    }
 }
 
+static void
+hk_pack_depth_bias(struct hk_cmd_buffer *cmd, void *out)
+{
+   const struct vk_dynamic_graphics_state *dyn =
+      &cmd->vk.dynamic_graphics_state;
+   bool exact = dyn->rs.depth_bias.exact;
+   bool force_unorm =
+      dyn->rs.depth_bias.representation ==
+      VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+
+   agx_pack(out, DEPTH_BIAS, cfg) {
+      cfg.slope_scale = dyn->rs.depth_bias.slope_factor;
+      cfg.clamp = dyn->rs.depth_bias.clamp;
+      cfg.depth_bias = dyn->rs.depth_bias.constant_factor;
+      cfg.depth_bias /= hk_depth_bias_factor(
+         cmd->state.gfx.render.depth_att.vk_format, exact, force_unorm);
+   }
+}
+
 static bool
 uses_blend_constant(const struct vk_color_blend_state *cb)
 {
@@ -5378,7 +5391,6 @@ hk_flush_dynamic_state(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                        uint32_t draw_id, struct agx_draw draw)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
-   const struct hk_rendering_state *render = &cmd->state.gfx.render;
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
 
    struct hk_graphics_state *gfx = &cmd->state.gfx;
@@ -5583,18 +5595,7 @@ hk_flush_dynamic_state(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       void *ptr =
          util_dynarray_grow_bytes(&cs->depth_bias, 1, AGX_DEPTH_BIAS_LENGTH);
 
-      bool exact = dyn->rs.depth_bias.exact;
-      bool force_unorm =
-         dyn->rs.depth_bias.representation ==
-         VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-
-      agx_pack(ptr, DEPTH_BIAS, cfg) {
-         cfg.slope_scale = dyn->rs.depth_bias.slope_factor;
-         cfg.clamp = dyn->rs.depth_bias.clamp;
-         cfg.depth_bias = dyn->rs.depth_bias.constant_factor;
-         cfg.depth_bias /= hk_depth_bias_factor(render->depth_att.vk_format,
-                                                exact, force_unorm);
-      }
+      hk_pack_depth_bias(cmd, ptr);
    }
 
    /* Hardware viewport/scissor state is entangled with depth bias. */
