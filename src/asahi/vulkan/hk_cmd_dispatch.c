@@ -454,61 +454,37 @@ static void
 dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
 {
    struct hk_shader *s = hk_only_variant(cmd->state.cs.shader);
+   bool launch = agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev);
    if (agx_is_shader_empty(&s->b))
       return;
-   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
-      if (!agx_is_indirect(grid) &&
-          (!grid.count[0] || !grid.count[1] || !grid.count[2]))
-         return;
-      /* An API dispatch may run ahead of a render kept open for merging
-       * when nothing orders it after the render. Indirect grids and
-       * statistics stay in place. */
-      const VkPipelineStageFlags2 saved_move = cmd->merge_move_stage;
-      if (!cmd->in_meta)
-         cmd->merge_move_stage =
-            agx_is_indirect(grid) ||
-                  hk_stat_enabled(hk_pipeline_stat_addr(
-                     cmd,
-                     VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT))
-               ? 0
-               : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-      struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, true);
-      cmd->merge_move_stage = saved_move;
-      if (!cs)
-         return;
-      uint64_t stat = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
-      const struct hk_linked_shader *linked = s->only_linked;
-      const struct agx_compute_profile *p = &linked->b.program.profile;
-      if (hk_stat_enabled(stat)) {
-         libagx_increment_cs_invocations(
-            cmd, agx_1d(1), AGX_BARRIER_ALL,
-            cmd->state.cs.descriptors.root.cs.group_count_addr, stat,
-            p->local_size[0] * p->local_size[1] * p->local_size[2]);
-      }
-      if (!agx_is_indirect(grid)) {
-         for (unsigned d = 0; d < 3; ++d)
-            grid.count[d] *= p->local_size[d];
-      }
-      /* Push words are the root and set addresses, as the root table starts */
-      uint64_t root =
-         hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
-      cmd->api_dispatch = !cmd->in_meta;
-      hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body, p, grid, root,
-                         root, s);
-      cmd->api_dispatch = false;
+
+   /* Launch programs reject empty grids */
+   if (launch && !agx_is_indirect(grid) &&
+       (!grid.count[0] || !grid.count[1] || !grid.count[2]))
       return;
+
+   uint64_t stat = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
+
+   /* An API dispatch may run ahead of a render kept open for merging when
+    * nothing orders it after the render. Indirect grids and statistics stay
+    * in place.
+    */
+   const VkPipelineStageFlags2 saved_move = cmd->merge_move_stage;
+   if (!cmd->in_meta) {
+      cmd->merge_move_stage = agx_is_indirect(grid) || hk_stat_enabled(stat)
+                                 ? 0
+                                 : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
    }
+
    struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, true /* compute */);
+   cmd->merge_move_stage = saved_move;
    if (!cs)
       return;
 
    struct agx_workgroup local_size =
       agx_workgroup(s->b.info.workgroup_size[0], s->b.info.workgroup_size[1],
                     s->b.info.workgroup_size[2]);
-
-   uint64_t stat = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
 
    if (hk_stat_enabled(stat)) {
       perf_debug(cmd, "CS invocation statistic");
@@ -525,9 +501,18 @@ dispatch(struct hk_cmd_buffer *cmd, struct agx_grid grid)
    }
 
    cmd->api_dispatch = !cmd->in_meta;
-   hk_dispatch_with_local_size(cmd, cs, s, grid, local_size);
+   if (launch) {
+      /* Push words are the root and set addresses, as the root table starts */
+      const struct hk_linked_shader *linked = s->only_linked;
+      uint64_t root =
+         hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
+      hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body,
+                         &linked->b.program.profile, grid, root, root, s);
+   } else {
+      hk_dispatch_with_local_size(cmd, cs, s, grid, local_size);
+      cs->stats.calls++;
+   }
    cmd->api_dispatch = false;
-   cs->stats.calls++;
 }
 
 VKAPI_ATTR void VKAPI_CALL
