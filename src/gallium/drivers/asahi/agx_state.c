@@ -6271,6 +6271,260 @@ agx_draw_stages_for_batch(struct agx_batch *batch,
    fragment->reads_tile = ctx->fs->b.info.reads_tib;
 }
 
+/* Emit a draw through launch programs, returning the new end of the stream */
+static uint8_t *
+agx_launch_draw(struct agx_batch *batch, const struct pipe_draw_info *info,
+                const struct pipe_draw_indirect_info *indirect,
+                const struct pipe_draw_start_count_bias *draws, uint64_t ib,
+                size_t ib_extent, enum mesa_prim reduced_prim)
+{
+   struct agx_context *ctx = batch->ctx;
+   struct agx_device *dev = agx_device(ctx->base.screen);
+   uint8_t *out;
+
+   /* Apple9 encodes all GLES primitive modes and index widths directly,
+    * including restart and GPU-provided draw arguments. */
+   assert(!info->index_size || info->index_size == 1 ||
+          info->index_size == 2 || info->index_size == 4);
+   assert(indirect || (draws->count > 0 && info->instance_count > 0));
+
+   struct agx_linked_shader *linked_vs =
+      ctx->gs ? ctx->linked.gs : ctx->linked.vs;
+   struct agx_compiled_shader *vs = ctx->gs ? ctx->gs->gs_copy : ctx->vs;
+   if (!linked_vs || !ctx->linked.fs)
+      return NULL;
+
+   struct agx_draw_stage vertex, fragment;
+   agx_draw_stages_for_batch(batch, linked_vs, vs, info->mode, &vertex,
+                             &fragment);
+
+   /* The linked programs respect the varying, clip and RT limits */
+   struct agx_draw_pipeline pipeline;
+   ASSERTED bool linked =
+      agx_link_draw_pipeline(&pipeline, &vertex, &fragment);
+   assert(linked);
+
+   if (!agx_collect_color_targets(batch, &pipeline)) {
+      mesa_loge("Apple9 direct render requires one to eight color surfaces");
+      return NULL;
+   }
+   batch->render_initialized = true;
+   bool depth_enabled =
+      ctx->zs->base.depth_enabled && batch->key.zsbuf.texture;
+   struct agx_draw_record draw_record = {0};
+   struct agx_draw_record *record = &draw_record;
+   const struct agx_draw_record *previous =
+      batch->launch_draw_count ? &batch->previous_draw_record : NULL;
+   agx_batch_add_bo(batch, pipeline.vertex->bo);
+   agx_batch_add_bo(batch, pipeline.fragment->bo);
+   record->flatshade_first = ctx->rast->base.flatshade_first;
+   memcpy(record->viewport_translate, ctx->viewport[0].translate,
+          sizeof(record->viewport_translate));
+   memcpy(record->viewport_scale, ctx->viewport[0].scale,
+          sizeof(record->viewport_scale));
+   /* The Apple9 vertex path already lowers clip Z to [0, W]. */
+   if (!agx_clip_halfz(ctx)) {
+      record->viewport_translate[2] -= record->viewport_scale[2];
+      record->viewport_scale[2] *= 2.0f;
+   }
+   unsigned minx, miny, maxx, maxy;
+   agx_get_scissor_extents(&ctx->viewport[0],
+                           ctx->rast->base.scissor ? &ctx->scissor[0] : NULL,
+                           &batch->key, &minx, &miny, &maxx, &maxy);
+   /* Canonicalize empty intersections before unsigned region packing. */
+   if (minx >= maxx || miny >= maxy)
+      minx = miny = maxx = maxy = 0;
+   record->scissor_min[0] = minx;
+   record->scissor_min[1] = miny;
+   record->scissor_max[0] = maxx;
+   record->scissor_max[1] = maxy;
+   struct agx_scissor_packed scissor;
+   float minz, maxz;
+   util_viewport_zmin_zmax(&ctx->viewport[0], agx_clip_halfz(ctx), &minz,
+                           &maxz);
+   agx_pack(&scissor, SCISSOR, cfg) {
+      cfg.min_x = minx;
+      cfg.min_y = miny;
+      cfg.max_x = maxx;
+      cfg.max_y = maxy;
+      cfg.min_z = minz;
+      cfg.max_z = maxz;
+   }
+   const uint8_t *old_scissor =
+      previous ? (const uint8_t *)batch->scissor.data +
+                    previous->scissor_index * AGX_SCISSOR_LENGTH
+               : NULL;
+   if (old_scissor && !memcmp(old_scissor, &scissor, sizeof(scissor))) {
+      record->scissor_index = previous->scissor_index;
+   } else {
+      record->scissor_index = batch->scissor.size / AGX_SCISSOR_LENGTH;
+      memcpy(util_dynarray_grow_bytes(&batch->scissor, 1, sizeof(scissor)),
+             &scissor, sizeof(scissor));
+   }
+   /* Logic ops read the destination in the epilog, like blending */
+   record->reads_tile =
+      pipeline.fragment->reads_tile || ctx->blend->key.logicop_enable;
+   record->uses_discard = pipeline.fragment->uses_discard;
+   record->writes_depth = pipeline.fragment->writes_depth;
+   record->disable_tri_merging = pipeline.fragment->disable_tri_merging;
+   for (unsigned rt = 0; rt < batch->key.nr_cbufs; ++rt) {
+      struct agx_blend_standard blend =
+         agx_unpack_blend_standard(ctx->blend->key.rt[rt].mode);
+      record->reads_tile |=
+         ctx->blend->key.rt[rt].advanced_blend ||
+         blend.rgb_func != PIPE_BLEND_ADD ||
+         blend.alpha_func != PIPE_BLEND_ADD ||
+         blend.rgb_src_factor != PIPE_BLENDFACTOR_ONE ||
+         blend.alpha_src_factor != PIPE_BLENDFACTOR_ONE ||
+         blend.rgb_dst_factor != PIPE_BLENDFACTOR_ZERO ||
+         blend.alpha_dst_factor != PIPE_BLENDFACTOR_ZERO ||
+         ctx->blend->key.rt[rt].colormask != 15;
+   }
+   /* Fragment control bits18/19 enable stencil/two-sided stencil, not
+    * depth. Depth disable is ALWAYS plus disabled writes in each face.
+    * Authored Metal captures match the shared fragment stencil encoding. */
+   bool stencil_enabled =
+      ctx->zs->base.stencil[0].enabled && batch->key.zsbuf.texture;
+   bool depth_bias_enabled =
+      ctx->rast->depth_bias && reduced_prim == MESA_PRIM_TRIANGLES;
+   if (depth_bias_enabled) {
+      if (previous && (previous->depth_control & (1u << 17)) &&
+          !(ctx->dirty & AGX_DIRTY_RS)) {
+         record->depth_bias_index = previous->depth_bias_index;
+      } else {
+         record->depth_bias_index =
+            batch->depth_bias.size / AGX_DEPTH_BIAS_LENGTH;
+         agx_upload_depth_bias(batch, &ctx->rast->base);
+      }
+   }
+   record->depth_control = 0x200 | (1u << 16) |
+                           (depth_bias_enabled ? (1u << 17) : 0) |
+                           (stencil_enabled ? (3u << 18) : 0);
+   if (ctx->active_queries && ctx->occlusion_query) {
+      record->occlusion_index =
+         agx_get_oq_index(batch, ctx->occlusion_query);
+      record->visibility_mode =
+         ctx->occlusion_query->type == PIPE_QUERY_OCCLUSION_COUNTER
+            ? AGX_VISIBILITY_MODE_COUNTING
+            : AGX_VISIBILITY_MODE_BOOLEAN;
+      record->depth_control |= record->visibility_mode << 14;
+   }
+   if (ctx->rast->base.rasterizer_discard)
+      record->depth_control |= 1u << 21;
+   /* The cull packet also owns near/far clipping and depth clamping. */
+   memcpy(&record->raster_control, ctx->rast->cull,
+          sizeof(record->raster_control));
+   record->raster_control |= ctx->rast->base.front_ccw ? 1u << 16 : 0;
+   record->object_type =
+      reduced_prim == MESA_PRIM_POINTS  ? agx_point_object_type(ctx->rast)
+      : reduced_prim == MESA_PRIM_LINES ? AGX_OBJECT_TYPE_LINE
+                                        : AGX_OBJECT_TYPE_TRIANGLE;
+   uint32_t depth_face =
+      (ctx->rast->line_width << 8) |
+      ((depth_enabled ? ctx->zs->base.depth_func : PIPE_FUNC_ALWAYS) << 24) |
+      ((depth_enabled && ctx->zs->base.depth_writemask) ? 0 : (1 << 21));
+   bool two_sided = ctx->zs->base.stencil[1].enabled;
+   for (unsigned face = 0; face < 2; ++face)
+      record->depth_face[face] =
+         depth_face |
+         (agx_translate_polygon_mode(face ? ctx->rast->base.fill_back
+                                          : ctx->rast->base.fill_front)
+          << 18) |
+         (ctx->stencil_ref.ref_value[two_sided ? face : 0] & 0xff);
+   memcpy(&record->stencil[0], &ctx->zs->front_stencil, 4);
+   memcpy(&record->stencil[1], &ctx->zs->back_stencil, 4);
+   /* Tables, buffers and push words of each stage */
+   struct agx_compiled_shader *mains[] = {vs, ctx->fs};
+   const struct agx_linked_shader *programs[] = {linked_vs, ctx->linked.fs};
+   for (unsigned stage = 0; stage < 2; ++stage) {
+      const struct agx_compute_profile *profile =
+         &programs[stage]->program.profile;
+      struct agx_stage *shader = &ctx->stage[mains[stage]->stage];
+
+      agx_upload_launch_tables(batch, mains[stage],
+                               &record->texture_table[stage],
+                               &record->sampler_table[stage]);
+      agx_upload_launch_buffers(batch, shader, profile,
+                                record->buffers[stage]);
+
+      record->push[stage] = agx_upload_launch_push(batch, mains[stage]);
+      record->buffer_count[stage] = profile->resource_binding_count;
+
+      bool reuse = previous && previous->buffer_count[stage] ==
+                                  record->buffer_count[stage];
+      for (unsigned slot = 0; reuse && slot < record->buffer_count[stage];
+           slot++)
+         reuse =
+            previous->buffers[stage][slot] == record->buffers[stage][slot];
+
+      uint64_t address =
+         reuse ? (stage ? previous->fragment_table : previous->vertex_table)
+         : record->buffer_count[stage]
+            ? agx_pool_upload_aligned(
+                 &batch->pool, record->buffers[stage],
+                 record->buffer_count[stage] * sizeof(uint64_t), 64)
+            : 0;
+      if (stage)
+         record->fragment_table = address;
+      else
+         record->vertex_table = address;
+   }
+   pipeline.flatshade_first = ctx->rast->base.flatshade_first;
+   pipeline.index_size = info->index_size;
+   pipeline.primitive_restart = info->primitive_restart;
+   pipeline.restart_index =
+      info->primitive_restart ? info->restart_index : 0;
+   pipeline.primitive = agx_primitive_for_pipe(info->mode);
+   pipeline.index_buffer = ib;
+   pipeline.index_extent =
+      indirect ? ib_extent
+               : MIN2(ib_extent, (uint64_t)draws->count * info->index_size);
+   if (!agx_prepare_draw_record(dev, &batch->pipeline_pool,
+                                &batch->render_context_pool, &pipeline,
+                                record, previous)) {
+      mesa_loge("Apple9: out of memory for the state of a draw");
+      return NULL;
+   }
+   batch->previous_draw_record = *record;
+   ++batch->launch_draw_count;
+   pipeline.ppp = record->ppp;
+   pipeline.ppp_viewport_offset = record->ppp_viewport_offset;
+   pipeline.ppp_viewport_words = record->ppp_viewport_words;
+   pipeline.vertex_launch = record->launch[0] / 0x40;
+   /* Native vertex launch configuration. It is not a header address. */
+   pipeline.pipeline_word = 0x01000000;
+   /* Keep current at the terminator, so both another draw and a stream
+    * link replace it. A newly linked buffer starts at current directly.
+    */
+   out =
+      (indirect
+          ? agx_emit_indirect_draw(batch->vdm.current, &pipeline,
+                                   agx_indirect_buffer_ptr(batch, indirect))
+          : agx_emit_direct_draw(
+               batch->vdm.current, &pipeline, draws->count,
+               info->instance_count,
+               info->index_size ? draws->index_bias : draws->start)) -
+      sizeof(uint32_t);
+   agx_batch_pin_entries(batch, dev);
+   ++batch->vdm_draws;
+
+   /* Barrier the rasterization program's XFB writes for later vertex reads.
+    * The barrier replaces the terminator, which current points at.
+    */
+   if (ctx->gs && ctx->streamout.num_targets > 0) {
+      agx_push(out, VDM_BARRIER_G16, cfg) {
+         cfg.unk_0 = true;
+         cfg.unk_1 = true;
+         cfg.unk_4 = true;
+      }
+
+      const uint32_t terminator = 0xc0000000;
+      memcpy(out, &terminator, sizeof(terminator));
+   }
+
+   return out;
+}
+
 static void
 agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
                    unsigned drawid_offset,
@@ -6716,246 +6970,11 @@ agx_draw_vbo_inner(struct pipe_context *pctx, const struct pipe_draw_info *info,
    uint8_t *out;
 
    if (agx_has_launch_programs(dev)) {
-      /* Apple9 encodes all GLES primitive modes and index widths directly,
-       * including restart and GPU-provided draw arguments. */
-      assert(!info->index_size || info->index_size == 1 ||
-             info->index_size == 2 || info->index_size == 4);
       assert(native_prims & BITFIELD_BIT(info->mode));
-      assert(indirect || (draws->count > 0 && info->instance_count > 0));
-
-      struct agx_linked_shader *linked_vs =
-         ctx->gs ? ctx->linked.gs : ctx->linked.vs;
-      struct agx_compiled_shader *vs = ctx->gs ? ctx->gs->gs_copy : ctx->vs;
-      if (!linked_vs || !ctx->linked.fs)
+      out = agx_launch_draw(batch, info, indirect, draws, ib, ib_extent,
+                            reduced_prim);
+      if (!out)
          return;
-
-      struct agx_draw_stage vertex, fragment;
-      agx_draw_stages_for_batch(batch, linked_vs, vs, info->mode, &vertex,
-                                &fragment);
-
-      /* The linked programs respect the varying, clip and RT limits */
-      struct agx_draw_pipeline pipeline;
-      ASSERTED bool linked =
-         agx_link_draw_pipeline(&pipeline, &vertex, &fragment);
-      assert(linked);
-
-      if (!agx_collect_color_targets(batch, &pipeline)) {
-         mesa_loge("Apple9 direct render requires one to eight color surfaces");
-         return;
-      }
-      batch->render_initialized = true;
-      bool depth_enabled =
-         ctx->zs->base.depth_enabled && batch->key.zsbuf.texture;
-      struct agx_draw_record draw_record = {0};
-      struct agx_draw_record *record = &draw_record;
-      const struct agx_draw_record *previous =
-         batch->launch_draw_count ? &batch->previous_draw_record : NULL;
-      agx_batch_add_bo(batch, pipeline.vertex->bo);
-      agx_batch_add_bo(batch, pipeline.fragment->bo);
-      record->flatshade_first = ctx->rast->base.flatshade_first;
-      memcpy(record->viewport_translate, ctx->viewport[0].translate,
-             sizeof(record->viewport_translate));
-      memcpy(record->viewport_scale, ctx->viewport[0].scale,
-             sizeof(record->viewport_scale));
-      /* The Apple9 vertex path already lowers clip Z to [0, W]. */
-      if (!agx_clip_halfz(ctx)) {
-         record->viewport_translate[2] -= record->viewport_scale[2];
-         record->viewport_scale[2] *= 2.0f;
-      }
-      unsigned minx, miny, maxx, maxy;
-      agx_get_scissor_extents(&ctx->viewport[0],
-                              ctx->rast->base.scissor ? &ctx->scissor[0] : NULL,
-                              &batch->key, &minx, &miny, &maxx, &maxy);
-      /* Canonicalize empty intersections before unsigned region packing. */
-      if (minx >= maxx || miny >= maxy)
-         minx = miny = maxx = maxy = 0;
-      record->scissor_min[0] = minx;
-      record->scissor_min[1] = miny;
-      record->scissor_max[0] = maxx;
-      record->scissor_max[1] = maxy;
-      struct agx_scissor_packed scissor;
-      float minz, maxz;
-      util_viewport_zmin_zmax(&ctx->viewport[0], agx_clip_halfz(ctx), &minz,
-                              &maxz);
-      agx_pack(&scissor, SCISSOR, cfg) {
-         cfg.min_x = minx;
-         cfg.min_y = miny;
-         cfg.max_x = maxx;
-         cfg.max_y = maxy;
-         cfg.min_z = minz;
-         cfg.max_z = maxz;
-      }
-      const uint8_t *old_scissor =
-         previous ? (const uint8_t *)batch->scissor.data +
-                       previous->scissor_index * AGX_SCISSOR_LENGTH
-                  : NULL;
-      if (old_scissor && !memcmp(old_scissor, &scissor, sizeof(scissor))) {
-         record->scissor_index = previous->scissor_index;
-      } else {
-         record->scissor_index = batch->scissor.size / AGX_SCISSOR_LENGTH;
-         memcpy(util_dynarray_grow_bytes(&batch->scissor, 1, sizeof(scissor)),
-                &scissor, sizeof(scissor));
-      }
-      /* Logic ops read the destination in the epilog, like blending */
-      record->reads_tile =
-         pipeline.fragment->reads_tile || ctx->blend->key.logicop_enable;
-      record->uses_discard = pipeline.fragment->uses_discard;
-      record->writes_depth = pipeline.fragment->writes_depth;
-      record->disable_tri_merging = pipeline.fragment->disable_tri_merging;
-      for (unsigned rt = 0; rt < batch->key.nr_cbufs; ++rt) {
-         struct agx_blend_standard blend =
-            agx_unpack_blend_standard(ctx->blend->key.rt[rt].mode);
-         record->reads_tile |=
-            ctx->blend->key.rt[rt].advanced_blend ||
-            blend.rgb_func != PIPE_BLEND_ADD ||
-            blend.alpha_func != PIPE_BLEND_ADD ||
-            blend.rgb_src_factor != PIPE_BLENDFACTOR_ONE ||
-            blend.alpha_src_factor != PIPE_BLENDFACTOR_ONE ||
-            blend.rgb_dst_factor != PIPE_BLENDFACTOR_ZERO ||
-            blend.alpha_dst_factor != PIPE_BLENDFACTOR_ZERO ||
-            ctx->blend->key.rt[rt].colormask != 15;
-      }
-      /* Fragment control bits18/19 enable stencil/two-sided stencil, not
-       * depth. Depth disable is ALWAYS plus disabled writes in each face.
-       * Authored Metal captures match the shared fragment stencil encoding. */
-      bool stencil_enabled =
-         ctx->zs->base.stencil[0].enabled && batch->key.zsbuf.texture;
-      bool depth_bias_enabled =
-         ctx->rast->depth_bias && reduced_prim == MESA_PRIM_TRIANGLES;
-      if (depth_bias_enabled) {
-         if (previous && (previous->depth_control & (1u << 17)) &&
-             !(ctx->dirty & AGX_DIRTY_RS)) {
-            record->depth_bias_index = previous->depth_bias_index;
-         } else {
-            record->depth_bias_index =
-               batch->depth_bias.size / AGX_DEPTH_BIAS_LENGTH;
-            agx_upload_depth_bias(batch, &ctx->rast->base);
-         }
-      }
-      record->depth_control = 0x200 | (1u << 16) |
-                              (depth_bias_enabled ? (1u << 17) : 0) |
-                              (stencil_enabled ? (3u << 18) : 0);
-      if (ctx->active_queries && ctx->occlusion_query) {
-         record->occlusion_index =
-            agx_get_oq_index(batch, ctx->occlusion_query);
-         record->visibility_mode =
-            ctx->occlusion_query->type == PIPE_QUERY_OCCLUSION_COUNTER
-               ? AGX_VISIBILITY_MODE_COUNTING
-               : AGX_VISIBILITY_MODE_BOOLEAN;
-         record->depth_control |= record->visibility_mode << 14;
-      }
-      if (ctx->rast->base.rasterizer_discard)
-         record->depth_control |= 1u << 21;
-      /* The cull packet also owns near/far clipping and depth clamping. */
-      memcpy(&record->raster_control, ctx->rast->cull,
-             sizeof(record->raster_control));
-      record->raster_control |= ctx->rast->base.front_ccw ? 1u << 16 : 0;
-      record->object_type =
-         reduced_prim == MESA_PRIM_POINTS  ? agx_point_object_type(ctx->rast)
-         : reduced_prim == MESA_PRIM_LINES ? AGX_OBJECT_TYPE_LINE
-                                           : AGX_OBJECT_TYPE_TRIANGLE;
-      uint32_t depth_face =
-         (ctx->rast->line_width << 8) |
-         ((depth_enabled ? ctx->zs->base.depth_func : PIPE_FUNC_ALWAYS) << 24) |
-         ((depth_enabled && ctx->zs->base.depth_writemask) ? 0 : (1 << 21));
-      bool two_sided = ctx->zs->base.stencil[1].enabled;
-      for (unsigned face = 0; face < 2; ++face)
-         record->depth_face[face] =
-            depth_face |
-            (agx_translate_polygon_mode(face ? ctx->rast->base.fill_back
-                                             : ctx->rast->base.fill_front)
-             << 18) |
-            (ctx->stencil_ref.ref_value[two_sided ? face : 0] & 0xff);
-      memcpy(&record->stencil[0], &ctx->zs->front_stencil, 4);
-      memcpy(&record->stencil[1], &ctx->zs->back_stencil, 4);
-      /* Tables, buffers and push words of each stage */
-      struct agx_compiled_shader *mains[] = {vs, ctx->fs};
-      const struct agx_linked_shader *programs[] = {linked_vs, ctx->linked.fs};
-      for (unsigned stage = 0; stage < 2; ++stage) {
-         const struct agx_compute_profile *profile =
-            &programs[stage]->program.profile;
-         struct agx_stage *shader = &ctx->stage[mains[stage]->stage];
-
-         agx_upload_launch_tables(batch, mains[stage],
-                                  &record->texture_table[stage],
-                                  &record->sampler_table[stage]);
-         agx_upload_launch_buffers(batch, shader, profile,
-                                   record->buffers[stage]);
-
-         record->push[stage] = agx_upload_launch_push(batch, mains[stage]);
-         record->buffer_count[stage] = profile->resource_binding_count;
-
-         bool reuse = previous && previous->buffer_count[stage] ==
-                                     record->buffer_count[stage];
-         for (unsigned slot = 0; reuse && slot < record->buffer_count[stage];
-              slot++)
-            reuse =
-               previous->buffers[stage][slot] == record->buffers[stage][slot];
-
-         uint64_t address =
-            reuse ? (stage ? previous->fragment_table : previous->vertex_table)
-            : record->buffer_count[stage]
-               ? agx_pool_upload_aligned(
-                    &batch->pool, record->buffers[stage],
-                    record->buffer_count[stage] * sizeof(uint64_t), 64)
-               : 0;
-         if (stage)
-            record->fragment_table = address;
-         else
-            record->vertex_table = address;
-      }
-      pipeline.flatshade_first = ctx->rast->base.flatshade_first;
-      pipeline.index_size = info->index_size;
-      pipeline.primitive_restart = info->primitive_restart;
-      pipeline.restart_index =
-         info->primitive_restart ? info->restart_index : 0;
-      pipeline.primitive = agx_primitive_for_pipe(info->mode);
-      pipeline.index_buffer = ib;
-      pipeline.index_extent =
-         indirect ? ib_extent
-                  : MIN2(ib_extent, (uint64_t)draws->count * info->index_size);
-      if (!agx_prepare_draw_record(dev, &batch->pipeline_pool,
-                                   &batch->render_context_pool, &pipeline,
-                                   record, previous)) {
-         mesa_loge("Apple9: out of memory for the state of a draw");
-         return;
-      }
-      batch->previous_draw_record = *record;
-      ++batch->launch_draw_count;
-      pipeline.ppp = record->ppp;
-      pipeline.ppp_viewport_offset = record->ppp_viewport_offset;
-      pipeline.ppp_viewport_words = record->ppp_viewport_words;
-      pipeline.vertex_launch = record->launch[0] / 0x40;
-      /* Native vertex launch configuration. It is not a header address. */
-      pipeline.pipeline_word = 0x01000000;
-      /* Keep current at the terminator, so both another draw and a stream
-       * link replace it. A newly linked buffer starts at current directly.
-       */
-      out =
-         (indirect
-             ? agx_emit_indirect_draw(batch->vdm.current, &pipeline,
-                                      agx_indirect_buffer_ptr(batch, indirect))
-             : agx_emit_direct_draw(
-                  batch->vdm.current, &pipeline, draws->count,
-                  info->instance_count,
-                  info->index_size ? draws->index_bias : draws->start)) -
-         sizeof(uint32_t);
-      agx_batch_pin_entries(batch, dev);
-      ++batch->vdm_draws;
-
-      /* Barrier the rasterization program's XFB writes for later vertex reads.
-       * The barrier replaces the terminator, which current points at.
-       */
-      if (ctx->gs && ctx->streamout.num_targets > 0) {
-         agx_push(out, VDM_BARRIER_G16, cfg) {
-            cfg.unk_0 = true;
-            cfg.unk_1 = true;
-            cfg.unk_4 = true;
-         }
-
-         const uint32_t terminator = 0xc0000000;
-         memcpy(out, &terminator, sizeof(terminator));
-      }
    } else {
       out = agx_encode_state(batch, batch->vdm.current);
 
