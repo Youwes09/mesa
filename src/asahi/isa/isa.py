@@ -183,9 +183,6 @@ class Operand:
         self.bits = Bits(el.attrib['bit'])
         self.is_dest = is_dest
 
-        # Operand role in the form, if not its position among the sources
-        self.role = el.attrib.get('role')
-
     def specialize(self, length):
         obj = copy.copy(self)
         obj.bits = obj.bits.specialize(length)

@@ -79,6 +79,21 @@ def operand(role, max, files = ["gpr"], widths = [32], min = 0,
    forms[-1].operands.append(Operand(role, max, files, widths, min,
                                      uniform_max, align, flags, evidence))
 
+# Roles of the operands of the instructions whose operands are not, in order,
+# the dest and the sources src0, src1... of their forms. None marks an operand
+# with no entry in the table.
+roles = {
+   "device_load": ["dest", "src1", "index"],
+   "device_store": ["store_data", "src1", "index"],
+   "atomic": ["atomic_data", None, "index"],
+   "atomic_indirect": ["atomic_data", "src1", "index"],
+   "atomic_result": ["src0"],
+   "local_atomic": ["dest", "atomic_data", "index"],
+   "texture": ["dest", None, None, None],
+   "texture_reg": ["dest", None, None, None],
+   "texture_reg2": ["dest", None, None, None],
+}
+
 form("mov_imm_compact", 2, "mov_imm")
 operand("dest", 15, flags = ["allocatable", "hard_low", "compact_preferred"])
 

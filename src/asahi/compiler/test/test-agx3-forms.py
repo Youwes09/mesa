@@ -122,16 +122,14 @@ def reach(op, names):
     return best
 
 def find_operand(ins, role):
-    for op in ins.dests + ins.sources:
-        if op.role == role:
-            return op
+    if ins.name in agx3_forms.roles:
+        roles = agx3_forms.roles[ins.name]
+        return (ins.dests + ins.sources)[roles.index(role)] if role in roles else None
     if role == 'dest':
         return ins.dests[0] if ins.dests else None
     if role.startswith('src'):
-        # Operands without a role are the table's sources in order
-        srcs = [op for op in ins.sources if op.role is None]
         i = int(role[3:])
-        return srcs[i] if i < len(srcs) else None
+        return ins.sources[i] if i < len(ins.sources) else None
     return None
 
 # The dependency field of each layout: a slot index or a slot mask
@@ -173,8 +171,6 @@ for name in order:
             for ins in position:
                 if ins not in isa.instrs:
                     error(f'{name}: no instruction {ins}')
-                elif name not in isa.instrs[ins].attrib.get('form', '').split():
-                    error(f'{name}: {ins} does not list the form')
 
     if int(info['length']) not in set().union(*[lengths(p) for p in alternatives]):
         error(f'{name}: no encoding of {info["length"]} bytes')
@@ -218,13 +214,14 @@ for name in order:
                 elif r < int(limit):
                     error(f'{name}: {ins} {role} reaches uniform {r}, table {limit}')
 
-# Every form an instruction lists exists
-for ins in isa.instrs.values():
-    for f in ins.attrib.get('form', '').split():
-        if f not in forms:
-            error(f'{ins.name}: no form {f}')
-    if 'form' not in ins.attrib:
-        error(f'{ins.name}: no form')
+# Instructions of a form
+def instructions(form):
+    return {ins for positions in sequences(form.encoding)
+            for position in positions for ins in position}
+
+# Every instruction is packed as some form
+for ins in sorted(set(isa.instrs) - set().union(*map(instructions, forms.values()))):
+    error(f'{ins}: no form')
 
 # The packer's instructions
 def decode(raw, avail):
@@ -241,7 +238,7 @@ if vectors:
         ins = decode(int.from_bytes(data, 'little'), len(data))
         if ins is None or ins.length[0] != len(data):
             error(f'{form} {code}: not one instruction')
-        elif form not in ins.attrib.get('form', '').split():
+        elif ins.name not in instructions(forms[form]):
             error(f'{form} {code}: decodes to {ins.name}, of another form')
 
 for e in errors:
