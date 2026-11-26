@@ -1044,8 +1044,11 @@
     16-bit halves, uniforms or 8-bit constants.
   -->
   <group name="Integer add" length="10" form="int_add_extended store_uniform_add store_uniform">
-    <template>9f 01 54 00 02 00 00 a8 17 05</template>
+    <exact bit="0:6 8:11">00010011111</exact>
     <exact bit="7">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:40 60 62 67 69:71 76:79"/>
+    <exact bit="59 64 68">111</exact>
     <dest kind="idst" bit="25:32 33"/>
     <src kind="isrc_desc" bit="42:48 49 41 61 65 72 73"/>
     <src kind="isrc_desc" bit="51:57 58 50 63 66 74 75"/>
@@ -1056,7 +1059,10 @@
   </group>
 
   <ins name="imad" length="12" form="int_mad_extended store_uniform_mad">
-    <template>9f 00 54 00 02 00 00 00 d0 2f 2a 00</template>
+    <exact bit="0:11">000010011111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:40 69 76 78:80 84 86:95"/>
+    <exact bit="68 77">11</exact>
     <dest kind="idst" bit="25:32 33"/>
     <src kind="isrc_desc" bit="42:48 49 41 70 73 81 82"/>
     <src kind="isrc_desc" bit="51:57 58 50 71 74 83 =0"/>
@@ -1066,8 +1072,11 @@
 
   <!-- Both factors zero-extend, or with bits 82 and 84 sign-extend -->
   <group name="Widening multiply" length="12" form="int_mul_wide store_uniform_mul_wide">
-    <template>9f 00 54 00 02 00 00 00 e0 26 0a 00</template>
+    <exact bit="0:11">000010011111</exact>
+    <exact bit="18:24">0010101</exact>
     <exact bit="82 84">opcode</exact>
+    <zero bit="34:41 50 59:68 72 75:76 78:80 85:95"/>
+    <exact bit="69:71 77 81 83">111111</exact>
     <dest kind="idst64" bit="25:32 33"/>
     <src kind="reg" bit="42:48 49 73"/>
     <src kind="reg" bit="51:57 58 74"/>
@@ -1084,7 +1093,10 @@
     in bits 84-89.
   -->
   <ins name="asr" length="10" form="shift_extended">
-    <template>a7 01 54 00 02 00 00 78 62 00</template>
+    <exact bit="0:11">000110100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 55:58 63:64 66:68 71:79"/>
+    <exact bit="33 59:61 65 70">111111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
     <immediate name="amount" bit="50:54"/>
@@ -1092,7 +1104,10 @@
   </ins>
 
   <ins name="asr_reg" display="asr" length="10" form="shift_arith_register">
-    <template>a7 01 54 00 02 00 00 d8 e2 00</template>
+    <exact bit="0:11">000110100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 50 61 64 66:68 72:79"/>
+    <exact bit="33 59:60 65 70">11111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
     <src kind="usrc" bit="51:57 58 63 71 =0 =0"/>
@@ -1100,8 +1115,11 @@
   </ins>
 
   <group name="Logical shift by a constant" length="12" form="shift_logical_immediate">
-    <template>a7 00 54 00 02 00 00 00 f0 11 01 00</template>
+    <exact bit="0:6 8:11">00000100111</exact>
     <exact bit="7">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 55:67 73:75 77:79 81:83 90:95"/>
+    <exact bit="33 68:71 76">111111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <immediate name="amount" bit="50:54"/>
@@ -1113,8 +1131,11 @@
   </group>
 
   <group name="Logical shift by a register" length="12" form="shift_logical_register">
-    <template>a7 00 54 00 02 00 00 00 f0 13 05 00</template>
+    <exact bit="0:6 8:11">00000100111</exact>
     <exact bit="7">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 50 59:67 74:75 77:79 81 83:95"/>
+    <exact bit="33 68:71 76">111111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <src kind="usrc" bit="51:57 58 73 82 =0 =0"/>
@@ -1126,8 +1147,11 @@
 
   <!-- Conversions between 32-bit integers and FP32 -->
   <group name="Integer to float" length="8">
-    <template>a7 07 54 00 03 00 8c 20</template>
+    <exact bit="0:11">011110100111</exact>
+    <exact bit="18:24">0010101</exact>
     <exact bit="62">opcode</exact>
+    <zero bit="34:41 52 54 56:60 63"/>
+    <exact bit="32:33 50:51 55">11111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 61 =0 =0"/>
     <mask_12_17/>
@@ -1138,8 +1162,11 @@
 
   <!-- Bit 64 selects the signed format, which must match the conversion -->
   <group name="Float to integer" length="10">
-    <template>27 07 54 00 03 00 96 08 02 00</template>
+    <exact bit="0:11">011100100111</exact>
+    <exact bit="18:24">0010101</exact>
     <exact bit="62 64">opcode</exact>
+    <zero bit="34:41 51 54 56:58 60:61 63 66:79"/>
+    <exact bit="32:33 50 52 55 65">111111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 59 =0 =0"/>
     <mask_12_17/>
@@ -1149,8 +1176,11 @@
   </group>
 
   <group name="Bit operations" length="8" form="bit_unary">
-    <template>a7 05 54 00 02 00 4e 04</template>
+    <exact bit="0:6 9:11">0100100111</exact>
     <exact bit="7 8">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 53 55:57 59:63"/>
+    <exact bit="33 50:51 54">1111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
     <mask_12_17/>
@@ -1162,7 +1192,10 @@
 
   <!-- Population count of a uniform uses another destination format -->
   <ins name="popcount_uniform" display="popcount" length="8" form="bit_unary">
-    <template>27 05 54 00 03 00 cc 04</template>
+    <exact bit="0:11">010100100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 53 56:57 59:63"/>
+    <exact bit="32:33 50:51 54:55">111111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
     <mask_12_17/>
@@ -1175,8 +1208,11 @@
     other release, saturate and modifier bits.
   -->
   <group name="Special function" length="10" form="float_special float_special_uniform">
-    <template>2f 00 54 00 02 00 90 40 00 00</template>
+    <exact bit="0:6 10:11">000101111</exact>
     <exact bit="7 8:9 65:66">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50:51 54 56:57 59:61 67:79"/>
+    <exact bit="33 52 55">111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 62 64 63"/>
     <alu/>
@@ -1195,7 +1231,10 @@
   </group>
 
   <ins name="rcp" length="10" form="float_special">
-    <template>af 00 54 00 02 00 00 48 20 00</template>
+    <exact bit="0:11">000010101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50:51 53:58 60:61 63:64 66:68 72:79"/>
+    <exact bit="33 59 69">111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 52 62 71 70"/>
     <alu/>
@@ -1205,7 +1244,10 @@
 
   <!-- A uniform source of the reciprocal sets bit 53 instead of 52 -->
   <ins name="rcp_uniform" display="rcp" length="10" form="float_special_uniform">
-    <template>af 00 54 00 02 00 20 48 20 00</template>
+    <exact bit="0:11">000010101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50:52 54:58 60:61 63:64 66:68 72:79"/>
+    <exact bit="33 53 59 69">1111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 =1 62 71 70"/>
     <alu/>
@@ -1219,8 +1261,11 @@
     FP16 source for an FP32 result.
   -->
   <group name="FP16 special function" length="10" form="half_special">
-    <template>2f 00 54 00 02 00 8c 60 00 00</template>
+    <exact bit="0:6 10:11">000101111</exact>
     <exact bit="7 8:9 65:66">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 49 52 54 56:57 59:60 67:79"/>
+    <exact bit="33 50:51 55 61">11111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
     <alu/>
@@ -1237,7 +1282,10 @@
   </group>
 
   <ins name="srsqrt_f16_f32" display="srsqrt" length="10" form="half_special">
-    <template>2f 01 54 00 02 00 8a 40 00 00</template>
+    <exact bit="0:11">000100101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50 52 54 56:57 59:61 65:79"/>
+    <exact bit="33 49 51 55">1111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
     <alu/>
@@ -1245,27 +1293,28 @@
     <mask_12_17/>
   </ins>
 
-  <ins name="rcp_f16" display="rcp" length="10" form="half_special">
-    <template>af 00 54 00 02 00 00 46 30 00</template>
+  <group name="FP16 reciprocal" length="10" form="half_special">
+    <exact bit="0:11">000010101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <exact bit="57 68">opcode</exact>
+    <zero bit="34:41 49:51 53:56 59:61 63:64 66:67 72:79"/>
+    <exact bit="33 58 69">111</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
     <alu/>
     <modifier name="saturate" bit="65" display="sat"/>
     <mask_12_17/>
-  </ins>
 
-  <ins name="rcp_f16_f32" display="rcp" length="10" form="half_special">
-    <template>af 00 54 00 02 00 00 44 20 00</template>
-    <rdst/>
-    <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
-    <alu/>
-    <modifier name="saturate" bit="65" display="sat"/>
-    <mask_12_17/>
-  </ins>
+    <ins name="rcp_f16" display="rcp" opcode="11"/>
+    <ins name="rcp_f16_f32" display="rcp" opcode="00"/>
+  </group>
 
   <group name="Derivative" length="10" form="derivative">
-    <template>37 05 54 00 03 00 90 40 00 00</template>
+    <exact bit="0:8 10:11">01100110111</exact>
     <exact bit="9">opcode</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50:51 53:54 56:57 59:61 63:79"/>
+    <exact bit="32:33 52 55 62">11111</exact>
     <rdst/>
     <src kind="reg" bit="42:48 49 =0"/>
     <modifier name="saturate" bit="58" display="sat"/>
@@ -1275,23 +1324,24 @@
     <ins name="dfdy" opcode="1"/>
   </group>
 
-  <!-- Special registers. Bit 15 of the selector is set. -->
-  <ins name="get_sr" length="4" form="get_sr get_draw_id get_coverage">
-    <template>0c 80 10 06</template>
+  <!-- Special registers. Bit 15 of the selector is set. 16-bit registers
+       are read with get_sr16, followed by the companion zero-extending the
+       result in place. -->
+  <group name="Special registers" length="4">
+    <exact bit="0:3">opcode</exact>
+    <zero bit="16:19 21 24 27:31"/>
+    <exact bit="20 25:26">111</exact>
     <dst4/>
     <modifier name="sr" kind="sr" bit="8:15"/>
-  </ins>
 
-  <!-- 16-bit registers are read with this form, followed by the companion
-       zero-extending the result in place -->
-  <ins name="get_sr16" length="4" form="get_sr_zext16">
-    <template>04 80 10 06</template>
-    <dst4/>
-    <modifier name="sr" kind="sr" bit="8:15"/>
-  </ins>
+    <ins name="get_sr" opcode="1100" form="get_sr get_draw_id get_coverage"/>
+    <ins name="get_sr16" opcode="0100" form="get_sr_zext16"/>
+  </group>
 
   <ins name="zext16" length="4" form="get_sr_zext16 float_to_half_zext">
-    <template>03 00 00 01</template>
+    <exact bit="0:3">0011</exact>
+    <zero bit="8:21 25:31"/>
+    <exact bit="24">1</exact>
     <dst4/>
   </ins>
 
