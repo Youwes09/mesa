@@ -2569,18 +2569,31 @@ static agx_instr *
 agx_emit_imadshl_agx(agx_builder *b, nir_alu_instr *alu, agx_index dst,
                      agx_index s0, agx_index s1, agx_index s2, agx_index s3)
 {
-   /* If the shift is not constant, use a variable shift. This should never
-    * happen in practice but we don't want to constrain the NIR.
-    */
-   unsigned shift;
-   if (!nir_src_is_const(alu->src[3].src)) {
-      s2 = agx_bfi(b, agx_immediate(0), s2, s3, 0);
-      shift = 0;
-   } else {
-      shift = nir_alu_src_as_uint(alu->src[3]);
-   }
+   bool sub = alu->op == nir_op_imsubshl_agx;
+   unsigned shift = 0;
 
-   assert(shift <= 4 && "domain restriction on the input NIR");
+   if (b->shader->target.word_registers) {
+      /* There are no shifted adds, so shift the addend first */
+      if (!nir_src_is_const(alu->src[3].src) ||
+          nir_alu_src_as_uint(alu->src[3]) != 0)
+         s2 = agx_shl32(b, s2, s3);
+
+      if (sub)
+         s2 = agx_neg(s2);
+   } else {
+      if (sub)
+         s2 = agx_neg(s2);
+
+      /* If the shift is not constant, use a variable shift. This should never
+       * happen in practice but we don't want to constrain the NIR.
+       */
+      if (!nir_src_is_const(alu->src[3].src))
+         s2 = agx_bfi(b, agx_immediate(0), s2, s3, 0);
+      else
+         shift = nir_alu_src_as_uint(alu->src[3]);
+
+      assert(shift <= 4 && "domain restriction on the input NIR");
+   }
 
    /* Emit iadd if possible, else imad */
    if (nir_src_is_const(alu->src[1].src) &&
@@ -2630,73 +2643,448 @@ agx_fminmax_to(agx_builder *b, agx_index dst, agx_index s0, agx_index s1,
    return agx_fcmpsel_to(b, dst, s0, s1, s0, s1, fcond);
 }
 
-/* FP16 special function on low halves */
+/* Words hold narrower integers in their low bits, with undefined high bits */
 static agx_instr *
-agx_emit_half_special(agx_builder *b, nir_op op, agx_index dst, agx_index s0)
+agx_emit_word_resize(agx_builder *b, nir_alu_instr *alu, agx_index dst,
+                     agx_index s0)
 {
-   agx_instr *I;
+   unsigned src_sz = nir_src_bit_size(alu->src[0].src);
+   bool sign = alu->op == nir_op_i2i8 || alu->op == nir_op_i2i16 ||
+               alu->op == nir_op_i2i32;
 
-   switch (op) {
-   case nir_op_frcp:
-      I = agx_rcp_to(b, dst, s0);
-      break;
-   case nir_op_frsq:
-      I = agx_rsqrt_to(b, dst, s0);
-      break;
-   case nir_op_fexp2:
-      I = agx_exp2_to(b, dst, s0);
-      break;
-   case nir_op_flog2:
-      I = agx_log2_to(b, dst, s0);
-      break;
-   case nir_op_ffloor:
-      I = agx_floor_to(b, dst, s0);
-      break;
-   case nir_op_fceil:
-      I = agx_ceil_to(b, dst, s0);
-      break;
-   case nir_op_ftrunc:
-      I = agx_trunc_to(b, dst, s0);
-      break;
-   case nir_op_fround_even:
-      I = agx_roundeven_to(b, dst, s0);
-      break;
-   default:
-      UNREACHABLE("not an FP16 special function");
-   }
-
-   I->format = AGX_FORMAT_F16;
-   return I;
+   if (src_sz == 64)
+      return agx_subdivide_to(b, dst, s0, 0);
+   else if (src_sz >= alu->def.bit_size)
+      return agx_mov_to(b, dst, s0);
+   else
+      return agx_mov_to(b, dst, agx_extend(b, s0, src_sz, sign));
 }
 
-/* ALU operations on word registers that differ, or NULL for the rest */
 static agx_instr *
-agx_emit_word_alu(agx_builder *b, nir_alu_instr *instr, agx_index dst,
-                  agx_index s0, agx_index s1, agx_index s2, agx_index s3)
+agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
 {
    unsigned srcs = nir_op_infos[instr->op].num_inputs;
-   unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
    unsigned sz = instr->def.bit_size;
+   unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
+   ASSERTED unsigned comps = instr->def.num_components;
+
+   /* The word ALU unpacks normalized values natively, as vectors */
+   assert(comps == 1 || nir_op_is_vec_or_mov(instr->op) ||
+          (b->shader->target.word_registers &&
+           nir_op_infos[instr->op].output_size == comps));
+   assert(
+      sz == 1 ||
+      ((nir_op_is_vec_or_mov(instr->op) || is_conversion_to_8bit(instr->op) ||
+        instr->op == nir_op_bcsel || b->shader->target.word_registers) &&
+       sz == 8) ||
+      sz == 16 || sz == 32 || sz == 64);
+
+   agx_index dst = agx_def_index(b->shader, &instr->def);
+   agx_index s0 = srcs > 0 ? agx_alu_src_index(b, instr->src[0]) : agx_null();
+   agx_index s1 = srcs > 1 ? agx_alu_src_index(b, instr->src[1]) : agx_null();
+   agx_index s2 = srcs > 2 ? agx_alu_src_index(b, instr->src[2]) : agx_null();
+   agx_index s3 = srcs > 3 ? agx_alu_src_index(b, instr->src[3]) : agx_null();
+
+   agx_index i0 = agx_immediate(0);
+   agx_index i1 = agx_immediate(1);
+   bool words = b->shader->target.word_registers;
+
+#define UNOP(nop, aop)                                                         \
+   case nir_op_##nop:                                                          \
+      return agx_##aop##_to(b, dst, s0);
+/* FP16 operates on the low halves of word registers */
+#define FUNOP(nop, aop)                                                        \
+   case nir_op_##nop: {                                                        \
+      agx_instr *I = agx_##aop##_to(b, dst, s0);                               \
+      if (words && sz == 16)                                                   \
+         I->format = AGX_FORMAT_F16;                                           \
+      return I;                                                                \
+   }
+#define BINOP(nop, aop)                                                        \
+   case nir_op_##nop:                                                          \
+      return agx_##aop##_to(b, dst, s0, s1);
 
    switch (instr->op) {
-   case nir_op_frcp:
-   case nir_op_frsq:
-   case nir_op_fexp2:
-   case nir_op_flog2:
-   case nir_op_ffloor:
-   case nir_op_fceil:
-   case nir_op_ftrunc:
-   case nir_op_fround_even:
-      return sz == 16 ? agx_emit_half_special(b, instr->op, dst, s0) : NULL;
-
    case nir_op_f2f16:
    case nir_op_f2f16_rtne:
+      if (!words)
+         return agx_fmov_to(b, dst, s0);
+
       assert(src_sz == 32 && "doubles are lowered");
       return agx_f32_to_f16_to(b, dst, s0);
 
    case nir_op_f2f32:
+      if (!words)
+         return agx_fmov_to(b, dst, s0);
+
       assert(src_sz == 16 && "doubles are lowered");
       return agx_f16_to_f32_to(b, dst, s0);
+
+      FUNOP(fround_even, roundeven);
+      FUNOP(ftrunc, trunc);
+      FUNOP(ffloor, floor);
+      FUNOP(fceil, ceil);
+      FUNOP(frcp, rcp);
+      FUNOP(frsq, rsqrt);
+      FUNOP(flog2, log2);
+      FUNOP(fexp2, exp2);
+
+      UNOP(mov, mov);
+      UNOP(fsin_factor_agx, sin_factor);
+      UNOP(bitfield_reverse, bitrev);
+      UNOP(bit_count, popcount);
+      UNOP(ufind_msb, ffs);
+      BINOP(iand, and);
+      BINOP(ior, or);
+      BINOP(ixor, xor);
+      BINOP(interleave, intl);
+
+   case nir_op_fadd:
+      if (instr->def.bit_size == 16)
+         return agx_hadd_to(b, dst, s0, s1);
+      else
+         return agx_fadd_to(b, dst, s0, s1);
+
+   case nir_op_fmul:
+      if (instr->def.bit_size == 16)
+         return agx_hmul_to(b, dst, s0, s1);
+      else
+         return agx_fmul_to(b, dst, s0, s1);
+
+   case nir_op_ffma:
+      if (instr->def.bit_size == 16)
+         return agx_hfma_to(b, dst, s0, s1, s2);
+      else
+         return agx_ffma_to(b, dst, s0, s1, s2);
+
+   case nir_op_fsat: {
+      agx_instr *I = agx_fadd_to(b, dst, s0, agx_negzero());
+      if (instr->def.bit_size == 16)
+         I->op = AGX_OPCODE_HADD;
+
+      I->saturate = true;
+      return I;
+   }
+
+   case nir_op_feq:
+   case nir_op_flt:
+   case nir_op_fge:
+   case nir_op_fneu: {
+      enum agx_fcond fcond = instr->op == nir_op_flt   ? AGX_FCOND_LT
+                             : instr->op == nir_op_fge ? AGX_FCOND_GE
+                                                       : AGX_FCOND_EQ;
+      bool invert = instr->op == nir_op_fneu;
+
+      if (words && src_sz == 16)
+         return agx_hcmp_to(b, dst, s0, s1, fcond, invert);
+      else
+         return agx_fcmp_to(b, dst, s0, s1, fcond, invert);
+   }
+
+   case nir_op_ieq:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, false);
+   case nir_op_ine:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, true);
+   case nir_op_ilt:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, false);
+   case nir_op_ige:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, true);
+   case nir_op_ult:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, false);
+   case nir_op_uge:
+      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, true);
+
+   case nir_op_inot:
+      if (sz == 1)
+         return agx_xor_to(b, dst, s0, i1);
+      else if (words)
+         return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, UINT32_MAX));
+      else
+         return agx_not_to(b, dst, s0);
+
+   case nir_op_b2b1:
+      return agx_icmp_to(b, dst, s0, i0, AGX_ICOND_UEQ, true);
+
+   case nir_op_fsqrt:
+      return agx_fmul_to(b, dst, s0, agx_srsqrt(b, s0));
+   case nir_op_fabs:
+      /* FP16 sign operations on words are bitwise */
+      if (words && sz == 16)
+         return agx_and_to(b, dst, s0, agx_mov_imm(b, 32, 0x7fff));
+      else
+         return agx_fmov_to(b, dst, agx_abs(s0));
+   case nir_op_fneg:
+      if (words && sz == 16)
+         return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, 0x8000));
+      else
+         return agx_fmov_to(b, dst, agx_neg(s0));
+
+   case nir_op_fmin:
+   case nir_op_fmax:
+   case nir_op_fmin_agx:
+   case nir_op_fmax_agx:
+      if (words && sz == 16) {
+         assert(!nir_alu_instr_is_signed_zero_preserve(instr) &&
+                "should've been lowered");
+
+         if (instr->op == nir_op_fmin || instr->op == nir_op_fmin_agx)
+            return agx_hmin_to(b, dst, s0, s1);
+         else
+            return agx_hmax_to(b, dst, s0, s1);
+      }
+
+      return agx_fminmax_to(b, dst, s0, s1, instr);
+
+   case nir_op_imin:
+      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_SLT);
+   case nir_op_imax:
+      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_SGT);
+   case nir_op_umin:
+      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_ULT);
+   case nir_op_umax:
+      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_UGT);
+   case nir_op_bounds_agx:
+      /* end offset > bound ? 0 : data */
+      return agx_icmpsel_to(b, dst, s1, s2, agx_zero(), s0, AGX_ICOND_UGT);
+
+   case nir_op_iadd:
+      return agx_iadd_to(b, dst, s0, s1, 0);
+   case nir_op_imadshl_agx:
+   case nir_op_imsubshl_agx:
+      return agx_emit_imadshl_agx(b, instr, dst, s0, s1, s2, s3);
+   case nir_op_isub:
+      return agx_iadd_to(b, dst, s0, agx_neg(s1), 0);
+   case nir_op_ineg:
+      return agx_iadd_to(b, dst, i0, agx_neg(s0), 0);
+   case nir_op_imul:
+      return agx_imad_to(b, dst, s0, s1, i0, 0);
+   case nir_op_umul_2x32_64:
+      return agx_imad_to(b, dst, agx_abs(s0), agx_abs(s1), i0, 0);
+   case nir_op_imul_2x32_64:
+      return agx_imad_to(b, dst, s0, s1, i0, 0);
+   case nir_op_umul_high:
+      return agx_mul_high_to(b, dst, s0, s1, false);
+   case nir_op_imul_high:
+      return agx_mul_high_to(b, dst, s0, s1, true);
+
+   case nir_op_ishl:
+      return agx_bfi_to(b, dst, i0, s0, s1, 0);
+   case nir_op_ushr:
+      return agx_ushr_to(b, dst, s0, s1);
+   case nir_op_ishr:
+      return agx_asr_to(b, dst, s0, s1);
+
+   case nir_op_extr_agx:
+      return agx_extr_to(b, dst, s0, s1, s2,
+                         nir_alu_src_as_uint(instr->src[3]));
+
+   case nir_op_ubitfield_extract: {
+      unsigned m = nir_alu_src_as_uint(instr->src[2]);
+      assert(m != 0 && "should've been optimized");
+
+      if (words) {
+         /* Only constant offsets have a width */
+         if (m >= 32)
+            return agx_ushr_to(b, dst, s0, s1);
+         else if (nir_src_is_const(instr->src[1].src))
+            return agx_bfeil_to(
+               b, dst, agx_zero(), s0,
+               agx_immediate(nir_alu_src_as_uint(instr->src[1])), m);
+         else
+            return agx_mov_to(b, dst,
+                              agx_extend(b, agx_ushr(b, s0, s1), m, false));
+      }
+
+      /* Disable masking if the whole thing is used */
+      if (m >= 32)
+         m = 0;
+
+      return agx_bfeil_to(b, dst, i0, s0, s1, m);
+   }
+
+   case nir_op_bcsel:
+      return agx_icmpsel_to(b, dst, s0, i0, s2, s1, AGX_ICOND_UEQ);
+
+   case nir_op_i2i32: {
+      if (words)
+         return agx_emit_word_resize(b, instr, dst, s0);
+
+      if (src_sz == 8) {
+         /* Sign extend in software, NIR likes 8-bit conversions */
+         agx_index ishl16 = agx_bfi(b, i0, s0, agx_immediate(8), 0);
+         return agx_asr_to(b, dst, ishl16, agx_immediate(8));
+      } else {
+         assert(s0.size == AGX_SIZE_16 && "other conversions lowered");
+         return agx_signext_to(b, dst, s0);
+      }
+   }
+
+   case nir_op_i2i16: {
+      if (words)
+         return agx_emit_word_resize(b, instr, dst, s0);
+
+      if (src_sz == 8) {
+         /* Sign extend in software, NIR likes 8-bit conversions */
+         agx_index ishl16 = agx_bfi(b, i0, s0, agx_immediate(8), 0);
+         return agx_asr_to(b, dst, ishl16, agx_immediate(8));
+      } else {
+         assert(s0.size == AGX_SIZE_32 && "other conversions lowered");
+         return agx_subdivide_to(b, dst, s0, 0);
+      }
+   }
+
+   case nir_op_u2u16: {
+      if (words)
+         return agx_emit_word_resize(b, instr, dst, s0);
+
+      if (s0.size == AGX_SIZE_32)
+         return agx_subdivide_to(b, dst, s0, 0);
+      else
+         return agx_mov_to(b, dst, s0);
+   }
+
+   case nir_op_u2u32:
+      if (words)
+         return agx_emit_word_resize(b, instr, dst, s0);
+
+      return agx_mov_to(b, dst, s0);
+
+   /* It will be put into a 16-bit register, but zero out the garbage. We could
+    * optimize this in the future but it ensures correctness for u2u16(u2u8(x))
+    * sequences.
+    */
+   case nir_op_u2u8:
+   case nir_op_i2i8:
+      if (words)
+         return agx_emit_word_resize(b, instr, dst, s0);
+
+      return agx_and_to(b, dst, s0, agx_immediate(0xFF));
+
+   case nir_op_iadd_sat: {
+      agx_instr *I = agx_iadd_to(b, dst, s0, s1, 0);
+      I->saturate = true;
+      return I;
+   }
+
+   case nir_op_isub_sat: {
+      agx_instr *I = agx_iadd_to(b, dst, s0, agx_neg(s1), 0);
+      I->saturate = true;
+      return I;
+   }
+
+   case nir_op_uadd_sat: {
+      agx_instr *I = agx_iadd_to(b, dst, agx_abs(s0), agx_abs(s1), 0);
+      I->saturate = true;
+      return I;
+   }
+
+   case nir_op_usub_sat: {
+      agx_instr *I = agx_iadd_to(b, dst, agx_abs(s0), agx_neg(agx_abs(s1)), 0);
+      I->saturate = true;
+      return I;
+   }
+
+   case nir_op_fsin_agx: {
+      agx_index fixup = agx_sin_pt_1(b, s0);
+      agx_index sinc = agx_sin_pt_2(b, fixup);
+      return agx_fmul_to(b, dst, sinc, fixup);
+   }
+
+   case nir_op_f2i16:
+   case nir_op_f2i32:
+   case nir_op_f2u16:
+   case nir_op_f2u32: {
+      bool sign = instr->op == nir_op_f2i16 || instr->op == nir_op_f2i32;
+      enum agx_convert mode;
+
+      if (words) {
+         /* Narrow results are the low bits. Conversions take FP32 only */
+         if (src_sz == 16)
+            s0 = agx_f16_to_f32(b, s0);
+
+         mode = sign ? AGX_CONVERT_F_TO_S32 : AGX_CONVERT_F_TO_U32;
+      } else if (sz == 16) {
+         mode = sign ? AGX_CONVERT_F_TO_S16 : AGX_CONVERT_F_TO_U16;
+      } else {
+         mode = sign ? AGX_CONVERT_F_TO_S32 : AGX_CONVERT_F_TO_U32;
+      }
+
+      return agx_convert_to(b, dst, agx_immediate(mode), s0, AGX_ROUND_RTZ);
+   }
+
+   case nir_op_u2f16:
+   case nir_op_u2f32: {
+      if (src_sz == 64)
+         UNREACHABLE("64-bit conversions unimplemented");
+
+      /* Word conversions take whole words */
+      if (words && sz == 32) {
+         s0 = agx_extend(b, s0, src_sz, false);
+         src_sz = 32;
+      }
+
+      enum agx_convert mode = (src_sz == 32)   ? AGX_CONVERT_U32_TO_F
+                              : (src_sz == 16) ? AGX_CONVERT_U16_TO_F
+                                               : AGX_CONVERT_U8_TO_F;
+
+      return agx_convert_to(b, dst, agx_immediate(mode), s0, AGX_ROUND_RTE);
+   }
+
+   case nir_op_i2f16:
+   case nir_op_i2f32: {
+      if (src_sz == 64)
+         UNREACHABLE("64-bit conversions unimplemented");
+
+      if (words && sz == 32) {
+         s0 = agx_extend(b, s0, src_sz, true);
+         src_sz = 32;
+      }
+
+      enum agx_convert mode = (src_sz == 32)   ? AGX_CONVERT_S32_TO_F
+                              : (src_sz == 16) ? AGX_CONVERT_S16_TO_F
+                                               : AGX_CONVERT_S8_TO_F;
+
+      return agx_convert_to(b, dst, agx_immediate(mode), s0, AGX_ROUND_RTE);
+   }
+
+   case nir_op_pack_32_2x16_split:
+      if (words)
+         return agx_or_to(b, dst, agx_extend(b, s0, 16, false),
+                          agx_shl32(b, s1, agx_immediate(16)));
+      FALLTHROUGH;
+   case nir_op_pack_64_2x32_split: {
+      agx_index idx[] = {s0, s1};
+      return agx_emit_collect_to(b, dst, 2, idx);
+   }
+
+   case nir_op_unpack_32_2x16_split_x:
+      if (words)
+         return agx_mov_to(b, dst, s0);
+      FALLTHROUGH;
+   case nir_op_unpack_64_2x32_split_x:
+      return agx_subdivide_to(b, dst, s0, 0);
+
+   case nir_op_unpack_32_2x16_split_y:
+      if (words)
+         return agx_ushr_to(b, dst, s0, agx_immediate(16));
+      FALLTHROUGH;
+   case nir_op_unpack_64_2x32_split_y:
+      return agx_subdivide_to(b, dst, s0, 1);
+
+   case nir_op_pack_64_4x16: {
+      agx_index packed[2];
+      for (unsigned i = 0; i < 2; ++i) {
+         agx_index lo = agx_extract_nir_src(b, instr->src[0].src,
+                                            instr->src[0].swizzle[2 * i]);
+         agx_index hi = agx_extract_nir_src(b, instr->src[0].src,
+                                            instr->src[0].swizzle[2 * i + 1]);
+
+         packed[i] = agx_or(b, agx_extend(b, lo, 16, false),
+                            agx_shl32(b, hi, agx_immediate(16)));
+      }
+
+      return agx_emit_collect_to(b, dst, 2, packed);
+   }
 
    case nir_op_pack_half_2x16:
       return agx_pack_half_to(
@@ -2745,462 +3133,6 @@ agx_emit_word_alu(agx_builder *b, nir_alu_instr *instr, agx_index dst,
 
       return agx_emit_collect_to(b, dst, n, c);
    }
-
-   case nir_op_u2u8:
-   case nir_op_u2u16:
-   case nir_op_u2u32:
-   case nir_op_i2i8:
-   case nir_op_i2i16:
-   case nir_op_i2i32: {
-      bool sign = instr->op == nir_op_i2i8 || instr->op == nir_op_i2i16 ||
-                  instr->op == nir_op_i2i32;
-
-      if (src_sz == 64) {
-         return agx_subdivide_to(b, dst, s0, 0);
-      } else if (src_sz >= sz) {
-         /* The low bits are the narrower value */
-         return agx_mov_to(b, dst, s0);
-      } else {
-         return agx_mov_to(b, dst, agx_extend(b, s0, src_sz, sign));
-      }
-   }
-
-   case nir_op_f2i16:
-   case nir_op_f2i32:
-   case nir_op_f2u16:
-   case nir_op_f2u32: {
-      /* Narrow integer results are the low bits. Conversions take FP32 only */
-      bool sign = instr->op == nir_op_f2i16 || instr->op == nir_op_f2i32;
-      if (src_sz == 16)
-         s0 = agx_f16_to_f32(b, s0);
-
-      return agx_convert_to(
-         b, dst,
-         agx_immediate(sign ? AGX_CONVERT_F_TO_S32 : AGX_CONVERT_F_TO_U32), s0,
-         AGX_ROUND_RTZ);
-   }
-
-   case nir_op_u2f32:
-   case nir_op_i2f32: {
-      bool sign = instr->op == nir_op_i2f32;
-      assert(src_sz <= 32 && "64-bit conversions are lowered");
-
-      return agx_convert_to(
-         b, dst,
-         agx_immediate(sign ? AGX_CONVERT_S32_TO_F : AGX_CONVERT_U32_TO_F),
-         agx_extend(b, s0, src_sz, sign), AGX_ROUND_RTE);
-   }
-
-   case nir_op_inot:
-      if (sz == 1)
-         return NULL;
-
-      return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, UINT32_MAX));
-
-   case nir_op_fsin_factor_agx:
-      return agx_sin_factor_to(b, dst, s0);
-
-   case nir_op_fneg:
-   case nir_op_fabs:
-      /* FP16 sign operations are bitwise */
-      if (sz != 16)
-         return NULL;
-      else if (instr->op == nir_op_fneg)
-         return agx_xor_to(b, dst, s0, agx_mov_imm(b, 32, 0x8000));
-      else
-         return agx_and_to(b, dst, s0, agx_mov_imm(b, 32, 0x7fff));
-
-   case nir_op_imadshl_agx:
-   case nir_op_imsubshl_agx: {
-      /* Shift the addend first */
-      if (!nir_src_is_const(instr->src[3].src) ||
-          nir_alu_src_as_uint(instr->src[3]) != 0)
-         s2 = agx_shl32(b, s2, s3);
-
-      if (instr->op == nir_op_imsubshl_agx)
-         s2 = agx_neg(s2);
-
-      if (nir_src_is_const(instr->src[1].src) &&
-          nir_alu_src_as_uint(instr->src[1]) == 1)
-         return agx_iadd_to(b, dst, s0, s2, 0);
-      else
-         return agx_imad_to(b, dst, s0, s1, s2, 0);
-   }
-
-   case nir_op_ubitfield_extract: {
-      unsigned m = nir_alu_src_as_uint(instr->src[2]);
-      assert(m != 0 && "should've been optimized");
-
-      if (m >= 32)
-         return agx_ushr_to(b, dst, s0, s1);
-      else if (nir_src_is_const(instr->src[1].src))
-         return agx_bfeil_to(b, dst, agx_zero(), s0,
-                             agx_immediate(nir_alu_src_as_uint(instr->src[1])),
-                             m);
-
-      /* Only constant offsets have a width */
-      return agx_mov_to(b, dst, agx_extend(b, agx_ushr(b, s0, s1), m, false));
-   }
-
-   case nir_op_pack_32_2x16_split:
-      return agx_or_to(b, dst, agx_extend(b, s0, 16, false),
-                       agx_shl32(b, s1, agx_immediate(16)));
-
-   case nir_op_unpack_32_2x16_split_x:
-      return agx_mov_to(b, dst, s0);
-
-   case nir_op_unpack_32_2x16_split_y:
-      return agx_ushr_to(b, dst, s0, agx_immediate(16));
-
-   case nir_op_pack_64_4x16: {
-      agx_index words[2];
-      for (unsigned i = 0; i < 2; ++i) {
-         agx_index lo = agx_extract_nir_src(b, instr->src[0].src,
-                                            instr->src[0].swizzle[2 * i]);
-         agx_index hi = agx_extract_nir_src(b, instr->src[0].src,
-                                            instr->src[0].swizzle[2 * i + 1]);
-
-         words[i] = agx_or(b, agx_extend(b, lo, 16, false),
-                           agx_shl32(b, hi, agx_immediate(16)));
-      }
-
-      return agx_emit_collect_to(b, dst, 2, words);
-   }
-
-   default:
-      return NULL;
-   }
-}
-
-static agx_instr *
-agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
-{
-   unsigned srcs = nir_op_infos[instr->op].num_inputs;
-   unsigned sz = instr->def.bit_size;
-   unsigned src_sz = srcs ? nir_src_bit_size(instr->src[0].src) : 0;
-   ASSERTED unsigned comps = instr->def.num_components;
-
-   /* The word ALU unpacks normalized values natively, as vectors */
-   assert(comps == 1 || nir_op_is_vec_or_mov(instr->op) ||
-          (b->shader->target.word_registers &&
-           nir_op_infos[instr->op].output_size == comps));
-   assert(
-      sz == 1 ||
-      ((nir_op_is_vec_or_mov(instr->op) || is_conversion_to_8bit(instr->op) ||
-        instr->op == nir_op_bcsel || b->shader->target.word_registers) &&
-       sz == 8) ||
-      sz == 16 || sz == 32 || sz == 64);
-
-   agx_index dst = agx_def_index(b->shader, &instr->def);
-   agx_index s0 = srcs > 0 ? agx_alu_src_index(b, instr->src[0]) : agx_null();
-   agx_index s1 = srcs > 1 ? agx_alu_src_index(b, instr->src[1]) : agx_null();
-   agx_index s2 = srcs > 2 ? agx_alu_src_index(b, instr->src[2]) : agx_null();
-   agx_index s3 = srcs > 3 ? agx_alu_src_index(b, instr->src[3]) : agx_null();
-
-   agx_index i0 = agx_immediate(0);
-   agx_index i1 = agx_immediate(1);
-
-   if (b->shader->target.word_registers) {
-      agx_instr *I = agx_emit_word_alu(b, instr, dst, s0, s1, s2, s3);
-      if (I)
-         return I;
-   }
-
-#define UNOP(nop, aop)                                                         \
-   case nir_op_##nop:                                                          \
-      return agx_##aop##_to(b, dst, s0);
-#define BINOP(nop, aop)                                                        \
-   case nir_op_##nop:                                                          \
-      return agx_##aop##_to(b, dst, s0, s1);
-
-   switch (instr->op) {
-      UNOP(f2f16, fmov);
-      UNOP(f2f16_rtne, fmov);
-      UNOP(f2f32, fmov);
-      UNOP(fround_even, roundeven);
-      UNOP(ftrunc, trunc);
-      UNOP(ffloor, floor);
-      UNOP(fceil, ceil);
-      UNOP(frcp, rcp);
-      UNOP(frsq, rsqrt);
-      UNOP(flog2, log2);
-      UNOP(fexp2, exp2);
-
-      UNOP(mov, mov);
-      UNOP(u2u32, mov);
-      UNOP(bitfield_reverse, bitrev);
-      UNOP(bit_count, popcount);
-      UNOP(ufind_msb, ffs);
-      BINOP(iand, and);
-      BINOP(ior, or);
-      BINOP(ixor, xor);
-      BINOP(interleave, intl);
-
-   case nir_op_fadd:
-      if (instr->def.bit_size == 16)
-         return agx_hadd_to(b, dst, s0, s1);
-      else
-         return agx_fadd_to(b, dst, s0, s1);
-
-   case nir_op_fmul:
-      if (instr->def.bit_size == 16)
-         return agx_hmul_to(b, dst, s0, s1);
-      else
-         return agx_fmul_to(b, dst, s0, s1);
-
-   case nir_op_ffma:
-      if (instr->def.bit_size == 16)
-         return agx_hfma_to(b, dst, s0, s1, s2);
-      else
-         return agx_ffma_to(b, dst, s0, s1, s2);
-
-   case nir_op_fsat: {
-      agx_instr *I = agx_fadd_to(b, dst, s0, agx_negzero());
-      if (instr->def.bit_size == 16)
-         I->op = AGX_OPCODE_HADD;
-
-      I->saturate = true;
-      return I;
-   }
-
-   case nir_op_feq:
-   case nir_op_flt:
-   case nir_op_fge:
-   case nir_op_fneu: {
-      enum agx_fcond fcond = instr->op == nir_op_flt   ? AGX_FCOND_LT
-                             : instr->op == nir_op_fge ? AGX_FCOND_GE
-                                                       : AGX_FCOND_EQ;
-      bool invert = instr->op == nir_op_fneu;
-
-      if (b->shader->target.word_registers && src_sz == 16)
-         return agx_hcmp_to(b, dst, s0, s1, fcond, invert);
-      else
-         return agx_fcmp_to(b, dst, s0, s1, fcond, invert);
-   }
-
-   case nir_op_ieq:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, false);
-   case nir_op_ine:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, true);
-   case nir_op_ilt:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, false);
-   case nir_op_ige:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, true);
-   case nir_op_ult:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, false);
-   case nir_op_uge:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, true);
-
-   case nir_op_inot:
-      if (sz == 1)
-         return agx_xor_to(b, dst, s0, i1);
-      else
-         return agx_not_to(b, dst, s0);
-
-   case nir_op_b2b1:
-      return agx_icmp_to(b, dst, s0, i0, AGX_ICOND_UEQ, true);
-
-   case nir_op_fsqrt:
-      return agx_fmul_to(b, dst, s0, agx_srsqrt(b, s0));
-   case nir_op_fabs:
-      return agx_fmov_to(b, dst, agx_abs(s0));
-   case nir_op_fneg:
-      return agx_fmov_to(b, dst, agx_neg(s0));
-
-   case nir_op_fmin:
-   case nir_op_fmax:
-   case nir_op_fmin_agx:
-   case nir_op_fmax_agx:
-      if (b->shader->target.word_registers && sz == 16) {
-         assert(!nir_alu_instr_is_signed_zero_preserve(instr) &&
-                "should've been lowered");
-
-         if (instr->op == nir_op_fmin || instr->op == nir_op_fmin_agx)
-            return agx_hmin_to(b, dst, s0, s1);
-         else
-            return agx_hmax_to(b, dst, s0, s1);
-      }
-
-      return agx_fminmax_to(b, dst, s0, s1, instr);
-
-   case nir_op_imin:
-      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_SLT);
-   case nir_op_imax:
-      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_SGT);
-   case nir_op_umin:
-      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_ULT);
-   case nir_op_umax:
-      return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_UGT);
-   case nir_op_bounds_agx:
-      /* end offset > bound ? 0 : data */
-      return agx_icmpsel_to(b, dst, s1, s2, agx_zero(), s0, AGX_ICOND_UGT);
-
-   case nir_op_iadd:
-      return agx_iadd_to(b, dst, s0, s1, 0);
-   case nir_op_imadshl_agx:
-      return agx_emit_imadshl_agx(b, instr, dst, s0, s1, s2, s3);
-   case nir_op_imsubshl_agx:
-      return agx_emit_imadshl_agx(b, instr, dst, s0, s1, agx_neg(s2), s3);
-   case nir_op_isub:
-      return agx_iadd_to(b, dst, s0, agx_neg(s1), 0);
-   case nir_op_ineg:
-      return agx_iadd_to(b, dst, i0, agx_neg(s0), 0);
-   case nir_op_imul:
-      return agx_imad_to(b, dst, s0, s1, i0, 0);
-   case nir_op_umul_2x32_64:
-      return agx_imad_to(b, dst, agx_abs(s0), agx_abs(s1), i0, 0);
-   case nir_op_imul_2x32_64:
-      return agx_imad_to(b, dst, s0, s1, i0, 0);
-   case nir_op_umul_high:
-      return agx_mul_high_to(b, dst, s0, s1, false);
-   case nir_op_imul_high:
-      return agx_mul_high_to(b, dst, s0, s1, true);
-
-   case nir_op_ishl:
-      return agx_bfi_to(b, dst, i0, s0, s1, 0);
-   case nir_op_ushr:
-      return agx_ushr_to(b, dst, s0, s1);
-   case nir_op_ishr:
-      return agx_asr_to(b, dst, s0, s1);
-
-   case nir_op_extr_agx:
-      return agx_extr_to(b, dst, s0, s1, s2,
-                         nir_alu_src_as_uint(instr->src[3]));
-
-   case nir_op_ubitfield_extract: {
-      unsigned m = nir_alu_src_as_uint(instr->src[2]);
-      assert(m != 0 && "should've been optimized");
-
-      /* Disable masking if the whole thing is used */
-      if (m >= 32)
-         m = 0;
-
-      return agx_bfeil_to(b, dst, i0, s0, s1, m);
-   }
-
-   case nir_op_bcsel:
-      return agx_icmpsel_to(b, dst, s0, i0, s2, s1, AGX_ICOND_UEQ);
-
-   case nir_op_i2i32: {
-      if (src_sz == 8) {
-         /* Sign extend in software, NIR likes 8-bit conversions */
-         agx_index ishl16 = agx_bfi(b, i0, s0, agx_immediate(8), 0);
-         return agx_asr_to(b, dst, ishl16, agx_immediate(8));
-      } else {
-         assert(s0.size == AGX_SIZE_16 && "other conversions lowered");
-         return agx_signext_to(b, dst, s0);
-      }
-   }
-
-   case nir_op_i2i16: {
-      if (src_sz == 8) {
-         /* Sign extend in software, NIR likes 8-bit conversions */
-         agx_index ishl16 = agx_bfi(b, i0, s0, agx_immediate(8), 0);
-         return agx_asr_to(b, dst, ishl16, agx_immediate(8));
-      } else {
-         assert(s0.size == AGX_SIZE_32 && "other conversions lowered");
-         return agx_subdivide_to(b, dst, s0, 0);
-      }
-   }
-
-   case nir_op_u2u16: {
-      if (s0.size == AGX_SIZE_32)
-         return agx_subdivide_to(b, dst, s0, 0);
-      else
-         return agx_mov_to(b, dst, s0);
-   }
-
-   /* It will be put into a 16-bit register, but zero out the garbage. We could
-    * optimize this in the future but it ensures correctness for u2u16(u2u8(x))
-    * sequences.
-    */
-   case nir_op_u2u8:
-   case nir_op_i2i8:
-      return agx_and_to(b, dst, s0, agx_immediate(0xFF));
-
-   case nir_op_iadd_sat: {
-      agx_instr *I = agx_iadd_to(b, dst, s0, s1, 0);
-      I->saturate = true;
-      return I;
-   }
-
-   case nir_op_isub_sat: {
-      agx_instr *I = agx_iadd_to(b, dst, s0, agx_neg(s1), 0);
-      I->saturate = true;
-      return I;
-   }
-
-   case nir_op_uadd_sat: {
-      agx_instr *I = agx_iadd_to(b, dst, agx_abs(s0), agx_abs(s1), 0);
-      I->saturate = true;
-      return I;
-   }
-
-   case nir_op_usub_sat: {
-      agx_instr *I = agx_iadd_to(b, dst, agx_abs(s0), agx_neg(agx_abs(s1)), 0);
-      I->saturate = true;
-      return I;
-   }
-
-   case nir_op_fsin_agx: {
-      agx_index fixup = agx_sin_pt_1(b, s0);
-      agx_index sinc = agx_sin_pt_2(b, fixup);
-      return agx_fmul_to(b, dst, sinc, fixup);
-   }
-
-   case nir_op_f2i16:
-      return agx_convert_to(b, dst, agx_immediate(AGX_CONVERT_F_TO_S16), s0,
-                            AGX_ROUND_RTZ);
-
-   case nir_op_f2i32:
-      return agx_convert_to(b, dst, agx_immediate(AGX_CONVERT_F_TO_S32), s0,
-                            AGX_ROUND_RTZ);
-
-   case nir_op_f2u16:
-      return agx_convert_to(b, dst, agx_immediate(AGX_CONVERT_F_TO_U16), s0,
-                            AGX_ROUND_RTZ);
-
-   case nir_op_f2u32:
-      return agx_convert_to(b, dst, agx_immediate(AGX_CONVERT_F_TO_U32), s0,
-                            AGX_ROUND_RTZ);
-
-   case nir_op_u2f16:
-   case nir_op_u2f32: {
-      if (src_sz == 64)
-         UNREACHABLE("64-bit conversions unimplemented");
-
-      enum agx_convert mode = (src_sz == 32)   ? AGX_CONVERT_U32_TO_F
-                              : (src_sz == 16) ? AGX_CONVERT_U16_TO_F
-                                               : AGX_CONVERT_U8_TO_F;
-
-      return agx_convert_to(b, dst, agx_immediate(mode), s0, AGX_ROUND_RTE);
-   }
-
-   case nir_op_i2f16:
-   case nir_op_i2f32: {
-      if (src_sz == 64)
-         UNREACHABLE("64-bit conversions unimplemented");
-
-      enum agx_convert mode = (src_sz == 32)   ? AGX_CONVERT_S32_TO_F
-                              : (src_sz == 16) ? AGX_CONVERT_S16_TO_F
-                                               : AGX_CONVERT_S8_TO_F;
-
-      return agx_convert_to(b, dst, agx_immediate(mode), s0, AGX_ROUND_RTE);
-   }
-
-   case nir_op_pack_32_2x16_split:
-   case nir_op_pack_64_2x32_split: {
-      agx_index idx[] = {s0, s1};
-      return agx_emit_collect_to(b, dst, 2, idx);
-   }
-
-   case nir_op_unpack_64_2x32_split_x:
-   case nir_op_unpack_32_2x16_split_x:
-      return agx_subdivide_to(b, dst, s0, 0);
-
-   case nir_op_unpack_64_2x32_split_y:
-   case nir_op_unpack_32_2x16_split_y:
-      return agx_subdivide_to(b, dst, s0, 1);
 
    case nir_op_vec2:
    case nir_op_vec3:
