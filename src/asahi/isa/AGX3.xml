@@ -819,8 +819,10 @@
     constant.
   -->
   <group name="Min/max" length="6" form="minmax_compact">
-    <template>02 01 3e 05 00 00</template>
+    <exact bit="0:3">0010</exact>
     <exact bit="17 32:34">opcode</exact>
+    <zero bit="16 37:38"/>
+    <exact bit="21">1</exact>
     <dst6/>
     <fsrc1_6/>
     <fsrc2_6/>
@@ -834,8 +836,10 @@
   </group>
 
   <group name="Integer min/max" length="6" form="minmax_compact">
-    <template>02 01 3e 05 00 00</template>
+    <exact bit="0:3">0010</exact>
     <exact bit="17 32:34">opcode</exact>
+    <zero bit="16 37:38"/>
+    <exact bit="21">1</exact>
     <dst6/>
     <isrc1_6/>
     <src kind="isrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
@@ -855,7 +859,10 @@
     Bit 18 is clear when C or D carries a modifier.
   -->
   <ins name="fcmpsel" length="10" form="select_gpr_wide half_compare_select">
-    <template>02 01 1f 01 82 00 00 00 80 00</template>
+    <exact bit="0:3">0010</exact>
+    <exact bit="16:17">11</exact>
+    <exact bit="32:33">10</exact>
+    <zero bit="21 50:51 53:54 64:66"/>
     <dst8/>
     <fsrc1_ext/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
@@ -867,7 +874,11 @@
   </ins>
 
   <ins name="icmpsel" length="10" form="select_gpr_wide">
-    <template>02 01 1f 01 82 00 04 00 80 00</template>
+    <exact bit="0:3">0010</exact>
+    <exact bit="16:17">11</exact>
+    <exact bit="32:33">10</exact>
+    <zero bit="21 51 53:54 64:66"/>
+    <exact bit="50">1</exact>
     <dst8/>
     <isrc1_ext/>
     <src kind="isrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
@@ -879,7 +890,10 @@
   </ins>
 
   <ins name="fcmpsel_mod" display="fcmpsel" length="14" form="select_modifier_extended">
-    <template>02 01 1f 01 83 00 00 00 80 00 00 00 00 00</template>
+    <exact bit="0:3">0010</exact>
+    <exact bit="16:17">11</exact>
+    <exact bit="32:33">11</exact>
+    <zero bit="21 50:51 53:54 64:66 80:92 98:111"/>
     <dst8/>
     <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 96"/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 97"/>
@@ -894,11 +908,14 @@
   <!--
     Predicate compares. Byte 0 bits 5-7 name the predicate, bit 4 inverts the
     result, bit 16 selects the extended form. Registers are released through
-    bits 19 and 20 only. FP16 operands clear the width bits. Bit 34 (36 in the
+    bits 19 and 20 only. FP16 operands clear the width bits. Bit 34 (50 in the
     extended form) is set for the integer conditions.
   -->
   <ins name="fcmp_pred" length="6" form="predicate_compare_short half_predicate_short">
-    <template>0a 01 22 01 00 00</template>
+    <exact bit="0:3">1010</exact>
+    <exact bit="16:18">010</exact>
+    <zero bit="22:23 34:35 37:38 43:44"/>
+    <exact bit="21">1</exact>
     <src kind="fsrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
     <src kind="fsrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
     <pred/>
@@ -908,7 +925,11 @@
   </ins>
 
   <ins name="icmp_pred" length="6" form="predicate_compare_short">
-    <template>0a 01 22 01 04 00</template>
+    <exact bit="0:3">1010</exact>
+    <exact bit="16:18">010</exact>
+    <exact bit="34">1</exact>
+    <zero bit="22:23 35 37:38 43:44"/>
+    <exact bit="21">1</exact>
     <src kind="isrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
     <isrc2_6/>
     <pred/>
@@ -918,7 +939,11 @@
   </ins>
 
   <ins name="fcmp_pred_ext" display="fcmp_pred" length="10" form="predicate_compare_extended half_predicate_extended predicate_compare_loop">
-    <template>0a 01 23 01 06 00 00 00 00 00</template>
+    <exact bit="0:3">1010</exact>
+    <exact bit="16:18">011</exact>
+    <exact bit="32:34">110</exact>
+    <zero bit="22:23 35:47 50:51 53:54 59:60 64:79"/>
+    <exact bit="21">1</exact>
     <fsrc1_ext/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
     <pred/>
@@ -928,7 +953,11 @@
   </ins>
 
   <ins name="icmp_pred_ext" display="icmp_pred" length="10" form="predicate_compare_extended predicate_compare_loop">
-    <template>0a 01 23 01 06 00 04 00 00 00</template>
+    <exact bit="0:3">1010</exact>
+    <exact bit="16:18">011</exact>
+    <exact bit="32:34">110</exact>
+    <zero bit="22:23 35:47 51 53:54 59:60 64:79"/>
+    <exact bit="21 50">11</exact>
     <isrc1_ext/>
     <src kind="isrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
     <pred/>
@@ -943,7 +972,9 @@
     Bit 68 makes an export move write one word per lane.
   -->
   <ins name="bitop" length="10" form="logic_extended logic_uniform">
-    <template>0b 05 1f 01 00 00 00 00 00 00</template>
+    <exact bit="0:3">1011</exact>
+    <exact bit="17:18">11</exact>
+    <zero bit="32 34 37:38 48:60 64:79"/>
     <dst6/>
     <isrc1_6/>
     <isrc2_6/>
@@ -953,7 +984,10 @@
   </ins>
 
   <ins name="bitop_export" display="bitop" length="10" form="logic_export publication_pair publication_split block_store_params block_store_extended_params image_write_params texture_lod_params texture_volume_params texture_grad_params texture_grad_array_params texture_grad_volume_params">
-    <template>0b 05 1f 01 40 00 00 00 00 00</template>
+    <exact bit="0:3">1011</exact>
+    <exact bit="17:18">11</exact>
+    <zero bit="32 34 37 48:57 64:67 69:79"/>
+    <exact bit="38">1</exact>
     <edst6/>
     <isrc1_6/>
     <isrc2_6/>
@@ -967,14 +1001,20 @@
   <!-- Move of a loaded word into r0-r63, by the drivers' launch code. Bit
        30 waits for the loads on slot 2. -->
   <ins name="mov_launch" display="mov" length="4" form="launch_move">
-    <template>0b 00 09 04</template>
+    <exact bit="0:3">1011</exact>
+    <exact bit="16:18">001</exact>
+    <zero bit="8 15 20:21 24:25 27:29 31"/>
+    <exact bit="19 26">11</exact>
     <dst4/>
     <src kind="reg" bit="9:14 =0 =0 =0"/>
     <modifier name="wait" bit="30"/>
   </ins>
 
   <ins name="mov_uniform" display="mov" length="4" form="uniform_move">
-    <template>0b 00 01 08</template>
+    <exact bit="0:3">1011</exact>
+    <exact bit="16:18">001</exact>
+    <zero bit="8 15 20:21 24:26 29:31"/>
+    <exact bit="27">1</exact>
     <dst4/>
     <src kind="uniform" bit="9:14 19 28"/>
   </ins>
@@ -982,13 +1022,17 @@
   <!-- Moves of constants: seven bits into r0-r15, or 32 bits into r0-r63.
        Bit 15 of the short form means no write. -->
   <ins name="mov_imm" display="mov" length="2" form="mov_imm_compact">
-    <template>0c 00</template>
+    <exact bit="0:3">1100</exact>
+    <zero bit="15"/>
     <dest kind="dst" bit="4:7 =0 =0 =0 =0 =0"/>
     <immediate name="value" bit="8:14"/>
   </ins>
 
   <ins name="mov_imm32" display="mov" length="8" form="mov_imm32">
-    <template>0c 80 02 00 00 00 00 00</template>
+    <exact bit="0:3">1100</exact>
+    <exact bit="16:18">010</exact>
+    <zero bit="19:21 24 32 37:41 44:47 60:63"/>
+    <exact bit="15">1</exact>
     <dst4/>
     <immediate name="value" bit="8:14 33:36 42:43 48:55 56:59 25:31"/>
   </ins>
