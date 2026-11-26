@@ -3654,6 +3654,8 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       cfg.cull_back = dyn->rs.cull_mode & VK_CULL_MODE_BACK_BIT;
       cfg.depth_clip = vk_rasterization_state_depth_clip_enable(&dyn->rs);
       cfg.depth_clamp = !cfg.depth_clip;
+      /* Tag write disable alone does not stop shaders that discard */
+      cfg.rasterizer_discard = rasterizer_discard;
       /* Bresenham lines cover every sample of a covered pixel. */
       cfg.primitive_msaa =
          lines && dyn->rs.line.mode == VK_LINE_RASTERIZATION_MODE_BRESENHAM_KHR;

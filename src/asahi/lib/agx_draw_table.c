@@ -138,7 +138,7 @@ agx_prepare_draw_record_alloc(
       put_u32(group + 0x50, get_u32(group + 0x50) | (1u << 23));
    /* Native raster packet: cull front/back bits 0/1, provoking vertex
     * bits 7/8, clipping/clamping bits 10/11, primitive MSAA bit 15, front
-    * winding bit 16. */
+    * winding bit 16, rasterizer discard bit 17. */
    put_u32(group + 0x70, (get_u32(group + 0x70) & ~0x38d83u) |
                             ((draw->provoking_vertex + 1u) << 7) |
                             draw->raster_control);
