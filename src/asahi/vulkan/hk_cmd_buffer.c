@@ -426,6 +426,10 @@ hk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    vk_command_buffer_begin(&cmd->vk, pBeginInfo);
 
+   /* Secondaries only enqueue commands, replayed by vkCmdExecuteCommands. */
+   if (cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY)
+      return VK_SUCCESS;
+
    perf_debug(cmd, "Begin command buffer");
    hk_cmd_buffer_begin_compute(cmd, pBeginInfo);
    hk_cmd_buffer_begin_graphics(cmd, pBeginInfo);
