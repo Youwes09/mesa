@@ -754,7 +754,7 @@ hk_CreateDescriptorPool(VkDevice _device,
       vk_find_struct_const(pCreateInfo->pNext,
                            MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT);
 
-   uint32_t max_align = 0;
+   uint32_t max_align = 0, max_stride = 0;
    for (unsigned i = 0; i < pCreateInfo->poolSizeCount; ++i) {
       const VkMutableDescriptorTypeListEXT *type_list = NULL;
       if (pCreateInfo->pPoolSizes[i].type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT &&
@@ -766,6 +766,7 @@ hk_CreateDescriptorPool(VkDevice _device,
                                           type_list, false, &stride,
                                           &alignment);
       max_align = MAX2(max_align, alignment);
+      max_stride = MAX2(max_stride, stride);
    }
 
    uint64_t bo_size = 0;
@@ -789,9 +790,12 @@ hk_CreateDescriptorPool(VkDevice _device,
     * extra space to get the right alignment.  (Technically, it's at most 28B
     * because we're always going to start at least 4B aligned but we're being
     * conservative here.)  Allocate enough extra space that we can chop it
-    * into maxSets pieces and align each one of them to 32B.
+    * into maxSets pieces and align each one of them to 32B. Each set with a
+    * variable-count binding also allocates one extra descriptor, see
+    * hk_descriptor_set_create.
     */
-   bo_size += HK_MIN_UBO_ALIGNMENT * pCreateInfo->maxSets;
+   bo_size +=
+      (uint64_t)(HK_MIN_UBO_ALIGNMENT + max_stride) * pCreateInfo->maxSets;
 
    if (hk_descriptor_memory_init(&pool->mem, &hk_descriptor_bo_ops, dev,
                                  bo_size) != HK_DESCRIPTOR_MEMORY_OK) {
