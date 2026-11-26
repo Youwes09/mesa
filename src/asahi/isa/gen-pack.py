@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 # Generates instruction packers from an ISA description: for each instruction
-# a function packing its fields over its template, and for each operand
+# a function packing its fields over its fixed bits, and for each operand
 # encoding a function packing an operand into the value of a field.
 
 import sys
@@ -12,6 +12,10 @@ import isa as isa_xml
 
 isa = isa_xml.load(sys.argv[1])
 prefix = isa.name
+
+# Packers start from the fixed bits, so every bit must be a field or fixed
+for ins in isa.instrs.values():
+    assert ins.mask() == (1 << (8 * ins.length[0])) - 1, ins.name
 
 # Operand properties and modifiers, as the disassembler names them
 FLAGS = ['size32', 'size64', 'cache', 'lu', 'neg', 'abs', 'sx']
