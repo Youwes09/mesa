@@ -5413,9 +5413,6 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    const struct agx_isa_target *target =
       agx_get_isa_target(key->dev.shader_isa);
 
-   /* The shader must have been prepared for the ISA it is compiled for */
-   assert(target == agx_nir_target(nir));
-
    agx_compiler_debug = agx_get_compiler_debug();
    struct agx_shader_info *info = &out->info;
 

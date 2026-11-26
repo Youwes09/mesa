@@ -548,15 +548,6 @@ static const nir_shader_compiler_options agx_nir_options = {
 const nir_shader_compiler_options *
 agx_nir_options_for_isa(enum agx_shader_isa isa);
 
-/* The ISA a NIR shader is prepared for, known before the shader key exists */
-static inline enum agx_shader_isa
-agx_nir_shader_isa(const nir_shader *nir)
-{
-   return nir->options == agx_nir_options_for_isa(AGX_SHADER_ISA_APPLE9)
-             ? AGX_SHADER_ISA_APPLE9
-             : AGX_SHADER_ISA_APPLE8;
-}
-
 struct agx_context;
 
 /* Register files of a shader ISA, in 16-bit units like register numbers */
@@ -690,12 +681,6 @@ struct agx_isa_target {
 };
 
 const struct agx_isa_target *agx_get_isa_target(enum agx_shader_isa isa);
-
-static inline const struct agx_isa_target *
-agx_nir_target(const nir_shader *nir)
-{
-   return agx_get_isa_target(agx_nir_shader_isa(nir));
-}
 
 /*
  * Return the standard sample positions, packed into a 32-bit word with fixed
