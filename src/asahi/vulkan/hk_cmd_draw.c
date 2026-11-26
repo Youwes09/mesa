@@ -2653,6 +2653,77 @@ hk_unroll_fan(struct hk_cmd_buffer *cmd, struct agx_draw draw)
                                    false /* restart */);
 }
 
+/* Run a software pre-rasterization stage, linked as s, as compute */
+static void
+hk_launch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
+                  struct hk_linked_shader *linked, struct agx_grid grid)
+{
+   if (agx_is_shader_empty(&s->b))
+      return;
+   if (!agx_is_indirect(grid) &&
+       (!grid.count[0] || !grid.count[1] || !grid.count[2]))
+      return;
+
+   struct hk_cs *cs = hk_cmd_buffer_get_cs_general(
+      cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL);
+   if (!cs)
+      return;
+
+   uint64_t push = hk_launch_push_words(cmd, s, linked, cmd->state.gfx.root);
+   if (!push)
+      return;
+
+   hk_reserve_scratch(cmd, cs, s);
+   hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body,
+                      &linked->b.program.profile, grid, cmd->state.gfx.root,
+                      push, s);
+}
+
+/* Dispatch a software pre-rasterization stage, linked as linked */
+static void
+hk_dispatch_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
+                    struct hk_shader *s, struct hk_linked_shader *linked,
+                    struct agx_grid grid, struct agx_workgroup wg)
+{
+   struct hk_device *dev = hk_cmd_buffer_device(cmd);
+
+   if (agx_has_launch_programs(&dev->dev)) {
+      hk_launch_prerast(cmd, s, linked, grid);
+      return;
+   }
+
+   if (agx_is_shader_empty(&s->b))
+      return;
+
+   uint32_t usc = hk_upload_usc_words(cmd, s, linked);
+   hk_reserve_scratch(cmd, cs, s);
+   hk_dispatch_with_usc(dev, cs, &s->b.info, usc, grid, wg);
+}
+
+/* Launch programs have no dynamic state flush ahead of the stages, so the
+ * parameters the geometry stages read are uploaded here.
+ */
+static void
+hk_launch_upload_gs_root(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+   struct hk_descriptor_state *desc = &gfx->descriptors;
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
+
+   desc->root.draw.vertex_params = hk_upload_vertex_params(cmd, draw);
+   desc->root.draw.geometry_params = hk_upload_geometry_params(cmd, draw);
+
+   desc->root.draw.api_gs = !gs->is_passthrough;
+   desc->root.draw.rasterization_stream = dyn->rs.rasterization_stream;
+   desc->root.draw.provoking =
+      dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2
+                                                                           : 0;
+   desc->root_dirty = true;
+   hk_cmd_buffer_flush_push_descriptors(cmd, desc);
+   gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+}
+
 static struct agx_draw
 hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
                      struct agx_draw draw)
@@ -2662,11 +2733,15 @@ hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
    struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
    struct agx_grid grid_vs, grid_gs;
+   bool launch = agx_has_launch_programs(&dev->dev);
 
    struct hk_shader *vs = hk_bound_sw_vs_before_gs(gfx);
    struct hk_shader *main = hk_main_gs_variant(gs);
    struct hk_shader *count = hk_count_gs_variant(gs);
    struct hk_shader *pre_gs = hk_pre_gs_variant(gs);
+
+   if (launch)
+      hk_launch_upload_gs_root(cmd, draw);
 
    uint64_t vertex_params = desc->root.draw.vertex_params;
    uint64_t geometry_params = desc->root.draw.geometry_params;
@@ -2720,15 +2795,6 @@ hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       grid_gs.count[0] = u_decomposed_prims_for_vertices(mode, draw.b.count[0]);
    }
 
-   /* Launch the vertex shader first */
-   hk_reserve_scratch(cmd, cs, vs);
-   hk_dispatch_with_usc(dev, cs, &vs->b.info,
-                        hk_upload_usc_words(cmd, vs,
-                                            vs->info.stage == MESA_SHADER_VERTEX
-                                               ? gfx->linked[MESA_SHADER_VERTEX]
-                                               : vs->only_linked),
-                        grid_vs, wg);
-
    /* Transform feedback and various queries require extra dispatching,
     * determine if we need that here.
     */
@@ -2742,11 +2808,36 @@ hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    bool xfb_or_queries =
       main->info.gs.xfb || (root->draw.pipeline_stats_flags & gs_queries);
 
+   /* Launch programs count primitive queries in the pre-GS program too */
+   if (launch) {
+      for (unsigned i = 0; i < ARRAY_SIZE(gfx->pg_query); ++i)
+         xfb_or_queries |= gfx->pg_query[i] || gfx->xfb_query[i];
+   }
+
+   /* Without transform feedback or queries, a small direct draw is just the
+    * VS and GS passes over its own allocations: record them into the first
+    * two batch lanes (as for tessellation) so consecutive draws overlap.
+    */
+   const unsigned max_batch_prims = 2048;
+   bool batch = launch && !agx_is_indirect(draw.b) && !xfb_or_queries &&
+                grid_gs.count[0] * grid_gs.count[1] <= max_batch_prims;
+   if (launch && !batch)
+      hk_tess_batch_flush(cmd);
+
+   /* Launch the vertex shader first */
+   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
+   hk_dispatch_prerast(cmd, cs, vs,
+                       vs->info.stage == MESA_SHADER_VERTEX
+                          ? gfx->linked[MESA_SHADER_VERTEX]
+                          : vs->only_linked,
+                       grid_vs, wg);
+   cmd->tess_batch.capture = NULL;
+
    if (xfb_or_queries) {
       /* If we need counts, launch the count shader and prefix sum the results. */
       if (count_words) {
          perf_debug(dev, "Geometry shader count");
-         hk_dispatch_with_local_size(cmd, cs, count, grid_gs, wg);
+         hk_dispatch_prerast(cmd, cs, count, count->only_linked, grid_gs, wg);
       }
 
       if (count->info.gs.prefix_sum) {
@@ -2757,12 +2848,16 @@ hk_launch_gs_prerast(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
 
       /* Transform feedback / query program */
       perf_debug(dev, "Transform feedback / geometry query");
-      hk_dispatch_with_local_size(cmd, cs, pre_gs, agx_1d(1),
-                                  agx_workgroup(1, 1, 1));
+      hk_dispatch_prerast(cmd, cs, pre_gs, pre_gs->only_linked, agx_1d(1),
+                                 agx_workgroup(1, 1, 1));
    }
 
    /* Pre-rast geometry shader */
-   hk_dispatch_with_local_size(cmd, cs, main, grid_gs, wg);
+   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[1] : NULL;
+   hk_dispatch_prerast(cmd, cs, main, main->only_linked, grid_gs, wg);
+   cmd->tess_batch.capture = NULL;
+   if (batch)
+      cmd->tess_batch.draws++;
 
    if (poly_gs_indexed(count->info.gs.shape)) {
       enum agx_index_size index_size =
@@ -3742,31 +3837,6 @@ hk_launch_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
 {
    hk_launch_draw_impl(cmd, draw_id, draw);
 }
-/* Run a software pre-rasterization stage, linked as s, as compute */
-static void
-hk_launch_prerast(struct hk_cmd_buffer *cmd, struct hk_shader *s,
-                  struct hk_linked_shader *linked, struct agx_grid grid)
-{
-   if (agx_is_shader_empty(&s->b))
-      return;
-   if (!agx_is_indirect(grid) &&
-       (!grid.count[0] || !grid.count[1] || !grid.count[2]))
-      return;
-
-   struct hk_cs *cs = hk_cmd_buffer_get_cs_general(
-      cmd, &cmd->current_cs.pre_gfx, true, HK_SYNC_ALL);
-   if (!cs)
-      return;
-
-   uint64_t push = hk_launch_push_words(cmd, s, linked, cmd->state.gfx.root);
-   if (!push)
-      return;
-
-   hk_reserve_scratch(cmd, cs, s);
-   hk_launch_dispatch(cmd, cs, &linked->b.bo->shader_body,
-                      &linked->b.program.profile, grid, cmd->state.gfx.root,
-                      push, s);
-}
 
 /* Only geometry shaders observe adjacent vertices. Without one, draw the
  * primitive list of the remaining vertices through a generated index buffer.
@@ -3881,316 +3951,28 @@ hk_merge_tess_info(struct hk_cmd_buffer *cmd)
       gfx->tess.prim = MESA_PRIM_TRIANGLES;
 }
 
-/* Run the vertex and tessellation control shaders and the tessellator as
- * compute before the render pass, returning the draw of the tessellated
- * domain.
+/* Launch programs have no dynamic state flush ahead of the stages, so the
+ * parameters the tessellation stages read are uploaded here.
  */
-static struct agx_draw
-hk_launch_tess_stage(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+static struct agx_ptr
+hk_launch_upload_tess_root(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
-   /* Largest direct draw, in patches x instances, that is batched. */
-   const unsigned max_batch_patches = 2048;
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct hk_descriptor_state *desc = &gfx->descriptors;
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   struct hk_api_shader *tcs_api = gfx->shaders[MESA_SHADER_TESS_CTRL];
-   struct hk_api_shader *vs_api = gfx->shaders[MESA_SHADER_VERTEX];
-   struct hk_shader *vs = &vs_api->variants[HK_VS_VARIANT_SW];
-   struct hk_shader *tcs = hk_only_variant(tcs_api);
+   struct hk_shader *tcs = hk_only_variant(gfx->shaders[MESA_SHADER_TESS_CTRL]);
 
    desc->root.draw.vertex_params = hk_upload_vertex_params(cmd, draw);
    struct agx_ptr tess_args =
       hk_pool_alloc(cmd, sizeof(struct poly_tess_params), 4);
    if (!tess_args.cpu)
-      return draw;
+      return tess_args;
+
    desc->root.draw.tess_params = tess_args.gpu;
    hk_upload_tess_params_for_tcs(cmd, tess_args.cpu, draw, tcs);
    desc->root_dirty = true;
    hk_cmd_buffer_flush_push_descriptors(cmd, desc);
    gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
-
-   uint32_t input_patch_size = dyn->ts.patch_control_points;
-   uint64_t state = desc->root.draw.tess_params;
-   struct agx_grid grid_vs, grid_tcs, grid_tess;
-
-   if (agx_is_indirect(draw.b)) {
-      struct libagx_tess_setup_indirect_args args = {
-         .p = state,
-         .grids = gfx->tess.grids,
-         .indirect = draw.b.ptr,
-         .vp = desc->root.draw.vertex_params,
-         .vertex_outputs = vs->b.info.outputs,
-         .tcs_statistic = hk_pipeline_stat_addr(
-            cmd,
-            VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT),
-      };
-
-      if (draw.indexed) {
-         args.in_index_buffer = draw.index_buffer;
-         args.in_index_size_B = agx_index_size_to_B(draw.index_size);
-         args.in_index_buffer_range_el = agx_draw_index_range_el(draw);
-      }
-
-      libagx_tess_setup_indirect_struct(cmd, agx_1d(1),
-                                        AGX_BARRIER_ALL | AGX_PREGFX, args);
-
-      uint32_t grid_stride = sizeof(uint32_t) * 6;
-      grid_vs = agx_grid_indirect_local(gfx->tess.grids + 0 * grid_stride);
-      grid_tcs = agx_grid_indirect_local(gfx->tess.grids + 1 * grid_stride);
-      grid_tess = agx_grid_indirect_local(gfx->tess.grids + 2 * grid_stride);
-   } else {
-      uint32_t patches = draw.b.count[0] / input_patch_size;
-      grid_vs = grid_tcs = draw.b;
-      grid_tcs.count[0] = patches * tcs->info.tess.tcs_output_patch_size;
-      grid_tess = agx_1d(patches * draw.b.count[1]);
-
-      /* TCS invocation counter increments once per-patch */
-      uint64_t tcs_stat = hk_pipeline_stat_addr(
-         cmd,
-         VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT);
-      if (hk_stat_enabled(tcs_stat)) {
-         libagx_increment_statistic(
-            cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, tcs_stat, patches);
-      }
-   }
-
-   /* Without a geometry shader, the tessellated primitives are the clipper
-    * input.
-    */
-   uint64_t c_prims = 0, c_inv = 0;
-   if (!gfx->shaders[MESA_SHADER_GEOMETRY]) {
-      c_prims = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
-      c_inv = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
-   }
-
-   /* A direct draw without statistics or transform feedback touches only
-    * its own allocations here, so its passes can run alongside those of the
-    * neighbouring tessellated draws: record them into the stage lanes (see
-    * hk_tess_batch_flush). The stage order within each draw is kept by the
-    * barrier after every lane.
-    */
-   /* Only small draws are latency-bound enough to gain from overlapping;
-    * a large one fills the GPU on its own and is kept inline, which also
-    * keeps its passes out of the stream-end lanes.
-    */
-   unsigned batch_patches =
-      agx_is_indirect(draw.b)
-         ? 0
-         : (draw.b.count[0] / input_patch_size) * draw.b.count[1];
-   bool batch =
-      !agx_is_indirect(draw.b) && batch_patches <= max_batch_patches &&
-      !hk_stat_enabled(hk_pipeline_stat_addr(
-         cmd,
-         VK_QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES_BIT)) &&
-      !hk_stat_enabled(c_prims) && !hk_stat_enabled(c_inv) && !gfx->xfb_enabled;
-   /* A full fold table starts a new batch. */
-   if (!batch ||
-       util_dynarray_num_elements(&cmd->tess_batch.fold, struct hk_tess_fold) >=
-          HK_TESS_FOLD_MAX_DRAWS)
-      hk_tess_batch_flush(cmd);
-
-#define HK_TESS_LANE(l)                                                        \
-   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[l] : NULL
-
-   HK_TESS_LANE(0);
-   hk_launch_prerast(cmd, vs, gfx->linked[MESA_SHADER_VERTEX], grid_vs);
-   HK_TESS_LANE(1);
-   hk_launch_prerast(cmd, tcs, tcs->only_linked, grid_tcs);
-
-   if (batch) {
-      /* The flush runs the count, prefix sum and emit passes of every folded
-       * draw (hk_tess_fold_flush).
-       */
-      struct hk_tess_fold f = {
-         .params = state,
-         .nr_patches = ((struct poly_tess_params *)tess_args.cpu)->nr_patches,
-         .prim = gfx->tess.info.mode,
-      };
-      util_dynarray_append(&cmd->tess_batch.fold, f);
-      cmd->tess_batch.capture = NULL;
-      cmd->tess_batch.draws++;
-      return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws,
-                                      AGX_INDEX_SIZE_U32, false);
-   }
-
-   /* First generate counts, then prefix sum them, and then tessellate. */
-   libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX,
-                     gfx->tess.info.mode, POLY_TESS_MODE_COUNT, state);
-   /* One workgroup walking every patch takes milliseconds for large draws,
-    * so direct draws past a few blocks scan blocks in parallel instead.
-    */
-   const unsigned block_patches = 8192;
-   unsigned nr_patches =
-      agx_is_indirect(draw.b)
-         ? 0
-         : ((struct poly_tess_params *)tess_args.cpu)->nr_patches;
-   if (nr_patches > 2 * block_patches) {
-      uint64_t counts = ((struct poly_tess_params *)tess_args.cpu)->counts;
-      unsigned nr_blocks = DIV_ROUND_UP(nr_patches, block_patches);
-      uint64_t block_sums = hk_pool_alloc(cmd, nr_blocks * 4, 4).gpu;
-      libagx_prefix_sum_tess_blocks(cmd, agx_1d(1024 * nr_blocks),
-                                    AGX_BARRIER_ALL | AGX_PREGFX, counts,
-                                    block_sums, nr_patches, block_patches);
-      libagx_prefix_sum_tess_offsets(
-         cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX, state, block_sums,
-         nr_blocks, c_prims, c_inv, c_prims || c_inv);
-      libagx_prefix_sum_tess_add(cmd, agx_1d(nr_patches - block_patches),
-                                 AGX_BARRIER_ALL | AGX_PREGFX, counts,
-                                 block_sums, nr_patches, block_patches);
-   } else {
-      libagx_prefix_sum_tess(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
-                             state, c_prims, c_inv, c_prims || c_inv);
-   }
-   libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX,
-                     gfx->tess.info.mode, POLY_TESS_MODE_WITH_COUNTS, state);
-#undef HK_TESS_LANE
-
-   return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws, AGX_INDEX_SIZE_U32,
-                                   false);
-}
-
-/* Run the vertex and geometry shaders as compute before the render pass,
- * returning the draw that rasterizes the geometry shader output.
- */
-static struct agx_draw
-hk_launch_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
-{
-   struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct hk_descriptor_state *desc = &gfx->descriptors;
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   struct hk_api_shader *gs = gfx->shaders[MESA_SHADER_GEOMETRY];
-   struct hk_shader *vs = hk_bound_sw_vs_before_gs(gfx);
-   struct hk_shader *main = hk_main_gs_variant(gs);
-   struct hk_shader *count = hk_count_gs_variant(gs);
-   struct hk_shader *pre_gs = hk_pre_gs_variant(gs);
-
-   desc->root.draw.vertex_params = hk_upload_vertex_params(cmd, draw);
-   desc->root.draw.geometry_params = hk_upload_geometry_params(cmd, draw);
-
-   desc->root.draw.api_gs = !gs->is_passthrough;
-   desc->root.draw.rasterization_stream = dyn->rs.rasterization_stream;
-   desc->root.draw.provoking =
-      dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2
-                                                                           : 0;
-   desc->root_dirty = true;
-   hk_cmd_buffer_flush_push_descriptors(cmd, desc);
-   gfx->root = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
-
-   uint64_t vertex_params = desc->root.draw.vertex_params;
-   uint64_t geometry_params = desc->root.draw.geometry_params;
-   enum mesa_prim mode = hk_gs_in_prim(cmd);
-   struct agx_grid grid_vs, grid_gs;
-
-   if (draw.restart) {
-      draw = hk_draw_without_restart(cmd, draw, 1);
-      mode = u_decomposed_prim(mode);
-   }
-
-   if (agx_is_indirect(draw.b)) {
-      struct libagx_gs_setup_indirect_args gsi = {
-         .heap = hk_heap(cmd),
-         .index_buffer = draw.index_buffer,
-         .draw = draw.b.ptr,
-         .vp = vertex_params,
-         .p = geometry_params,
-         .vs_outputs = vs->b.info.outputs,
-         .prim = mode,
-         .is_prefix_summing = count->info.gs.prefix_sum,
-         .max_indices = count->info.gs.max_indices,
-         .shape = count->info.gs.shape,
-      };
-
-      if (draw.indexed) {
-         gsi.index_size_B = agx_index_size_to_B(draw.index_size);
-         gsi.index_buffer_range_el = agx_draw_index_range_el(draw);
-      }
-
-      libagx_gs_setup_indirect_struct(cmd, agx_1d(1),
-                                      AGX_BARRIER_ALL | AGX_PREGFX, gsi);
-
-      grid_vs = agx_grid_indirect_local(
-         vertex_params + offsetof(struct poly_vertex_params, grid));
-      grid_gs = agx_grid_indirect_local(
-         geometry_params + offsetof(struct poly_geometry_params, grid));
-   } else {
-      grid_vs = grid_gs = draw.b;
-      grid_gs.count[0] = u_decomposed_prims_for_vertices(mode, draw.b.count[0]);
-   }
-
-   /* Transform feedback and geometry statistics need the count and pre-GS
-    * programs.
-    */
-   VkQueryPipelineStatisticFlagBits gs_queries =
-      VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS_BIT |
-      VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT |
-      VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT |
-      VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
-   bool xfb_or_queries =
-      main->info.gs.xfb || (desc->root.draw.pipeline_stats_flags & gs_queries);
-   for (unsigned i = 0; i < ARRAY_SIZE(gfx->pg_query); ++i)
-      xfb_or_queries |= gfx->pg_query[i] || gfx->xfb_query[i];
-
-   /* Without transform feedback or queries, a small direct draw is just the
-    * VS and GS passes over its own allocations: record them into the first
-    * two batch lanes (as for tessellation) so consecutive draws overlap.
-    */
-   const unsigned max_batch_prims = 2048;
-   bool batch = !agx_is_indirect(draw.b) && !xfb_or_queries &&
-                grid_gs.count[0] * grid_gs.count[1] <= max_batch_prims;
-   if (!batch)
-      hk_tess_batch_flush(cmd);
-
-   /* The stage before the GS: the API VS linked with its prolog, or the TES */
-   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
-   hk_launch_prerast(cmd, vs,
-                     vs->info.stage == MESA_SHADER_VERTEX
-                        ? gfx->linked[MESA_SHADER_VERTEX]
-                        : vs->only_linked,
-                     grid_vs);
-   cmd->tess_batch.capture = NULL;
-
-   if (xfb_or_queries) {
-      if (count->info.gs.count_words)
-         hk_launch_prerast(cmd, count, count->only_linked, grid_gs);
-
-      if (count->info.gs.prefix_sum) {
-         libagx_prefix_sum_geom(cmd, agx_1d(1024 * count->info.gs.count_words),
-                                AGX_BARRIER_ALL | AGX_PREGFX, geometry_params);
-      }
-
-      hk_launch_prerast(cmd, pre_gs, pre_gs->only_linked, agx_1d(1));
-   }
-
-   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[1] : NULL;
-   hk_launch_prerast(cmd, main, main->only_linked, grid_gs);
-   cmd->tess_batch.capture = NULL;
-   if (batch)
-      cmd->tess_batch.draws++;
-
-   if (poly_gs_indexed(count->info.gs.shape)) {
-      enum agx_index_size index_size =
-         agx_translate_index_size(poly_gs_index_size(count->info.gs.shape));
-
-      if (agx_is_indirect(draw.b)) {
-         return agx_draw_indexed_indirect(
-            geometry_params + offsetof(struct poly_geometry_params, draw),
-            cmd->geom_index_buffer, cmd->geom_index_count, index_size, true);
-      } else {
-         return agx_draw_indexed(cmd->geom_index_count,
-                                 cmd->geom_instance_count, 0, 0, 0,
-                                 cmd->geom_index_buffer,
-                                 cmd->geom_index_count * 4, index_size, true);
-      }
-   } else if (agx_is_indirect(draw.b)) {
-      return agx_draw_indirect(geometry_params +
-                               offsetof(struct poly_geometry_params, draw));
-   } else {
-      return (struct agx_draw){
-         .b = agx_3d(cmd->geom_index_count, cmd->geom_instance_count, 1),
-      };
-   }
+   return tess_args;
 }
 
 static struct agx_draw
@@ -4200,9 +3982,17 @@ hk_launch_tess(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
    struct agx_grid grid_vs, grid_tcs, grid_tess;
+   bool launch = agx_has_launch_programs(&dev->dev);
 
    struct hk_shader *vs = hk_bound_sw_vs(gfx);
    struct hk_shader *tcs = hk_only_variant(gfx->shaders[MESA_SHADER_TESS_CTRL]);
+
+   struct agx_ptr tess_args = {0};
+   if (launch) {
+      tess_args = hk_launch_upload_tess_root(cmd, draw);
+      if (!tess_args.cpu)
+         return draw;
+   }
 
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
    uint32_t input_patch_size = dyn->ts.patch_control_points;
@@ -4257,25 +4047,83 @@ hk_launch_tess(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
       }
    }
 
+   unsigned nr_patches = tess_args.cpu && !agx_is_indirect(draw.b)
+                            ? ((struct poly_tess_params *)tess_args.cpu)->nr_patches
+                            : 0;
+
+   /* With launch programs, a small direct draw without statistics or
+    * transform feedback touches only its own allocations here, so its passes
+    * can run alongside those of the neighbouring tessellated draws: record
+    * them into the stage lanes (see hk_tess_batch_flush). The stage order
+    * within each draw is kept by the barrier after every lane. A large draw
+    * fills the GPU on its own and is kept inline.
+    */
+   const unsigned max_batch_patches = 2048;
+   bool batch = launch && !agx_is_indirect(draw.b) &&
+                (draw.b.count[0] / input_patch_size) * draw.b.count[1] <=
+                   max_batch_patches &&
+                !hk_stat_enabled(tcs_stat) && !hk_stat_enabled(c_prims) &&
+                !hk_stat_enabled(c_inv) && !gfx->xfb_enabled;
+
+   /* A full fold table starts a new batch. */
+   if (launch &&
+       (!batch || util_dynarray_num_elements(&cmd->tess_batch.fold,
+                                             struct hk_tess_fold) >=
+                     HK_TESS_FOLD_MAX_DRAWS))
+      hk_tess_batch_flush(cmd);
+
    /* First launch the VS and TCS */
-   hk_reserve_scratch(cmd, cs, vs);
-   hk_reserve_scratch(cmd, cs, tcs);
+   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[0] : NULL;
+   hk_dispatch_prerast(cmd, cs, vs, gfx->linked[MESA_SHADER_VERTEX], grid_vs,
+                       agx_workgroup(64, 1, 1));
 
-   hk_dispatch_with_usc(
-      dev, cs, &vs->b.info,
-      hk_upload_usc_words(cmd, vs, gfx->linked[MESA_SHADER_VERTEX]), grid_vs,
-      agx_workgroup(64, 1, 1));
+   cmd->tess_batch.capture = batch ? &cmd->tess_batch.lane[1] : NULL;
+   hk_dispatch_prerast(cmd, cs, tcs, tcs->only_linked, grid_tcs,
+                       agx_workgroup(tcs->info.tess.tcs_output_patch_size, 1, 1));
 
-   hk_dispatch_with_usc(
-      dev, cs, &tcs->b.info, hk_upload_usc_words(cmd, tcs, tcs->only_linked),
-      grid_tcs, agx_workgroup(tcs->info.tess.tcs_output_patch_size, 1, 1));
+   if (batch) {
+      /* The flush runs the count, prefix sum and emit passes of every folded
+       * draw (hk_tess_fold_flush).
+       */
+      struct hk_tess_fold f = {
+         .params = state,
+         .nr_patches = nr_patches,
+         .prim = info.mode,
+      };
+      util_dynarray_append(&cmd->tess_batch.fold, f);
+      cmd->tess_batch.capture = NULL;
+      cmd->tess_batch.draws++;
+      return hk_heap_indexed_indirect(cmd, gfx->tess.out_draws,
+                                      AGX_INDEX_SIZE_U32, false);
+   }
+
+   cmd->tess_batch.capture = NULL;
 
    /* First generate counts, then prefix sum them, and then tessellate. */
    libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX, info.mode,
                      POLY_TESS_MODE_COUNT, state);
 
-   libagx_prefix_sum_tess(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
-                          state, c_prims, c_inv, c_prims || c_inv);
+   /* One workgroup walking every patch takes milliseconds for large draws,
+    * so direct draws past a few blocks scan blocks in parallel instead.
+    */
+   const unsigned block_patches = 8192;
+   if (nr_patches > 2 * block_patches) {
+      uint64_t counts = ((struct poly_tess_params *)tess_args.cpu)->counts;
+      unsigned nr_blocks = DIV_ROUND_UP(nr_patches, block_patches);
+      uint64_t block_sums = hk_pool_alloc(cmd, nr_blocks * 4, 4).gpu;
+      libagx_prefix_sum_tess_blocks(cmd, agx_1d(1024 * nr_blocks),
+                                    AGX_BARRIER_ALL | AGX_PREGFX, counts,
+                                    block_sums, nr_patches, block_patches);
+      libagx_prefix_sum_tess_offsets(
+         cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX, state, block_sums,
+         nr_blocks, c_prims, c_inv, c_prims || c_inv);
+      libagx_prefix_sum_tess_add(cmd, agx_1d(nr_patches - block_patches),
+                                 AGX_BARRIER_ALL | AGX_PREGFX, counts,
+                                 block_sums, nr_patches, block_patches);
+   } else {
+      libagx_prefix_sum_tess(cmd, agx_1d(1024), AGX_BARRIER_ALL | AGX_PREGFX,
+                             state, c_prims, c_inv, c_prims || c_inv);
+   }
 
    libagx_tessellate(cmd, grid_tess, AGX_BARRIER_ALL | AGX_PREGFX, info.mode,
                      POLY_TESS_MODE_WITH_COUNTS, state);
@@ -6268,6 +6116,12 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
    draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
    draw_.index_size = cmd->state.gfx.index.size;
 
+   uint64_t stat_c_inv = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
+
+   uint64_t stat_c_prims = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
+
    if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
       if (!hk_feedback_prepare_draw(cmd))
          return;
@@ -6319,20 +6173,17 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
                   !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
                   hk_needs_index_copy(cmd, draw))
             draw = hk_robust_index_copy(cmd, draw);
-         if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
-            draw = hk_launch_tess_stage(cmd, draw);
+         if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL]) {
+            bool geom = cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY];
+            draw = hk_launch_tess(cmd, NULL, draw, geom ? 0 : stat_c_prims,
+                                  geom ? 0 : stat_c_inv);
+         }
          if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
-            draw = hk_launch_gs(cmd, draw);
+            draw = hk_launch_gs_prerast(cmd, NULL, draw);
          hk_launch_draw(cmd, draw_id, draw);
       }
       return;
    }
-
-   uint64_t stat_c_inv = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
-
-   uint64_t stat_c_prims = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
 
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
 
