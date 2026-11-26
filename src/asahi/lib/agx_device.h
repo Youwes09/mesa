@@ -402,6 +402,7 @@ void agx_get_driver_uuid(void *uuid);
 unsigned agx_get_num_cores(const struct agx_device *dev);
 
 struct agx_device_key agx_gather_device_key(struct agx_device *dev);
+const struct agx_isa_target *agx_device_target(struct agx_device *dev);
 
 struct agx_va *agx_va_alloc(struct agx_device *dev, uint64_t size_B,
                             uint64_t align_B, enum agx_va_flags flags,

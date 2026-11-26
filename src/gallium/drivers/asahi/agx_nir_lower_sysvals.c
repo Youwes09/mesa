@@ -128,11 +128,17 @@ load_texture_handle(nir_builder *b, nir_intrinsic_instr *intr, void *base)
    return nir_bindless_image_agx(b, offs_B);
 }
 
+struct sysvals_state {
+   const struct agx_isa_target *target;
+   bool lower_draw_params;
+};
+
 /* Root uniforms read draw parameters by address, as indirect draws write them */
 static nir_def *
-lower_draw_param(nir_builder *b, unsigned offset)
+lower_draw_param(nir_builder *b, const struct agx_isa_target *target,
+                 unsigned offset)
 {
-   if (!agx_nir_target(b->shader)->root_uniforms)
+   if (!target->root_uniforms)
       return load_sysval(b, 1, 32, AGX_SYSVAL_TABLE_PARAMS, offset);
 
    struct agx_draw_uniforms *u = NULL;
@@ -152,7 +158,7 @@ load_provoking_vtx(nir_builder *b)
 
 static nir_def *
 lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
-                bool lower_draw_params)
+                const struct sysvals_state *state)
 {
    struct agx_draw_uniforms *u = NULL;
    struct agx_stage_uniforms *s = NULL;
@@ -162,7 +168,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
       /* Texture state is then a buffer the compiler binds itself */
       if (nir_src_is_const(intr->src[0]) &&
           nir_src_as_uint(intr->src[0]) == AGX_GRAPHICS_SYSVAL_BINDING &&
-          agx_nir_target(b->shader)->root_uniforms)
+          state->target->root_uniforms)
          return NULL;
 
       return load_ubo(b, intr, s->ubo_base);
@@ -191,7 +197,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
       return load_sysval_root(b, 1, 32, &u->ppp_multisamplectl);
    case nir_intrinsic_load_samples_log2_agx:
       /* Without root uniforms, the sample count is a special register */
-      if (!agx_nir_target(b->shader)->root_uniforms)
+      if (!state->target->root_uniforms)
          return NULL;
 
       return load_sysval_root(b, 1, 16, &u->samples_log2);
@@ -240,27 +246,27 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
       break;
    }
 
-   if (!lower_draw_params)
+   if (!state->lower_draw_params)
       return NULL;
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_num_workgroups:
       /* Compute roots pass the workgroup counts themselves */
-      if (agx_nir_target(b->shader)->root_uniforms)
+      if (state->target->root_uniforms)
          return NULL;
 
       return load_sysval(b, 3, 32, AGX_SYSVAL_TABLE_GRID, 0);
    case nir_intrinsic_load_first_vertex:
-      return lower_draw_param(b, 0);
+      return lower_draw_param(b, state->target, 0);
    case nir_intrinsic_load_base_instance:
-      return lower_draw_param(b, 4);
+      return lower_draw_param(b, state->target, 4);
    case nir_intrinsic_load_base_vertex:
       /* first vertex if indexed, 0 otherwise. More efficient for our hw than
        * the lowering in NIR.
        */
       return nir_bcsel(
          b, nir_i2b(b, load_sysval_root(b, 1, 16, &u->is_indexed_draw)),
-         lower_draw_param(b, 0), nir_imm_int(b, 0));
+         lower_draw_param(b, state->target, 0), nir_imm_int(b, 0));
    case nir_intrinsic_load_draw_id:
       return load_sysval_root(b, 1, 32, &u->draw_id);
    default:
@@ -272,7 +278,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
 static bool
 lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
 {
-   bool *lower_draw_params = data;
+   const struct sysvals_state *state = data;
    b->cursor = nir_before_instr(instr);
    nir_def *old;
    nir_def *replacement = NULL;
@@ -280,7 +286,7 @@ lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
    if (instr->type == nir_instr_type_intrinsic) {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
       old = &intr->def;
-      replacement = lower_intrinsic(b, intr, *lower_draw_params);
+      replacement = lower_intrinsic(b, intr, state);
    } else if (instr->type == nir_instr_type_tex) {
       nir_tex_instr *tex = nir_instr_as_tex(instr);
       old = &tex->def;
@@ -528,8 +534,8 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
 }
 
 bool
-agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
-                      bool lower_draw_params)
+agx_nir_lower_sysvals(nir_shader *shader, const struct agx_isa_target *target,
+                      mesa_shader_stage desc_stage, bool lower_draw_params)
 {
    /* override stage for the duration on the pass. XXX: should refactor, but
     * it's annoying!
@@ -537,8 +543,9 @@ agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
    mesa_shader_stage phys_stage = shader->info.stage;
    shader->info.stage = desc_stage;
 
+   struct sysvals_state state = {target, lower_draw_params};
    bool progress = nir_shader_instructions_pass(
-      shader, lower_sysvals, nir_metadata_control_flow, &lower_draw_params);
+      shader, lower_sysvals, nir_metadata_control_flow, &state);
 
    shader->info.stage = phys_stage;
    return progress;
@@ -605,14 +612,14 @@ assign_image_table(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_layout_uniforms(nir_shader *shader,
+agx_nir_layout_uniforms(nir_shader *shader, const struct agx_isa_target *target,
                         struct agx_compiled_shader *compiled,
                         unsigned *push_size)
 {
    struct state state = {
       .stage = compiled->stage,
       .hw_stage = shader->info.stage,
-      .root_uniforms = agx_nir_target(shader)->root_uniforms,
+      .root_uniforms = target->root_uniforms,
    };
 
    nir_shader_intrinsics_pass(shader, record_loads, nir_metadata_control_flow,

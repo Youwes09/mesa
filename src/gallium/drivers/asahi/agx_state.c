@@ -1523,9 +1523,10 @@ agx_compile_nir(struct agx_device *dev, nir_shader *nir,
       key.fs.inside_sample_loop = true;
 
    if (!secondary) {
-      NIR_PASS(_, nir, agx_nir_lower_sysvals, stage, true);
-      NIR_PASS(_, nir, agx_nir_layout_uniforms, compiled,
-               &key.reserved_preamble);
+      NIR_PASS(_, nir, agx_nir_lower_sysvals, agx_device_target(dev), stage,
+               true);
+      NIR_PASS(_, nir, agx_nir_layout_uniforms, agx_device_target(dev),
+               compiled, &key.reserved_preamble);
    }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -1629,9 +1630,9 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
       NIR_PASS(_, nir, poly_nir_lower_gs, &gs_count, &gs_copy, &pre_gs,
                &gs_info);
 
-      agx_preprocess_nir(gs_count, agx_nir_target(gs_count));
-      agx_preprocess_nir(gs_copy, agx_nir_target(gs_copy));
-      agx_preprocess_nir(pre_gs, agx_nir_target(pre_gs));
+      agx_preprocess_nir(gs_count, agx_device_target(dev));
+      agx_preprocess_nir(gs_copy, agx_device_target(dev));
+      agx_preprocess_nir(pre_gs, agx_device_target(dev));
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       struct asahi_fs_shader_key *key = &key_->fs;
 
@@ -1669,7 +1670,7 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
          NIR_PASS(_, nir, agx_nir_lower_to_per_sample);
       }
 
-      NIR_PASS(_, nir, agx_nir_lower_sample_mask, agx_nir_target(nir));
+      NIR_PASS(_, nir, agx_nir_lower_sample_mask, agx_device_target(dev));
       NIR_PASS(_, nir, agx_nir_lower_fs_active_samples_to_register);
    }
 
@@ -1921,6 +1922,8 @@ static void
 agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
                       nir_shader *nir, bool support_lod_bias, bool robust)
 {
+   const struct agx_isa_target *target = agx_device_target(dev);
+
    if (nir->info.stage == MESA_SHADER_KERNEL)
       nir->info.stage = MESA_SHADER_COMPUTE;
 
@@ -1946,10 +1949,10 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    NIR_PASS(_, nir, nir_lower_robust_access, should_lower_robustness, &robust);
 
    /* Similarly, we need to do early texture lowering before bindings */
-   NIR_PASS(_, nir, agx_nir_lower_texture_early, agx_nir_target(nir),
-            support_lod_bias, false /* software_buffer_bounds */);
+   NIR_PASS(_, nir, agx_nir_lower_texture_early, target, support_lod_bias,
+            false /* software_buffer_bounds */);
 
-   if (agx_nir_target(nir)->normalized_coords) {
+   if (target->normalized_coords) {
       NIR_PASS(_, nir, nir_lower_tex,
                &(nir_lower_tex_options){.lower_rect = true});
    }
@@ -1957,7 +1960,8 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
    /* We need to lower binding tables before calling agx_preprocess_nir, since
     * that does texture lowering that needs to know the binding model.
     */
-   NIR_PASS(_, nir, agx_nir_lower_bindings, &so->uses_bindless_samplers);
+   NIR_PASS(_, nir, agx_nir_lower_bindings, target,
+            &so->uses_bindless_samplers);
 
    /* We need to do some I/O lowering before lowering textures */
    so->info.nr_bindful_textures = BITSET_LAST_BIT(nir->info.textures_used);
@@ -2028,7 +2032,7 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
       });
 
    /* Storage images go through storage descriptors, queries included */
-   bool texture_exports = agx_nir_target(nir)->texture_exports;
+   bool texture_exports = target->texture_exports;
    if (texture_exports) {
       NIR_PASS(_, nir, agx_nir_lower_storage, true, true);
       NIR_PASS(_, nir, agx_nir_lower_images);
@@ -2041,10 +2045,10 @@ agx_shader_initialize(struct agx_device *dev, struct agx_uncompiled_shader *so,
                nir_metadata_control_flow, NULL);
    }
 
-   NIR_PASS(_, nir, agx_nir_lower_texture, agx_nir_target(nir));
+   NIR_PASS(_, nir, agx_nir_lower_texture, target);
    NIR_PASS(_, nir, nir_lower_ssbo, NULL);
 
-   agx_preprocess_nir(nir, agx_nir_target(nir));
+   agx_preprocess_nir(nir, target);
 
    if (texture_exports)
       NIR_PASS(_, nir, agx_nir_lower_image_barriers);
@@ -2946,8 +2950,8 @@ agx_build_meta_shader_internal(struct agx_context *ctx,
    builder(&b, data);
 
    if (!prolog) {
-      agx_preprocess_nir(b.shader, agx_nir_target(b.shader));
-      NIR_PASS(_, b.shader, agx_nir_lower_texture, agx_nir_target(b.shader));
+      agx_preprocess_nir(b.shader, agx_device_target(dev));
+      NIR_PASS(_, b.shader, agx_nir_lower_texture, agx_device_target(dev));
       NIR_PASS(_, b.shader, agx_nir_lower_multisampled_image_store);
    }
 

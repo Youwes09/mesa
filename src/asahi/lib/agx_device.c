@@ -1179,3 +1179,9 @@ agx_gather_device_key(struct agx_device *dev)
       .soft_fault = agx_has_soft_fault(dev),
    };
 }
+
+const struct agx_isa_target *
+agx_device_target(struct agx_device *dev)
+{
+   return agx_get_isa_target(agx_gather_device_key(dev).shader_isa);
+}

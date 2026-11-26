@@ -1132,14 +1132,19 @@ void agx_set_ssbo_uniforms(struct agx_batch *batch, mesa_shader_stage stage);
 
 bool agx_nir_lower_point_size(nir_shader *nir, bool insert_write);
 
-bool agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
+bool agx_nir_lower_sysvals(nir_shader *shader,
+                           const struct agx_isa_target *target,
+                           mesa_shader_stage desc_stage,
                            bool lower_draw_params);
 
 bool agx_nir_layout_uniforms(nir_shader *shader,
+                             const struct agx_isa_target *target,
                              struct agx_compiled_shader *compiled,
                              unsigned *push_size);
 
-bool agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers);
+bool agx_nir_lower_bindings(nir_shader *shader,
+                            const struct agx_isa_target *target,
+                            bool *uses_bindless_samplers);
 
 bool agx_batch_is_active(struct agx_batch *batch);
 bool agx_batch_is_submitted(struct agx_batch *batch);

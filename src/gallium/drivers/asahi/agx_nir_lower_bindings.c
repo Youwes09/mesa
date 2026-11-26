@@ -37,12 +37,18 @@ lower_sampler(nir_builder *b, nir_tex_instr *tex)
    return true;
 }
 
+struct lower_state {
+   const struct agx_isa_target *target;
+   bool *uses_bindless_samplers;
+};
+
 static bool
 lower(nir_builder *b, nir_instr *instr, void *data)
 {
-   bool *uses_bindless_samplers = data;
+   struct lower_state *state = data;
+   bool *uses_bindless_samplers = state->uses_bindless_samplers;
    bool progress = false;
-   bool exports = agx_nir_target(b->shader)->texture_exports;
+   bool exports = state->target->texture_exports;
 
    /* Texture exports read dimensions from memory, not the descriptor */
    bool force_bindless = !exports && agx_nir_needs_texture_crawl(instr);
@@ -248,7 +254,8 @@ lower_dynamic_texture_index(nir_shader *shader)
 }
 
 bool
-agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers)
+agx_nir_lower_bindings(nir_shader *shader, const struct agx_isa_target *target,
+                       bool *uses_bindless_samplers)
 {
    /* First lower index to offset so we can lower more naturally */
    bool progress = nir_lower_tex(
@@ -259,10 +266,11 @@ agx_nir_lower_bindings(nir_shader *shader, bool *uses_bindless_samplers)
     */
    progress |= nir_opt_constant_folding(shader);
 
-   if (agx_nir_target(shader)->texture_exports)
+   if (target->texture_exports)
       progress |= lower_dynamic_texture_index(shader);
 
-   progress |= nir_shader_instructions_pass(
-      shader, lower, nir_metadata_control_flow, uses_bindless_samplers);
+   struct lower_state state = {target, uses_bindless_samplers};
+   progress |= nir_shader_instructions_pass(shader, lower,
+                                            nir_metadata_control_flow, &state);
    return progress;
 }
