@@ -5983,13 +5983,34 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    hk_cmd_bind_graphics_shader(cmd, MESA_SHADER_GEOMETRY, gs);
 }
 
+/* Bind the shaders a draw runs and flush push descriptors */
+static void
+hk_flush_shader_state(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+{
+   struct hk_graphics_state *gfx = &cmd->state.gfx;
+
+   /* Merge tess info before GS construction since that depends on
+    * gfx->tess.prim
+    */
+   if ((IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL)) &&
+       gfx->shaders[MESA_SHADER_TESS_CTRL])
+      hk_merge_tess_info(cmd);
+
+   /* TODO: Try to reduce draw overhead of this */
+   hk_handle_passthrough_gs(cmd, draw);
+
+   hk_flush_shaders(cmd);
+
+   if (gfx->descriptors.push_dirty)
+      hk_cmd_buffer_flush_push_descriptors(cmd, &gfx->descriptors);
+}
+
 static struct hk_cs *
 hk_flush_gfx_state(struct hk_cmd_buffer *cmd, uint32_t draw_id,
                    struct agx_draw draw)
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
    struct hk_graphics_state *gfx = &cmd->state.gfx;
-   struct hk_descriptor_state *desc = &gfx->descriptors;
 
    struct hk_cs *cs = hk_cmd_buffer_get_cs(cmd, false /* compute */);
    const struct vk_dynamic_graphics_state *dyn =
@@ -6043,36 +6064,7 @@ hk_flush_gfx_state(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    }
 #endif
 
-   /* Merge tess info before GS construction since that depends on
-    * gfx->tess.prim
-    */
-   if ((IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL)) &&
-       gfx->shaders[MESA_SHADER_TESS_CTRL]) {
-      struct hk_api_shader *tcs = gfx->shaders[MESA_SHADER_TESS_CTRL];
-      struct hk_api_shader *tes = gfx->shaders[MESA_SHADER_TESS_EVAL];
-      struct hk_shader *tese = hk_any_variant(tes);
-      struct hk_shader *tesc = hk_only_variant(tcs);
-
-      gfx->tess.info =
-         hk_tess_info_merge(tese->info.tess.info, tesc->info.tess.info);
-
-      /* Determine primitive based on the merged state */
-      if (gfx->tess.info.points) {
-         gfx->tess.prim = MESA_PRIM_POINTS;
-      } else if (gfx->tess.info.mode == TESS_PRIMITIVE_ISOLINES) {
-         gfx->tess.prim = MESA_PRIM_LINES;
-      } else {
-         gfx->tess.prim = MESA_PRIM_TRIANGLES;
-      }
-   }
-
-   /* TODO: Try to reduce draw overhead of this */
-   hk_handle_passthrough_gs(cmd, draw);
-
-   hk_flush_shaders(cmd);
-
-   if (desc->push_dirty)
-      hk_cmd_buffer_flush_push_descriptors(cmd, desc);
+   hk_flush_shader_state(cmd, draw);
 
    if (draw.restart || gfx->shaders[MESA_SHADER_GEOMETRY])
       hk_flush_index(cmd, cs);
@@ -6179,11 +6171,26 @@ hk_flush_ia_stats(struct hk_cmd_buffer *cmd)
    memset(s, 0, sizeof(*s));
 }
 
+/* Update the input assembly, vertex shader and clipper statistics of a draw */
 static void
-hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw,
-             uint64_t ia_vertices, uint64_t ia_prims, uint64_t vs_invocations,
-             uint64_t c_prims, uint64_t c_inv)
+hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
+   uint64_t ia_vertices = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT);
+   uint64_t ia_prims = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT);
+   uint64_t vs_invocations = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT);
+   uint64_t c_inv = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
+   uint64_t c_prims = hk_pipeline_stat_addr(
+      cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
+
+   if (!hk_stat_enabled(ia_vertices) && !hk_stat_enabled(ia_prims) &&
+       !hk_stat_enabled(vs_invocations) && !hk_stat_enabled(c_inv) &&
+       !hk_stat_enabled(c_prims))
+      return;
+
    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
    enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
    bool geom = cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY];
@@ -6247,19 +6254,6 @@ hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw,
    }
 }
 
-/* Index size and primitive restart come from command buffer state, not the
- * draw entry points (hk_draw_indexed passes neither). Everything that routes
- * or launches a draw reads both, so G16 completes the draw before any of it. */
-static struct agx_draw
-hk_draw_complete_from_state(const struct hk_cmd_buffer *cmd,
-                            struct agx_draw draw)
-{
-   draw.restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable &&
-                  draw.indexed;
-   draw.index_size = cmd->state.gfx.index.size;
-   return draw;
-}
-
 static void
 hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
 {
@@ -6271,8 +6265,10 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
        (draw_.b.count[0] == 0 || draw_.b.count[1] == 0))
       return;
 
+   draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
+   draw_.index_size = cmd->state.gfx.index.size;
+
    if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
-      draw_ = hk_draw_complete_from_state(cmd, draw_);
       if (!hk_feedback_prepare_draw(cmd))
          return;
       /* Index fetch and indirect arguments are buffer reads of tiling. */
@@ -6288,29 +6284,8 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
             }
          }
       }
-      draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
-      draw_.index_size = cmd->state.gfx.index.size;
-      uint64_t ia_verts = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT);
-      uint64_t ia_prims = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT);
-      uint64_t vs_inv = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT);
-      uint64_t c_inv = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
-      uint64_t c_prims = hk_pipeline_stat_addr(
-         cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
-      if (hk_stat_enabled(ia_verts) || hk_stat_enabled(ia_prims) ||
-          hk_stat_enabled(vs_inv) || hk_stat_enabled(c_inv) ||
-          hk_stat_enabled(c_prims)) {
-         hk_ia_update(cmd, draw_, ia_verts, ia_prims, vs_inv, c_prims, c_inv);
-      }
-      if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL])
-         hk_merge_tess_info(cmd);
-      hk_handle_passthrough_gs(cmd, draw_);
-      hk_flush_shaders(cmd);
-      if (cmd->state.gfx.descriptors.push_dirty)
-         hk_cmd_buffer_flush_push_descriptors(cmd, &cmd->state.gfx.descriptors);
+      hk_ia_update(cmd, draw_);
+      hk_flush_shader_state(cmd, draw_);
       if (!hk_sw_vs_outputs_fit(cmd, draw_))
          return;
       /* Geometry and tessellation emulation decompose fans themselves. When
@@ -6353,28 +6328,12 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       return;
    }
 
-   draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
-   draw_.index_size = cmd->state.gfx.index.size;
-
-   uint64_t stat_ia_verts = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT);
-
-   uint64_t stat_ia_prims = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT);
-
-   uint64_t stat_vs_inv = hk_pipeline_stat_addr(
-      cmd, VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT);
-
    uint64_t stat_c_inv = hk_pipeline_stat_addr(
       cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
 
    uint64_t stat_c_prims = hk_pipeline_stat_addr(
       cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
 
-   bool ia_stats = hk_stat_enabled(stat_ia_verts) ||
-                   hk_stat_enabled(stat_ia_prims) ||
-                   hk_stat_enabled(stat_vs_inv) ||
-                   hk_stat_enabled(stat_c_inv) || hk_stat_enabled(stat_c_prims);
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
 
    hk_foreach_view(cmd) {
@@ -6411,10 +6370,7 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
             return;
       }
 
-      if (ia_stats) {
-         hk_ia_update(cmd, draw, stat_ia_verts, stat_ia_prims, stat_vs_inv,
-                      stat_c_prims, stat_c_inv);
-      }
+      hk_ia_update(cmd, draw);
 
       if (tess) {
          draw = hk_launch_tess(cmd, ccs, draw, geom ? 0 : stat_c_prims,
