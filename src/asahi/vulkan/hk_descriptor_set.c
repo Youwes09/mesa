@@ -369,13 +369,32 @@ write_buffer_view_desc(struct hk_descriptor_set *set,
    write_desc(set, binding, elem, out, size);
 }
 
-static void
-write_inline_uniform_data(struct hk_descriptor_set *set,
-                          const VkWriteDescriptorSetInlineUniformBlock *info,
-                          uint32_t binding, uint32_t offset)
+/* Inline uniform updates past the end of a binding continue in the next one */
+static uint32_t
+inline_uniform_span(const struct hk_descriptor_set_layout *layout,
+                    uint32_t *binding, uint32_t *offset, uint32_t size)
 {
-   assert(set->layout->binding[binding].stride == 1);
-   write_desc(set, binding, offset, info->pData, info->dataSize);
+   while (*offset >= layout->binding[*binding].array_size) {
+      *offset -= layout->binding[*binding].array_size;
+      (*binding)++;
+      assert(*binding < layout->binding_count);
+   }
+
+   assert(layout->binding[*binding].stride == 1);
+   return MIN2(size, layout->binding[*binding].array_size - *offset);
+}
+
+static void
+write_inline_uniform_data(struct hk_descriptor_set *set, uint32_t binding,
+                          uint32_t offset, const void *data, uint32_t size)
+{
+   while (size > 0) {
+      uint32_t n = inline_uniform_span(set->layout, &binding, &offset, size);
+      write_desc(set, binding, offset, data, n);
+      data = (const uint8_t *)data + n;
+      offset += n;
+      size -= n;
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -488,8 +507,9 @@ hk_UpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
             vk_find_struct_const(write->pNext,
                                  WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK);
          assert(write_inline->dataSize == write->descriptorCount);
-         write_inline_uniform_data(set, write_inline, write->dstBinding,
-                                   write->dstArrayElement);
+         write_inline_uniform_data(set, write->dstBinding,
+                                   write->dstArrayElement, write_inline->pData,
+                                   write_inline->dataSize);
          break;
       }
 
@@ -508,7 +528,24 @@ hk_UpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
       const struct hk_descriptor_set_binding_layout *dst_binding_layout =
          &dst->layout->binding[copy->dstBinding];
 
-      if (dst_binding_layout->stride > 0 && src_binding_layout->stride > 0) {
+      if (src_binding_layout->type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
+         uint32_t src_binding = copy->srcBinding;
+         uint32_t src_offset = copy->srcArrayElement;
+         uint32_t dst_binding = copy->dstBinding;
+         uint32_t dst_offset = copy->dstArrayElement;
+         uint32_t size = copy->descriptorCount;
+         while (size > 0) {
+            uint32_t n = inline_uniform_span(src->layout, &src_binding,
+                                             &src_offset, size);
+            n = inline_uniform_span(dst->layout, &dst_binding, &dst_offset, n);
+            memcpy(desc_ubo_data(dst, dst_binding, dst_offset, NULL),
+                   desc_ubo_data(src, src_binding, src_offset, NULL), n);
+            src_offset += n;
+            dst_offset += n;
+            size -= n;
+         }
+      } else if (dst_binding_layout->stride > 0 &&
+                 src_binding_layout->stride > 0) {
          for (uint32_t j = 0; j < copy->descriptorCount; j++) {
             ASSERTED uint32_t dst_max_size, src_max_size;
             void *dst_map = desc_ubo_data(
@@ -1021,8 +1058,8 @@ hk_descriptor_set_write_template(
          break;
 
       case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
-         write_desc(set, entry->binding, entry->array_element,
-                    data + entry->offset, entry->array_count);
+         write_inline_uniform_data(set, entry->binding, entry->array_element,
+                                   data + entry->offset, entry->array_count);
          break;
 
       default:
