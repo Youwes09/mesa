@@ -484,7 +484,13 @@ typedef struct agx_instr {
    bool saturate : 1;
    unsigned mask : 4;
 
-   unsigned padding : 1;
+   /* Hints, see agx_mark_result_hints: another device load follows in program
+    * order, and the result is read by more than device stores.
+    */
+   bool load_follows : 1;
+   bool result_read  : 1;
+
+   unsigned padding : 7;
 } agx_instr;
 
 static inline void
@@ -1196,6 +1202,7 @@ void agx_lower_64bit_postra(agx_context *ctx);
 void agx_insert_waits(agx_context *ctx);
 void agx_opt_empty_else(agx_context *ctx);
 void agx_opt_register_cache(agx_context *ctx);
+void agx_mark_result_hints(agx_context *ctx);
 
 /* Fills in reg_live_in and reg_live_out of every block, for GPRs */
 void agx_compute_postra_liveness(agx_context *ctx);
@@ -1205,8 +1212,7 @@ void agx2_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 void agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 
 /* Packs one instruction and returns its length */
-unsigned agx3_pack_instr(const agx_instr *I, bool load_follows,
-                         bool alu_reads_result, uint8_t *bytes);
+unsigned agx3_pack_instr(const agx_instr *I, uint8_t *bytes);
 
 bool agx3_float_immediate_ok(agx_index idx, bool wide);
 bool agx3_sr_supported(enum agx_sr sr);

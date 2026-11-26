@@ -25,14 +25,6 @@ struct a9_packed {
    bool form_only;
 };
 
-struct a9_state {
-   /* Another device load follows in program order */
-   bool load_follows;
-
-   /* A special function's result is read by more than device stores */
-   bool alu_reads_result;
-};
-
 static void
 pack_assert_internal(const agx_instr *I, bool condition, const char *msg)
 {
@@ -821,7 +813,7 @@ pack_bit_unary(const agx_instr *I, struct a9_packed *p)
  * a uniform source. Some functions have no FP16 form.
  */
 static void
-pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
+pack_special(const agx_instr *I, struct a9_packed *p)
 {
    agx_index x = I->src[0];
    bool half = I->format == AGX_FORMAT_F16;
@@ -887,7 +879,7 @@ pack_special(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
         (struct agx3_fields){
            .dest = agx3_encode_reg(plain(I, I->dest[0])),
            .src = {agx3_encode_usrc(op)},
-           .alu = st->alu_reads_result,
+           .alu = I->result_read,
            .saturate = I->saturate,
         });
 }
@@ -1426,8 +1418,7 @@ memory_base(const agx_instr *I, agx_index base, bool release)
 
 /* Device loads of base + (index << shift) + offset, zero-extended */
 static void
-pack_device_load(const agx_instr *I, const struct a9_state *st,
-                 struct a9_packed *p)
+pack_device_load(const agx_instr *I, struct a9_packed *p)
 {
    agx_index base = I->src[0], index = I->src[1];
    unsigned components = memory_components(I);
@@ -1457,7 +1448,7 @@ pack_device_load(const agx_instr *I, const struct a9_state *st,
            .shift = memory_shift_field(I, pointer ? 0 : shift),
            .format = memory_format(I, components),
            .slot = completion_slot(I),
-           .next = st->load_follows,
+           .next = I->load_follows,
         });
 }
 
@@ -2619,7 +2610,7 @@ is_float_convert(const agx_instr *I)
 
 /* Smallest form of an instruction, with a dependency field if it waits */
 static void
-pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
+pack_body(const agx_instr *I, struct a9_packed *p)
 {
    switch (I->op) {
    case AGX_OPCODE_FADD:
@@ -2719,7 +2710,7 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
    case AGX_OPCODE_CEIL:
    case AGX_OPCODE_TRUNC:
    case AGX_OPCODE_ROUNDEVEN:
-      pack_special(I, st, p);
+      pack_special(I, p);
       return;
 
    case AGX_OPCODE_DFDX:
@@ -2758,7 +2749,7 @@ pack_body(const agx_instr *I, const struct a9_state *st, struct a9_packed *p)
       return;
 
    case AGX_OPCODE_DEVICE_LOAD:
-      pack_device_load(I, st, p);
+      pack_device_load(I, p);
       return;
 
    case AGX_OPCODE_DEVICE_STORE:
@@ -2862,82 +2853,23 @@ is_empty(const agx_instr *I)
 enum agx3_encoding
 agx3_encoding_for(const agx_instr *I)
 {
-   struct a9_state st = {0};
    struct a9_packed p = {.form = AGX3_ENC_PSEUDO, .form_only = true};
-   pack_body(I, &st, &p);
+   pack_body(I, &p);
    return p.form;
 }
 
 unsigned
-agx3_pack_instr(const agx_instr *I, bool load_follows, bool alu_reads_result,
-                uint8_t *bytes)
+agx3_pack_instr(const agx_instr *I, uint8_t *bytes)
 {
    if (is_empty(I))
       return 0;
 
-   struct a9_state st = {
-      .load_follows = load_follows,
-      .alu_reads_result = alu_reads_result,
-   };
    struct a9_packed p = {.form = AGX3_ENC_PSEUDO};
 
-   pack_body(I, &st, &p);
+   pack_body(I, &p);
    pack_assert(I, p.form != AGX3_ENC_PSEUDO && "no AGX3 encoding");
    memcpy(bytes, p.bytes, p.length);
    return p.length;
-}
-
-/* Special functions, which hint who reads their result */
-static bool
-is_special(const agx_instr *I)
-{
-   switch (I->op) {
-   case AGX_OPCODE_RCP:
-   case AGX_OPCODE_RSQRT:
-   case AGX_OPCODE_SRSQRT:
-   case AGX_OPCODE_SIN_FACTOR:
-   case AGX_OPCODE_EXP2:
-   case AGX_OPCODE_LOG2:
-   case AGX_OPCODE_FLOOR:
-   case AGX_OPCODE_CEIL:
-   case AGX_OPCODE_TRUNC:
-   case AGX_OPCODE_ROUNDEVEN:
-      return true;
-   default:
-      return false;
-   }
-}
-
-/* Whether a non-store reads the result before it is overwritten */
-static bool
-alu_reads_result(agx_block *block, agx_instr *I)
-{
-   agx_index dest = I->dest[0];
-   unsigned reg = dest.value, count = agx_index_size_16(dest);
-
-   for (agx_instr *J = list_entry(I->link.next, agx_instr, link);
-        &J->link != &block->instructions;
-        J = list_entry(J->link.next, agx_instr, link)) {
-
-      agx_foreach_reg_src(J, s) {
-         agx_index src = J->src[s];
-         if (src.reg_class != RA_GPR)
-            continue;
-
-         unsigned end = src.value + agx_index_size_16(src);
-         if (src.value < reg + count && reg < end &&
-             !(J->op == AGX_OPCODE_DEVICE_STORE && s == 0))
-            return true;
-      }
-
-      agx_foreach_reg_dest(J, d) {
-         if (J->dest[d].reg_class == RA_GPR && J->dest[d].value == reg &&
-             agx_index_size_16(J->dest[d]) >= count)
-            return false;
-      }
-   }
-
-   return block->successors[0] != NULL;
 }
 
 struct a9_fixup {
@@ -2953,22 +2885,11 @@ agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission)
    struct util_dynarray fixups;
    util_dynarray_init(&fixups, ctx);
 
-   unsigned loads = 0;
-   agx_foreach_instr_global(ctx, I) {
-      loads += I->op == AGX_OPCODE_DEVICE_LOAD;
-   }
-
    agx_foreach_block(ctx, block) {
       block->offset = emission->size;
 
       agx_foreach_instr_in_block(block, I) {
          block->last_offset = emission->size;
-
-         bool load_follows = false;
-         if (I->op == AGX_OPCODE_DEVICE_LOAD)
-            load_follows = --loads > 0;
-
-         bool reads = is_special(I) && alu_reads_result(block, I);
 
          if (I->op == AGX_OPCODE_JMP_EXEC_ANY ||
              I->op == AGX_OPCODE_JMP_EXEC_NONE ||
@@ -2992,7 +2913,7 @@ agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission)
          }
 
          uint8_t bytes[A9_MAX_BYTES];
-         unsigned length = agx3_pack_instr(I, load_follows, reads, bytes);
+         unsigned length = agx3_pack_instr(I, bytes);
          memcpy(util_dynarray_grow_bytes(emission, 1, length), bytes, length);
       }
    }

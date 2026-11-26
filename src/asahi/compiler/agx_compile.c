@@ -5038,6 +5038,8 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    if (ctx->target.uniform_dests)
       agx_fuse_uniform_stores(ctx);
 
+   agx_mark_result_hints(ctx);
+
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       agx_print_shader(ctx, stdout);
 

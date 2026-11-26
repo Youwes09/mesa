@@ -94,7 +94,9 @@ class Agx3Pack : public testing::Test {
                              bool alu_reads = true)
    {
       uint8_t bytes[32];
-      unsigned length = agx3_pack_instr(I, load_follows, alu_reads, bytes);
+      I->load_follows = load_follows;
+      I->result_read = alu_reads;
+      unsigned length = agx3_pack_instr(I, bytes);
       return std::vector<uint8_t>(bytes, bytes + length);
    }
 

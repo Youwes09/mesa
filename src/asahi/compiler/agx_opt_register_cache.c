@@ -94,6 +94,59 @@ writes_reg(const agx_instr *I, unsigned reg)
    return false;
 }
 
+/* Special functions encode a hint of whether their result is read */
+static bool
+is_special(const agx_instr *I)
+{
+   switch (I->op) {
+   case AGX_OPCODE_RCP:
+   case AGX_OPCODE_RSQRT:
+   case AGX_OPCODE_SRSQRT:
+   case AGX_OPCODE_SIN_FACTOR:
+   case AGX_OPCODE_EXP2:
+   case AGX_OPCODE_LOG2:
+   case AGX_OPCODE_FLOOR:
+   case AGX_OPCODE_CEIL:
+   case AGX_OPCODE_TRUNC:
+   case AGX_OPCODE_ROUNDEVEN:
+      return true;
+   default:
+      return false;
+   }
+}
+
+/* Whether a non-store reads the result before it is overwritten */
+static bool
+result_read(agx_block *block, agx_instr *I)
+{
+   agx_index dest = I->dest[0];
+   unsigned reg = dest.value, count = agx_index_size_16(dest);
+
+   for (agx_instr *J = list_entry(I->link.next, agx_instr, link);
+        &J->link != &block->instructions;
+        J = list_entry(J->link.next, agx_instr, link)) {
+
+      agx_foreach_reg_src(J, s) {
+         agx_index src = J->src[s];
+         if (src.reg_class != RA_GPR)
+            continue;
+
+         unsigned end = src.value + agx_index_size_16(src);
+         if (src.value < reg + count && reg < end &&
+             !(J->op == AGX_OPCODE_DEVICE_STORE && s == 0))
+            return true;
+      }
+
+      agx_foreach_reg_dest(J, d) {
+         if (J->dest[d].reg_class == RA_GPR && J->dest[d].value == reg &&
+             agx_index_size_16(J->dest[d]) >= count)
+            return false;
+      }
+   }
+
+   return block->successors[0] != NULL;
+}
+
 /*
  * Mark last-use sources to allow the hardware to discard from the register
  * cache. Last use information follows immediately from (post-RA) liveness
@@ -171,6 +224,26 @@ agx_opt_register_cache(agx_context *ctx)
          }
 
          postra_liveness_ins(live, I);
+      }
+   }
+}
+
+/*
+ * Hint how results are consumed: whether another device load follows in
+ * program order, and whether a special function's result is read.
+ */
+void
+agx_mark_result_hints(agx_context *ctx)
+{
+   bool load_follows = false;
+   agx_foreach_block_rev(ctx, block) {
+      agx_foreach_instr_in_block_rev(block, I) {
+         if (I->op == AGX_OPCODE_DEVICE_LOAD) {
+            I->load_follows = load_follows;
+            load_follows = true;
+         } else if (is_special(I)) {
+            I->result_read = result_read(block, I);
+         }
       }
    }
 }
