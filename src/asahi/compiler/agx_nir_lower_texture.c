@@ -201,9 +201,26 @@ lower_buffer_texture(nir_builder *b, nir_tex_instr *tex)
    return true;
 }
 
+/* Texture info fields */
+enum texture_info_field {
+   TEXTURE_INFO_WIDTH = 0,
+   TEXTURE_INFO_HEIGHT = 1,
+   TEXTURE_INFO_LAYERS = 2,
+   TEXTURE_INFO_LEVELS = 3,
+   TEXTURE_INFO_SAMPLES = 4,
+
+   /* Texel buffers by index: RGB32 views, and swizzle at 3 bits per channel */
+   TEXTURE_INFO_RGB32 = 5,
+   TEXTURE_INFO_BUFFER_SWIZZLE = 6,
+
+   /* The view's swizzle, as pipe_swizzle at 3 bits per channel */
+   TEXTURE_INFO_SWIZZLE = 7,
+};
+
 /* The 32-byte texture info of the handle's descriptor or the texture index */
 static nir_def *
-export_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
+texture_info(nir_builder *b, const nir_tex_instr *tex,
+             enum texture_info_field field)
 {
    int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
 
@@ -224,19 +241,6 @@ export_texture_info(nir_builder *b, nir_tex_instr *tex, unsigned field)
       .align_mul = 4, .range = ~0);
 }
 
-/* Texture info fields */
-enum texture_info_field {
-   TEXTURE_INFO_WIDTH = 0,
-   TEXTURE_INFO_HEIGHT = 1,
-   TEXTURE_INFO_LAYERS = 2,
-   TEXTURE_INFO_LEVELS = 3,
-   TEXTURE_INFO_SAMPLES = 4,
-
-   /* Texel buffers by index: RGB32 views, and swizzle at 3 bits per channel */
-   TEXTURE_INFO_RGB32 = 5,
-   TEXTURE_INFO_BUFFER_SWIZZLE = 6,
-};
-
 /* Size, level and sample queries, all zero for a null view */
 static bool
 lower_query_export(nir_builder *b, nir_tex_instr *tex)
@@ -252,7 +256,7 @@ lower_query_export(nir_builder *b, nir_tex_instr *tex)
       nir_def *size[3];
       for (unsigned c = 0; c < tex->def.num_components; ++c) {
          bool layer = tex->is_array && c + 1 == tex->def.num_components;
-         size[c] = export_texture_info(b, tex, layer ? TEXTURE_INFO_LAYERS : c);
+         size[c] = texture_info(b, tex, layer ? TEXTURE_INFO_LAYERS : c);
 
          if (!layer && tex->sampler_dim != GLSL_SAMPLER_DIM_BUF)
             size[c] = nir_umax(b, nir_ushr(b, size[c], lod), nir_imm_int(b, 1));
@@ -260,7 +264,7 @@ lower_query_export(nir_builder *b, nir_tex_instr *tex)
 
       result = nir_vec(b, size, tex->def.num_components);
    } else {
-      result = export_texture_info(b, tex,
+      result = texture_info(b, tex,
                                    tex->op == nir_texop_query_levels
                                       ? TEXTURE_INFO_LEVELS
                                       : TEXTURE_INFO_SAMPLES);
@@ -269,7 +273,7 @@ lower_query_export(nir_builder *b, nir_tex_instr *tex)
    if (tex->op != nir_texop_query_levels &&
        tex->sampler_dim != GLSL_SAMPLER_DIM_BUF) {
       nir_def *null =
-         nir_ieq_imm(b, export_texture_info(b, tex, TEXTURE_INFO_LEVELS), 0);
+         nir_ieq_imm(b, texture_info(b, tex, TEXTURE_INFO_LEVELS), 0);
       result = nir_bcsel(b, null, nir_imm_zero(b, result->num_components, 32),
                          result);
    }
@@ -322,20 +326,20 @@ bound_fetch(nir_builder *b, nir_tex_instr *tex, nir_def *coord, nir_def **lod,
    if (*lod) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, *lod, export_texture_info(b, tex, TEXTURE_INFO_LEVELS)));
+         nir_ult(b, *lod, texture_info(b, tex, TEXTURE_INFO_LEVELS)));
       *lod = nir_bcsel(b, valid, *lod, nir_imm_int(b, 0));
    }
 
    if (layer) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, layer, export_texture_info(b, tex, TEXTURE_INFO_LAYERS)));
+         nir_ult(b, layer, texture_info(b, tex, TEXTURE_INFO_LAYERS)));
    }
 
    if (sample) {
       valid = nir_iand(
          b, valid,
-         nir_ult(b, sample, export_texture_info(b, tex, TEXTURE_INFO_SAMPLES)));
+         nir_ult(b, sample, texture_info(b, tex, TEXTURE_INFO_SAMPLES)));
    }
 
    nir_def *x =
@@ -456,7 +460,7 @@ lower_regular_texture_export(nir_builder *b, nir_tex_instr *tex)
             b, nir_fmax(b, nir_fround_even(b, layer), nir_imm_float(b, 0.0f)));
          layer = nir_umin(
             b, layer,
-            nir_iadd_imm(b, export_texture_info(b, tex, TEXTURE_INFO_LAYERS),
+            nir_iadd_imm(b, texture_info(b, tex, TEXTURE_INFO_LAYERS),
                          -1));
       }
    }
@@ -1473,10 +1477,10 @@ lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
 
    b->cursor = nir_before_instr(&tex->instr);
    nir_def *index = nir_u2u32(b, nir_get_tex_src(tex, nir_tex_src_coord));
-   nir_def *size = export_texture_info(b, tex, TEXTURE_INFO_WIDTH);
+   nir_def *size = texture_info(b, tex, TEXTURE_INFO_WIDTH);
    nir_push_if(b, nir_ult(b, index, size));
    nir_push_if(
-      b, nir_ine_imm(b, export_texture_info(b, tex, TEXTURE_INFO_RGB32), 0));
+      b, nir_ine_imm(b, texture_info(b, tex, TEXTURE_INFO_RGB32), 0));
 
    nir_def *components[4];
    nir_def *scalar_index = nir_imul_imm(b, index, 3);
@@ -1488,7 +1492,7 @@ lower_texel_buffer_index(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    bool floating = nir_alu_type_get_base_type(tex->dest_type) == nir_type_float;
    components[3] = floating ? nir_imm_float(b, 1) : nir_imm_int(b, 1);
 
-   nir_def *swizzle = export_texture_info(b, tex, TEXTURE_INFO_BUFFER_SWIZZLE);
+   nir_def *swizzle = texture_info(b, tex, TEXTURE_INFO_BUFFER_SWIZZLE);
    nir_def *rgba[4];
    for (unsigned c = 0; c < 4; ++c) {
       nir_def *channel = nir_iand_imm(b, nir_ushr_imm(b, swizzle, c * 3), 7);
@@ -1548,22 +1552,6 @@ descriptor_word(nir_builder *b, nir_def *handle, unsigned offset)
    return nir_load_global_constant(
       b, 1, 32, address, .align_mul = 4,
       .access = ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE);
-}
-
-static nir_def *
-descriptor_texture_info(nir_builder *b, const nir_tex_instr *tex,
-                        unsigned field)
-{
-   int handle = nir_tex_instr_src_index(tex, nir_tex_src_texture_handle);
-   if (handle >= 0)
-      return descriptor_word(b, tex->src[handle].src.ssa,
-                             AGX_DESCRIPTOR_TEXTURE_INFO + field * 4);
-   return nir_load_ubo(
-      b, 1, 32, nir_imm_int(b, AGX_GRAPHICS_SYSVAL_BINDING),
-      nir_imm_int(b, AGX_TEXTURE_INFO_OFFSET +
-                        tex->texture_index * AGX_TEXTURE_INFO_STRIDE +
-                        field * 4),
-      .align_mul = 4, .range = 4);
 }
 
 static nir_def *
@@ -1663,7 +1651,7 @@ normalize_runtime_coordinates(nir_builder *b, nir_tex_instr *tex,
    /* Scale by the reciprocal size or one, hoisted to the preamble */
    for (unsigned c = 0; c < coord->num_components; ++c) {
       if (c < 2) {
-         nir_def *size = nir_u2f32(b, descriptor_texture_info(b, tex, c));
+         nir_def *size = nir_u2f32(b, texture_info(b, tex, c));
          nir_def *scale = nir_bcsel(b, nir_ine_imm(b, pixel, 0),
                                     nir_frcp(b, size), nir_imm_float(b, 1.0f));
          normalized[c] = nir_fmul(b, nir_channel(b, coord, c), scale);
@@ -2098,7 +2086,7 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
              * that same mapping to software border taps before selecting a
              * gather component, including constant zero/one channels.
              */
-            nir_def *swizzle = descriptor_texture_info(&b, tex, 7);
+            nir_def *swizzle = texture_info(&b, tex, TEXTURE_INFO_SWIZZLE);
             nir_def *rgba[4];
             for (unsigned c = 0; c < 4; ++c) {
                nir_def *channel =
@@ -2123,15 +2111,15 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
             }
          }
          for (unsigned c = 0; c < s.dims; ++c)
-            s.base_size[c] = descriptor_texture_info(&b, tex, c);
+            s.base_size[c] = texture_info(&b, tex, c);
          if (tex->is_array) {
             s.layer = nir_f2i32(
                &b,
                nir_ffloor(
                   &b, nir_fadd_imm(&b, nir_channel(&b, s.coord, s.dims), 0.5)));
-            s.layer = nir_iclamp(
-               &b, s.layer, nir_imm_int(&b, 0),
-               nir_iadd_imm(&b, descriptor_texture_info(&b, tex, 2), -1));
+            nir_def *layers = texture_info(&b, tex, TEXTURE_INFO_LAYERS);
+            s.layer = nir_iclamp(&b, s.layer, nir_imm_int(&b, 0),
+                                 nir_iadd_imm(&b, layers, -1));
          }
          if (tex->is_shadow)
             s.comparator =
@@ -2144,7 +2132,7 @@ lower_texture_offsets(nir_shader *nir, bool bias_applied, const char **reason)
          }
          nir_def *lambda = sample_lod(&b, &s);
          nir_def *last =
-            nir_iadd_imm(&b, descriptor_texture_info(&b, tex, 3), -1);
+            nir_iadd_imm(&b, texture_info(&b, tex, TEXTURE_INFO_LEVELS), -1);
          nir_def *level =
             nir_fclamp(&b, lambda, nir_imm_float(&b, 0), nir_i2f32(&b, last));
          nir_def *nearest_lod = nir_imax(
