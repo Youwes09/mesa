@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #include "../hk_sync.h"
 #include <algorithm>
 #include <vector>

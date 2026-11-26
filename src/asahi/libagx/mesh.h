@@ -1,7 +1,8 @@
 /*
- * Copyright 2026 The Asahi Linux Contributors
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #include "compiler/libcl/libcl.h"
 
 #pragma once

@@ -1,5 +1,6 @@
 /*
- * Copyright 2026 Asahi Linux Contributors
+ * Copyright 2026 Youwes09
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
 

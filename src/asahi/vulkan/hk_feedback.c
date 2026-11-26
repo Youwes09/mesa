@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #include "hk_feedback.h"
 #include "util/format/u_format.h"
 #include "hk_cmd_buffer.h"

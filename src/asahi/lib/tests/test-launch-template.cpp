@@ -1,6 +1,9 @@
-/* Copyright 2026 Asahi Linux Contributors
+/*
+ * Copyright 2026 Niklas Sheth
+ * Copyright 2026 Youwes09
  * SPDX-License-Identifier: MIT
  */
+
 #include <random>
 #include <string.h>
 #include <gtest/gtest.h>

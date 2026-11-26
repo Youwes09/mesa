@@ -1,6 +1,9 @@
-/* Copyright 2026 Asahi Linux Contributors
+/*
+ * Copyright 2026 Youwes09
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #ifndef AGX3_EMIT_H
 #define AGX3_EMIT_H
 

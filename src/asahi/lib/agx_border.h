@@ -1,4 +1,7 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
 
 #pragma once
 

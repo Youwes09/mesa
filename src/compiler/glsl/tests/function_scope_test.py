@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright 2026 Niklas Sheth
 # SPDX-License-Identifier: MIT
 """Exercise the ESSL 1.00 function-body scope and later-language restrictions."""
 import pathlib

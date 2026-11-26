@@ -1,6 +1,8 @@
-/* Copyright 2026 The Asahi Linux Contributors
+/*
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #include <vector>
 #include <gtest/gtest.h>
 #include "agx_test.h"

@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Youwes09
+ * SPDX-License-Identifier: MIT
+ */
+
 #ifndef AGX_RESOURCE_LAYOUT_H
 #define AGX_RESOURCE_LAYOUT_H
 

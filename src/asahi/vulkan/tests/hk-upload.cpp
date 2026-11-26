@@ -1,6 +1,8 @@
-/* Copyright 2026 Asahi Linux Contributors
+/*
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #include <array>
 #include <gtest/gtest.h>
 #include "hk_upload.h"

@@ -1,4 +1,9 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Youwes09
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #include "agx_shader_body.h"
 #include "asahi/compiler/agx3_emit.h"
 #include "util/u_atomic.h"

@@ -1,7 +1,14 @@
-/* SPDX-License-Identifier: MIT
+/*
+ * Copyright 2026 Niklas Sheth
+ * Copyright 2026 Youwes09
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * Compare binding-only updates with complete preparation at fixed addresses.
  * The reference rebuilds all raster state; both arms emit real launch/VDM bytes.
  */
+
 #include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"

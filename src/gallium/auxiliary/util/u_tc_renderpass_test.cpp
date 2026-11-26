@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #include <gtest/gtest.h>
 #include "u_threaded_context.h"
 

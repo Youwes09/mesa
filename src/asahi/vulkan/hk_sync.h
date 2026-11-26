@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #ifndef HK_SYNC_H
 #define HK_SYNC_H
 

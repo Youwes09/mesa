@@ -1,4 +1,4 @@
-# Copyright 2026 The Asahi Linux Contributors
+# Copyright 2026 Youwes09
 # SPDX-License-Identifier: MIT
 
 # Generates instruction packers from an ISA description: for each instruction

@@ -1,6 +1,14 @@
-/* SPDX-License-Identifier: MIT
+/*
+ * Copyright 2026 Niklas Sheth
+ * Copyright 2026 Youwes09
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * Compare object-owned interpolation state with draw-time packing using fixed
- * semantic allocation addresses. No shader compilation or GPU is involved. */
+ * semantic allocation addresses. No shader compilation or GPU is involved.
+ */
+
 #include "asahi/lib/agx_resource_layout.h"
 #include "asahi/lib/agx_tilebuffer.h"
 #include "agx_cdm.h"

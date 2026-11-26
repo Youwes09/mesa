@@ -1,4 +1,5 @@
 /*
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
 

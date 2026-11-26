@@ -1,6 +1,8 @@
-/* Copyright 2026 Asahi Linux Contributors
+/*
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #pragma once
 #include "hk_descriptor_memory.h"
 

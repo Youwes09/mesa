@@ -1,4 +1,9 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * Copyright 2026 Youwes09
+ * SPDX-License-Identifier: MIT
+ */
+
 #pragma once
 
 #include <stdbool.h>

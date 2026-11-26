@@ -1,4 +1,4 @@
-# Copyright 2026 The Asahi Linux Contributors
+# Copyright 2026 Youwes09
 # SPDX-License-Identifier: MIT
 
 # Checks the AGX3 forms of agx3_forms.py: that each is consistent with its

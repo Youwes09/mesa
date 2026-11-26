@@ -1,6 +1,8 @@
-/* Copyright 2026 Asahi Linux Contributors
+/*
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
  */
+
 #include "hk_usc_heap.h"
 #include <assert.h>
 #include <stdlib.h>

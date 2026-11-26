@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #include "compiler/shader_enums.h"
 #include <gtest/gtest.h>
 #include "poly-indirect-size.h"

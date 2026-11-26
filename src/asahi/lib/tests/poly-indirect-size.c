@@ -1,4 +1,9 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Niklas Sheth
+ * Copyright 2026 Youwes09
+ * SPDX-License-Identifier: MIT
+ */
+
 /* geometry.h is C-only; expose its size checks to the C++ tests. */
 #include "poly-indirect-size.h"
 #include "poly/geometry.h"

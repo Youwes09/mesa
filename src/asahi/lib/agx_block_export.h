@@ -1,4 +1,9 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright 2026 Youwes09
+ * Copyright 2026 Niklas Sheth
+ * SPDX-License-Identifier: MIT
+ */
+
 #ifndef AGX_BLOCK_EXPORT_H
 #define AGX_BLOCK_EXPORT_H
 

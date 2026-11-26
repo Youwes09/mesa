@@ -1,7 +1,9 @@
 /*
- * Copyright 2026 The Asahi Linux Contributors
+ * Copyright 2026 Niklas Sheth
  * SPDX-License-Identifier: MIT
- *
+ */
+
+/*
  * Bounded, opt-in spill-home coalescing prototype. Build interference while
  * the program is SSA, then recolor only memory after normal register assignment.
  * If the contracted graph cannot fit the original frame, keep the original
