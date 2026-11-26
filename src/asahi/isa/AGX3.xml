@@ -1751,7 +1751,10 @@
     bits 42-44, repeated in bits 45-47.
   -->
   <ins name="texture" length="14" form="texture_sample texture_lod texture_grad">
-    <template>05 80 0c b8 b0 00 00 00 00 00 10 00 01 00</template>
+    <exact bit="0:2">101</exact>
+    <exact bit="16:18">100</exact>
+    <zero bit="20 23 30 38 40:41 64:67 73:74 80:83 87:95 97:104 111"/>
+    <exact bit="15 19 29 31 36 39 96">1111111</exact>
     <dest kind="reg" bit="3:7 22 =0"/>
     <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
     <src kind="table" bit="71 11:14 68:70 =0 =0" role="-"/>
@@ -1769,7 +1772,10 @@
   </ins>
 
   <ins name="texture_reg" display="texture" length="20" form="texture_sample_indexed texture_lod_indexed texture_grad_indexed">
-    <template>05 80 0c b8 b0 00 00 00 00 02 10 00 01 00 00 20 00 00 40 00</template>
+    <exact bit="0:2">101</exact>
+    <exact bit="16:18">100</exact>
+    <zero bit="20 23 30 38 40:41 64:67 71 74 80:83 88:95 97:104 111:121 124 126:149 151:152 154:159"/>
+    <exact bit="15 19 29 31 36 39 73 96 125 150">1111111111</exact>
     <dest kind="reg" bit="3:7 22 153"/>
     <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
     <src kind="table" bit="11:14 68:70 122 87 123" role="-"/>
@@ -1787,7 +1793,10 @@
   </ins>
 
   <ins name="texture_reg2" display="texture" length="20" form="texture_sample_indexed texture_lod_indexed texture_grad_indexed">
-    <template>05 80 0c b8 b0 00 00 00 00 02 10 01 01 00 80 20 00 00 40 00</template>
+    <exact bit="0:2">101</exact>
+    <exact bit="16:18">100</exact>
+    <zero bit="20 23 30 38 40:41 64 71:72 74 80:83 89:95 97:104 111:115 118 120:121 124 126:149 151:152 154:159"/>
+    <exact bit="15 19 29 31 36 39 73 96 119 125 150">11111111111</exact>
     <dest kind="reg" bit="3:7 22 153"/>
     <src kind="export" bit="8:10 24:25 =0 =0" role="-"/>
     <src kind="table" bit="11:14 68:70 122 87 123" role="-"/>
@@ -1811,14 +1820,20 @@
     block store writes the implicit tile.
   -->
   <ins name="image_write" length="16" form="image_write">
-    <template>d7 10 54 00 00 40 00 00 20 04 00 00 88 1a 89 00</template>
+    <exact bit="0:11">000011010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="13:17 32:45 47:56 65:68 70:73 75:98 100:102 104 106 110:111 113:114 116:118 120:127"/>
+    <exact bit="12 46 69 74 99 103 105 107:108 112 115 119">111111111111</exact>
     <esrc/>
     <src kind="reg64" bit="57:63 =0 64"/>
     <modifier name="floating" display="float" bit="109"/>
   </ins>
 
   <ins name="block_image_store" length="12" form="block_image_store block_image_store_extended">
-    <template>57 10 54 00 00 00 00 80 00 00 01 00</template>
+    <exact bit="0:11">000001010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="13:17 32:43 48:62 81:95"/>
+    <exact bit="12 63 80">111</exact>
     <esrc/>
     <immediate name="image" bit="44:47" prefix="ts"/>
     <immediate name="mode" bit="64:75" prefix="mode="/>
@@ -1826,18 +1841,27 @@
   </ins>
 
   <ins name="join_export" length="6" form="image_write block_image_store block_image_store_extended">
-    <template>07 12 54 00 03 00</template>
+    <exact bit="0:11">001000000111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="13:17 25:31 34:47"/>
+    <exact bit="12 32:33">111</exact>
   </ins>
 
   <!-- Fragment outputs -->
   <ins name="write_coverage" length="6" form="coverage">
-    <template>57 04 54 00 00 01</template>
+    <exact bit="0:11">010001010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32:39 41:47"/>
+    <exact bit="40">1</exact>
     <esrc/>
     <mask_12_17/>
   </ins>
 
   <ins name="zs_store" length="6" form="depth_store">
-    <template>d7 14 54 00 00 00</template>
+    <exact bit="0:11">010011010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="13:17 32:39"/>
+    <exact bit="12">1</exact>
     <esrc/>
     <modifier name="mode" kind="depth" bit="40:47"/>
   </ins>
@@ -1848,14 +1872,20 @@
     coordinates, a constant. Loads complete on their slot.
   -->
   <ins name="ld_tile" length="12" form="tile_load">
-    <template>67 0e 54 00 00 00 01 4e 00 00 00 00</template>
+    <exact bit="0:11">111001100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 32:40 46:47 49:56 60:61 66:95"/>
+    <exact bit="48 57:59 62">11111</exact>
     <rdst/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
     <modifier name="slot" kind="slot" bit="63:65"/>
   </ins>
 
   <ins name="ld_tile_mask" display="ld_tile" length="12" form="tile_load_mask">
-    <template>67 06 54 00 00 00 00 4e 00 00 00 20</template>
+    <exact bit="0:11">011001100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 32:40 46:47 56 60:61 66:68 70:92 94:95"/>
+    <exact bit="57:59 62 93">11111</exact>
     <rdst/>
     <src kind="half" bit="48:55 =0 69"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
@@ -1863,7 +1893,10 @@
   </ins>
 
   <ins name="ld_tile_coords" display="ld_tile" length="12" form="tile_load_coords">
-    <template>67 16 54 00 00 00 00 4e 00 00 00 10</template>
+    <exact bit="0:11">011001100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="13:17 39:40 46:47 56 60:61 66:91 93:95"/>
+    <exact bit="12 57:59 62 92">111111</exact>
     <rdst/>
     <src kind="reg" bit="32:38"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
@@ -1872,13 +1905,19 @@
   </ins>
 
   <ins name="st_tile" length="12" form="tile_store">
-    <template>e7 06 54 00 00 00 01 4e 00 00 00 00</template>
+    <exact bit="0:11">011011100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 32:40 46:47 49:56 60:61 63:95"/>
+    <exact bit="48 57:59 62">11111</exact>
     <rsrc/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
   </ins>
 
   <ins name="st_tile_mask" display="st_tile" length="12" form="tile_store_mask">
-    <template>e7 06 54 00 00 00 00 4e 00 00 00 08</template>
+    <exact bit="0:11">011011100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32:40 46:47 56 60:61 63:66 68:90 92:95"/>
+    <exact bit="57:59 62 91">11111</exact>
     <rsrc/>
     <src kind="half" bit="48:55 =0 67"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
@@ -1892,34 +1931,48 @@
     completing on its slot.
   -->
   <ins name="st_vary" length="8" form="vary_store">
-    <template>57 06 54 00 00 40 00 00</template>
+    <exact bit="0:11">011001010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32:36 45 47:63"/>
+    <exact bit="46">1</exact>
     <esrc/>
     <immediate name="slot" bit="37:39 40:44" prefix="slot="/>
     <mask_12_17/>
   </ins>
 
   <ins name="iter" length="10" form="iter">
-    <template>2f 05 54 00 03 00 00 02 10 00</template>
+    <exact bit="0:11">010100101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 34:40 48:56 58:67 69:79"/>
+    <exact bit="32:33 57 68">1111</exact>
     <rdst/>
     <immediate name="cf" bit="41:47" prefix="cf"/>
   </ins>
 
   <ins name="iter_coord" display="iter" length="10" form="iter_coord">
-    <template>2f 05 54 00 03 00 00 02 00 00</template>
+    <exact bit="0:11">010100101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 34:40 55:56 58:66 68 70:79"/>
+    <exact bit="32:33 57">111</exact>
     <rdst/>
     <src kind="reg" bit="48:54 67 69"/>
     <immediate name="cf" bit="41:47" prefix="cf"/>
   </ins>
 
   <ins name="ldcf" length="6" form="iter_flat">
-    <template>1f 03 54 00 00 00</template>
+    <exact bit="0:11">001100011111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 43:47"/>
     <dest kind="reg" bit="24:30"/>
     <immediate name="cf" bit="31:39" prefix="cf"/>
     <modifier name="slot" kind="slot" bit="40:42"/>
   </ins>
 
   <ins name="interpolation_position" length="8" form="interpolation_position">
-    <template>af 04 54 00 03 00 0a 01</template>
+    <exact bit="0:11">010010101111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="34:41 50 52:55 58:63"/>
+    <exact bit="32:33 49 51 56">11111</exact>
     <rdst/>
     <src kind="reg" bit="42:48"/>
     <modifier name="sample" bit="57"/>
