@@ -3838,81 +3838,6 @@ hk_launch_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
    hk_launch_draw_impl(cmd, draw_id, draw);
 }
 
-/* Only geometry shaders observe adjacent vertices. Without one, draw the
- * primitive list of the remaining vertices through a generated index buffer.
- */
-static struct agx_draw
-hk_draw_without_adj(struct hk_cmd_buffer *cmd, struct agx_draw draw)
-{
-   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-   enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
-
-   if (draw.restart) {
-      draw = hk_draw_without_restart(cmd, draw, 1);
-      prim = u_decomposed_prim(prim);
-   }
-
-   uint64_t in_draw = draw.b.ptr;
-   if (!agx_is_indirect(draw.b)) {
-      uint32_t desc[5] = {draw.b.count[0], draw.b.count[1]};
-      if (draw.indexed) {
-         desc[2] = draw.start;
-         desc[3] = draw.index_bias;
-         desc[4] = draw.start_instance;
-      } else {
-         desc[2] = draw.start;
-         desc[3] = draw.start_instance;
-      }
-      in_draw = hk_pool_upload(cmd, desc, sizeof(desc), 4);
-   }
-
-   uint64_t out_draw = hk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4).gpu;
-   uint64_t heap = hk_heap(cmd);
-   libagx_unroll_adjacency(
-      cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw, heap, in_draw,
-      draw.indexed ? draw.index_buffer : 0,
-      draw.indexed ? draw.index_buffer_range_B >> draw.index_size : 0,
-      draw.indexed ? agx_index_size_to_B(draw.index_size) : 0, prim,
-      dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT);
-
-   return hk_heap_indexed_indirect(cmd, out_draw, AGX_INDEX_SIZE_U32, false);
-}
-
-/* The Apple9 index fetch reads only from the USC aperture and is bounded in
- * whole words. Fetch from a copy for index buffers placed outside the
- * aperture, and when robustness requires zeroes past a binding that ends
- * inside a word.
- */
-static bool
-hk_needs_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
-{
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-
-   if (!draw.indexed || draw.index_buffer_range_B == 0)
-      return false;
-
-   /* Check the whole binding, not just its base: a direct draw's firstIndex
-    * (or an indirect draw's GPU-provided firstIndex) may otherwise move the
-    * hardware pointer past the end of the USC aperture. Subtraction avoids
-    * wrapping the end of a high-VA binding.
-    */
-   if (draw.index_buffer < dev->dev.shader_base ||
-       draw.index_buffer - dev->dev.shader_base >= (1ull << 32) ||
-       draw.index_buffer_range_B >
-          (1ull << 32) - (draw.index_buffer - dev->dev.shader_base))
-      return true;
-
-   if (!((draw.index_buffer + draw.index_buffer_range_B) & 3))
-      return false;
-
-   if (!(dev->vk.enabled_features.robustBufferAccess ||
-         dev->vk.enabled_features.robustBufferAccess2 ||
-         dev->vk.enabled_features.pipelineRobustness))
-      return false;
-
-   return agx_is_indirect(draw.b) || agx_direct_draw_overreads_indices(draw);
-}
-
 static struct agx_draw
 hk_robust_index_copy(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
@@ -5707,13 +5632,36 @@ hk_needs_index_robustness(struct hk_cmd_buffer *cmd, struct agx_draw *draw)
       return false;
 
    /* Soft fault does not cover the hardware index buffer fetch, use the zero
-    * page instead.
+    * page instead. Launch programs fetch zeroes from a pool allocation, see
+    * hk_launch_draw_impl.
     */
    if (draw->index_buffer_range_B == 0) {
-      draw->index_buffer = AGX_ZERO_PAGE_ADDRESS;
-      draw->index_buffer_range_B = 4;
-      draw->start = 0;
+      if (!agx_has_launch_programs(&dev->dev)) {
+         draw->index_buffer = AGX_ZERO_PAGE_ADDRESS;
+         draw->index_buffer_range_B = 4;
+         draw->start = 0;
+      }
       return false;
+   }
+
+   /* The launch program index fetch reads only from the USC aperture and is
+    * bounded in whole words. Copy index buffers placed outside the aperture,
+    * and, for robustness, those whose binding ends inside a word.
+    */
+   if (agx_has_launch_programs(&dev->dev)) {
+      /* Check the whole binding, not just its base: a direct draw's
+       * firstIndex (or an indirect draw's GPU-provided firstIndex) may
+       * otherwise move the hardware pointer past the end of the USC aperture.
+       * Subtraction avoids wrapping the end of a high-VA binding.
+       */
+      if (draw->index_buffer < dev->dev.shader_base ||
+          draw->index_buffer - dev->dev.shader_base >= (1ull << 32) ||
+          draw->index_buffer_range_B >
+             (1ull << 32) - (draw->index_buffer - dev->dev.shader_base))
+         return true;
+
+      if (!((draw->index_buffer + draw->index_buffer_range_B) & 3))
+         return false;
    }
 
    if (!(dev->vk.enabled_features.robustBufferAccess ||
@@ -6102,11 +6050,132 @@ hk_ia_update(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    }
 }
 
-static void
-hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
+/* Per-draw preparation of launch programs, shared by every view */
+static bool
+hk_launch_begin_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id,
+                     struct agx_draw *draw)
 {
    const struct vk_dynamic_graphics_state *dyn =
       &cmd->vk.dynamic_graphics_state;
+
+   if (!hk_feedback_prepare_draw(cmd))
+      return false;
+   /* Index fetch and indirect arguments are buffer reads of tiling. */
+   if (!hk_launch_prepare_draw(cmd,
+                               agx_is_indirect(draw->b) || draw->indexed))
+      return false;
+   if (cmd->feedback_raw.size) {
+      for (unsigned stage = 0; stage <= MESA_SHADER_MESH; stage++) {
+         if (cmd->state.gfx.shaders[stage] &&
+             cmd->state.gfx.shaders[stage]->writes_memory) {
+            hk_feedback_invalidate(cmd);
+            break;
+         }
+      }
+   }
+   hk_ia_update(cmd, *draw);
+   hk_flush_shader_state(cmd, *draw);
+   if (!hk_sw_vs_outputs_fit(cmd, *draw))
+      return false;
+   /* Geometry and tessellation emulation decompose fans themselves. When
+    * nothing observes the provoking vertex, the fan is drawn natively from
+    * its first vertex, see hk_launch_draw_impl. */
+   cmd->state.gfx.fan_unrolled =
+      dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
+      dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
+      !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
+      !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
+      hk_provoking_observed(cmd);
+   if (cmd->state.gfx.fan_unrolled)
+      *draw = hk_unroll_fan(cmd, *draw);
+   /* Software stages read the draw ID from the root table they upload,
+    * when one of the bound stages they run reads it. */
+   if (hk_stages_read_draw_id(&cmd->state.gfx) &&
+       cmd->state.gfx.descriptors.root.draw.draw_id != draw_id) {
+      cmd->state.gfx.descriptors.root.draw.draw_id = draw_id;
+      cmd->state.gfx.descriptors.root_dirty = true;
+   }
+
+   return true;
+}
+
+/* Only geometry shaders observe adjacent vertices. Without one, draw the
+ * primitives of the remaining vertices.
+ */
+static struct agx_draw
+hk_draw_without_adj(struct hk_cmd_buffer *cmd, struct agx_draw draw)
+{
+   struct hk_device *dev = hk_cmd_buffer_device(cmd);
+   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+   enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
+
+   if (draw.restart) {
+      draw = hk_draw_without_restart(cmd, draw, 1);
+      prim = u_decomposed_prim(prim);
+   }
+
+   /* Launch programs draw a generated index list of the remaining vertices,
+    * where the vertex prolog remaps the vertex ID otherwise.
+    */
+   if (agx_has_launch_programs(&dev->dev)) {
+      uint64_t in_draw = draw.b.ptr;
+      if (!agx_is_indirect(draw.b)) {
+         uint32_t desc[5] = {draw.b.count[0], draw.b.count[1]};
+         if (draw.indexed) {
+            desc[2] = draw.start;
+            desc[3] = draw.index_bias;
+            desc[4] = draw.start_instance;
+         } else {
+            desc[2] = draw.start;
+            desc[3] = draw.start_instance;
+         }
+         in_draw = hk_pool_upload(cmd, desc, sizeof(desc), 4);
+      }
+
+      uint64_t out_draw = hk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4).gpu;
+      uint64_t heap = hk_heap(cmd);
+      libagx_unroll_adjacency(
+         cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw, heap, in_draw,
+         draw.indexed ? draw.index_buffer : 0,
+         draw.indexed ? draw.index_buffer_range_B >> draw.index_size : 0,
+         draw.indexed ? agx_index_size_to_B(draw.index_size) : 0, prim,
+         dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT);
+
+      return hk_heap_indexed_indirect(cmd, out_draw, AGX_INDEX_SIZE_U32, false);
+   }
+
+   if (agx_is_indirect(draw.b)) {
+      const size_t size = sizeof(VkDrawIndexedIndirectCommand);
+      static_assert(sizeof(VkDrawIndexedIndirectCommand) >
+                       sizeof(VkDrawIndirectCommand),
+                    "allocation size is conservative");
+
+      uint64_t out_draw = hk_pool_alloc(cmd, size, 4).gpu;
+      struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
+
+      libagx_draw_without_adj(
+         cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw, draw.b.ptr,
+         desc->root.draw.vertex_params, draw.index_buffer,
+         draw.indexed ? agx_draw_index_range_el(draw) : 0,
+         draw.indexed ? agx_index_size_to_B(draw.index_size) : 0, prim);
+
+      return agx_draw_indirect(out_draw);
+   } else {
+      unsigned count = libagx_remap_adj_count(draw.b.count[0], prim);
+
+      return (struct agx_draw){
+         .b = agx_3d(count, draw.b.count[1], 1),
+      };
+   }
+}
+
+static void
+hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
+{
+   struct hk_device *dev = hk_cmd_buffer_device(cmd);
+   const struct vk_dynamic_graphics_state *dyn =
+      &cmd->vk.dynamic_graphics_state;
+   bool launch = agx_has_launch_programs(&dev->dev);
 
    /* Filter trivial draws so we don't need to worry about null index buffers */
    if (!agx_is_indirect(draw_.b) &&
@@ -6116,87 +6185,31 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
    draw_.restart = dyn->ia.primitive_restart_enable && draw_.indexed;
    draw_.index_size = cmd->state.gfx.index.size;
 
+   if (launch && !hk_launch_begin_draw(cmd, draw_id, &draw_))
+      return;
+
    uint64_t stat_c_inv = hk_pipeline_stat_addr(
       cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
 
    uint64_t stat_c_prims = hk_pipeline_stat_addr(
       cmd, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT);
 
-   if (agx_has_launch_programs(&hk_cmd_buffer_device(cmd)->dev)) {
-      if (!hk_feedback_prepare_draw(cmd))
-         return;
-      /* Index fetch and indirect arguments are buffer reads of tiling. */
-      if (!hk_launch_prepare_draw(cmd,
-                                  agx_is_indirect(draw_.b) || draw_.indexed))
-         return;
-      if (cmd->feedback_raw.size) {
-         for (unsigned stage = 0; stage <= MESA_SHADER_MESH; stage++) {
-            if (cmd->state.gfx.shaders[stage] &&
-                cmd->state.gfx.shaders[stage]->writes_memory) {
-               hk_feedback_invalidate(cmd);
-               break;
-            }
-         }
-      }
-      hk_ia_update(cmd, draw_);
-      hk_flush_shader_state(cmd, draw_);
-      if (!hk_sw_vs_outputs_fit(cmd, draw_))
-         return;
-      /* Geometry and tessellation emulation decompose fans themselves. When
-       * nothing observes the provoking vertex, the fan is drawn natively from
-       * its first vertex, see hk_launch_draw_impl. */
-      cmd->state.gfx.fan_unrolled =
-         dyn->ia.primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
-         dyn->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
-         !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
-         !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-         hk_provoking_observed(cmd);
-      if (cmd->state.gfx.fan_unrolled)
-         draw_ = hk_unroll_fan(cmd, draw_);
-      /* Software stages read the draw ID from the root table they upload,
-       * when one of the bound stages they run reads it. */
-      if (hk_stages_read_draw_id(&cmd->state.gfx) &&
-          cmd->state.gfx.descriptors.root.draw.draw_id != draw_id) {
-         cmd->state.gfx.descriptors.root.draw.draw_id = draw_id;
-         cmd->state.gfx.descriptors.root_dirty = true;
-      }
-      bool adjacency = !cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
-                       !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-                       mesa_prim_has_adjacency(
-                          vk_topology_to_mesa(dyn->ia.primitive_topology));
-      hk_foreach_view(cmd) {
-         struct agx_draw draw = draw_;
-         hk_flush_shader_parts(cmd, draw_id, draw);
-         if (adjacency)
-            draw = hk_draw_without_adj(cmd, draw);
-         else if (!cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY] &&
-                  !cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL] &&
-                  hk_needs_index_copy(cmd, draw))
-            draw = hk_robust_index_copy(cmd, draw);
-         if (cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL]) {
-            bool geom = cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY];
-            draw = hk_launch_tess(cmd, NULL, draw, geom ? 0 : stat_c_prims,
-                                  geom ? 0 : stat_c_inv);
-         }
-         if (cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY])
-            draw = hk_launch_gs_prerast(cmd, NULL, draw);
-         hk_launch_draw(cmd, draw_id, draw);
-      }
-      return;
-   }
-
-   struct hk_device *dev = hk_cmd_buffer_device(cmd);
-
    hk_foreach_view(cmd) {
       struct agx_draw draw = draw_;
-      struct hk_cs *cs = hk_flush_gfx_state(cmd, draw_id, draw);
-      /* If we failed to allocate a control stream, we've already lost the
-       * device. Just drop the draw so we don't crash.
-       */
-      if (!cs)
-         return;
+      struct hk_cs *cs = NULL, *ccs = NULL;
+      uint8_t *out = NULL;
 
-      struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+      if (launch) {
+         hk_flush_shader_parts(cmd, draw_id, draw);
+      } else {
+         cs = hk_flush_gfx_state(cmd, draw_id, draw);
+         /* If we failed to allocate a control stream, we've already lost the
+          * device. Just drop the draw so we don't crash.
+          */
+         if (!cs)
+            return;
+      }
+
       bool geom = cmd->state.gfx.shaders[MESA_SHADER_GEOMETRY];
       bool tess = cmd->state.gfx.shaders[MESA_SHADER_TESS_EVAL];
       bool needs_idx_robust = hk_needs_index_robustness(cmd, &draw);
@@ -6205,23 +6218,24 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
       adj &= !geom;
       needs_idx_robust &= !adj;
 
-      struct hk_cs *ccs = NULL;
-      uint8_t *out = cs->current;
-      assert(cs->current + 0x1000 < cs->end);
+      if (!launch) {
+         out = cs->current;
+         assert(cs->current + 0x1000 < cs->end);
 
-      if (tess && HK_PERF(dev, NOTESS))
-         continue;
+         if (tess && HK_PERF(dev, NOTESS))
+            continue;
 
-      cs->stats.calls++;
+         cs->stats.calls++;
 
-      if (geom || tess) {
-         ccs = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx, true,
-                                            HK_SYNC_ALL);
-         if (!ccs)
-            return;
+         if (geom || tess) {
+            ccs = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.pre_gfx,
+                                               true, HK_SYNC_ALL);
+            if (!ccs)
+               return;
+         }
+
+         hk_ia_update(cmd, draw);
       }
-
-      hk_ia_update(cmd, draw);
 
       if (tess) {
          draw = hk_launch_tess(cmd, ccs, draw, geom ? 0 : stat_c_prims,
@@ -6234,36 +6248,15 @@ hk_draw(struct hk_cmd_buffer *cmd, uint16_t draw_id, struct agx_draw draw_)
 
       if (adj) {
          assert(!geom && "geometry shaders handle adj directly");
-         enum mesa_prim prim = vk_topology_to_mesa(dyn->ia.primitive_topology);
+         draw = hk_draw_without_adj(cmd, draw);
+      }
 
-         if (draw.restart) {
-            draw = hk_draw_without_restart(cmd, draw, 1);
-            prim = u_decomposed_prim(prim);
-         }
+      if (launch) {
+         if (needs_idx_robust)
+            draw = hk_robust_index_copy(cmd, draw);
 
-         if (agx_is_indirect(draw.b)) {
-            const size_t size = sizeof(VkDrawIndexedIndirectCommand);
-            static_assert(sizeof(VkDrawIndexedIndirectCommand) >
-                             sizeof(VkDrawIndirectCommand),
-                          "allocation size is conservative");
-
-            uint64_t out_draw = hk_pool_alloc(cmd, size, 4).gpu;
-            struct hk_descriptor_state *desc = &cmd->state.gfx.descriptors;
-
-            libagx_draw_without_adj(
-               cmd, agx_1d(1), AGX_BARRIER_ALL | AGX_PREGFX, out_draw,
-               draw.b.ptr, desc->root.draw.vertex_params, draw.index_buffer,
-               draw.indexed ? agx_draw_index_range_el(draw) : 0,
-               draw.indexed ? agx_index_size_to_B(draw.index_size) : 0, prim);
-
-            draw = agx_draw_indirect(out_draw);
-         } else {
-            unsigned count = libagx_remap_adj_count(draw.b.count[0], prim);
-
-            draw = (struct agx_draw){
-               .b = agx_3d(count, draw.b.count[1], 1),
-            };
-         }
+         hk_launch_draw(cmd, draw_id, draw);
+         continue;
       }
 
       enum agx_primitive topology = cmd->state.gfx.topology;
