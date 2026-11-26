@@ -631,48 +631,48 @@
 
   <group name="Float binary, 4 bytes" length="4" form="float2_base">
     <template>09 05 38 01</template>
-    <exact bit="16">op</exact>
+    <exact bit="16">opcode</exact>
     <dst4/>
     <fsrc1_4/>
     <fsrc2_4/>
 
-    <ins name="fadd_base" display="fadd" op="0"/>
-    <ins name="fmul_base" display="fmul" op="1"/>
+    <ins name="fadd_base" display="fadd" opcode="0"/>
+    <ins name="fmul_base" display="fmul" opcode="1"/>
   </group>
 
   <group name="Float binary, 6 bytes" length="6">
     <template>09 05 3c 01 00 00</template>
-    <exact bit="0:3 16">op</exact>
+    <exact bit="0:3 16">opcode</exact>
     <dst6/>
     <fsrc1_6/>
     <fsrc2_6/>
     <dstate/>
     <index_45_47/>
 
-    <ins name="fadd" op="01001" form="float2_compact float2_immediate_compact half_to_float"/>
-    <ins name="fmul" op="11001" form="float2_compact float2_immediate_compact half_to_float"/>
+    <ins name="fadd" opcode="01001" form="float2_compact float2_immediate_compact half_to_float"/>
+    <ins name="fmul" opcode="11001" form="float2_compact float2_immediate_compact half_to_float"/>
   </group>
 
   <!-- FP32 arithmetic writing an FP16 half: the conversions, as an add of
        -0.0. Also FP16 add and multiply. -->
   <group name="Float binary, 6 bytes, FP16 result" length="6">
     <template>01 01 1c 81 00 02</template>
-    <exact bit="0:3 16">op</exact>
+    <exact bit="0:3 16">opcode</exact>
     <hdst6/>
     <fsrc1_6/>
     <fsrc2_6/>
     <dstate/>
     <index_45_47/>
 
-    <ins name="fadd_f16" display="fadd" op="00001" form="float_to_half float_to_half_zext pack_half_2x16 half2"/>
-    <ins name="fmul_f16" display="fmul" op="10001" form="half2"/>
-    <ins name="hadd" op="00000" form="half2"/>
-    <ins name="hmul" op="10000" form="half2"/>
+    <ins name="fadd_f16" display="fadd" opcode="00001" form="float_to_half float_to_half_zext pack_half_2x16 half2"/>
+    <ins name="fmul_f16" display="fmul" opcode="10001" form="half2"/>
+    <ins name="hadd" opcode="00000" form="half2"/>
+    <ins name="hmul" opcode="10000" form="half2"/>
   </group>
 
   <group name="Float binary, 8 bytes" length="8" form="float2_modifier_extended float2_immediate_extended">
     <template>09 05 3c 01 01 00 00 00</template>
-    <exact bit="16">op</exact>
+    <exact bit="16">opcode</exact>
     <dst6/>
     <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 =0"/>
     <fsrc2_6/>
@@ -680,8 +680,8 @@
     <dstate/>
     <mask_45_47_61_63/>
 
-    <ins name="fadd_mod" display="fadd" op="0"/>
-    <ins name="fmul_mod" display="fmul" op="1"/>
+    <ins name="fadd_mod" display="fadd" opcode="0"/>
+    <ins name="fmul_mod" display="fmul" opcode="1"/>
   </group>
 
   <!-- Multiply into an export word, completing on the producer slot -->
@@ -788,32 +788,32 @@
   -->
   <group name="Min/max" length="6" form="minmax_compact">
     <template>02 01 3e 05 00 00</template>
-    <exact bit="17 32:34">op</exact>
+    <exact bit="17 32:34">opcode</exact>
     <dst6/>
     <fsrc1_6/>
     <fsrc2_6/>
     <modifier name="bit18" bit="18"/>
     <index_45_47/>
 
-    <ins name="fmax" op="0001"/>
-    <ins name="fmin" op="0011"/>
-    <ins name="hmax" op="0000" form="half_minmax"/>
-    <ins name="hmin" op="0010" form="half_minmax"/>
+    <ins name="fmax" opcode="0001"/>
+    <ins name="fmin" opcode="0011"/>
+    <ins name="hmax" opcode="0000" form="half_minmax"/>
+    <ins name="hmin" opcode="0010" form="half_minmax"/>
   </group>
 
   <group name="Integer min/max" length="6" form="minmax_compact">
     <template>02 01 3e 05 00 00</template>
-    <exact bit="17 32:34">op</exact>
+    <exact bit="17 32:34">opcode</exact>
     <dst6/>
     <isrc1_6/>
     <src kind="isrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
     <modifier name="bit18" bit="18"/>
     <index_45_47/>
 
-    <ins name="umax" op="1001"/>
-    <ins name="umin" op="1011"/>
-    <ins name="imax" op="1101"/>
-    <ins name="imin" op="1111"/>
+    <ins name="umax" opcode="1001"/>
+    <ins name="umin" opcode="1011"/>
+    <ins name="imax" opcode="1101"/>
+    <ins name="imin" opcode="1111"/>
   </group>
 
   <!--
@@ -969,14 +969,14 @@
   -->
   <group name="Integer add" length="10" form="int_add_extended store_uniform_add store_uniform">
     <template>9f 01 54 00 02 00 00 a8 17 05</template>
-    <exact bit="7">op</exact>
+    <exact bit="7">opcode</exact>
     <dest kind="idst" bit="25:32 33"/>
     <src kind="isrc_desc" bit="42:48 49 41 61 65 72 73"/>
     <src kind="isrc_desc" bit="51:57 58 50 63 66 74 75"/>
     <mask_12_17/>
 
-    <ins name="iadd" op="1"/>
-    <ins name="isub" op="0"/>
+    <ins name="iadd" opcode="1"/>
+    <ins name="isub" opcode="0"/>
   </group>
 
   <ins name="imad" length="12" form="int_mad_extended store_uniform_mad">
@@ -991,14 +991,14 @@
   <!-- Both factors zero-extend, or with bits 82 and 84 sign-extend -->
   <group name="Widening multiply" length="12" form="int_mul_wide store_uniform_mul_wide">
     <template>9f 00 54 00 02 00 00 00 e0 26 0a 00</template>
-    <exact bit="82 84">op</exact>
+    <exact bit="82 84">opcode</exact>
     <dest kind="idst64" bit="25:32 33"/>
     <src kind="reg" bit="42:48 49 73"/>
     <src kind="reg" bit="51:57 58 74"/>
     <mask_12_17/>
 
-    <ins name="umul_wide" op="00"/>
-    <ins name="imul_wide" op="11"/>
+    <ins name="umul_wide" opcode="00"/>
+    <ins name="imul_wide" opcode="11"/>
   </group>
 
   <!--
@@ -1025,63 +1025,63 @@
 
   <group name="Logical shift by a constant" length="12" form="shift_logical_immediate">
     <template>a7 00 54 00 02 00 00 00 f0 11 01 00</template>
-    <exact bit="7">op</exact>
+    <exact bit="7">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <immediate name="amount" bit="50:54"/>
     <immediate name="width" bit="84:89" prefix="width="/>
     <mask_12_17/>
 
-    <ins name="shl" op="0"/>
-    <ins name="shr" op="1"/>
+    <ins name="shl" opcode="0"/>
+    <ins name="shr" opcode="1"/>
   </group>
 
   <group name="Logical shift by a register" length="12" form="shift_logical_register">
     <template>a7 00 54 00 02 00 00 00 f0 13 05 00</template>
-    <exact bit="7">op</exact>
+    <exact bit="7">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <src kind="usrc" bit="51:57 58 73 82 =0 =0"/>
     <mask_12_17/>
 
-    <ins name="shl_reg" display="shl" op="0"/>
-    <ins name="shr_reg" display="shr" op="1"/>
+    <ins name="shl_reg" display="shl" opcode="0"/>
+    <ins name="shr_reg" display="shr" opcode="1"/>
   </group>
 
   <!-- Conversions between 32-bit integers and FP32 -->
   <group name="Integer to float" length="8">
     <template>a7 07 54 00 03 00 8c 20</template>
-    <exact bit="62">op</exact>
+    <exact bit="62">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 61 =0 =0"/>
     <mask_12_17/>
 
-    <ins name="u32_to_f" op="0" form="uint_to_float"/>
-    <ins name="s32_to_f" op="1" form="sint_to_float"/>
+    <ins name="u32_to_f" opcode="0" form="uint_to_float"/>
+    <ins name="s32_to_f" opcode="1" form="sint_to_float"/>
   </group>
 
   <!-- Bit 64 selects the signed format, which must match the conversion -->
   <group name="Float to integer" length="10">
     <template>27 07 54 00 03 00 96 08 02 00</template>
-    <exact bit="62 64">op</exact>
+    <exact bit="62 64">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 59 =0 =0"/>
     <mask_12_17/>
 
-    <ins name="f_to_u32" op="00" form="float_to_uint"/>
-    <ins name="f_to_s32" op="11" form="float_to_sint"/>
+    <ins name="f_to_u32" opcode="00" form="float_to_uint"/>
+    <ins name="f_to_s32" opcode="11" form="float_to_sint"/>
   </group>
 
   <group name="Bit operations" length="8" form="bit_unary">
     <template>a7 05 54 00 02 00 4e 04</template>
-    <exact bit="7 8">op</exact>
+    <exact bit="7 8">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
     <mask_12_17/>
 
-    <ins name="popcount" op="10"/>
-    <ins name="ffs" op="11"/>
-    <ins name="bitrev" op="01"/>
+    <ins name="popcount" opcode="10"/>
+    <ins name="ffs" opcode="11"/>
+    <ins name="bitrev" opcode="01"/>
   </group>
 
   <!-- Population count of a uniform uses another destination format -->
@@ -1100,22 +1100,22 @@
   -->
   <group name="Special function" length="10" form="float_special float_special_uniform">
     <template>2f 00 54 00 02 00 90 40 00 00</template>
-    <exact bit="7 8:9 65:66">op</exact>
+    <exact bit="7 8:9 65:66">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 49 53 62 64 63"/>
     <alu/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
 
-    <ins name="rsqrt" op="00011"/>
-    <ins name="srsqrt" op="00010"/>
-    <ins name="sin_factor" op="00110"/>
-    <ins name="exp2" op="00101"/>
-    <ins name="log2" op="00100"/>
-    <ins name="rint" op="00000"/>
-    <ins name="floor" op="01000"/>
-    <ins name="ceil" op="10000"/>
-    <ins name="trunc" op="11000"/>
+    <ins name="rsqrt" opcode="00011"/>
+    <ins name="srsqrt" opcode="00010"/>
+    <ins name="sin_factor" opcode="00110"/>
+    <ins name="exp2" opcode="00101"/>
+    <ins name="log2" opcode="00100"/>
+    <ins name="rint" opcode="00000"/>
+    <ins name="floor" opcode="01000"/>
+    <ins name="ceil" opcode="10000"/>
+    <ins name="trunc" opcode="11000"/>
   </group>
 
   <ins name="rcp" length="10" form="float_special">
@@ -1144,20 +1144,20 @@
   -->
   <group name="FP16 special function" length="10" form="half_special">
     <template>2f 00 54 00 02 00 8c 60 00 00</template>
-    <exact bit="7 8:9 65:66">op</exact>
+    <exact bit="7 8:9 65:66">opcode</exact>
     <rdst/>
     <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
     <alu/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
 
-    <ins name="rsqrt_f16" display="rsqrt" op="00011"/>
-    <ins name="exp2_f16" display="exp2" op="00101"/>
-    <ins name="log2_f16" display="log2" op="00100"/>
-    <ins name="rint_f16" display="rint" op="00000"/>
-    <ins name="floor_f16" display="floor" op="01000"/>
-    <ins name="ceil_f16" display="ceil" op="10000"/>
-    <ins name="trunc_f16" display="trunc" op="11000"/>
+    <ins name="rsqrt_f16" display="rsqrt" opcode="00011"/>
+    <ins name="exp2_f16" display="exp2" opcode="00101"/>
+    <ins name="log2_f16" display="log2" opcode="00100"/>
+    <ins name="rint_f16" display="rint" opcode="00000"/>
+    <ins name="floor_f16" display="floor" opcode="01000"/>
+    <ins name="ceil_f16" display="ceil" opcode="10000"/>
+    <ins name="trunc_f16" display="trunc" opcode="11000"/>
   </group>
 
   <ins name="srsqrt_f16_f32" display="srsqrt" length="10" form="half_special">
@@ -1189,14 +1189,14 @@
 
   <group name="Derivative" length="10" form="derivative">
     <template>37 05 54 00 03 00 90 40 00 00</template>
-    <exact bit="9">op</exact>
+    <exact bit="9">opcode</exact>
     <rdst/>
     <src kind="reg" bit="42:48 49 =0"/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
 
-    <ins name="dfdx" op="0"/>
-    <ins name="dfdy" op="1"/>
+    <ins name="dfdx" opcode="0"/>
+    <ins name="dfdy" opcode="1"/>
   </group>
 
   <!-- Special registers. Bit 15 of the selector is set. -->
@@ -1261,11 +1261,11 @@
 
   <group name="Branch" length="10">
     <template>0f 00 54 00 00 00 00 00 00 00</template>
-    <exact bit="8">op</exact>
+    <exact bit="8">opcode</exact>
     <immediate name="offset" bit="24:71" kind="signed"/>
 
-    <ins name="jmp_exec_any" op="0" form="jmp_exec_any"/>
-    <ins name="jmp_exec_none" op="1" form="jmp_exec_none"/>
+    <ins name="jmp_exec_any" opcode="0" form="jmp_exec_any"/>
+    <ins name="jmp_exec_none" opcode="1" form="jmp_exec_none"/>
   </group>
 
   <!-- Waits for the slots in its mask -->
