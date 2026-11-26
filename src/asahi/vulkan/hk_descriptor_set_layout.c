@@ -430,7 +430,7 @@ hk_GetDescriptorSetLayoutSupport(
    uint32_t variable_stride = 0;
    uint32_t variable_count = 0;
    bool variable_is_inline_uniform_block = false;
-   uint8_t dynamic_buffer_count = 0;
+   uint64_t dynamic_buffer_count = 0;
 
    for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
       const VkDescriptorSetLayoutBinding *binding = &pCreateInfo->pBindings[i];
@@ -472,7 +472,7 @@ hk_GetDescriptorSetLayoutSupport(
              * check for whether or not the max buffer size is big enough, we
              * keep non_variable_size aligned to max_align.
              */
-            non_variable_size += stride * binding->descriptorCount;
+            non_variable_size += (uint64_t)stride * binding->descriptorCount;
             non_variable_size = align64(non_variable_size, max_align);
          }
       }
@@ -480,7 +480,7 @@ hk_GetDescriptorSetLayoutSupport(
 
    uint64_t buffer_size = non_variable_size;
    if (variable_stride > 0) {
-      buffer_size += variable_stride * variable_count;
+      buffer_size += (uint64_t)variable_stride * variable_count;
       buffer_size = align64(buffer_size, max_align);
    }
 
@@ -500,7 +500,7 @@ hk_GetDescriptorSetLayoutSupport(
          VkDescriptorSetVariableDescriptorCountLayoutSupport *vs = (void *)ext;
          uint32_t max_var_count;
 
-         if (variable_stride > 0) {
+         if (variable_stride > 0 && non_variable_size <= max_buffer_size) {
             max_var_count =
                (max_buffer_size - non_variable_size) / variable_stride;
          } else {
