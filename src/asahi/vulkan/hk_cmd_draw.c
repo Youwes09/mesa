@@ -5729,6 +5729,10 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
    perf_debug(cmd, "Binding passthrough GS for%s\n", xfb_outputs ? " XFB" : "");
 
    gs = hk_meta_shader(dev, build_passthrough_gs, key, key_size);
+   if (!gs) {
+      vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return;
+   }
 
    gs->is_passthrough = true;
    hk_cmd_bind_graphics_shader(cmd, MESA_SHADER_GEOMETRY, gs);
