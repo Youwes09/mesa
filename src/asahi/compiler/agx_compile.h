@@ -717,7 +717,9 @@ agx_default_sample_positions(unsigned nr_samples)
    }
 }
 
-bool agx_nir_lower_monolithic_msaa(nir_shader *shader, uint8_t nr_samples);
+bool agx_nir_lower_monolithic_msaa(nir_shader *shader,
+                                   const struct agx_isa_target *target,
+                                   uint8_t nr_samples);
 bool agx_nir_lower_sample_intrinsics(nir_shader *shader,
                                      bool ignore_sample_mask_without_msaa);
 bool agx_nir_lower_to_per_sample(nir_shader *shader);

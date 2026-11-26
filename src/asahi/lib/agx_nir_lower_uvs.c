@@ -34,6 +34,7 @@ struct ctx {
    nir_def *layer, *viewport;
    nir_cursor after_layer_viewport;
    struct agx_unlinked_uvs_layout *layout;
+   bool unlinked;
 };
 
 static enum uvs_group
@@ -71,10 +72,8 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    enum uvs_group group = group_for_varying(sem.location);
 
    /* Exported varyings go to unlinked slots for the linker to relocate */
-   bool unlinked = agx_nir_target(b->shader)->varying_exports;
-
    nir_def *base;
-   if ((group == UVS_VARYINGS) && unlinked) {
+   if ((group == UVS_VARYINGS) && ctx->unlinked) {
       unsigned offs = ctx->layout->group_offs[UVS_VARYINGS];
       u_foreach_bit64(loc, ctx->layout->written & BITFIELD64_MASK(sem.location))
          offs += ctx->layout->components[loc];
@@ -162,7 +161,8 @@ gather_components(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
+agx_nir_lower_uvs(nir_shader *s, const struct agx_isa_target *target,
+                  struct agx_unlinked_uvs_layout *layout)
 {
    bool progress = false;
 
@@ -201,7 +201,7 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
    layout->user_size = sizes[UVS_VARYINGS];
 
    /* Now lower in terms of the unlinked layout */
-   struct ctx ctx = {.layout = layout};
+   struct ctx ctx = {.layout = layout, .unlinked = target->varying_exports};
    NIR_PASS(progress, s, nir_shader_intrinsics_pass, lower,
             nir_metadata_control_flow, &ctx);
 
@@ -235,8 +235,7 @@ agx_nir_lower_uvs(nir_shader *s, struct agx_unlinked_uvs_layout *layout)
    /* If we know the interpolation qualifiers in the vertex shader, we can
     * inline UVS indices to eliminate some indirection.
     */
-   if (s->info.known_interpolation_qualifiers &&
-       !agx_nir_target(s)->varying_exports) {
+   if (s->info.known_interpolation_qualifiers && !target->varying_exports) {
       struct agx_varyings_vs v;
       uint64_t flat = ~(s->info.linear_varyings | s->info.perspective_varyings);
 

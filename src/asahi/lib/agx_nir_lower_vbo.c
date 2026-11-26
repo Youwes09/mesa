@@ -14,6 +14,7 @@
 #include "shader_enums.h"
 
 struct ctx {
+   const struct agx_isa_target *target;
    const struct agx_velem_key *attribs;
    struct agx_robustness rs;
    bool dynamic_strides;
@@ -148,7 +149,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned interchange_comps = util_format_get_nr_components(attrib.format);
 
    /* Without format conversion, load the raw bits and convert below */
-   bool raw_loads = agx_nir_target(b->shader)->raw_loads;
+   bool raw_loads = ctx->target->raw_loads;
    bool raw = raw_loads && !util_format_is_pure_uint(interchange_format);
    if (raw) {
       interchange_format = interchange_align == 4   ? PIPE_FORMAT_R32_UINT
@@ -346,7 +347,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_vbo(nir_shader *shader, const struct agx_velem_key *attribs,
+agx_nir_lower_vbo(nir_shader *shader, const struct agx_isa_target *target,
+                  const struct agx_velem_key *attribs,
                   struct agx_robustness robustness, bool dynamic_strides)
 {
    assert(shader->info.stage == MESA_SHADER_VERTEX);
@@ -359,6 +361,7 @@ agx_nir_lower_vbo(nir_shader *shader, const struct agx_velem_key *attribs,
    }
 
    struct ctx ctx = {
+      .target = target,
       .attribs = attribs,
       .rs = robustness,
       .dynamic_strides = dynamic_strides,

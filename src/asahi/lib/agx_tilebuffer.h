@@ -26,6 +26,7 @@ extern "C" {
 /* Forward declarations to keep the header lean */
 struct nir_shader;
 struct nir_def;
+struct agx_isa_target;
 struct nir_builder;
 
 struct agx_tilebuffer_layout {
@@ -115,6 +116,7 @@ bool agx_nir_lower_tilebuffer(struct nir_shader *shader,
 bool agx_nir_lower_to_per_sample(struct nir_shader *shader);
 
 bool agx_nir_lower_monolithic_msaa(struct nir_shader *shader,
+                                   const struct agx_isa_target *target,
                                    uint8_t nr_samples);
 
 bool agx_nir_lower_sample_intrinsics(struct nir_shader *shader,

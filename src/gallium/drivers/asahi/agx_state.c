@@ -1614,7 +1614,7 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
          NIR_PASS(_, nir, nir_lower_io_to_scalar, nir_var_shader_out, NULL,
                   NULL);
          NIR_PASS(_, nir, agx_nir_lower_cull_distance_vs);
-         NIR_PASS(_, nir, agx_nir_lower_uvs, &uvs);
+         NIR_PASS(_, nir, agx_nir_lower_uvs, agx_device_target(dev), &uvs);
       } else {
          NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
 
@@ -1638,7 +1638,8 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
 
       /* Discards must be lowering before lowering MSAA to handle discards */
       NIR_PASS(_, nir, agx_nir_lower_discard_zs_emit);
-      NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog, &epilog_key);
+      NIR_PASS(_, nir, agx_nir_lower_fs_output_to_epilog,
+               agx_device_target(dev), &epilog_key);
 
       if (nir->info.fs.uses_fbfetch_output) {
          struct agx_tilebuffer_layout tib =
@@ -1724,7 +1725,7 @@ agx_compile_variant(struct agx_device *dev, struct pipe_context *pctx,
       NIR_PASS(_, gs_copy, agx_nir_lower_cull_distance_vs);
 
       struct agx_unlinked_uvs_layout uvs = {0};
-      NIR_PASS(_, gs_copy, agx_nir_lower_uvs, &uvs);
+      NIR_PASS(_, gs_copy, agx_nir_lower_uvs, agx_device_target(dev), &uvs);
 
       /* Apple9 links the rasterization program with a vertex ID prolog */
       compiled->gs_copy =
@@ -2341,9 +2342,10 @@ lower_fs_prolog_abi(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *_)
 }
 
 static void
-build_fs_prolog(nir_builder *b, const void *key)
+build_fs_prolog(nir_builder *b, const struct agx_isa_target *target,
+                const void *key)
 {
-   agx_nir_fs_prolog(b, key);
+   agx_nir_fs_prolog(b, target, key);
 
    NIR_PASS(_, b->shader, nir_shader_intrinsics_pass, lower_fs_prolog_abi,
             nir_metadata_control_flow, NULL);
@@ -2947,7 +2949,7 @@ agx_build_meta_shader_internal(struct agx_context *ctx,
    nir_builder b = nir_builder_init_simple_shader(
       MESA_SHADER_COMPUTE, agx_nir_options_for_dev(dev), "AGX meta shader");
 
-   builder(&b, data);
+   builder(&b, agx_device_target(dev), data);
 
    if (!prolog) {
       agx_preprocess_nir(b.shader, agx_device_target(dev));

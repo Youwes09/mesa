@@ -854,7 +854,9 @@ agx_context(struct pipe_context *pctx)
 
 struct agx_linked_shader;
 
-typedef void (*meta_shader_builder_t)(struct nir_builder *b, const void *key);
+typedef void (*meta_shader_builder_t)(struct nir_builder *b,
+                                      const struct agx_isa_target *target,
+                                      const void *key);
 
 void agx_init_meta_shaders(struct agx_context *ctx);
 

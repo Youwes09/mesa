@@ -39,8 +39,10 @@ struct agx_robustness {
 };
 
 struct agx_velem_key;
+struct agx_isa_target;
 
-bool agx_nir_lower_vbo(nir_shader *shader, const struct agx_velem_key *attribs,
+bool agx_nir_lower_vbo(nir_shader *shader, const struct agx_isa_target *target,
+                       const struct agx_velem_key *attribs,
                        struct agx_robustness rs, bool dynamic_strides);
 
 enum pipe_format agx_vbo_internal_format(enum pipe_format format);

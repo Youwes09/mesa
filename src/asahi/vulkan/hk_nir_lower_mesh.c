@@ -529,7 +529,8 @@ hk_nir_lower_task_main(nir_shader *nir)
 
 /* The hardware vertex shader rasterizing mesh records, see hk_mesh_rast_key */
 void
-hk_nir_mesh_rast(nir_builder *b_, const void *key_)
+hk_nir_mesh_rast(nir_builder *b_, UNUSED const struct agx_isa_target *target,
+                 const void *key_)
 {
    const struct hk_mesh_rast_key *key = key_;
    const struct hk_mesh_info *info = &key->info;

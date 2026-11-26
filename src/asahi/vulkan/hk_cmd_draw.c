@@ -2468,7 +2468,7 @@ hk_build_meta_shader_locked(struct hk_device *dev, struct hk_internal_key *key,
       MESA_SHADER_COMPUTE,
       agx_nir_options_for_isa(agx_gather_device_key(&dev->dev).shader_isa),
       NULL);
-   builder(&b, key->key);
+   builder(&b, agx_device_target(&dev->dev), key->key);
 
    const struct vk_pipeline_robustness_state rs = {
       .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED_EXT,
@@ -4141,7 +4141,7 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
 
    nir_builder b = nir_builder_init_simple_shader(
       0, agx_nir_options_for_isa(dev_key.shader_isa), NULL);
-   builder(&b, key->key);
+   builder(&b, agx_device_target(&dev->dev), key->key);
 
    if (preprocess_nir)
       agx_preprocess_nir(b.shader, agx_nir_target(b.shader));
@@ -4239,9 +4239,10 @@ lower_fs_root(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 }
 
 static void
-build_fs_prolog(nir_builder *b, const void *key)
+build_fs_prolog(nir_builder *b, const struct agx_isa_target *target,
+                const void *key)
 {
-   agx_nir_fs_prolog(b, key);
+   agx_nir_fs_prolog(b, target, key);
 
    /* Lower load_stat_query_address_agx, needed for FS statistics */
    NIR_PASS(_, b->shader, hk_lower_uvs_index, MESA_SHADER_FRAGMENT, 0);
@@ -5701,6 +5702,13 @@ hk_sw_vs_outputs_fit(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 }
 
 static void
+build_passthrough_gs(nir_builder *b, UNUSED const struct agx_isa_target *target,
+                     const void *key)
+{
+   poly_nir_passthrough_gs(b, key);
+}
+
+static void
 hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 {
    struct hk_graphics_state *gfx = &cmd->state.gfx;
@@ -5772,7 +5780,7 @@ hk_handle_passthrough_gs(struct hk_cmd_buffer *cmd, struct agx_draw draw)
 
    perf_debug(cmd, "Binding passthrough GS for%s\n", xfb_outputs ? " XFB" : "");
 
-   gs = hk_meta_shader(dev, poly_nir_passthrough_gs, key, key_size);
+   gs = hk_meta_shader(dev, build_passthrough_gs, key, key_size);
 
    gs->is_passthrough = true;
    hk_cmd_bind_graphics_shader(cmd, MESA_SHADER_GEOMETRY, gs);

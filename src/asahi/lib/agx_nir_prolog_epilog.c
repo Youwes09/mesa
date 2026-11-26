@@ -115,14 +115,19 @@ map_fs_part_uniform(nir_intrinsic_instr *intr)
    }
 }
 
+struct uniforms_ctx {
+   const struct agx_isa_target *target;
+   unsigned nr_attribs;
+};
+
 static bool
 lower_non_monolithic_uniforms(nir_builder *b, nir_intrinsic_instr *intr,
                               void *data)
 {
+   const struct uniforms_ctx *ctx = data;
    int unif;
    if (b->shader->info.stage == MESA_SHADER_VERTEX) {
-      unsigned *nr_attribs = data;
-      unif = map_vs_part_uniform(intr, *nr_attribs);
+      unif = map_vs_part_uniform(intr, ctx->nr_attribs);
    } else {
       unif = map_fs_part_uniform(intr);
    }
@@ -131,12 +136,11 @@ lower_non_monolithic_uniforms(nir_builder *b, nir_intrinsic_instr *intr,
       b->cursor = nir_instr_remove(&intr->instr);
       nir_def *load;
 
-      if (agx_nir_target(b->shader)->root_uniforms &&
+      if (ctx->target->root_uniforms &&
           (intr->intrinsic == nir_intrinsic_load_first_vertex ||
            intr->intrinsic == nir_intrinsic_load_base_instance)) {
-         unsigned *nr_attribs = data;
          load = agx_nir_load_vs_draw_param(
-            b, AGX_ABI_VUNI_FIRST_VERTEX(*nr_attribs),
+            b, AGX_ABI_VUNI_FIRST_VERTEX(ctx->nr_attribs),
             intr->intrinsic == nir_intrinsic_load_base_instance);
       } else {
          load = nir_load_preamble(b, 1, intr->def.bit_size, .base = unif);
@@ -157,10 +161,13 @@ lower_non_monolithic_uniforms(nir_builder *b, nir_intrinsic_instr *intr,
 }
 
 bool
-agx_nir_lower_non_monolithic_uniforms(nir_shader *nir, unsigned nr)
+agx_nir_lower_non_monolithic_uniforms(nir_shader *nir,
+                                      const struct agx_isa_target *target,
+                                      unsigned nr)
 {
+   struct uniforms_ctx ctx = {target, nr};
    return nir_shader_intrinsics_pass(nir, lower_non_monolithic_uniforms,
-                                     nir_metadata_control_flow, &nr);
+                                     nir_metadata_control_flow, &ctx);
 }
 
 static bool
@@ -194,7 +201,8 @@ lower_adjacency(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 void
-agx_nir_vs_prolog(nir_builder *b, const void *key_)
+agx_nir_vs_prolog(nir_builder *b, const struct agx_isa_target *target,
+                  const void *key_)
 {
    const struct agx_vs_prolog_key *key = key_;
    b->shader->info.stage = MESA_SHADER_VERTEX;
@@ -231,7 +239,8 @@ agx_nir_vs_prolog(nir_builder *b, const void *key_)
 
    /* Now lower the resulting program using the key */
    if (!key->static_vi) {
-      agx_nir_lower_vbo(b->shader, key->attribs, key->robustness, false);
+      agx_nir_lower_vbo(b->shader, target, key->attribs, key->robustness,
+                        false);
 
       /* Clean up redundant vertex ID loads */
       if (!key->hw || key->adjacency) {
@@ -252,7 +261,7 @@ agx_nir_vs_prolog(nir_builder *b, const void *key_)
 
    /* Finally, lower uniforms according to our ABI */
    unsigned nr = DIV_ROUND_UP(BITSET_LAST_BIT(key->component_mask), 4);
-   agx_nir_lower_non_monolithic_uniforms(b->shader, nr);
+   agx_nir_lower_non_monolithic_uniforms(b->shader, target, nr);
    b->shader->info.io_lowered = true;
 }
 
@@ -400,7 +409,8 @@ copy_colour(nir_builder *b, const struct agx_fs_epilog_key *key,
 }
 
 void
-agx_nir_fs_epilog(nir_builder *b, const void *key_)
+agx_nir_fs_epilog(nir_builder *b, const struct agx_isa_target *target,
+                  const void *key_)
 {
    const struct agx_fs_epilog_key *key = key_;
    b->shader->info.stage = MESA_SHADER_FRAGMENT;
@@ -445,10 +455,9 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    }
 
    /* Now lower the resulting program using the key */
-   bool tile_domains = agx_nir_target(b->shader)->tile_domains;
    struct agx_tilebuffer_layout tib =
-      (tile_domains ? agx_build_raw_tilebuffer_layout
-                    : agx_build_tilebuffer_layout)(
+      (target->tile_domains ? agx_build_raw_tilebuffer_layout
+                            : agx_build_tilebuffer_layout)(
          key->rt_formats, ARRAY_SIZE(key->rt_formats), key->nr_samples, true);
 
    if (key->force_small_tile)
@@ -556,7 +565,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    unsigned rt_spill = key->link.rt_spill_base;
    NIR_PASS(_, b->shader, agx_nir_lower_tilebuffer, &tib, colormasks, &rt_spill,
             write_samples, &force_translucent);
-   NIR_PASS(_, b->shader, agx_nir_lower_texture, agx_nir_target(b->shader));
+   NIR_PASS(_, b->shader, agx_nir_lower_texture, target);
    NIR_PASS(_, b->shader, agx_nir_lower_multisampled_image_store);
 
    /* If the API shader runs once per sample, then the epilog runs once per
@@ -572,10 +581,8 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
        * the pixel shaded path. Must be done before agx_nir_lower_to_per_sample
        * to avoid duplicating tests.
        */
-      if (key->blend.alpha_to_coverage) {
-         NIR_PASS(_, b->shader, agx_nir_lower_sample_mask,
-                  agx_nir_target(b->shader));
-      }
+      if (key->blend.alpha_to_coverage)
+         NIR_PASS(_, b->shader, agx_nir_lower_sample_mask, target);
 
       NIR_PASS(_, b->shader, agx_nir_lower_to_per_sample);
       NIR_PASS(_, b->shader, agx_nir_lower_fs_active_samples_to_register);
@@ -587,12 +594,12 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
       b->cursor = nir_after_impl(b->impl);
       nir_export_agx(b, sample_id, .base = AGX_ABI_FIN_SAMPLE_MASK);
    } else {
-      NIR_PASS(_, b->shader, agx_nir_lower_monolithic_msaa, key->nr_samples);
+      NIR_PASS(_, b->shader, agx_nir_lower_monolithic_msaa, target,
+               key->nr_samples);
    }
 
    /* Finally, lower uniforms according to our ABI */
-   nir_shader_intrinsics_pass(b->shader, lower_non_monolithic_uniforms,
-                              nir_metadata_control_flow, NULL);
+   agx_nir_lower_non_monolithic_uniforms(b->shader, target, 0);
 
    /* There is no shader part after the epilog, so we're always responsible for
     * running our own tests, unless the fragment shader forced early tests.
@@ -600,7 +607,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    NIR_PASS(_, b->shader, lower_tests_zs, !key->link.already_ran_zs);
 
    /* Tile domains mask stores by the killed samples, kept across iterations */
-   if (agx_nir_target(b->shader)->tile_domains) {
+   if (target->tile_domains) {
       NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, key->link.kills,
                key->link.sample_shading);
    }
@@ -611,6 +618,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
 }
 
 struct lower_epilog_ctx {
+   const struct agx_isa_target *target;
    struct agx_fs_epilog_link_info *info;
    nir_variable *masked_samples;
 };
@@ -640,8 +648,7 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
    /* Tile domains mask stores by the killed samples anyway, keeping discards */
    if (intr->intrinsic == nir_intrinsic_demote_samples &&
-       b->shader->info.fs.early_fragment_tests &&
-       !agx_nir_target(b->shader)->tile_domains) {
+       b->shader->info.fs.early_fragment_tests && !ctx->target->tile_domains) {
 
       if (!ctx->masked_samples) {
          b->cursor = nir_before_impl(nir_shader_get_entrypoint(b->shader));
@@ -713,7 +720,7 @@ lower_output_to_epilog(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          info->loc0_w_1 = true;
       } else {
          /* Word registers keep 16-bit values in their low half */
-         bool words = agx_nir_target(b->shader)->word_registers;
+         bool words = ctx->target->word_registers;
          unsigned stride = words ? 2 : vec->bit_size / 16;
 
          nir_export_agx(b, nir_channel(b, vec, c),
@@ -761,10 +768,11 @@ kills_samples(nir_shader *s)
 
 bool
 agx_nir_lower_fs_output_to_epilog(nir_shader *s,
+                                  const struct agx_isa_target *target,
                                   struct agx_fs_epilog_link_info *out)
 {
-   struct lower_epilog_ctx ctx = {.info = out};
-   out->kills = agx_nir_target(s)->tile_domains && kills_samples(s);
+   struct lower_epilog_ctx ctx = {.target = target, .info = out};
+   out->kills = target->tile_domains && kills_samples(s);
 
    nir_shader_intrinsics_pass(s, lower_output_to_epilog,
                               nir_metadata_control_flow, &ctx);
@@ -816,7 +824,8 @@ agx_nir_lower_stats_fs(nir_shader *s)
 }
 
 void
-agx_nir_fs_prolog(nir_builder *b, const void *key_)
+agx_nir_fs_prolog(nir_builder *b, const struct agx_isa_target *target,
+                  const void *key_)
 {
    const struct agx_fs_prolog_key *key = key_;
    b->shader->info.stage = MESA_SHADER_FRAGMENT;
@@ -844,14 +853,12 @@ agx_nir_fs_prolog(nir_builder *b, const void *key_)
 
    /* Then, lower the prolog */
    NIR_PASS(_, b->shader, agx_nir_lower_discard_zs_emit);
-   NIR_PASS(_, b->shader, agx_nir_lower_sample_mask,
-            agx_nir_target(b->shader));
-   NIR_PASS(_, b->shader, nir_shader_intrinsics_pass,
-            lower_non_monolithic_uniforms, nir_metadata_control_flow, NULL);
+   NIR_PASS(_, b->shader, agx_nir_lower_sample_mask, target);
+   NIR_PASS(_, b->shader, agx_nir_lower_non_monolithic_uniforms, target, 0);
    NIR_PASS(_, b->shader, lower_tests_zs, key->run_zs_tests);
 
    /* The prolog runs first, so it starts the killed samples */
-   if (agx_nir_target(b->shader)->tile_domains)
+   if (target->tile_domains)
       NIR_PASS(_, b->shader, agx_nir_lower_killed_samples, false, true);
 
    b->shader->info.io_lowered = true;

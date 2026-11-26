@@ -33,7 +33,11 @@
 struct hk_physical_device;
 struct vk_pipeline_cache;
 
-typedef void (*hk_internal_builder_t)(struct nir_builder *b, const void *key);
+struct agx_isa_target;
+
+typedef void (*hk_internal_builder_t)(struct nir_builder *b,
+                                      const struct agx_isa_target *target,
+                                      const void *key);
 
 struct hk_internal_key {
    hk_internal_builder_t builder;

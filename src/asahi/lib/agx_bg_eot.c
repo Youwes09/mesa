@@ -35,9 +35,10 @@ lower_tex_handle_to_u0(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 static void
-agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
+agx_lower_bg_eot_shader(nir_shader *shader, enum agx_shader_isa isa,
+                        struct agx_tilebuffer_layout *tib)
 {
-   const struct agx_isa_target *target = agx_nir_target(shader);
+   const struct agx_isa_target *target = agx_get_isa_target(isa);
 
    agx_nir_lower_texture(shader, target);
    agx_preprocess_nir(shader, target);
@@ -45,7 +46,8 @@ agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
       unsigned bindless_base = 0;
       NIR_PASS(_, shader, agx_nir_lower_tilebuffer, tib, NULL, &bindless_base,
                NULL, NULL);
-      NIR_PASS(_, shader, agx_nir_lower_monolithic_msaa, tib->nr_samples);
+      NIR_PASS(_, shader, agx_nir_lower_monolithic_msaa, target,
+               tib->nr_samples);
       NIR_PASS(_, shader, agx_nir_lower_multisampled_image_store);
 
       /* Spilled render targets. Raw tiles do not spill, lower textures once */
@@ -155,7 +157,7 @@ agx_build_background_shader(const struct agx_bg_eot_key *key,
    }
 
    struct agx_tilebuffer_layout tib = key->tib;
-   agx_lower_bg_eot_shader(b.shader, &tib);
+   agx_lower_bg_eot_shader(b.shader, isa, &tib);
    return b.shader;
 }
 
@@ -197,7 +199,7 @@ agx_build_raw_end_of_tile_shader(const struct agx_bg_eot_key *key)
    }
 
    b.shader->info.num_images = AGX_MAX_RENDER_TARGETS;
-   agx_lower_bg_eot_shader(b.shader, NULL);
+   agx_lower_bg_eot_shader(b.shader, AGX_SHADER_ISA_APPLE9, NULL);
    return b.shader;
 }
 
@@ -238,7 +240,7 @@ agx_build_end_of_tile_shader(const struct agx_bg_eot_key *key,
          .image_dim = dim, .image_array = key->tib.layered);
    }
 
-   agx_lower_bg_eot_shader(b.shader, NULL);
+   agx_lower_bg_eot_shader(b.shader, isa, NULL);
    return b.shader;
 }
 

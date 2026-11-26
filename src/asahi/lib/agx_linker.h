@@ -290,9 +290,12 @@ struct agx_fs_epilog_key {
    bool force_small_tile;
 };
 
-void agx_nir_vs_prolog(struct nir_builder *b, const void *key_);
-void agx_nir_fs_epilog(struct nir_builder *b, const void *key_);
-void agx_nir_fs_prolog(struct nir_builder *b, const void *key_);
+void agx_nir_vs_prolog(struct nir_builder *b,
+                       const struct agx_isa_target *target, const void *key_);
+void agx_nir_fs_epilog(struct nir_builder *b,
+                       const struct agx_isa_target *target, const void *key_);
+void agx_nir_fs_prolog(struct nir_builder *b,
+                       const struct agx_isa_target *target, const void *key_);
 bool agx_nir_lower_poly_stipple(nir_shader *s);
 
 bool agx_nir_gather_vs_inputs(nir_shader *s,
@@ -301,11 +304,14 @@ bool agx_nir_gather_vs_inputs(nir_shader *s,
 bool agx_nir_lower_vs_input_to_prolog(nir_shader *s);
 
 bool agx_nir_lower_fs_output_to_epilog(nir_shader *s,
+                                       const struct agx_isa_target *target,
                                        struct agx_fs_epilog_link_info *out);
 
 bool agx_nir_lower_fs_active_samples_to_register(nir_shader *s);
 
-bool agx_nir_lower_non_monolithic_uniforms(nir_shader *nir, unsigned nr);
+bool agx_nir_lower_non_monolithic_uniforms(nir_shader *nir,
+                                           const struct agx_isa_target *target,
+                                           unsigned nr);
 
 nir_def *agx_nir_load_vs_draw_param(struct nir_builder *b, unsigned uniform,
                                     bool base_instance);

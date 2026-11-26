@@ -115,12 +115,14 @@ agx_nir_wrap_per_sample_loop(nir_shader *shader, uint8_t nr_samples)
  * epilogs must be used, which have separate lowerings.
  */
 bool
-agx_nir_lower_monolithic_msaa(nir_shader *shader, uint8_t nr_samples)
+agx_nir_lower_monolithic_msaa(nir_shader *shader,
+                              const struct agx_isa_target *target,
+                              uint8_t nr_samples)
 {
    assert(shader->info.stage == MESA_SHADER_FRAGMENT);
    assert(nr_samples == 1 || nr_samples == 2 || nr_samples == 4);
 
-   agx_nir_lower_sample_mask(shader, agx_nir_target(shader));
+   agx_nir_lower_sample_mask(shader, target);
 
    /* In single sampled programs, interpolateAtSample needs to return the
     * center pixel.

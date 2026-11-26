@@ -10,6 +10,7 @@
 #include "shader_enums.h"
 
 struct nir_shader;
+struct agx_isa_target;
 
 /* Matches the hardware order */
 enum uvs_group {
@@ -61,6 +62,7 @@ struct agx_unlinked_uvs_layout {
 static_assert(sizeof(struct agx_unlinked_uvs_layout) == 88, "packed");
 
 bool agx_nir_lower_uvs(struct nir_shader *s,
+                       const struct agx_isa_target *target,
                        struct agx_unlinked_uvs_layout *layout);
 
 /**

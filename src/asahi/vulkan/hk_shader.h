@@ -154,7 +154,8 @@ struct hk_mesh_rast_key {
    uint8_t clip_distance_array_size, cull_distance_array_size;
 };
 
-void hk_nir_mesh_rast(struct nir_builder *b, const void *key);
+void hk_nir_mesh_rast(struct nir_builder *b,
+                      const struct agx_isa_target *target, const void *key);
 
 struct hk_shader_info {
    union {
