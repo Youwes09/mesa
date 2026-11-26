@@ -252,6 +252,7 @@ struct ra_ctx {
    enum agx_size *sizes;
    enum ra_class *classes;
    BITSET_WORD *visited;
+   BITSET_WORD *read;
    BITSET_WORD *used_regs[RA_CLASSES];
 
    /* Were any sources killed early this instruction? We assert this is not true
@@ -405,6 +406,20 @@ agx_split_width(const agx_instr *I)
    return width;
 }
 
+/* Set of values some instruction reads */
+static BITSET_WORD *
+agx_read_values(agx_context *ctx)
+{
+   BITSET_WORD *read = BITSET_CALLOC(ctx->alloc);
+
+   agx_foreach_instr_global(ctx, I) {
+      agx_foreach_ssa_src(I, s)
+         BITSET_SET(read, I->src[s].value);
+   }
+
+   return read;
+}
+
 /*
  * Calculate register demand in 16-bit registers, while gathering widths and
  * classes. Becuase we allocate in SSA, this calculation is exact in
@@ -422,6 +437,7 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
 
    uint8_t *widths = calloc(ctx->alloc, sizeof(uint8_t));
    enum ra_class *classes = calloc(ctx->alloc, sizeof(enum ra_class));
+   BITSET_WORD *read = agx_read_values(ctx);
 
    agx_foreach_instr_global(ctx, I) {
       if (I->op == AGX_OPCODE_MOV_IMM && remat)
@@ -542,7 +558,12 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
             unsigned pot_width = util_next_power_of_two(real_width);
 
             demand += pot_width;
-            late_kill_count += (pot_width - real_width);
+
+            /* A result nothing reads is freed after its instruction */
+            if (BITSET_TEST(read, I->dest[d].value))
+               late_kill_count += (pot_width - real_width);
+            else
+               late_kill_count += pot_width;
          }
 
          max_demand = MAX2(demand, max_demand);
@@ -553,6 +574,7 @@ agx_calc_register_demand(agx_context *ctx, bool remat)
 
    free(widths);
    free(classes);
+   free(read);
    return max_demand;
 }
 
@@ -2098,6 +2120,15 @@ agx_ra_assign_local(struct ra_ctx *rctx)
          }
       }
 
+      /* Results nothing reads are written, then freed */
+      agx_foreach_ssa_dest(I, d) {
+         unsigned v = I->dest[d].value;
+         if (!BITSET_TEST(rctx->read, v)) {
+            BITSET_CLEAR_COUNT(rctx->used_regs[rctx->classes[v]],
+                               rctx->ssa_to_reg[v], rctx->ncomps[v]);
+         }
+      }
+
       /* Phi sources are special. Set in the corresponding predecessors */
       if (I->op != AGX_OPCODE_PHI)
          agx_set_sources(rctx, I);
@@ -2633,6 +2664,7 @@ agx_ra(agx_context *ctx)
    }
    enum agx_size *sizes = calloc(ctx->alloc, sizeof(enum agx_size));
    BITSET_WORD *visited = BITSET_CALLOC(ctx->alloc);
+   BITSET_WORD *read = agx_read_values(ctx);
    unsigned max_ncomps = 1;
 
    agx_foreach_instr_global(ctx, I) {
@@ -2729,6 +2761,7 @@ agx_ra(agx_context *ctx)
              .sizes = sizes,
              .classes = classes,
              .visited = visited,
+             .read = read,
              .bound[RA_GPR] = max_regs,
              .bound[RA_MEM] = ctx->target.memory_halves,
              .bound[RA_EXPORT] = ctx->target.export_halves,
@@ -2924,5 +2957,6 @@ cleanup:
    free(sizes);
    free(classes);
    free(visited);
+   free(read);
    return success;
 }
