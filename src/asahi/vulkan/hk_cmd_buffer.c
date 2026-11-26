@@ -431,7 +431,7 @@ hk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                       const VkCommandBufferBeginInfo *pBeginInfo)
 {
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
-   hk_reset_cmd_buffer(&cmd->vk, 0);
+   vk_command_buffer_begin(&cmd->vk, pBeginInfo);
 
    perf_debug(cmd, "Begin command buffer");
    hk_cmd_buffer_begin_compute(cmd, pBeginInfo);
@@ -504,7 +504,7 @@ hk_EndCommandBuffer(VkCommandBuffer commandBuffer)
       }
    }
 
-   return vk_command_buffer_get_record_result(&cmd->vk);
+   return vk_command_buffer_end(&cmd->vk);
 }
 
 void
