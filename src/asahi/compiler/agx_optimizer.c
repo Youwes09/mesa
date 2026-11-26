@@ -657,7 +657,9 @@ agx_optimizer_fold_constant_bits(agx_instr **defs, agx_instr *I)
 {
    uint32_t a, b, v;
 
-   if (I->dest[0].size != AGX_SIZE_32)
+   if ((I->op != AGX_OPCODE_BFEIL && I->op != AGX_OPCODE_BFI &&
+        I->op != AGX_OPCODE_BITOP) ||
+       I->dest[0].size != AGX_SIZE_32)
       return;
 
    if (I->op == AGX_OPCODE_BFEIL) {
@@ -677,7 +679,7 @@ agx_optimizer_fold_constant_bits(agx_instr **defs, agx_instr *I)
 
       uint32_t mask = I->bfi_mask ? BITFIELD_MASK(I->bfi_mask) : ~0u;
       v = (a & mask) << I->src[2].value;
-   } else if (I->op == AGX_OPCODE_BITOP) {
+   } else {
       if (!const_operand(defs, I->src[0], &a) ||
           !const_operand(defs, I->src[1], &b))
          return;
@@ -687,8 +689,6 @@ agx_optimizer_fold_constant_bits(agx_instr **defs, agx_instr *I)
          unsigned row = ((a >> bit) & 1) | (((b >> bit) & 1) << 1);
          v |= ((I->truth_table >> row) & 1) << bit;
       }
-   } else {
-      return;
    }
 
    I->op = AGX_OPCODE_MOV_IMM;
