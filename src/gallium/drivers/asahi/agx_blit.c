@@ -681,16 +681,6 @@ try_copy_via_blit(struct pipe_context *pctx, struct pipe_resource *dst,
    }
 }
 
-/* Morton addressing shared by raw layout copies and resolves. */
-static nir_def *
-asahi_spread_bits(nir_builder *b, nir_def *v)
-{
-   v = nir_iand_imm(b, nir_ior(b, v, nir_ishl_imm(b, v, 8)), 0x00ff00ff);
-   v = nir_iand_imm(b, nir_ior(b, v, nir_ishl_imm(b, v, 4)), 0x0f0f0f0f);
-   v = nir_iand_imm(b, nir_ior(b, v, nir_ishl_imm(b, v, 2)), 0x33333333);
-   return nir_iand_imm(b, nir_ior(b, v, nir_ishl_imm(b, v, 1)), 0x55555555);
-}
-
 /* Sample-minor tiled storage is shared by rendering and resolves. Keeping the
  * addressing in NIR lets ordinary compute lowering handle both byte layouts. */
 static nir_def *
@@ -699,8 +689,7 @@ asahi_tiled_pixel(nir_builder *b, nir_def *x, nir_def *y, nir_def *tw_log2,
 {
    nir_def *common = nir_umin(b, tw_log2, th_log2);
    nir_def *mask = nir_iadd_imm(b, nir_ishl(b, nir_imm_int(b, 1), common), -1);
-   nir_def *ix = asahi_spread_bits(b, nir_iand(b, x, mask));
-   nir_def *iy = asahi_spread_bits(b, nir_iand(b, y, mask));
+   nir_def *xy = nir_interleave(b, nir_iand(b, x, mask), nir_iand(b, y, mask));
    nir_def *major = nir_bcsel(b, nir_ult(b, th_log2, tw_log2), x, y);
    nir_def *tail = nir_ishl(
       b,
@@ -714,7 +703,7 @@ asahi_tiled_pixel(nir_builder *b, nir_def *x, nir_def *y, nir_def *tw_log2,
    nir_def *tile = nir_iadd(b, nir_ushr(b, x, tw_log2),
                             nir_imul(b, nir_ushr(b, y, th_log2), columns));
    return nir_iadd(b, nir_ishl(b, tile, nir_iadd(b, tw_log2, th_log2)),
-                   nir_ior(b, tail, nir_ior(b, ix, nir_ishl_imm(b, iy, 1))));
+                   nir_ior(b, tail, xy));
 }
 
 static void *
