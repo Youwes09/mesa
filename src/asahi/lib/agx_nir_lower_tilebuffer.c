@@ -127,6 +127,24 @@ unpack_raw_tile(nir_builder *b, enum pipe_format tile, nir_def *raw)
    return nir_format_unpack_rgba(b, raw, tile);
 }
 
+static nir_def *
+nir_build_fsat_signed(nir_builder *b, nir_def *x)
+{
+   return nir_fclamp(b, x, nir_imm_floatN_t(b, -1.0, x->bit_size),
+                     nir_imm_floatN_t(b, +1.0, x->bit_size));
+}
+
+static nir_def *
+nir_fsat_to_format(nir_builder *b, nir_def *x, enum pipe_format format)
+{
+   if (util_format_is_unorm(format))
+      return nir_fsat(b, x);
+   else if (util_format_is_snorm(format))
+      return nir_build_fsat_signed(b, x);
+   else
+      return x;
+}
+
 static void
 store_raw_tile(nir_builder *b, struct agx_tilebuffer_layout *tib,
                enum pipe_format logical_format, unsigned rt, nir_def *value,
@@ -140,6 +158,10 @@ store_raw_tile(nir_builder *b, struct agx_tilebuffer_layout *tib,
                                                        : nir_u2u32(b, value);
    } else {
       value = nir_f2f32(b, value);
+
+      /* Replace blending leaves normalized values in float tiles unclamped */
+      if (util_format_is_float(tile))
+         value = nir_fsat_to_format(b, value, logical_format);
 
       if (util_format_is_srgb(logical_format)) {
          nir_def *rgb = nir_format_linear_to_srgb(b, value);
@@ -246,24 +268,6 @@ store_tilebuffer(nir_builder *b, struct agx_tilebuffer_layout *tib,
    nir_store_local_pixel_agx(b, value, samples, nir_undef(b, 2, 16),
                              .base = offset_B, .write_mask = write_mask,
                              .format = format);
-}
-
-static nir_def *
-nir_build_fsat_signed(nir_builder *b, nir_def *x)
-{
-   return nir_fclamp(b, x, nir_imm_floatN_t(b, -1.0, x->bit_size),
-                     nir_imm_floatN_t(b, +1.0, x->bit_size));
-}
-
-static nir_def *
-nir_fsat_to_format(nir_builder *b, nir_def *x, enum pipe_format format)
-{
-   if (util_format_is_unorm(format))
-      return nir_fsat(b, x);
-   else if (util_format_is_snorm(format))
-      return nir_build_fsat_signed(b, x);
-   else
-      return x;
 }
 
 static nir_def *
