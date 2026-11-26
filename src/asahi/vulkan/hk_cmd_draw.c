@@ -3240,15 +3240,9 @@ hk_launch_link_stages(struct hk_cmd_buffer *cmd, const struct hk_shader *vs,
       if (!t.cpu)
          return false;
 
-      if (bindings) {
-         agx_link_varyings_vs_fs(t.cpu, &gfx->linked_varyings, uvs->user_size,
-                                 (struct agx_varyings_fs *)&fs_linked->b.cf, pv,
-                                 0, &primitive_id);
-      } else {
-         agx_pack(t.cpu, CF_BINDING_HEADER, cfg) {
-            cfg.number_of_32_bit_slots = 1;
-         }
-      }
+      agx_link_varyings_vs_fs(t.cpu, &gfx->linked_varyings, uvs->user_size,
+                              (struct agx_varyings_fs *)&fs_linked->b.cf, pv, 0,
+                              &primitive_id);
 
       fragment->coefficients[pv] = agx_usc_addr(&dev->dev, t.gpu);
    }
