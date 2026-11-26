@@ -193,7 +193,9 @@ fuse_imad = [
 
     # Fuse regular imad
     (('iadd', ('imul(is_used_once)', a, b), c), imad(a, b, c)),
-    (('isub', ('imul(is_used_once)', a, b), c), imsub(a, b, c)),
+
+    # Word multiply-add cannot negate its addend
+    (('isub', ('imul(is_used_once)', a, b), c), imsub(a, b, c), no_word_alu),
 ]
 
 # Word integer add and multiply-add have no shift
