@@ -836,12 +836,7 @@ min_algorithm(struct spill_ctx *ctx)
 
       agx_foreach_ssa_dest(I, d) {
          assert(next_use_cursor >= 1);
-         unsigned next_ip = next_ips[--next_use_cursor];
-
-         if (next_ip == DIST_INFINITY)
-            remove_W_if_present(ctx, I->dest[d].value);
-         else
-            ctx->next_uses[I->dest[d].value] = next_ip;
+         ctx->next_uses[I->dest[d].value] = next_ips[--next_use_cursor];
       }
 
       /* Count how many registers we need for destinations. Because of
@@ -855,9 +850,10 @@ min_algorithm(struct spill_ctx *ctx)
       /* Limit W to make space for the destinations. */
       limit(ctx, I, ctx->k - dest_size);
 
-      /* Destinations are now in the register file */
+      /* Destinations are now in the register file, unless nothing reads them */
       agx_foreach_ssa_dest(I, d) {
-         insert_W(ctx, I->dest[d].value);
+         if (ctx->next_uses[I->dest[d].value] != DIST_INFINITY)
+            insert_W(ctx, I->dest[d].value);
       }
 
       /* Update next-use distances for this instruction. Unlike the paper, we
