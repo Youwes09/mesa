@@ -1352,42 +1352,62 @@
     with a signed 48-bit displacement.
   -->
   <ins name="if_pred" display="if" length="4" form="exec_mask_push">
-    <template>0f 05 54 01</template>
+    <exact bit="0:11">010100001111</exact>
+    <exact bit="18:24">1010101</exact>
+    <zero bit="12:17 25 30:31"/>
     <immediate name="pred" bit="26:28" prefix="p"/>
     <modifier name="invert" bit="29" display="not"/>
   </ins>
 
   <ins name="else" length="4" form="exec_mask_else">
-    <template>0f 04 04 19</template>
+    <exact bit="0:11">010000001111</exact>
+    <exact bit="18:24">1000001</exact>
+    <zero bit="12:17 25:26 29:31"/>
+    <exact bit="27:28">11</exact>
   </ins>
 
   <ins name="pop_exec" length="6" form="exec_mask_pop">
-    <template>0f 06 04 01 00 00</template>
+    <exact bit="0:11">011000001111</exact>
+    <exact bit="18:24">1000001</exact>
+    <zero bit="12:17 25:47"/>
   </ins>
 
   <ins name="begin_loop" length="4" form="loop_mask_push">
-    <template>0f 05 54 1a</template>
+    <exact bit="0:11">010100001111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 26 29:31"/>
+    <exact bit="25 27:28">111</exact>
   </ins>
 
   <ins name="while_pred" display="while" length="4" form="loop_mask_update">
-    <template>8f 04 54 02</template>
+    <exact bit="0:11">010010001111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 30:31"/>
+    <exact bit="25">1</exact>
     <immediate name="pred" bit="26:28" prefix="p"/>
     <modifier name="bit29" bit="29"/>
   </ins>
 
   <ins name="end_loop" length="6" form="loop_mask_pop">
-    <template>0f 06 04 02 00 00</template>
+    <exact bit="0:11">011000001111</exact>
+    <exact bit="18:24">0000001</exact>
+    <zero bit="12:17 26:47"/>
+    <exact bit="25">1</exact>
   </ins>
 
   <ins name="break_pred" display="break" length="6" form="break_mask_unwind">
-    <template>8f 05 54 00 00 00</template>
+    <exact bit="0:11">010110001111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 32:39"/>
     <immediate name="nest" bit="24:31"/>
     <immediate name="pred" bit="40:47" prefix="p"/>
   </ins>
 
   <group name="Branch" length="10">
-    <template>0f 00 54 00 00 00 00 00 00 00</template>
+    <exact bit="0:7 9:11">00000001111</exact>
     <exact bit="8">opcode</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 72:79"/>
     <immediate name="offset" bit="24:71" kind="signed"/>
 
     <ins name="jmp_exec_any" opcode="0" form="jmp_exec_any"/>
@@ -1396,37 +1416,40 @@
 
   <!-- Waits for the slots in its mask -->
   <ins name="wait" length="2" form="wait">
-    <template>06 00</template>
+    <exact bit="0:3">0110</exact>
+    <zero bit="4:9"/>
     <modifier name="slots" kind="waitmask" bit="10:15"/>
   </ins>
 
   <ins name="stop" length="4" form="halt">
-    <template>0e 00 00 00</template>
+    <exact bit="0:3">1110</exact>
+    <zero bit="4:31"/>
   </ins>
 
-  <ins name="threadgroup_barrier" length="6" form="workgroup_barrier">
-    <template>07 04 54 61 09 00</template>
-  </ins>
+  <group name="Barrier" length="6">
+    <exact bit="0:11">010000000111</exact>
+    <exact bit="18:23">010101</exact>
+    <exact bit="24 26 29:33">opcode</exact>
+    <zero bit="12:17 25 27:28 34 36:47"/>
+    <exact bit="35">1</exact>
 
-  <ins name="memory_barrier" length="6" form="device_fence">
-    <template>07 04 54 84 0a 00</template>
-  </ins>
-
-  <ins name="raster_order_fence" length="6" form="device_fence">
-    <template>07 04 54 c4 08 00</template>
-  </ins>
+    <ins name="threadgroup_barrier" opcode="0101101" form="workgroup_barrier"/>
+    <ins name="memory_barrier" opcode="1010010" form="device_fence"/>
+    <ins name="raster_order_fence" opcode="0011010" form="device_fence"/>
+  </group>
 
   <!-- Opens (begin) or closes (end) the tile and raster order domains in
        the control -->
-  <ins name="begin_tile" length="6" form="tile_access">
-    <template>87 02 54 00 00 00</template>
+  <group name="Tile domain" length="6">
+    <exact bit="0:6 8:11">00100000111</exact>
+    <exact bit="7">opcode</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 40:47"/>
     <immediate name="control" bit="24:39"/>
-  </ins>
 
-  <ins name="end_tile" length="6" form="tile_fence">
-    <template>07 02 54 00 00 00</template>
-    <immediate name="control" bit="24:39"/>
-  </ins>
+    <ins name="begin_tile" opcode="1" form="tile_access"/>
+    <ins name="end_tile" opcode="0" form="tile_fence"/>
+  </group>
 
   <!--
     Device memory. The address is base + (index << shift) + offset, with a
