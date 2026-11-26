@@ -1384,13 +1384,13 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       NIR_PASS(progress, nir, nir_opt_dce);
    } while (progress);
 
-   /* With coherent memory, device accesses add an offset to an index, so
+   /* With byte offsets, device accesses add an offset to an index, so
     * vectorize before the buffer base and offset become one 64-bit
     * address. Afterwards the offset is hidden inside u2u64, where adjacent
     * fields at x + c are no longer provably adjacent, and every field of a
     * dynamically indexed struct becomes a separate scalar load.
     */
-   if (target->coherent_memory) {
+   if (target->byte_offsets) {
       /* Explicit I/O builds each access's base and offset afresh. The
        * vectorizer only merges accesses sharing those definitions. */
       NIR_PASS(_, nir, nir_opt_cse);
@@ -1408,7 +1408,7 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
 
    /* Loads merged above check each component against its own end */
    NIR_PASS(_, nir, hk_lower_bounded_global_loads,
-            agx_has_soft_fault(&dev->dev), target->coherent_memory);
+            agx_has_soft_fault(&dev->dev), target->byte_offsets);
 
    assert(nir->info.shared_size == 0);
 

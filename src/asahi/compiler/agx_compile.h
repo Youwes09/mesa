@@ -594,11 +594,16 @@ struct agx_isa_target {
     */
    bool word_memory;
 
-   /* Memory accesses are coherent as issued and barriers order them directly.
-    * Device accesses add a signed 16-bit byte offset to an unsigned index, and
-    * returning device atomics write the old value to the private frame.
-    */
+   /* Memory accesses are coherent as issued and barriers order them directly */
    bool coherent_memory;
+
+   /* Device loads and stores add a signed 16-bit byte offset to an unsigned
+    * index.
+    */
+   bool byte_offsets;
+
+   /* Returning device atomics write the old value to the private frame */
+   bool frame_atomics;
 
    /* Fragment shaders hold tile domains rather than waiting on pixel fences,
     * and write coverage and depth/stencil through export registers.

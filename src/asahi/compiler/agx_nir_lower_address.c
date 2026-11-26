@@ -59,7 +59,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned max_shift = format_shift + (atomic ? 0 : 2);
 
    /* Indices may be unsigned only, and atomics take the whole address */
-   bool unsigned_only = agx_nir_target(b->shader)->coherent_memory;
+   bool unsigned_only = agx_nir_target(b->shader)->byte_offsets;
 
    /* Loads and stores may add a signed 16-bit byte offset to the address */
    int byte_offset = 0;

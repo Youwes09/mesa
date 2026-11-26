@@ -1217,21 +1217,23 @@ agx_emit_load(agx_builder *b, agx_index dest, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset unless sign-extending. Coherent memory indices are
-    * unsigned
-    */
    bool coherent = nir_is_coherent(instr);
    int byte_offset = nir_intrinsic_byte_offset(instr);
 
    if (b->shader->target.coherent_memory) {
-      assert(!nir_intrinsic_sign_extend(instr));
       agx_emit_access_order(b, instr);
       coherent = false;
-   } else if (!nir_intrinsic_sign_extend(instr)) {
-      offset = agx_abs(offset);
    }
 
-   assert(byte_offset == 0 || b->shader->target.coherent_memory);
+   /* Zero-extend offset unless sign-extending. Indices with byte offsets are
+    * unsigned
+    */
+   if (b->shader->target.byte_offsets)
+      assert(!nir_intrinsic_sign_extend(instr));
+   else if (!nir_intrinsic_sign_extend(instr))
+      offset = agx_abs(offset);
+
+   assert(byte_offset == 0 || b->shader->target.byte_offsets);
    agx_device_load_to(b, dest, addr, offset, fmt,
                       BITFIELD_MASK(instr->def.num_components), shift, coherent,
                       byte_offset);
@@ -1248,21 +1250,23 @@ agx_emit_store(agx_builder *b, nir_intrinsic_instr *instr)
 
    assert(shift <= 3);
 
-   /* Zero-extend offset unless sign-extending. Coherent memory indices are
-    * unsigned
-    */
    bool coherent = nir_is_coherent(instr);
    int byte_offset = nir_intrinsic_byte_offset(instr);
 
    if (b->shader->target.coherent_memory) {
-      assert(!nir_intrinsic_sign_extend(instr));
       agx_emit_access_order(b, instr);
       coherent = false;
-   } else if (!nir_intrinsic_sign_extend(instr)) {
-      offset = agx_abs(offset);
    }
 
-   assert(byte_offset == 0 || b->shader->target.coherent_memory);
+   /* Zero-extend offset unless sign-extending. Indices with byte offsets are
+    * unsigned
+    */
+   if (b->shader->target.byte_offsets)
+      assert(!nir_intrinsic_sign_extend(instr));
+   else if (!nir_intrinsic_sign_extend(instr))
+      offset = agx_abs(offset);
+
+   assert(byte_offset == 0 || b->shader->target.byte_offsets);
    agx_device_store(b, agx_recollect_vector(b, instr->src[0]), addr, offset,
                     fmt, BITFIELD_MASK(nir_src_num_components(instr->src[0])),
                     shift, coherent, byte_offset);
@@ -2062,7 +2066,7 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_global_atomic_agx:
    case nir_intrinsic_global_atomic_swap_agx:
       /* The old value goes through private memory, so only ask if used */
-      if (b->shader->target.coherent_memory && nir_def_is_unused(&instr->def))
+      if (b->shader->target.frame_atomics && nir_def_is_unused(&instr->def))
          dst = agx_null();
 
       agx_emit_atomic(b, dst, instr, false);
@@ -4848,7 +4852,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    }
 
    /* A returning device atomic writes the private frame's first word */
-   if (ctx->target.coherent_memory && agx_returns_atomic(impl))
+   if (ctx->target.frame_atomics && agx_returns_atomic(impl))
       ctx->atomic_frame_B = 16;
 
    ctx->alloc = impl->ssa_alloc;
