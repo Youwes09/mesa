@@ -120,7 +120,7 @@ lower_texel_buffer(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    nir_def *count = nir_load_global_constant(
       b, 1, 32,
       nir_iadd_imm(b, ptr, offsetof(struct agx_texel_metadata, elements)),
-      .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 4);
    if (tex->op == nir_texop_txs) {
       nir_def_replace(&tex->def, count);
       return true;
@@ -132,11 +132,11 @@ lower_texel_buffer(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
    nir_push_if(b, nir_ult(b, coord, count));
    nir_def *base = nir_load_global_constant(
       b, 1, 64, nir_iadd_imm(b, ptr, offsetof(struct agx_texel_metadata, base)),
-      .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 8);
    nir_def *size = nir_load_global_constant(
       b, 1, 32,
       nir_iadd_imm(b, ptr, offsetof(struct agx_texel_metadata, size_B)),
-      .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 4);
    nir_push_if(b, nir_ieq_imm(b, size, 12));
    nir_def *xyz = nir_load_global(
       b, 3, 32, nir_iadd(b, base, nir_u2u64(b, nir_imul_imm(b, coord, 12))),
@@ -183,7 +183,7 @@ lower_texel_buffer(nir_builder *b, nir_tex_instr *tex, UNUSED void *data)
             b, 1, 32,
             nir_iadd_imm(b, ptr,
                          offsetof(struct agx_texel_metadata, component[3])),
-            .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX),
+            .align_mul = 4),
          18);
       nir_def *one = floating ? nir_imm_float(b, 1.0) : nir_imm_int(b, 1);
       zero = nir_vector_insert_imm(
@@ -628,7 +628,7 @@ buffer_texel_address(nir_builder *b, nir_def *meta, nir_def *coord,
    nir_def *base = nir_load_global_constant(
       b, 1, 64,
       nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, base)),
-      .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 8);
    nir_def *offset = nir_imul(b, nir_channel(b, coord, 0), size_B);
    return nir_iadd(b, base, nir_u2u64(b, offset));
 }
@@ -828,7 +828,7 @@ view_has_format(nir_builder *b, nir_def *tex, enum pipe_format format)
       nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, tex),
                    offsetof(struct agx_storage_descriptor, metadata) +
                       offsetof(struct agx_texel_metadata, component)),
-      .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 4);
 
    return nir_ball_iequal(
       b, layout,
@@ -1006,11 +1006,11 @@ lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr, bool load,
    nir_def *size_B = nir_load_global_constant(
       b, 1, 32,
       nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, size_B)),
-      .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 4);
    nir_def *layout = nir_load_global_constant(
       b, 4, 32,
       nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, component)),
-      .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 4);
    /* Storage image descriptors also name a canonical store encoding */
    nir_def *encode = NULL;
    if (!load && dim != GLSL_SAMPLER_DIM_BUF) {
@@ -1018,7 +1018,7 @@ lower_formatless_storage(nir_builder *b, nir_intrinsic_instr *intr, bool load,
          b, 1, 32,
          nir_iadd_imm(b, nir_load_from_texture_handle_agx(b, tex),
                       offsetof(struct agx_storage_descriptor, store_encode)),
-         .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+         .align_mul = 4);
    }
 
    /* Honeykrisp's storage cube descriptors are 2D arrays of faces */
@@ -1172,7 +1172,7 @@ buffer_residency_code(nir_builder *b, nir_def *meta, nir_def *x)
    nir_def *table = nir_load_global_constant(
       b, 1, 64,
       nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, residency)),
-      .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
+      .align_mul = 8);
    nir_def *code;
    nir_push_if(b, nir_ine_imm(b, table, 0));
    {
@@ -1180,7 +1180,7 @@ buffer_residency_code(nir_builder *b, nir_def *meta, nir_def *x)
       nir_def *fields = nir_load_global_constant(
          b, 2, 32,
          nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, elements)),
-         .align_mul = 8, .access = ACCESS_UNIFORM_SAFE_AGX);
+         .align_mul = 8);
       nir_def *elements = nir_channel(b, fields, 0);
       nir_def *size_B = nir_channel(b, fields, 1);
       x = nir_umin(b, x, nir_iadd_imm(b, nir_umax_imm(b, elements, 1), -1));
@@ -1360,7 +1360,7 @@ lower_sparse_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
       nir_def *base = nir_load_global_constant(
          b, 1, 32,
          nir_iadd_imm(b, meta, offsetof(struct agx_texel_metadata, elements)),
-         .align_mul = 4, .access = ACCESS_UNIFORM_SAFE_AGX);
+         .align_mul = 4);
       nir_def *coord = nir_u2u32(b, intr->src[1].ssa);
       bool layered =
          nir_intrinsic_image_array(intr) || dim == GLSL_SAMPLER_DIM_CUBE;
