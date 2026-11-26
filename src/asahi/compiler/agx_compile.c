@@ -3990,12 +3990,13 @@ agx_lower_sincos_filter(const nir_instr *instr, UNUSED const void *_)
  */
 
 static nir_def *
-agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, UNUSED void *_)
+agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, void *data)
 {
+   const struct agx_isa_target *target = data;
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    nir_def *x = nir_mov_alu(b, alu->src[0], 1);
 
-   if (agx_nir_target(b->shader)->word_registers) {
+   if (target->word_registers) {
       /* There is no FP16 arithmetic, so reduce in FP32 */
       nir_def *res =
          agx_nir_sincos_fp32(b, nir_f2f32(b, x), alu->op == nir_op_fcos);
@@ -4012,10 +4013,10 @@ agx_lower_sincos_impl(struct nir_builder *b, nir_instr *instr, UNUSED void *_)
 }
 
 static bool
-agx_lower_sincos(nir_shader *shader)
+agx_lower_sincos(nir_shader *shader, const struct agx_isa_target *target)
 {
    return nir_shader_lower_instructions(shader, agx_lower_sincos_filter,
-                                        agx_lower_sincos_impl, NULL);
+                                        agx_lower_sincos_impl, (void *)target);
 }
 
 static bool
@@ -4125,8 +4126,9 @@ set_speculate(nir_builder *b, nir_instr *instr, UNUSED void *_)
 }
 
 static void
-agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
-                 uint8_t *ts_count, uint8_t *ss_count)
+agx_optimize_nir(nir_shader *nir, const struct agx_isa_target *target,
+                 bool soft_fault, uint16_t *preamble_size, uint8_t *ts_count,
+                 uint8_t *ss_count)
 {
    /* This runs only once up front since other optimizations don't affect it */
    NIR_PASS(_, nir, nir_opt_shrink_stores, true);
@@ -4157,8 +4159,8 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
       &(const nir_load_store_vectorize_options){
          .modes =
             nir_var_mem_global | nir_var_mem_constant | nir_var_shader_temp,
-         .callback = agx_nir_target(nir)->word_memory ? mem_vectorize_words_cb
-                                                      : agx_mem_vectorize_cb,
+         .callback = target->word_memory ? mem_vectorize_words_cb
+                                         : agx_mem_vectorize_cb,
       });
    NIR_PASS(_, nir, nir_lower_pack);
    NIR_PASS(_, nir, nir_opt_algebraic);
@@ -4180,11 +4182,11 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * want to vectorize first since nir_opt_load_store_vectorize doesn't know
     * how to handle our loads. Likewise for uniform atomic optimization.
     */
-   NIR_PASS(_, nir, agx_nir_lower_address);
+   NIR_PASS(_, nir, agx_nir_lower_address, target);
 
    NIR_PASS(progress, nir, nir_opt_uniform_subgroup, &subgroups_options);
    if (progress) {
-      NIR_PASS(_, nir, agx_nir_lower_subgroups);
+      NIR_PASS(_, nir, agx_nir_lower_subgroups, target);
    }
 
    /* The above create operations that need lowering/optimizing */
@@ -4239,13 +4241,13 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
     * Flushing targets flush min/max where needed, in
     * agx_nir_flush_denorms.
     */
-   bool flushes_denorms = agx_nir_target(nir)->flushes_denorms;
+   bool flushes_denorms = target->flushes_denorms;
    if (!flushes_denorms)
       NIR_PASS(_, nir, agx_nir_lower_fminmax);
 
    /* A preamble run per workgroup gains nothing for one invocation */
    bool single_invocation =
-      agx_nir_target(nir)->trailing_preamble &&
+      target->trailing_preamble &&
       mesa_shader_stage_is_compute(nir->info.stage) &&
       !nir->info.workgroup_size_variable && nir->info.workgroup_size[0] == 1 &&
       nir->info.workgroup_size[1] == 1 && nir->info.workgroup_size[2] == 1;
@@ -4265,7 +4267,7 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
       if (sizes[2] == 0)
          sizes[2]++;
 
-      NIR_PASS(_, nir, agx_nir_opt_preamble, sizes);
+      NIR_PASS(_, nir, agx_nir_opt_preamble, target, sizes);
 
       *preamble_size = sizes[0];
 
@@ -4303,7 +4305,8 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
 
       NIR_PASS(progress, nir, nir_opt_dce);
       NIR_PASS(progress, nir, nir_opt_cse);
-      NIR_PASS(progress, nir, agx_nir_fuse_algebraic_late);
+      NIR_PASS(progress, nir, agx_nir_fuse_algebraic_late,
+               target->word_registers);
    } while (progress);
 
    /* Before optimizing bounds checks, we need to clean up and index defs so
@@ -4319,11 +4322,11 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, uint16_t *preamble_size,
    /* Do remaining lowering late, since this inserts &s for shifts so we want to
     * do it after fusing constant shifts. Constant folding will clean up.
     */
-   NIR_PASS(_, nir, agx_nir_lower_algebraic_late);
+   NIR_PASS(_, nir, agx_nir_lower_algebraic_late, target->word_registers);
    NIR_PASS(_, nir, agx_nir_fuse_selects);
 
    /* The algebraic passes can form narrow arithmetic again */
-   if (agx_nir_target(nir)->word_registers)
+   if (target->word_registers)
       NIR_PASS(_, nir, agx_nir_lower_word_alu);
 
    NIR_PASS(_, nir, nir_opt_constant_folding);
@@ -5179,7 +5182,7 @@ agx_nir_lower_accurate_frcp(nir_shader *nir)
 
 /* Preprocess NIR independent of shader state */
 void
-agx_preprocess_nir(nir_shader *nir)
+agx_preprocess_nir(nir_shader *nir, const struct agx_isa_target *target)
 {
    if (!nir)
       return;
@@ -5187,12 +5190,11 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
    /* Varyings named in instructions must be indexed directly */
-   if (agx_nir_target(nir)->varying_exports)
+   if (target->varying_exports)
       NIR_PASS(_, nir, agx_nir_lower_indirect_io);
 
    /* Lower large arrays to scratch and small to csel, fewer with fewer GPRs */
-   unsigned scratch_threshold =
-      agx_nir_target(nir)->gpr_halves < 256 ? 128 : 256;
+   unsigned scratch_threshold = target->gpr_halves < 256 ? 128 : 256;
 
    NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_threshold,
             glsl_get_natural_size_align_bytes, glsl_get_word_size_align_bytes);
@@ -5215,18 +5217,18 @@ agx_preprocess_nir(nir_shader *nir)
    NIR_PASS(_, nir, nir_lower_alu);
    NIR_PASS(_, nir, nir_lower_load_const_to_scalar);
    NIR_PASS(_, nir, nir_lower_flrp, 16 | 32 | 64, false);
-   NIR_PASS(_, nir, agx_lower_sincos);
+   NIR_PASS(_, nir, agx_lower_sincos, target);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, agx_lower_front_face,
             nir_metadata_control_flow, NULL);
 
-   if (agx_nir_target(nir)->minimal_subgroups)
+   if (target->minimal_subgroups)
       NIR_PASS(_, nir, agx_nir_lower_compute_derivatives);
 
    /* Flush FP32 min/max reductions */
-   if (agx_nir_target(nir)->flushes_denorms)
+   if (target->flushes_denorms)
       NIR_PASS(_, nir, agx_nir_flush_subgroup_denorms);
 
-   NIR_PASS(_, nir, agx_nir_lower_subgroups);
+   NIR_PASS(_, nir, agx_nir_lower_subgroups, target);
    NIR_PASS(_, nir, nir_lower_all_phis_to_scalar);
 
    /* After lowering, run through the standard suite of NIR optimizations. We
@@ -5471,7 +5473,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    }
 
    if (target->word_registers)
-      NIR_PASS(_, nir, agx_nir_lower_word_math);
+      NIR_PASS(_, nir, agx_nir_lower_word_math, target);
 
    /* Prolog and epilog builders lower their own parts */
    if (target->tile_domains && nir->info.stage == MESA_SHADER_FRAGMENT &&
@@ -5545,7 +5547,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
 
    info->push_count = reserved_preamble;
    agx_optimize_nir(
-      nir, key->dev.soft_fault, key->secondary ? NULL : &info->push_count,
+      nir, target, key->dev.soft_fault,
+      key->secondary ? NULL : &info->push_count,
       (key->secondary || !key->promote_textures) ? NULL
                                                  : &info->texture_state_count,
       (key->secondary || !key->promote_textures) ? NULL
@@ -5558,7 +5561,7 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    if (graphics_abi &&
        agx_nir_preload_push(nir, 2 * AGX_LAUNCH_GRAPHICS_ROOT_WORDS,
                             push_halves)) {
-      NIR_PASS(_, nir, agx_nir_lower_address);
+      NIR_PASS(_, nir, agx_nir_lower_address, target);
       NIR_PASS(_, nir, nir_lower_pack);
       NIR_PASS(_, nir, nir_opt_dce);
    }

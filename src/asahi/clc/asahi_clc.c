@@ -181,9 +181,11 @@ compile(void *memctx, const uint32_t *spirv, size_t spirv_size)
    NIR_PASS(_, nir, nir_opt_if, 0);
    NIR_PASS(_, nir, nir_opt_idiv_const, 16);
 
-   NIR_PASS(_, nir, agx_nir_lower_texture_early, false /* support_lod_bias */,
-            false /* software_buffer_bounds */);
-   NIR_PASS(_, nir, agx_nir_lower_texture);
+   const struct agx_isa_target *target =
+      agx_get_isa_target(AGX_SHADER_ISA_APPLE8);
+   NIR_PASS(_, nir, agx_nir_lower_texture_early, target,
+            false /* support_lod_bias */, false /* software_buffer_bounds */);
+   NIR_PASS(_, nir, agx_nir_lower_texture, target);
    NIR_PASS(_, nir, agx_nir_lower_multisampled_image_store);
 
    optimize(nir);
@@ -386,7 +388,7 @@ main(int argc, char **argv)
       for (unsigned v = 0; v < nr_vars; ++v) {
          nir_shader *s = build_variant(libfunc, v, &agx_nir_options, nir, &opt);
 
-         agx_preprocess_nir(s);
+         agx_preprocess_nir(s, agx_get_isa_target(AGX_SHADER_ISA_APPLE8));
          lower_variant_io(s);
 
          bool has_atomic = false;
@@ -442,7 +444,7 @@ main(int argc, char **argv)
             nir_shader *s9 = build_variant(
                libfunc, v, agx_nir_options_for_isa(AGX_SHADER_ISA_APPLE9), nir,
                &opt);
-            agx_preprocess_nir(s9);
+            agx_preprocess_nir(s9, agx_get_isa_target(AGX_SHADER_ISA_APPLE9));
             lower_variant_io(s9);
 
             struct agx_shader_part compiled;

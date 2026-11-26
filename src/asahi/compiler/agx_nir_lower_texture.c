@@ -683,15 +683,17 @@ lower_regular_texture_export(nir_builder *b, nir_tex_instr *tex)
  * tex_src_backend1 for array textures by type-converting and clamping.
  */
 static bool
-lower_regular_texture(nir_builder *b, nir_instr *instr, UNUSED void *data)
+lower_regular_texture(nir_builder *b, nir_instr *instr, void *data)
 {
+   const struct agx_isa_target *target = data;
+
    if (instr->type != nir_instr_type_tex)
       return false;
 
    nir_tex_instr *tex = nir_instr_as_tex(instr);
    b->cursor = nir_before_instr(instr);
 
-   if (agx_nir_target(b->shader)->texture_exports)
+   if (target->texture_exports)
       return lower_regular_texture_export(b, tex);
 
    if (nir_tex_instr_is_query(tex) && tex->op != nir_texop_lod)
@@ -1247,11 +1249,11 @@ lower_implicit_array_compare(nir_builder *b, nir_tex_instr *tex,
 }
 
 bool
-agx_nir_lower_texture_early(nir_shader *s, bool support_lod_bias,
-                            bool software_buffer_bounds)
+agx_nir_lower_texture_early(nir_shader *s, const struct agx_isa_target *target,
+                            bool support_lod_bias, bool software_buffer_bounds)
 {
    bool progress = false;
-   bool exports = agx_nir_target(s)->texture_exports;
+   bool exports = target->texture_exports;
 
    if (exports && support_lod_bias) {
       NIR_PASS(progress, s, nir_shader_tex_pass, lower_sampler_lod_bias_export,
@@ -2214,7 +2216,7 @@ lower_sampler_state_runtime(nir_shader *nir)
 }
 
 static bool
-lower_texture_exports(nir_shader *s)
+lower_texture_exports(nir_shader *s, const struct agx_isa_target *target)
 {
    bool progress = false;
 
@@ -2242,17 +2244,17 @@ lower_texture_exports(nir_shader *s)
 
    NIR_PASS(progress, s, nir_opt_constant_folding);
    NIR_PASS(progress, s, nir_shader_instructions_pass, lower_regular_texture,
-            nir_metadata_none, NULL);
+            nir_metadata_none, (void *)target);
    return progress;
 }
 
 bool
-agx_nir_lower_texture(nir_shader *s)
+agx_nir_lower_texture(nir_shader *s, const struct agx_isa_target *target)
 {
    bool progress = false;
 
-   if (agx_nir_target(s)->texture_exports)
-      return lower_texture_exports(s);
+   if (target->texture_exports)
+      return lower_texture_exports(s, target);
 
    nir_tex_src_type_constraints tex_constraints = {
       [nir_tex_src_lod] = {true, 16},
@@ -2276,7 +2278,7 @@ agx_nir_lower_texture(nir_shader *s)
     * generates txs for array textures).
     */
    NIR_PASS(progress, s, nir_shader_instructions_pass, lower_regular_texture,
-            nir_metadata_none, NULL);
+            nir_metadata_none, (void *)target);
    NIR_PASS(progress, s, agx_nir_lower_texture_queries);
 
    return progress;

@@ -16,25 +16,31 @@ struct nir_instr;
 struct nir_builder;
 struct nir_def;
 struct agx_compute_profile;
+struct agx_isa_target;
 
-bool agx_nir_lower_address(struct nir_shader *shader);
+bool agx_nir_lower_address(struct nir_shader *shader,
+                           const struct agx_isa_target *target);
 bool agx_nir_lower_sink_address(struct nir_shader *shader);
-bool agx_nir_lower_algebraic_late(struct nir_shader *shader);
+bool agx_nir_lower_algebraic_late(struct nir_shader *shader, bool words);
 bool agx_nir_cleanup_amul(struct nir_shader *shader);
 bool agx_nir_fuse_lea(struct nir_shader *shader);
 bool agx_nir_lower_lea(struct nir_shader *shader);
 bool agx_nir_fuse_selects(struct nir_shader *shader);
-bool agx_nir_fuse_algebraic_late(struct nir_shader *shader);
+bool agx_nir_fuse_algebraic_late(struct nir_shader *shader, bool words);
 bool agx_nir_fence_images(struct nir_shader *shader);
 bool agx_nir_lower_layer(struct nir_shader *s);
 bool agx_nir_lower_clip_distance(struct nir_shader *s);
-bool agx_nir_lower_subgroups(struct nir_shader *s);
+bool agx_nir_lower_subgroups(struct nir_shader *s,
+                             const struct agx_isa_target *target);
 bool agx_nir_lower_fminmax(struct nir_shader *s);
 bool agx_nir_lower_accurate_frcp(struct nir_shader *s);
 
-bool agx_nir_lower_texture_early(struct nir_shader *s, bool support_lod_bias,
+bool agx_nir_lower_texture_early(struct nir_shader *s,
+                                 const struct agx_isa_target *target,
+                                 bool support_lod_bias,
                                  bool software_buffer_bounds);
-bool agx_nir_lower_texture(struct nir_shader *s);
+bool agx_nir_lower_texture(struct nir_shader *s,
+                           const struct agx_isa_target *target);
 bool agx_nir_lower_images(struct nir_shader *s);
 bool agx_nir_lower_texture_queries(struct nir_shader *s);
 bool agx_nir_lower_multisampled_image_store(struct nir_shader *s);
@@ -48,7 +54,8 @@ bool agx_nir_flush_subgroup_denorms(struct nir_shader *shader);
 bool agx_nir_lower_denorm_preserve(struct nir_shader *shader);
 
 /* Word registers and memory: conversions, sine, narrow arithmetic and access */
-bool agx_nir_lower_word_math(struct nir_shader *shader);
+bool agx_nir_lower_word_math(struct nir_shader *shader,
+                             const struct agx_isa_target *target);
 bool agx_nir_lower_word_alu(struct nir_shader *nir);
 bool agx_nir_lower_word_memory(struct nir_shader *nir);
 struct nir_def *agx_nir_sincos_fp32(struct nir_builder *b, struct nir_def *x,

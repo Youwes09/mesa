@@ -127,7 +127,7 @@ cf_node_contains_discard(nir_cf_node *node)
  * earliest unconditionally executed instruction after all discard.
  */
 static void
-run_tests_after_last_discard(nir_builder *b)
+run_tests_after_last_discard(nir_builder *b, bool tile_domains)
 {
    foreach_list_typed_reverse(nir_cf_node, node, node, &b->impl->body) {
       if (node->type == nir_cf_node_block) {
@@ -154,7 +154,7 @@ run_tests_after_last_discard(nir_builder *b)
 
             nir_def *testing = nir_load_shader_part_tests_zs_agx(b);
 
-            if (agx_nir_target(b->shader)->tile_domains) {
+            if (tile_domains) {
                /* A test ends ZS testing, so only kill if a later part tests */
                nir_push_if(b, nir_ine_imm(b, testing, 0));
                nir_sample_mask_agx(b, all_samples, live);
@@ -185,7 +185,7 @@ run_tests_after_last_discard(nir_builder *b)
          nir_def *all_samples = nir_imm_intN_t(b, ALL_SAMPLES, 16);
 
          /* As above, only test here if no later part does */
-         if (agx_nir_target(b->shader)->tile_domains) {
+         if (tile_domains) {
             nir_push_if(b, nir_ine_imm(b, testing, 0));
             nir_sample_mask_agx(b, all_samples, all_samples);
             nir_pop_if(b, NULL);
@@ -208,7 +208,8 @@ run_tests_at_start(nir_shader *shader)
 }
 
 bool
-agx_nir_lower_sample_mask(nir_shader *shader)
+agx_nir_lower_sample_mask(nir_shader *shader,
+                          const struct agx_isa_target *target)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
 
@@ -231,7 +232,7 @@ agx_nir_lower_sample_mask(nir_shader *shader)
          nir_builder b = nir_builder_create(impl);
 
          /* run tests late */
-         run_tests_after_last_discard(&b);
+         run_tests_after_last_discard(&b, target->tile_domains);
       }
    } else {
       /* regular shaders that don't use discard have nothing to lower */
@@ -240,8 +241,7 @@ agx_nir_lower_sample_mask(nir_shader *shader)
 
    /* Tile domain tests may be placed in new control flow */
    nir_progress(true, impl,
-                agx_nir_target(shader)->tile_domains
-                   ? nir_metadata_none
+                target->tile_domains ? nir_metadata_none
                    : nir_metadata_control_flow);
 
    nir_shader_intrinsics_pass(shader, lower_discard_to_sample_mask_0,

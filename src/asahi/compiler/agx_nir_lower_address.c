@@ -59,7 +59,8 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
    unsigned max_shift = format_shift + (atomic ? 0 : 2);
 
    /* Indices may be unsigned only, and atomics take the whole address */
-   bool unsigned_only = agx_nir_target(b->shader)->byte_offsets;
+   const struct agx_isa_target *target = data;
+   bool unsigned_only = target->byte_offsets;
 
    /* Loads and stores may add a signed 16-bit byte offset to the address */
    int byte_offset = 0;
@@ -185,7 +186,7 @@ pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_address(nir_shader *nir)
+agx_nir_lower_address(nir_shader *nir, const struct agx_isa_target *target)
 {
    bool progress = false;
 
@@ -203,7 +204,7 @@ agx_nir_lower_address(nir_shader *nir)
 
    /* Next, lower load/store using the lea's */
    NIR_PASS(progress, nir, nir_shader_intrinsics_pass, pass,
-            nir_metadata_control_flow, NULL);
+            nir_metadata_control_flow, (void *)target);
 
    /* Finally, lower any leftover lea instructions back to ALU to let
     * nir_opt_algebraic simplify them from here.

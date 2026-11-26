@@ -556,7 +556,7 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
    unsigned rt_spill = key->link.rt_spill_base;
    NIR_PASS(_, b->shader, agx_nir_lower_tilebuffer, &tib, colormasks, &rt_spill,
             write_samples, &force_translucent);
-   NIR_PASS(_, b->shader, agx_nir_lower_texture);
+   NIR_PASS(_, b->shader, agx_nir_lower_texture, agx_nir_target(b->shader));
    NIR_PASS(_, b->shader, agx_nir_lower_multisampled_image_store);
 
    /* If the API shader runs once per sample, then the epilog runs once per
@@ -573,7 +573,8 @@ agx_nir_fs_epilog(nir_builder *b, const void *key_)
        * to avoid duplicating tests.
        */
       if (key->blend.alpha_to_coverage) {
-         NIR_PASS(_, b->shader, agx_nir_lower_sample_mask);
+         NIR_PASS(_, b->shader, agx_nir_lower_sample_mask,
+                  agx_nir_target(b->shader));
       }
 
       NIR_PASS(_, b->shader, agx_nir_lower_to_per_sample);
@@ -843,7 +844,8 @@ agx_nir_fs_prolog(nir_builder *b, const void *key_)
 
    /* Then, lower the prolog */
    NIR_PASS(_, b->shader, agx_nir_lower_discard_zs_emit);
-   NIR_PASS(_, b->shader, agx_nir_lower_sample_mask);
+   NIR_PASS(_, b->shader, agx_nir_lower_sample_mask,
+            agx_nir_target(b->shader));
    NIR_PASS(_, b->shader, nir_shader_intrinsics_pass,
             lower_non_monolithic_uniforms, nir_metadata_control_flow, NULL);
    NIR_PASS(_, b->shader, lower_tests_zs, key->run_zs_tests);

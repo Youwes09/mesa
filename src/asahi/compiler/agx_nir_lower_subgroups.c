@@ -269,9 +269,9 @@ lower_minimal(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
 }
 
 bool
-agx_nir_lower_subgroups(nir_shader *s)
+agx_nir_lower_subgroups(nir_shader *s, const struct agx_isa_target *target)
 {
-   bool minimal = agx_nir_target(s)->minimal_subgroups;
+   bool minimal = target->minimal_subgroups;
 
    /* First, do as much common lowering as we can */
    nir_lower_subgroups_options opts = {

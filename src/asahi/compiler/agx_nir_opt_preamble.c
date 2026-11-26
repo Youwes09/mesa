@@ -361,6 +361,11 @@ lower_store_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
+struct preamble_ctx {
+   int16_t *heaps;
+   const struct agx_isa_target *target;
+};
+
 static bool
 lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
@@ -392,7 +397,8 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    if (intr->intrinsic != nir_intrinsic_load_preamble)
       return false;
 
-   int16_t *heaps = data;
+   const struct preamble_ctx *ctx = data;
+   int16_t *heaps = ctx->heaps;
    b->cursor = nir_after_instr(&intr->instr);
 
    unsigned base = nir_intrinsic_base(intr);
@@ -427,7 +433,7 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
             nir_steal_tex_src(tex, nir_tex_src_texture_handle);
             tex->texture_index = base / 2;
          } else if (src->src_type == nir_tex_src_texture_handle &&
-                    !agx_nir_target(b->shader)->texture_exports) {
+                    !ctx->target->texture_exports) {
             /* Exported texture handles are table indices, used as they are */
             assert(new_ != NULL);
             nir_src_rewrite(use, new_);
@@ -439,10 +445,10 @@ lower_preamble(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
+agx_nir_opt_preamble(nir_shader *nir, const struct agx_isa_target *target,
+                     unsigned *sizes)
 {
    nir_opt_preamble_options options = preamble_options;
-   const struct agx_isa_target *target = agx_nir_target(nir);
    if (target->word_registers)
       options.def_size = def_size_words;
 
@@ -471,8 +477,9 @@ agx_nir_opt_preamble(nir_shader *nir, unsigned *sizes)
                                    nir_metadata_control_flow, heap);
    }
 
+   struct preamble_ctx ctx = {.heaps = heap, .target = target};
    NIR_PASS(progress, nir, nir_shader_intrinsics_pass, lower_preamble,
-            nir_metadata_control_flow, heap);
+            nir_metadata_control_flow, &ctx);
 
    return progress;
 }

@@ -241,9 +241,10 @@ hk_preprocess_nir_internal(struct vk_physical_device *vk_pdev, nir_shader *nir)
    NIR_PASS(_, nir, nir_opt_constant_folding);
    NIR_PASS(_, nir, nir_opt_large_constants, NULL, 32);
 
-   if (agx_nir_target(nir)->word_registers)
-      NIR_PASS(_, nir, agx_nir_lower_word_math);
-   agx_preprocess_nir(nir);
+   const struct agx_isa_target *target = agx_nir_target(nir);
+   if (target->word_registers)
+      NIR_PASS(_, nir, agx_nir_lower_word_math, target);
+   agx_preprocess_nir(nir, target);
 
    /* Constant-offset reads can fold away after extraction. Do not upload
     * or bind an unused blob: besides wasting storage, that would extend
@@ -1336,8 +1337,8 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
     */
    /* Texture exports bounds-check buffer images in software against their
     * element count (hk_lower_storage_image). */
-   NIR_PASS(_, nir, agx_nir_lower_texture_early, true /* support_lod_bias */,
-            target->texture_exports);
+   NIR_PASS(_, nir, agx_nir_lower_texture_early, target,
+            true /* support_lod_bias */, target->texture_exports);
    if (hk_device_physical(dev)->d3d_mip_rounding)
       NIR_PASS(_, nir, nir_shader_tex_pass, hk_lower_d3d_txl_rounding,
                nir_metadata_control_flow, NULL);
@@ -1492,17 +1493,17 @@ hk_lower_nir(struct hk_device *dev, nir_shader *nir,
       /* Storage-image queries read the descriptor, sampled ones metadata */
       NIR_PASS(_, nir, agx_nir_lower_texture_queries);
 
-      NIR_PASS(_, nir, agx_nir_lower_texture);
+      NIR_PASS(_, nir, agx_nir_lower_texture, target);
    } else {
-      NIR_PASS(_, nir, agx_nir_lower_texture);
+      NIR_PASS(_, nir, agx_nir_lower_texture, target);
    }
    NIR_PASS(_, nir, agx_nir_lower_multisampled_image_store);
 
    /* Keep radians until word math range reduction. The common preprocessor
     * otherwise replaces sine/cosine with the older fsin_agx operation. */
    if (target->word_registers)
-      NIR_PASS(_, nir, agx_nir_lower_word_math);
-   agx_preprocess_nir(nir);
+      NIR_PASS(_, nir, agx_nir_lower_word_math, target);
+   agx_preprocess_nir(nir, target);
    if (target->texture_exports)
       NIR_PASS(_, nir, agx_nir_lower_image_barriers);
 
@@ -2241,7 +2242,7 @@ hk_compile_nir(struct hk_device *dev, const VkAllocationCallbacks *pAllocator,
          shader->info.fs.dynamic_late_zs = true;
       }
 
-      NIR_PASS(_, nir, agx_nir_lower_sample_mask);
+      NIR_PASS(_, nir, agx_nir_lower_sample_mask, agx_nir_target(nir));
 
       if (nir->info.fs.uses_sample_shading) {
          /* Ensure the sample mask is preserved in register */
@@ -2582,9 +2583,9 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
       NIR_PASS(_, nir, poly_nir_lower_gs, &count, &rast, &pre_gs,
                &count_variant->info.gs);
 
-      agx_preprocess_nir(count);
-      agx_preprocess_nir(rast);
-      agx_preprocess_nir(pre_gs);
+      agx_preprocess_nir(count, agx_nir_target(count));
+      agx_preprocess_nir(rast, agx_nir_target(rast));
+      agx_preprocess_nir(pre_gs, agx_nir_target(pre_gs));
 
       struct hk_shader *shader = &obj->variants[HK_GS_VARIANT_RAST];
       hk_lower_hw_vs(rast, shader, false);

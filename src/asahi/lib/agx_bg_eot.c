@@ -37,8 +37,10 @@ lower_tex_handle_to_u0(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 static void
 agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
 {
-   agx_nir_lower_texture(shader);
-   agx_preprocess_nir(shader);
+   const struct agx_isa_target *target = agx_nir_target(shader);
+
+   agx_nir_lower_texture(shader, target);
+   agx_preprocess_nir(shader, target);
    if (tib) {
       unsigned bindless_base = 0;
       NIR_PASS(_, shader, agx_nir_lower_tilebuffer, tib, NULL, &bindless_base,
@@ -48,7 +50,7 @@ agx_lower_bg_eot_shader(nir_shader *shader, struct agx_tilebuffer_layout *tib)
 
       /* Spilled render targets. Raw tiles do not spill, lower textures once */
       if (!tib->raw_tiles)
-         NIR_PASS(_, shader, agx_nir_lower_texture);
+         NIR_PASS(_, shader, agx_nir_lower_texture, target);
       NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_tex_handle_to_u0,
                nir_metadata_control_flow, NULL);
    }

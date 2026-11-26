@@ -4388,7 +4388,7 @@ hk_get_prolog_epilog_locked(struct hk_device *dev, struct hk_internal_key *key,
    builder(&b, key->key);
 
    if (preprocess_nir)
-      agx_preprocess_nir(b.shader);
+      agx_preprocess_nir(b.shader, agx_nir_target(b.shader));
 
    /* Apple9 parts read push words, and the linker adds the stop */
    struct agx_shader_key backend_key = {

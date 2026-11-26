@@ -478,10 +478,11 @@ fold_saturating_conversion(nir_builder *b, nir_alu_instr *alu,
 }
 
 bool
-agx_nir_lower_word_math(nir_shader *shader)
+agx_nir_lower_word_math(nir_shader *shader,
+                        const struct agx_isa_target *target)
 {
    bool progress = false;
-   if (agx_nir_target(shader)->flushes_denorms)
+   if (target->flushes_denorms)
       progress |= agx_nir_flush_subgroup_denorms(shader);
 
    progress |= nir_shader_alu_pass(shader, fold_saturating_conversion,

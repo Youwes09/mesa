@@ -8,8 +8,8 @@ import sys
 import math
 
 # Conditions for rules only valid with or without the word ALU
-word_alu = 'agx_nir_target(shader)->word_registers'
-no_word_alu = '!agx_nir_target(shader)->word_registers'
+word_alu = 'words'
+no_word_alu = '!words'
 
 a = 'a'
 b = 'b'
@@ -370,12 +370,14 @@ def run():
 
     print(nir_algebraic.AlgebraicPass("agx_nir_lower_algebraic_late",
                                       lower_sm5_shift + lower_pack +
-                                      lower_selects).render())
+                                      lower_selects,
+                                      [("bool", "words")]).render())
     print(nir_algebraic.AlgebraicPass("agx_nir_fuse_selects",
                                       opt_selects).render())
     print(nir_algebraic.AlgebraicPass("agx_nir_fuse_algebraic_late",
                                       fuse_extr + fuse_ubfe +
-                                      fuse_imad + ixor_bcsel).render())
+                                      fuse_imad + ixor_bcsel,
+                                      [("bool", "words")]).render())
 
 
 if __name__ == '__main__':

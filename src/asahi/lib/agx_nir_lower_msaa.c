@@ -120,7 +120,7 @@ agx_nir_lower_monolithic_msaa(nir_shader *shader, uint8_t nr_samples)
    assert(shader->info.stage == MESA_SHADER_FRAGMENT);
    assert(nr_samples == 1 || nr_samples == 2 || nr_samples == 4);
 
-   agx_nir_lower_sample_mask(shader);
+   agx_nir_lower_sample_mask(shader, agx_nir_target(shader));
 
    /* In single sampled programs, interpolateAtSample needs to return the
     * center pixel.
