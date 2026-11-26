@@ -891,24 +891,20 @@ static void
 agx_emit_local_load_pixel_words(agx_builder *b, agx_index dest,
                                 nir_intrinsic_instr *instr)
 {
-   bool coords = instr->intrinsic == nir_intrinsic_load_tile_pixel_agx;
    unsigned nr = instr->def.num_components;
    assert(instr->def.bit_size == 32 && (nir_intrinsic_base(instr) % 4) == 0);
 
    agx_index mask =
       agx_tile_sample_mask(b, agx_src_index(b->shader, &instr->src[0]));
-   agx_index xy =
-      coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null();
 
    b->shader->out->tile_reads = true;
-   agx_widen_tile_domain(
-      b, coords ? AGX_TILE_DOMAIN_COORDS : AGX_TILE_DOMAIN_PIXELS);
+   agx_widen_tile_domain(b, AGX_TILE_DOMAIN_PIXELS);
 
    agx_index words[4];
    for (unsigned i = 0; i < nr; ++i) {
       words[i] = agx_temp(b->shader, AGX_SIZE_32);
-      agx_ld_tile_to(b, words[i], mask, xy, AGX_FORMAT_I32, 1,
-                     nir_intrinsic_base(instr) / 4 + i, coords);
+      agx_ld_tile_to(b, words[i], mask, agx_null(), AGX_FORMAT_I32, 1,
+                     nir_intrinsic_base(instr) / 4 + i, false);
    }
 
    agx_emit_collect_to(b, dest, nr, words);
@@ -1192,12 +1188,9 @@ agx_emit_local_load_pixel(agx_builder *b, agx_index dest,
    agx_wait_pixel_mask(b, 0x8);
 
    unsigned nr_comps = instr->def.num_components;
-   bool coords = instr->intrinsic == nir_intrinsic_load_tile_pixel_agx;
-   agx_ld_tile_to(
-      b, dest, agx_src_index(b->shader, &instr->src[0]),
-      coords ? agx_src_index(b->shader, &instr->src[1]) : agx_null(),
-      agx_format_for_pipe(nir_intrinsic_format(instr)), BITFIELD_MASK(nr_comps),
-      nir_intrinsic_base(instr), coords);
+   agx_ld_tile_to(b, dest, agx_src_index(b->shader, &instr->src[0]),
+                  agx_null(), agx_format_for_pipe(nir_intrinsic_format(instr)),
+                  BITFIELD_MASK(nr_comps), nir_intrinsic_base(instr), false);
    agx_emit_cached_split(b, dest, nr_comps);
 }
 
@@ -2110,7 +2103,6 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
          agx_format_for_pipe(nir_intrinsic_format(instr)));
    }
 
-   case nir_intrinsic_load_tile_pixel_agx:
    case nir_intrinsic_load_local_pixel_agx:
       assert(stage == MESA_SHADER_FRAGMENT);
       agx_emit_local_load_pixel(b, dst, instr);

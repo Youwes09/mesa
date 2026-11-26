@@ -2551,9 +2551,6 @@ intrinsic("load_tile_id_agx", dest_comp=2, bit_sizes=[32],
 # src[] = { sample mask }
 # base = offset
 load("local_pixel_agx", [1], [BASE, FORMAT], [CAN_REORDER, CAN_ELIMINATE])
-# Explicit tile coordinates: packed uint32 (x in low 16 bits, y in high 16).
-# Apple9 currently requires a nonzero constant sample mask in the low four bits.
-load("tile_pixel_agx", [1, 1], [BASE, FORMAT], [CAN_REORDER, CAN_ELIMINATE])
 # src[] = { value, sample mask, coordinates }
 # base = offset
 store("local_pixel_agx", [1, -1], [BASE, WRITE_MASK, FORMAT, EXPLICIT_COORD], [CAN_REORDER])
@@ -2585,7 +2582,7 @@ image("store_block_agx", [1, -1], extra_indices=[EXPLICIT_COORD])
 #
 # The nir_intrinsic_base() index encodes the shift. The sign_extend index
 # determines whether sign- or zero-extension is used for the index.
-# byte_offset is a signed 16-bit displacement, only nonzero on Apple9.
+# byte_offset is a signed 16-bit displacement in bytes.
 #
 # All loads and stores on AGX uses these hardware instructions, so while these are
 # logically load_global_agx/load_global_constant_agx/store_global_agx, the
@@ -2712,14 +2709,13 @@ load("helper_arg_hi_agx", [], [], [CAN_ELIMINATE])
 # Must only appear in the last block of the shader part.
 intrinsic("export_agx", [0], indices=[BASE])
 
-# Apple9 cube face selection: the major axis, the face (0-5) and the face's u
+# Cube face selection: the major axis, the face (0-5) and the face's u
 # and v, so that the face coordinates are u / major + 0.5 and v / major + 0.5.
 intrinsic("cube_face_agx", src_comp=[3], dest_comp=4, bit_sizes=[32],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Pack an RGB(A) FP32 colour into one 32-bit word of the given packed format
-# (R11G11B10_FLOAT or R10G10B10A2_UNORM, component 0 in the low bits), as the
-# Apple9 single-instruction format pack does.
+# (R11G11B10_FLOAT or R10G10B10A2_UNORM, component 0 in the low bits).
 intrinsic("pack_format_agx", src_comp=[0], dest_comp=1, bit_sizes=[32],
           indices=[FORMAT], flags=[CAN_ELIMINATE, CAN_REORDER])
 
@@ -3346,7 +3342,6 @@ system_value("is_viewport_z_transform_emulated_kk", 1, bit_sizes=[1])
 # Loads the viewport Z range for a given viewport index.
 load("viewport_z_range_kk", [1], [], [CAN_ELIMINATE, CAN_REORDER])
 
-# Storage write through a PBE. src0 is a USC-relative 32-byte PBE index;
-# coordinates/data remain per-invocation values. The PBE supplies the format.
+# Image store through a PBE descriptor, which supplies the format.
+# src[] = { PBE descriptor index, coordinates, value }
 intrinsic("image_store_pbe_agx", [1, 2, 4], indices=[ACCESS, SRC_TYPE])
-
