@@ -1442,6 +1442,9 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_pdev_alloc;
    }
 
+   /* agx_close_device closes it from here on */
+   fd = -1;
+
    struct vk_physical_device_dispatch_table dispatch_table;
    vk_physical_device_dispatch_table_from_entrypoints(
       &dispatch_table, &hk_physical_device_entrypoints, true);
@@ -1545,7 +1548,7 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
    assert(pdev->queue_family_count <= ARRAY_SIZE(pdev->queue_families));
 
    unsigned st_idx = 0;
-   pdev->syncobj_sync_type = vk_drm_syncobj_get_type(fd);
+   pdev->syncobj_sync_type = vk_drm_syncobj_get_type(pdev->dev.fd);
    pdev->sync_types[st_idx++] = &pdev->syncobj_sync_type;
    pdev->sync_types[st_idx++] = NULL;
    assert(st_idx <= ARRAY_SIZE(pdev->sync_types));
@@ -1566,12 +1569,13 @@ fail_disk_cache:
 fail_agx_device:
    agx_close_device(&pdev->dev);
 fail_pdev_alloc:
-   if (pdev->master_fd)
+   if (pdev->master_fd >= 0)
       close(pdev->master_fd);
 
    vk_free(&instance->vk.alloc, pdev);
 fail_fd:
-   close(fd);
+   if (fd >= 0)
+      close(fd);
    return result;
 }
 
