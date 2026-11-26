@@ -2820,9 +2820,6 @@ agx_screen_create(int fd, struct renderonly *ro,
    driParseConfigFiles(config->options, config->options_info,
                        &(driConfigFileParseParams) { .driverName = "asahi" });
 
-   agx_screen->dual_color_blend_by_location =
-      driQueryOptionb(config->options, "dual_color_blend_by_location");
-
    agx_screen->dev.fd = fd;
    agx_screen->dev.ro = ro;
    u_rwlock_init(&agx_screen->destroy_lock);
@@ -2831,16 +2828,6 @@ agx_screen_create(int fd, struct renderonly *ro,
    if (!agx_open_device(agx_screen, &agx_screen->dev)) {
       ralloc_free(agx_screen);
       return NULL;
-   }
-
-   /* Some web security systems reject Apple renderer names on Linux. Keep
-    * the actual generation, variant and revision when hiding the vendor.
-    */
-   if (driQueryOptionb(config->options, "asahi_no_vendor_in_renderer")) {
-      const struct drm_asahi_params_global *params = &agx_screen->dev.params;
-      snprintf(agx_screen->dev.name, sizeof(agx_screen->dev.name),
-               "AGX G%d%c %02X", params->gpu_generation, params->gpu_variant,
-               params->gpu_revision + 0xA0);
    }
 
    /* Forward no16 flag from driconf. This must happen after opening the device,

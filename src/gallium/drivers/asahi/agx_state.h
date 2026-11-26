@@ -978,7 +978,6 @@ struct agx_screen {
 
    /* Flush an open batch before a draw once its BOs exceed this. */
    uint64_t batch_memory_budget;
-   bool dual_color_blend_by_location;
 };
 
 static inline bool
