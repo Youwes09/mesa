@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /*
  * Launch programs pass resources to shaders through root pointers. Buffer-only
@@ -118,5 +119,46 @@ struct agx_compute_profile {
       .abi = AGX_COMPUTE_ABI_DIRECT_BUFFERS,                                   \
       .local_size = {16, 1, 1},                                                \
    })
+
+/* Unaligned accessors for the records */
+static inline void
+put_u16(void *ptr, uint16_t value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline void
+put_u32(void *ptr, uint32_t value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline void
+put_u64(void *ptr, uint64_t value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline void
+put_f32(void *ptr, float value)
+{
+   memcpy(ptr, &value, sizeof(value));
+}
+
+static inline uint32_t
+get_u32(const void *ptr)
+{
+   uint32_t value;
+   memcpy(&value, ptr, sizeof(value));
+   return value;
+}
+
+static inline uint64_t
+get_u64(const void *ptr)
+{
+   uint64_t value;
+   memcpy(&value, ptr, sizeof(value));
+   return value;
+}
 
 #endif

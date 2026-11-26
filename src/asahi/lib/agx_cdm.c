@@ -15,40 +15,6 @@
 #include "agx_pack.h"
 #include "agx_shader_body.h"
 
-static inline void
-put_u32(void *ptr, uint32_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline void
-put_u64(void *ptr, uint64_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline uint32_t
-get_u32(const void *ptr)
-{
-   uint32_t value;
-   memcpy(&value, ptr, sizeof(value));
-   return value;
-}
-
-static inline uint64_t
-get_u64(const void *ptr)
-{
-   uint64_t value;
-   memcpy(&value, ptr, sizeof(value));
-   return value;
-}
-
-static inline void
-put_f32(void *ptr, float value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
 struct cdm_abi_desc {
    uint8_t resource_count;
    uint16_t resource_record_size;
@@ -214,10 +180,10 @@ agx_cdm_resource_kind(const struct agx_compute_profile *profile,
    return profile->resource_kind[argument];
 }
 
-bool
-agx_cdm_build_geometry_fields(void *record_, size_t record_size,
-                              uint64_t record_address,
-                              const struct agx_cdm_geometry *geometry)
+static bool
+cdm_build_geometry_fields(void *record_, size_t record_size,
+                          uint64_t record_address,
+                          const struct agx_cdm_geometry *geometry)
 {
    const unsigned offset = AGX_CDM_GEOMETRY_GROUPS_OFFSET;
    if (!record_ || !geometry || record_size < offset + 12 ||
@@ -262,20 +228,6 @@ agx_cdm_build_geometry_fields(void *record_, size_t record_size,
 }
 
 bool
-agx_cdm_prepare_dispatch_alloc(
-   struct agx_device *dev, void *allocator,
-   struct agx_ptr (*alloc)(void *, size_t, size_t),
-   struct agx_shader_body *body, const struct agx_compute_profile *profile,
-   const uint64_t *resources, unsigned resource_count, uint64_t textures,
-   uint64_t samplers, const struct agx_cdm_geometry *geometry,
-   uint64_t preamble_address, uint64_t *launch_address)
-{
-   return agx_cdm_prepare_dispatch_alloc_tmpl(
-      dev, allocator, alloc, body, profile, resources, resource_count, textures,
-      samplers, 0, geometry, preamble_address, NULL, launch_address);
-}
-
-bool
 agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_device *dev, void *allocator,
    struct agx_ptr (*alloc)(void *, size_t, size_t),
@@ -306,7 +258,7 @@ agx_cdm_prepare_dispatch_alloc_tmpl(
    if (!record.cpu)
       return false;
    memset(record.cpu, 0, record_size);
-   if (!agx_cdm_build_geometry_fields(record.cpu, record_size, record.gpu,
+   if (!cdm_build_geometry_fields(record.cpu, record_size, record.gpu,
                                       geometry))
       return false;
    if (profile->abi == AGX_COMPUTE_ABI_DESCRIPTOR_TABLES) {

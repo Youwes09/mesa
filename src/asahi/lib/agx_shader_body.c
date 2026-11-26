@@ -5,19 +5,8 @@
 #include "util/u_call_once.h"
 #include "util/vma.h"
 #include "agx_device.h"
+#include "agx_launch_abi.h"
 #include "agx_resource_layout.h"
-
-static inline void
-put_u16(void *ptr, uint16_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline void
-put_u32(void *ptr, uint32_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
 
 void
 agx_shader_body_init_bo(struct agx_bo *bo)

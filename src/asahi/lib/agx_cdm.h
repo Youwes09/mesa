@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include "asahi/lib/agx_launch_abi.h"
 #include "asahi/lib/agx_launch_program.h"
+#include "agx_pack.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,9 +31,17 @@ struct agx_shader_body;
 #define AGX_CDM_RESOURCE_STRIDE              0x20u
 #define AGX_CDM_SUPERSET_RESOURCE_STRIDE     0x100u
 #define AGX_CDM_GEOMETRY_GROUPS_OFFSET       0xc0u
-#define AGX_CDM_DISPATCH_SIZE                0x2cu
-#define AGX_CDM_INDIRECT_DISPATCH_SIZE       0x28u
-#define AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE 0x1cu
+
+/* Dispatch records, with the optional trailing barrier */
+#define AGX_CDM_DISPATCH_SIZE                                                  \
+   (AGX_CDM_LAUNCH_G16_LENGTH + AGX_CDM_GLOBAL_SIZE_LENGTH +                   \
+    AGX_CDM_LOCAL_SIZE_LENGTH + AGX_CDM_BARRIER_LENGTH)
+#define AGX_CDM_INDIRECT_DISPATCH_SIZE                                         \
+   (AGX_CDM_LAUNCH_G16_LENGTH + AGX_INDIRECT_G16_LENGTH +                      \
+    AGX_CDM_LOCAL_SIZE_LENGTH + AGX_CDM_BARRIER_LENGTH)
+#define AGX_CDM_INDIRECT_LOCAL_DISPATCH_SIZE                                   \
+   (AGX_CDM_LAUNCH_G16_LENGTH + AGX_INDIRECT_G16_LENGTH +                      \
+    AGX_CDM_BARRIER_LENGTH)
 
 size_t agx_cdm_launch_size(const struct agx_compute_profile *profile);
 
@@ -57,24 +66,10 @@ struct agx_cdm_geometry {
    uint32_t local[3];
 };
 
-/* Populate the group-count pointer and inline counts in a resource record. */
-bool agx_cdm_build_geometry_fields(void *record, size_t record_size,
-                                   uint64_t record_address,
-                                   const struct agx_cdm_geometry *geometry);
-
-/* Build immutable resource and launch records in the batch's USC pool. */
-bool agx_cdm_prepare_dispatch_alloc(
-   struct agx_device *dev, void *allocator,
-   struct agx_ptr (*alloc)(void *, size_t, size_t),
-   struct agx_shader_body *body, const struct agx_compute_profile *profile,
-   const uint64_t *resources, unsigned resource_count, uint64_t textures,
-   uint64_t samplers, const struct agx_cdm_geometry *geometry,
-   uint64_t preamble_address, uint64_t *launch_address);
-
-/* As agx_cdm_prepare_dispatch_alloc, emitting the launch program
- * from tmpl (agx_cdm_launch_template of the same profile and
- * preamble) when it is non-NULL and valid. Graphics ABI programs read their
- * push words from push.
+/* Build immutable resource and launch records with the given allocator,
+ * emitting the launch program from tmpl (agx_cdm_launch_template of the same
+ * profile and preamble) when it is non-NULL and valid. Graphics ABI programs
+ * read their push words from push.
  */
 bool agx_cdm_prepare_dispatch_alloc_tmpl(
    struct agx_device *dev, void *allocator,
@@ -97,10 +92,6 @@ bool agx_cdm_prepare_dispatch(
    const struct agx_cdm_geometry *geometry, uint64_t preamble_address,
    uint64_t *launch_address);
 
-/* Record-size constants include the optional trailing CDM barrier. Without
- * it, the emitted launch is one uint32_t shorter; the caller supplies the next
- * dependency barrier or a final stream barrier.
- */
 /* Why the emitters below would reject a dispatch, or NULL if they accept it.
  * global is unused for indirect dispatches. */
 const char *agx_cdm_dispatch_reject_reason(

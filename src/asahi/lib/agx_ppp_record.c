@@ -12,39 +12,6 @@
 #include "util/u_math.h"
 #include "agx_draw_table.h"
 
-static inline void
-put_u32(void *ptr, uint32_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline void
-put_u64(void *ptr, uint64_t value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
-
-static inline uint32_t
-get_u32(const void *ptr)
-{
-   uint32_t value;
-   memcpy(&value, ptr, sizeof(value));
-   return value;
-}
-
-static inline uint64_t
-get_u64(const void *ptr)
-{
-   uint64_t value;
-   memcpy(&value, ptr, sizeof(value));
-   return value;
-}
-
-static inline void
-put_f32(void *ptr, float value)
-{
-   memcpy(ptr, &value, sizeof(value));
-}
 /* The default coefficient table occupies the end of the graphics resource
  * page, after per-draw argument records. Draw-specific tables live in their
  * own slots on the following pages so mixed interpolation can use one

@@ -20,12 +20,6 @@
 #define LAUNCH_PENDING_BASE 18
 
 static void
-put_u64(uint8_t *p, uint64_t value)
-{
-   memcpy(p, &value, sizeof(value));
-}
-
-static void
 write16(uint8_t *p, uint16_t value)
 {
    p[0] = value;
