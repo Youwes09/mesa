@@ -87,6 +87,27 @@ agx_opcodes_c = custom_target(
   depend_files : files('agx_opcodes.py'),
 )
 
+agx3_forms_h = custom_target(
+  input : ['agx3_forms.h.py'],
+  output : 'agx3_forms.h',
+  command : [prog_python, '@INPUT@'],
+  capture : true,
+  depend_files : files('agx3_forms.py'),
+)
+
+idep_agx3_forms_h = declare_dependency(
+  sources : [agx3_forms_h],
+  include_directories : include_directories('.'),
+)
+
+agx3_forms_c = custom_target(
+  input : ['agx3_forms.c.py'],
+  output : 'agx3_forms.c',
+  command : [prog_python, '@INPUT@'],
+  capture : true,
+  depend_files : files('agx3_forms.py'),
+)
+
 agx_builder_h = custom_target(
   input : ['agx_builder.h.py'],
   output : 'agx_builder.h',
@@ -137,5 +158,20 @@ if with_tests
     ),
     suite : ['asahi'],
     protocol : 'gtest',
+  )
+
+  test(
+    'agx3_forms',
+    prog_python,
+    args : [files('test/test-agx3-forms.py', '../isa/AGX3.xml'),
+            executable(
+              'agx3_forms_dump',
+              [files('test/agx3-forms-dump.c'), agx3_forms_c],
+              include_directories : [inc_include, inc_src, inc_asahi],
+              dependencies : [idep_agx3_forms_h],
+              gnu_symbol_visibility : 'hidden',
+            ),
+            files('test/agx3-forms.txt')],
+    suite : ['asahi']
   )
 endif

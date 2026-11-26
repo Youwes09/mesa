@@ -1,9 +1,10 @@
 # Copyright 2026 The Asahi Linux Contributors
 # SPDX-License-Identifier: MIT
 
-# Checks the AGX3.xml forms: that each is consistent with its instructions,
-# that the compiler's table generated from them matches, and, with FORMS, that
-# the packer's instructions decode to instructions of their forms.
+# Checks the AGX3 forms of agx3_forms.py: that each is consistent with its
+# instructions in AGX3.xml, that the compiler's table generated from them
+# matches, and, with FORMS, that the packer's instructions decode to
+# instructions of their forms.
 #
 # usage: test-agx3-forms.py AGX3.xml agx3-forms-dump [FORMS]
 
@@ -12,8 +13,10 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import isa as isa_xml
+import agx3_forms
 
 errors = []
 
@@ -25,31 +28,22 @@ vectors = sys.argv[3] if len(sys.argv) > 3 else None
 root = ET.parse(xml_path).getroot()
 isa = isa_xml.ISA(root)
 
-# Defaults of the XML form attributes, in the dump's spelling
-FORM_DEFAULTS = {
-    'allocator_safe': '1', 'evidence': 'hardware', 'dependency': 'none',
-    'retains': '0', 'fixed_slot': '0', 'alternates': 'none', 'prior': '0',
-    'exempt': 'none', 'split': '0',
-}
-FORM_KEYS = ['length'] + list(FORM_DEFAULTS)
-
-OPERAND_DEFAULTS = {
-    'files': 'gpr', 'widths': '32', 'min': '0', 'uniform_max': '0',
-    'align': '2', 'flags': 'allocatable', 'evidence': 'hardware',
-}
+FORM_KEYS = ['length', 'allocator_safe', 'evidence', 'dependency', 'retains',
+             'fixed_slot', 'alternates', 'prior', 'exempt', 'split']
 OPERAND_KEYS = ['files', 'widths', 'min', 'max', 'uniform_max', 'align',
                 'flags', 'evidence']
-
-BOOLEAN = {'true': '1', 'false': '0'}
 
 def attrs(line):
     return dict(kv.split('=', 1) for kv in line.split()[2:])
 
-def xml_value(el, key, defaults):
-    v = el.get(key, defaults.get(key))
-    if v is None:
-        error(f'{el.get("name") or el.get("role")}: no {key}')
-    return BOOLEAN.get(v, v)
+# A value of the table in the dump's spelling
+def dump_value(v):
+    if isinstance(v, bool):
+        return str(int(v))
+    elif isinstance(v, list):
+        return ','.join(str(x) for x in v) or 'none'
+    else:
+        return str(v)
 
 # The C table
 table = {}
@@ -68,19 +62,16 @@ for line in subprocess.run([dump], capture_output=True, text=True,
         table[order[-1]][1].append((line.split()[1], attrs(line)))
 
 # Register files
-el = root.find('machine')
-if el is None:
-    error('no machine element')
-else:
-    for key, value in machine.items():
-        if BOOLEAN.get(el.get(key), el.get(key)) != value:
-            error(f'machine {key}: XML {el.get(key)}, table {value}')
+for key, value in machine.items():
+    if dump_value(agx3_forms.machine.get(key)) != value:
+        error(f'machine {key}: agx3_forms.py {agx3_forms.machine.get(key)}, '
+              f'table {value}')
 
-# Forms. Those marked packed="false" describe encodings the packer does not use
-forms = {f.get('name'): f for f in root.iter('form')}
-unpacked = {n for n, f in forms.items() if f.get('packed') == 'false'}
+# Forms. Those not packed describe encodings the packer does not use
+forms = {f.name: f for f in agx3_forms.forms}
+unpacked = {n for n, f in forms.items() if not f.packed}
 for name in sorted(set(table) ^ (set(forms) - unpacked)):
-    error(f'form {name} only in the {"table" if name in table else "XML"}')
+    error(f'form {name} only in the {"table" if name in table else "agx3_forms.py"}')
 
 def sequences(spec):
     """Alternatives of a form's encoding: lists of positions, each a list of
@@ -160,28 +151,23 @@ for name in order:
     info, operands = table[name]
 
     for key in FORM_KEYS:
-        v = xml_value(form, key, FORM_DEFAULTS)
+        v = dump_value(getattr(form, key))
         if v != info[key]:
-            error(f'{name} {key}: XML {v}, table {info[key]}')
+            error(f'{name} {key}: agx3_forms.py {v}, table {info[key]}')
 
-    xml_operands = [(o.get('role'), o) for o in form.findall('operand')]
-    if [r for r, _ in xml_operands] != [r for r, _ in operands]:
-        error(f'{name} operands: XML {[r for r, _ in xml_operands]}, '
+    py_roles = [o.role for o in form.operands]
+    if py_roles != [r for r, _ in operands]:
+        error(f'{name} operands: agx3_forms.py {py_roles}, '
               f'table {[r for r, _ in operands]}')
     else:
-        for (role, o), (_, t) in zip(xml_operands, operands):
+        for o, (role, t) in zip(form.operands, operands):
             for key in OPERAND_KEYS:
-                v = xml_value(o, key, OPERAND_DEFAULTS)
+                v = dump_value(getattr(o, key))
                 if v != t[key]:
-                    error(f'{name} {role} {key}: XML {v}, table {t[key]}')
+                    error(f'{name} {role} {key}: agx3_forms.py {v}, table {t[key]}')
 
     # The instructions of the form
-    spec = form.get('encoding')
-    if spec is None:
-        error(f'{name}: no encoding')
-        continue
-
-    alternatives = sequences(spec)
+    alternatives = sequences(form.encoding)
     for positions in alternatives:
         for position in positions:
             for ins in position:
