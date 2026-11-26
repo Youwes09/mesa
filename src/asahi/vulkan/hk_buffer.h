@@ -87,3 +87,4 @@ hk_buffer_addr_range(const struct hk_buffer *buffer, uint64_t offset,
 
 VkResult hk_bind_scratch(struct hk_device *dev, struct agx_va *va,
                          unsigned offs_B, size_t size_B);
+void hk_free_shadowed_va(struct hk_device *dev, struct agx_va *va);

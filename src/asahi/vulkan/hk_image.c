@@ -1172,7 +1172,7 @@ hk_image_plane_finish(struct hk_device *dev, struct hk_image_plane *plane,
                       const VkAllocationCallbacks *pAllocator)
 {
    if (plane->va) {
-      agx_va_free(&dev->dev, plane->va, true);
+      hk_free_shadowed_va(dev, plane->va);
    }
 
    agx_bo_unreference(&dev->dev, plane->sparse_map);

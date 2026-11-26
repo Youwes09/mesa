@@ -140,17 +140,24 @@ hk_bind_scratch(struct hk_device *dev, struct agx_va *va, unsigned offset_B,
    return VK_SUCCESS;
 }
 
-/* Release a buffer's own VA. agx_va_free unbinds only the read-write range;
- * the read-only shadow (bound by hk_bind_scratch and buffer memory binds) must
- * be unbound too, or it keeps pointing at the old pages after the VA is reused.
+/* Release a buffer's or image's own VA. agx_va_free unbinds only the
+ * read-write range; the read-only shadow (bound by hk_bind_scratch and sparse
+ * or memory binds) must be unbound too, or it keeps pointing at the old pages
+ * after the VA is reused.
  */
+void
+hk_free_shadowed_va(struct hk_device *dev, struct agx_va *va)
+{
+   if (hk_va_has_ro_shadow(dev, va->addr))
+      agx_bo_bind(&dev->dev, NULL, va->addr + dev->dev.sparse_ro_offset,
+                  va->size_B, 0, DRM_ASAHI_BIND_UNBIND);
+   agx_va_free(&dev->dev, va, true);
+}
+
 static void
 hk_buffer_free_va(struct hk_device *dev, struct hk_buffer *buffer)
 {
-   if (!buffer->usc_index_va && hk_va_has_ro_shadow(dev, buffer->va->addr))
-      agx_bo_bind(&dev->dev, NULL, buffer->va->addr + dev->dev.sparse_ro_offset,
-                  buffer->va->size_B, 0, DRM_ASAHI_BIND_UNBIND);
-   agx_va_free(&dev->dev, buffer->va, true);
+   hk_free_shadowed_va(dev, buffer->va);
    buffer->va = NULL;
 }
 
