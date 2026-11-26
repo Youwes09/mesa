@@ -56,16 +56,14 @@ hk_descriptor_state_fini(struct hk_cmd_buffer *cmd,
    }
 }
 
-/* Called only after reset, or when trimming an already initial buffer. GPU
- * storage has been released; discard CPU high-water marks on explicit trim. */
-void
-hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd)
+static void
+hk_free_cmd_buffer_arrays(struct hk_cmd_buffer *cmd)
 {
-   assert(cmd->vk.state == MESA_VK_COMMAND_BUFFER_STATE_INITIAL);
    struct util_dynarray *arrays[] = {
       &cmd->large_bos,    &cmd->implicit_sync_res, &cmd->query_adds,
       &cmd->query_writes, &cmd->occlusion_accum,   &cmd->sync_events,
       &cmd->sync_remap,   &cmd->sync_first_event,  &cmd->empty_barriers,
+      &cmd->feedback_raw,
    };
    for (unsigned i = 0; i < ARRAY_SIZE(arrays); ++i)
       util_dynarray_fini(arrays[i]);
@@ -76,6 +74,15 @@ hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd)
    cmd->pinned_entries = NULL;
    free(cmd->merge_empty_render);
    cmd->merge_empty_render = NULL;
+}
+
+/* Called only after reset, or when trimming an already initial buffer. GPU
+ * storage has been released; discard CPU high-water marks on explicit trim. */
+void
+hk_trim_cmd_buffer(struct hk_cmd_buffer *cmd)
+{
+   assert(cmd->vk.state == MESA_VK_COMMAND_BUFFER_STATE_INITIAL);
+   hk_free_cmd_buffer_arrays(cmd);
 }
 
 static void
@@ -115,9 +122,9 @@ hk_free_resettable_cmd_buffer(struct hk_cmd_buffer *cmd, bool release)
    util_dynarray_clear(&cmd->empty_barriers);
    util_dynarray_clear(&cmd->sync_remap);
    util_dynarray_clear(&cmd->sync_first_event);
+   util_dynarray_clear(&cmd->feedback_raw);
    if (release)
       hk_trim_cmd_buffer(cmd);
-   util_dynarray_clear(&cmd->feedback_raw);
 }
 
 void
@@ -173,21 +180,7 @@ hk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
    struct hk_cmd_pool *pool = hk_cmd_buffer_pool(cmd);
 
    hk_free_resettable_cmd_buffer(cmd, false);
-   _mesa_set_destroy(cmd->pinned_entries, NULL);
-   util_dynarray_fini(&cmd->large_bos);
-   util_dynarray_fini(&cmd->implicit_sync_res);
-   util_dynarray_fini(&cmd->query_adds);
-   util_dynarray_fini(&cmd->query_writes);
-   util_dynarray_fini(&cmd->occlusion_accum);
-   util_dynarray_fini(&cmd->sync_events);
-   util_dynarray_fini(&cmd->empty_barriers);
-   for (unsigned i = 0; i < HK_TESS_BATCH_LANES; ++i)
-      util_dynarray_fini(&cmd->tess_batch.lane[i]);
-   util_dynarray_fini(&cmd->tess_batch.fold);
-   util_dynarray_fini(&cmd->sync_remap);
-   util_dynarray_fini(&cmd->sync_first_event);
-   util_dynarray_fini(&cmd->feedback_raw);
-   free(cmd->merge_empty_render);
+   hk_free_cmd_buffer_arrays(cmd);
    vk_command_buffer_finish(&cmd->vk);
    vk_free(&pool->vk.alloc, cmd);
 }
