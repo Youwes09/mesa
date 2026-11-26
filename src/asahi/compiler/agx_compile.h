@@ -650,9 +650,6 @@ struct agx_isa_target {
     */
    bool root_uniforms;
 
-   /* Integer adds and multiply-adds can write uniform registers */
-   bool uniform_dests;
-
    /* Asynchronous results complete by class. Waits name a set of slots or fold
     * into a dependency field, and barriers wait for the classes they order.
     */

@@ -74,7 +74,6 @@ static const struct agx_isa_target agx_apple9_target = {
    .flushes_denorms = true,
    .minimal_subgroups = true,
    .root_uniforms = true,
-   .uniform_dests = true,
    .dependency_waits = true,
    .operand_limits = true,
    .avoid_export_targets = true,

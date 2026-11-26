@@ -948,6 +948,34 @@ agx_src_is_legal(const agx_context *ctx, agx_instr *I, unsigned s,
    return legal;
 }
 
+/* Whether an instruction can write the uniform file directly: iadd, imad and
+ * widening imul of registers. Only targets with operand limits can.
+ */
+bool
+agx_uniform_dest_is_legal(const agx_context *ctx, const agx_instr *I)
+{
+   if (!ctx->target.operand_limits)
+      return false;
+
+   if (I->op == AGX_OPCODE_IADD) {
+      return I->dest[0].size == AGX_SIZE_32 && !I->shift && !I->saturate &&
+             I->src[0].type == AGX_INDEX_REGISTER &&
+             I->src[1].type == AGX_INDEX_REGISTER &&
+             I->src[0].size == AGX_SIZE_32 && I->src[1].size == AGX_SIZE_32;
+   } else if (I->op == AGX_OPCODE_IMAD) {
+      for (unsigned s = 0; s < 3; ++s) {
+         if (!(I->src[s].type == AGX_INDEX_REGISTER &&
+               I->src[s].size == AGX_SIZE_32) &&
+             !(I->dest[0].size == AGX_SIZE_64 && s == 2))
+            return false;
+      }
+
+      return !I->shift && !I->wait;
+   } else {
+      return false;
+   }
+}
+
 /* Hard register limits of operations, in 16-bit units */
 static bool
 register_limits(const agx_instr *I, struct agx_reg_constraint *c)

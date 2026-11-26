@@ -1168,6 +1168,7 @@ bool agx_instr_accepts_uniform(const agx_context *ctx, agx_instr *I,
 
 /* ISA operand legality, see agx_legality.c */
 bool agx_instr_is_legal(const agx_context *ctx, const agx_instr *I);
+bool agx_uniform_dest_is_legal(const agx_context *ctx, const agx_instr *I);
 bool agx_src_is_legal(const agx_context *ctx, agx_instr *I, unsigned s,
                       agx_index src);
 void agx_set_reg_constraints(agx_context *ctx);

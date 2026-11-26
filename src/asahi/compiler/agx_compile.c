@@ -4675,29 +4675,6 @@ agx_lower_float_moves(agx_context *ctx)
    }
 }
 
-/* iadd, imad and widening imul can write the uniform file directly */
-static bool
-fusable_uniform_def(const agx_instr *I)
-{
-   if (I->op == AGX_OPCODE_IADD) {
-      return I->dest[0].size == AGX_SIZE_32 && !I->shift && !I->saturate &&
-             I->src[0].type == AGX_INDEX_REGISTER &&
-             I->src[1].type == AGX_INDEX_REGISTER &&
-             I->src[0].size == AGX_SIZE_32 && I->src[1].size == AGX_SIZE_32;
-   } else if (I->op == AGX_OPCODE_IMAD) {
-      for (unsigned s = 0; s < 3; ++s) {
-         if (!(I->src[s].type == AGX_INDEX_REGISTER &&
-               I->src[s].size == AGX_SIZE_32) &&
-             !(I->dest[0].size == AGX_SIZE_64 && s == 2))
-            return false;
-      }
-
-      return !I->shift && !I->wait;
-   } else {
-      return false;
-   }
-}
-
 static bool
 touches_uniforms(const agx_instr *I, unsigned first, unsigned count)
 {
@@ -4760,7 +4737,7 @@ agx_fuse_uniform_stores(agx_context *ctx)
                break;
          }
 
-         if (!def || !fusable_uniform_def(def))
+         if (!def || !agx_uniform_dest_is_legal(ctx, def))
             continue;
 
          if (def->dest[0].size == AGX_SIZE_32) {
@@ -5038,8 +5015,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    /* Set last-use bits after lowering pseudo for best results. */
    agx_opt_register_cache(ctx);
 
-   if (ctx->target.uniform_dests)
-      agx_fuse_uniform_stores(ctx);
+   agx_fuse_uniform_stores(ctx);
 
    agx_mark_result_hints(ctx);
 
