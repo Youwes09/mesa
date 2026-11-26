@@ -3279,8 +3279,7 @@ hk_launch_try_cached_draw(struct hk_cmd_buffer *cmd, uint32_t draw_id,
       uint64_t offset =
          (uint64_t)draw.start * agx_index_size_to_B(draw.index_size);
       uint64_t address = draw.index_buffer + offset;
-      if (address < dev->dev.shader_base ||
-          address >= dev->dev.shader_base + (1ull << 32))
+      if (!hk_va_in_usc(dev, address))
          return false;
       hk_launch_set_index_fetch(pipeline, draw, draw.index_buffer,
                                 draw.index_buffer_range_B, offset);
@@ -3501,8 +3500,7 @@ hk_launch_draw_impl(struct hk_cmd_buffer *cmd, uint32_t draw_id,
          offset = 0;
       }
       pipeline.index_buffer = index_buffer + offset;
-      if (pipeline.index_buffer < dev->dev.shader_base ||
-          pipeline.index_buffer >= dev->dev.shader_base + (1ull << 32))
+      if (!hk_va_in_usc(dev, pipeline.index_buffer))
          UNSUPPORTED("the index buffer is outside the shader window");
       hk_launch_set_index_fetch(&pipeline, draw, index_buffer, index_range,
                                 offset);
