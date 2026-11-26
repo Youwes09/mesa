@@ -1218,8 +1218,10 @@ hk_cmd_buffer_end_compute_internal(struct hk_cmd_buffer *cmd,
        * stream that only carries an end timestamp needs the full flush too:
        * without the drain at its end, the timestamp never lands.
        */
-      if (cs->cdm_dirty || cs->timestamp.end.handle)
+      if (cs->cdm_dirty || cs->timestamp.end.handle) {
+         hk_ensure_cs_has_space(cmd, cs, AGX_CDM_BARRIER_LENGTH);
          hk_cdm_cache_flush(hk_cmd_buffer_device(cmd), cs);
+      }
 
       if (cs->sync_after_gfx)
          hk_cmd_sync_work(cmd, cs, HK_SYNC_ALL);
