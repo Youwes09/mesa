@@ -1873,6 +1873,24 @@ hk_optimize_empty_vdm(struct hk_cmd_buffer *cmd)
    clear_attachment_as_image(cmd, render, &render->stencil_att,
                              VK_IMAGE_ASPECT_STENCIL_BIT);
 
+   /* Keep the end timestamp: a compute stream that ends here writes it. */
+   if (cs->timestamp.end.handle) {
+      if (cmd->current_cs.cs && cmd->current_cs.cs->timestamp.end.handle)
+         hk_cmd_buffer_end_compute(cmd);
+
+      struct hk_cs *ts = hk_cmd_buffer_get_cs_general(cmd, &cmd->current_cs.cs,
+                                                      true, HK_SYNC_ALL);
+      if (ts) {
+         ts->timestamp.end = cs->timestamp.end;
+         /* A later timestamp in this pass copies it after graphics. */
+         if (cmd->current_cs.post_gfx) {
+            list_del(&ts->node);
+            list_addtail(&ts->node, &cmd->current_cs.post_gfx->node);
+         }
+         hk_cmd_buffer_end_compute(cmd);
+      }
+   }
+
    /* Remove the VDM control stream from the command buffer, now that it is
     * replaced by equivalent other operations.
     */
