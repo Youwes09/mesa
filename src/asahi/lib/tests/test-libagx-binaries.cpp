@@ -95,10 +95,10 @@ TEST(DispatchPacket, PacketFootprints)
    }
 }
 
-/* Consecutive draws with the same compiled stages reuse launches and the
- * coefficient table; a stage without a program id never does (hk once left
- * every id at zero, which silently disabled the reuse). */
-TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
+/* Consecutive draws with the same compiled stages reuse launches; a stage
+ * without a program id never does (hk once left every id at zero, which
+ * silently disabled the reuse). */
+TEST(DrawReuse, StablePairReusesLaunches)
 {
    agx_draw_record a = {}, b = {};
    for (unsigned s = 0; s < 2; ++s) {
@@ -111,16 +111,13 @@ TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
    a.fragment_table = b.fragment_table = 0x2000;
    a.samples = b.samples = 1;
    a.tile_bytes = b.tile_bytes = 4;
-   a.provoking_vertex = b.provoking_vertex = 0;
    EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 0));
    EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 1));
-   EXPECT_TRUE(agx_draw_reuses_coefficients(&a, &b));
 
    /* A changed stage table only affects that stage's launch. */
    b.vertex_table = 0x3000;
    EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 0));
    EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 1));
-   EXPECT_TRUE(agx_draw_reuses_coefficients(&a, &b));
    b.vertex_table = a.vertex_table;
 
    /* Tile allocation and sample count only matter to the fragment launch. */
@@ -130,7 +127,6 @@ TEST(DrawReuse, StablePairReusesLaunchesAndCoefficients)
    b.tile_bytes = a.tile_bytes;
 
    EXPECT_FALSE(agx_draw_reuses_launch(nullptr, &b, 0));
-   EXPECT_FALSE(agx_draw_reuses_coefficients(nullptr, &b));
 }
 
 TEST(DrawReuse, ZeroProgramIdNeverReuses)
@@ -138,8 +134,6 @@ TEST(DrawReuse, ZeroProgramIdNeverReuses)
    agx_draw_record a = {}, b = {};
    EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 0));
    EXPECT_FALSE(agx_draw_reuses_launch(&a, &b, 1));
-   EXPECT_FALSE(agx_draw_reuses_coefficients(&a, &b));
    a.program_id[0] = b.program_id[0] = 3;
    EXPECT_TRUE(agx_draw_reuses_launch(&a, &b, 0));
-   EXPECT_FALSE(agx_draw_reuses_coefficients(&a, &b));
 }

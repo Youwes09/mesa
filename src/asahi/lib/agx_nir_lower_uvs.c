@@ -338,8 +338,6 @@ agx_link_varyings_vs_fs(void *out, struct agx_varyings_vs *vs,
                         unsigned provoking_vertex, uint8_t sprite_coord_enable,
                         bool *generate_primitive_id)
 {
-   assert(fs->nr_bindings > 0);
-
    *generate_primitive_id = false;
 
    struct agx_cf_binding_header_packed *header = out;

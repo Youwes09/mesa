@@ -65,13 +65,11 @@ struct agx_draw_stage {
    uint8_t position_components;
    uint8_t varying_components;
    struct agx_varying_layout varyings;
-   struct agx_interp_mask linear_mask, flat_mask;
    bool reads_z;
    bool reads_primitive_id;
    bool writes_point_size;
    bool writes_layer_viewport;
    uint8_t clip_distance_count;
-   bool reads_point_coord;
    uint8_t render_targets;
    /* Optional per-shader launch templates; NULL builds every launch. */
    struct agx_stage_launch_cache *launch_cache;
@@ -184,8 +182,8 @@ agx_draw_record_reset(struct agx_draw_record *draw)
 }
 
 /* Whether a draw can take the previous draw's launch for stage (0 vertex, 1
- * fragment) or its coefficient table. Both need nonzero, equal program ids:
- * a stage without an id is never reused. draw->program_id, code, tables,
+ * fragment). It needs nonzero, equal program ids: a stage without an id is
+ * never reused. draw->program_id, code, tables,
  * samples, tile_bytes and provoking_vertex must already be filled in. */
 static inline bool
 agx_draw_reuses_launch(const struct agx_draw_record *previous,
@@ -202,24 +200,6 @@ agx_draw_reuses_launch(const struct agx_draw_record *previous,
           (!stage || (previous->samples == draw->samples &&
                       previous->tile_bytes == draw->tile_bytes));
 }
-
-static inline bool
-agx_draw_reuses_coefficients(const struct agx_draw_record *previous,
-                             const struct agx_draw_record *draw)
-{
-   return previous && draw->program_id[0] && draw->program_id[1] &&
-          previous->program_id[0] == draw->program_id[0] &&
-          previous->program_id[1] == draw->program_id[1] &&
-          previous->provoking_vertex == draw->provoking_vertex;
-}
-
-#define AGX_CF_TABLE_SIZE   0x2a0
-#define AGX_CF_TABLE_STRIDE 0x2c0
-#define AGX_CF_TABLES_SIZE  (3 * AGX_CF_TABLE_STRIDE)
-unsigned agx_coefficients_size(const struct agx_draw_stage *fragment);
-void agx_init_coefficients(struct agx_device *dev,
-                           struct agx_draw_stage *fragment,
-                           struct agx_ptr allocation);
 
 /* The caller owns both immutable arenas. Context allocations must lie wholly
  * within the render-context aperture; USC allocations use the shader aperture.

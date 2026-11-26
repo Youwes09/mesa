@@ -82,138 +82,134 @@ main(void)
    list_add(&bo.shader_body.entry_link, &dev->entry_lru);
    uint8_t code[128] = {0};
    unsigned cases = 0, failures = 0;
-   for (unsigned owned = 0; owned < 2; ++owned) {
-      for (unsigned samples = 1; samples <= 4; samples *= 2) {
-         for (unsigned viewports = 1; viewports <= 16; viewports *= 2) {
-            for (unsigned state = 0; state < 8; ++state) {
-               struct agx_draw_stage vs = {
-                  .bo = &bo,
-                  .binary = code,
-                  .binary_size = sizeof(code),
-                  .publication_count_valid = true,
-                  .publication_count = 32,
-                  .position_components = 4,
-                  .varying_components = 4,
-                  .program_id = 1,
-                  .resource_count = 1,
-               };
-               struct agx_draw_stage fs = vs;
-               fs.program_id = 2;
-               fs.position_components = 0;
-               fs.render_targets = state & 1 ? 2 : 1;
-               if (owned) {
-                  fs.coefficients[0] = 0x60000;
-                  fs.coefficients[1] = 0x602c0;
-                  fs.coefficients[2] = 0x60580;
-                  fs.coefficient_count = 4;
-               }
-               struct agx_draw_pipeline pipeline;
-               CHECK(agx_link_draw_pipeline(&pipeline, &vs, &fs));
-               pipeline.samples = samples;
-               pipeline.primitive = state & 2 ? AGX_PRIMITIVE_TRIANGLE_FAN
-                                              : AGX_PRIMITIVE_TRIANGLES;
-               pipeline.color_formats[0] = AGX_CHANNELS_R8G8B8A8;
-               pipeline.color_formats[1] = AGX_CHANNELS_R16G16B16A16;
-               struct arena usc[2] = {{.gpu = dev->shader_base + 0x20000}};
-               struct arena context[2] = {
-                  {.gpu = AGX_RENDER_CONTEXT_BASE + 0x10000}};
-               struct agx_draw_record draw[2] = {0};
-               draw[0].vertex_table = 0x40000;
-               draw[0].fragment_table = 0x50000;
-               draw[0].texture_table[0] = 0x70000;
-               draw[0].texture_table[1] = 0x80000;
-               draw[0].sampler_table[0] = 0x90000;
-               draw[0].sampler_table[1] = 0xa0000;
-               draw[0].flatshade_first = state & 4;
-               draw[0].object_type = AGX_OBJECT_TYPE_TRIANGLE;
-               draw[0].reads_tile = state & 1;
-               draw[0].uses_discard = state & 2;
-               draw[0].writes_depth = state & 4;
-               draw[0].pixel_interlock = state & 1;
-               draw[0].disable_tri_merging = state & 4;
-               draw[0].depth_control = 0x100;
-               draw[0].depth_face[0] = 0x20000;
-               draw[0].depth_face[1] = 0x30000;
-               draw[0].stencil[0] = 0x100001;
-               draw[0].stencil[1] = 0x200002;
-               draw[0].raster_control = 0x10000;
-               draw[0].occlusion_index = 3;
-               draw[0].visibility_mode = 1;
-               draw[0].scissor_index = 5;
-               draw[0].depth_bias_index = 7;
-               draw[0].scissor_min[0] = 17;
-               draw[0].scissor_min[1] = 31;
-               draw[0].scissor_max[0] = 100;
-               draw[0].scissor_max[1] = 200;
-               draw[0].viewport_count = viewports;
-               for (unsigned i = 0; i < 3; ++i) {
-                  draw[0].viewport_translate[i] = 0.5f + i;
-                  draw[0].viewport_scale[i] = 2.5f + i;
-               }
-               for (unsigned v = 1; v < viewports; ++v)
-                  for (unsigned i = 0; i < 6; ++i)
-                     draw[0].viewports[v - 1][i] = v + i * 0.25f;
-               CHECK(agx_prepare_draw_record_alloc(dev, &usc[0], allocate,
-                                                   &context[0], allocate,
-                                                   &pipeline, &draw[0], NULL));
-               usc[1] = usc[0];
-               context[1] = context[0];
-               draw[1] = draw[0];
-               /* Repeated VS-only, FS-only, both and no-op updates, followed
-                * by a full raster update, exercise predecessor ownership.
-                */
-               for (unsigned step = 0; step < 8; ++step) {
-                  struct agx_draw_record previous = draw[0];
-                  unsigned mask = step % 4;
-                  uint64_t tables[] = {
-                     previous.vertex_table + ((mask & 1) ? 64 : 0),
-                     previous.fragment_table + ((mask & 2) ? 64 : 0)};
-                  unsigned usc_used = usc[0].used, ctx_used = context[0].used;
-                  uint8_t old_usc[16384], old_ctx[16384];
-                  memcpy(old_usc, usc[0].bytes, usc_used);
-                  memcpy(old_ctx, context[0].bytes, ctx_used);
-                  draw[0].vertex_table = tables[0];
-                  draw[0].fragment_table = tables[1];
-                  CHECK(agx_prepare_draw_record_alloc(
-                     dev, &usc[0], allocate, &context[0], allocate, &pipeline,
-                     &draw[0], &previous));
-                  CHECK(agx_update_draw_tables_alloc(
-                     dev, &usc[1], allocate, &context[1], allocate, &pipeline,
-                     &draw[1], tables, NULL));
-                  compare(&pipeline, draw, usc, context);
-                  CHECK(!memcmp(old_usc, usc[1].bytes, usc_used));
-                  CHECK(!memcmp(old_ctx, context[1].bytes, ctx_used));
-                  ++cases;
-               }
-               for (unsigned arm = 0; arm < 2; ++arm) {
-                  struct agx_draw_record previous = draw[arm];
-                  draw[arm].viewport_scale[0] += 1.0f;
-                  CHECK(agx_prepare_draw_record_alloc(
-                     dev, &usc[arm], allocate, &context[arm], allocate,
-                     &pipeline, &draw[arm], &previous));
-               }
+   for (unsigned samples = 1; samples <= 4; samples *= 2) {
+      for (unsigned viewports = 1; viewports <= 16; viewports *= 2) {
+         for (unsigned state = 0; state < 8; ++state) {
+            struct agx_draw_stage vs = {
+               .bo = &bo,
+               .binary = code,
+               .binary_size = sizeof(code),
+               .publication_count_valid = true,
+               .publication_count = 32,
+               .position_components = 4,
+               .varying_components = 4,
+               .program_id = 1,
+               .resource_count = 1,
+            };
+            struct agx_draw_stage fs = vs;
+            fs.program_id = 2;
+            fs.position_components = 0;
+            fs.render_targets = state & 1 ? 2 : 1;
+            fs.coefficients[0] = 0x60000;
+            fs.coefficients[1] = 0x602c0;
+            fs.coefficients[2] = 0x60580;
+            fs.coefficient_count = 4;
+            struct agx_draw_pipeline pipeline;
+            CHECK(agx_link_draw_pipeline(&pipeline, &vs, &fs));
+            pipeline.samples = samples;
+            pipeline.primitive = state & 2 ? AGX_PRIMITIVE_TRIANGLE_FAN
+                                           : AGX_PRIMITIVE_TRIANGLES;
+            pipeline.color_formats[0] = AGX_CHANNELS_R8G8B8A8;
+            pipeline.color_formats[1] = AGX_CHANNELS_R16G16B16A16;
+            struct arena usc[2] = {{.gpu = dev->shader_base + 0x20000}};
+            struct arena context[2] = {
+               {.gpu = AGX_RENDER_CONTEXT_BASE + 0x10000}};
+            struct agx_draw_record draw[2] = {0};
+            draw[0].vertex_table = 0x40000;
+            draw[0].fragment_table = 0x50000;
+            draw[0].texture_table[0] = 0x70000;
+            draw[0].texture_table[1] = 0x80000;
+            draw[0].sampler_table[0] = 0x90000;
+            draw[0].sampler_table[1] = 0xa0000;
+            draw[0].flatshade_first = state & 4;
+            draw[0].object_type = AGX_OBJECT_TYPE_TRIANGLE;
+            draw[0].reads_tile = state & 1;
+            draw[0].uses_discard = state & 2;
+            draw[0].writes_depth = state & 4;
+            draw[0].pixel_interlock = state & 1;
+            draw[0].disable_tri_merging = state & 4;
+            draw[0].depth_control = 0x100;
+            draw[0].depth_face[0] = 0x20000;
+            draw[0].depth_face[1] = 0x30000;
+            draw[0].stencil[0] = 0x100001;
+            draw[0].stencil[1] = 0x200002;
+            draw[0].raster_control = 0x10000;
+            draw[0].occlusion_index = 3;
+            draw[0].visibility_mode = 1;
+            draw[0].scissor_index = 5;
+            draw[0].depth_bias_index = 7;
+            draw[0].scissor_min[0] = 17;
+            draw[0].scissor_min[1] = 31;
+            draw[0].scissor_max[0] = 100;
+            draw[0].scissor_max[1] = 200;
+            draw[0].viewport_count = viewports;
+            for (unsigned i = 0; i < 3; ++i) {
+               draw[0].viewport_translate[i] = 0.5f + i;
+               draw[0].viewport_scale[i] = 2.5f + i;
+            }
+            for (unsigned v = 1; v < viewports; ++v)
+               for (unsigned i = 0; i < 6; ++i)
+                  draw[0].viewports[v - 1][i] = v + i * 0.25f;
+            CHECK(agx_prepare_draw_record_alloc(dev, &usc[0], allocate,
+                                                &context[0], allocate,
+                                                &pipeline, &draw[0], NULL));
+            usc[1] = usc[0];
+            context[1] = context[0];
+            draw[1] = draw[0];
+            /* Repeated VS-only, FS-only, both and no-op updates, followed
+             * by a full raster update, exercise predecessor ownership.
+             */
+            for (unsigned step = 0; step < 8; ++step) {
+               struct agx_draw_record previous = draw[0];
+               unsigned mask = step % 4;
+               uint64_t tables[] = {
+                  previous.vertex_table + ((mask & 1) ? 64 : 0),
+                  previous.fragment_table + ((mask & 2) ? 64 : 0)};
+               unsigned usc_used = usc[0].used, ctx_used = context[0].used;
+               uint8_t old_usc[16384], old_ctx[16384];
+               memcpy(old_usc, usc[0].bytes, usc_used);
+               memcpy(old_ctx, context[0].bytes, ctx_used);
+               draw[0].vertex_table = tables[0];
+               draw[0].fragment_table = tables[1];
+               CHECK(agx_prepare_draw_record_alloc(
+                  dev, &usc[0], allocate, &context[0], allocate, &pipeline,
+                  &draw[0], &previous));
+               CHECK(agx_update_draw_tables_alloc(
+                  dev, &usc[1], allocate, &context[1], allocate, &pipeline,
+                  &draw[1], tables, NULL));
                compare(&pipeline, draw, usc, context);
-               for (unsigned fail = 0; fail < 5; ++fail) {
-                  struct arena u = usc[1], c = context[1];
-                  struct agx_draw_record d = draw[1];
-                  const uint64_t tables[] = {d.vertex_table + 64,
-                                             d.fragment_table + 64};
-                  if (fail < 2)
-                     u.fail_at = u.calls + fail + 1;
-                  if (fail == 2)
-                     c.fail_at = c.calls + 1;
-                  if (fail == 3)
-                     c.gpu = AGX_RENDER_CONTEXT_BASE - c.used - 64;
-                  if (fail == 4)
-                     c.gpu = AGX_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
-                  CHECK(!agx_update_draw_tables_alloc(dev, &u, allocate, &c,
-                                                      allocate, &pipeline, &d,
-                                                      tables, NULL));
-                  CHECK(!memcmp(&d, &draw[1], sizeof(d)));
-                  CHECK(!memcmp(u.bytes, usc[1].bytes, usc[1].used));
-                  CHECK(!memcmp(c.bytes, context[1].bytes, context[1].used));
-                  ++failures;
-               }
+               CHECK(!memcmp(old_usc, usc[1].bytes, usc_used));
+               CHECK(!memcmp(old_ctx, context[1].bytes, ctx_used));
+               ++cases;
+            }
+            for (unsigned arm = 0; arm < 2; ++arm) {
+               struct agx_draw_record previous = draw[arm];
+               draw[arm].viewport_scale[0] += 1.0f;
+               CHECK(agx_prepare_draw_record_alloc(
+                  dev, &usc[arm], allocate, &context[arm], allocate,
+                  &pipeline, &draw[arm], &previous));
+            }
+            compare(&pipeline, draw, usc, context);
+            for (unsigned fail = 0; fail < 5; ++fail) {
+               struct arena u = usc[1], c = context[1];
+               struct agx_draw_record d = draw[1];
+               const uint64_t tables[] = {d.vertex_table + 64,
+                                          d.fragment_table + 64};
+               if (fail < 2)
+                  u.fail_at = u.calls + fail + 1;
+               if (fail == 2)
+                  c.fail_at = c.calls + 1;
+               if (fail == 3)
+                  c.gpu = AGX_RENDER_CONTEXT_BASE - c.used - 64;
+               if (fail == 4)
+                  c.gpu = AGX_RENDER_CONTEXT_BASE + UINT32_MAX - c.used;
+               CHECK(!agx_update_draw_tables_alloc(dev, &u, allocate, &c,
+                                                   allocate, &pipeline, &d,
+                                                   tables, NULL));
+               CHECK(!memcmp(&d, &draw[1], sizeof(d)));
+               CHECK(!memcmp(u.bytes, usc[1].bytes, usc[1].used));
+               CHECK(!memcmp(c.bytes, context[1].bytes, context[1].used));
+               ++failures;
             }
          }
       }

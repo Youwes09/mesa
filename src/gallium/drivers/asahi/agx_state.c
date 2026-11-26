@@ -6247,22 +6247,19 @@ agx_draw_stages_for_batch(struct agx_batch *batch,
    unsigned provoking = first ? (prim == MESA_PRIM_TRIANGLE_FAN ? 1 : 0) : 2;
    bool generate_primitive_id = false;
 
-   if (cf->nr_bindings) {
-      size_t size = AGX_CF_BINDING_HEADER_LENGTH +
-                    (cf->nr_bindings * AGX_CF_BINDING_LENGTH);
-      struct agx_ptr t =
-         agx_pool_alloc_aligned(&batch->pipeline_pool, size, 16);
+   size_t size =
+      AGX_CF_BINDING_HEADER_LENGTH + (cf->nr_bindings * AGX_CF_BINDING_LENGTH);
+   struct agx_ptr t = agx_pool_alloc_aligned(&batch->pipeline_pool, size, 16);
 
-      agx_link_varyings_vs_fs(t.cpu, &batch->linked_varyings, uvs->user_size,
-                              (struct agx_varyings_fs *)cf, provoking,
-                              u_reduced_prim(prim) == MESA_PRIM_POINTS
-                                 ? ctx->rast->base.sprite_coord_enable
-                                 : 0,
-                              &generate_primitive_id);
+   agx_link_varyings_vs_fs(t.cpu, &batch->linked_varyings, uvs->user_size,
+                           (struct agx_varyings_fs *)cf, provoking,
+                           u_reduced_prim(prim) == MESA_PRIM_POINTS
+                              ? ctx->rast->base.sprite_coord_enable
+                              : 0,
+                           &generate_primitive_id);
 
-      for (unsigned i = 0; i < 3; ++i)
-         fragment->coefficients[i] = agx_usc_addr(dev, t.gpu);
-   }
+   for (unsigned i = 0; i < 3; ++i)
+      fragment->coefficients[i] = agx_usc_addr(dev, t.gpu);
 
    fragment->reads_primitive_id = generate_primitive_id;
    fragment->disable_tri_merging = ctx->fs->b.info.disable_tri_merging;

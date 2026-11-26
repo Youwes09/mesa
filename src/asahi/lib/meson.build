@@ -78,11 +78,6 @@ if with_tests
     include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
     dependencies : [idep_mesautil, idep_nir, idep_libagx],
     link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
-  test('coefficients', executable('coefficients',
-    'tests/test-coefficients.c',
-    include_directories : [inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
-    dependencies : [idep_mesautil, idep_nir, idep_libagx],
-    link_with : [libasahi_lib, libasahi_compiler]), suite : ['asahi'])
   test(
     'libasahi_tests',
     executable(
