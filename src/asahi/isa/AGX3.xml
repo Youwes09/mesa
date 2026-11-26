@@ -630,8 +630,10 @@
   -->
 
   <group name="Float binary, 4 bytes" length="4" form="float2_base">
-    <template>09 05 38 01</template>
+    <exact bit="0:3">1001</exact>
     <exact bit="16">opcode</exact>
+    <zero bit="17:18"/>
+    <exact bit="21">1</exact>
     <dst4/>
     <fsrc1_4/>
     <fsrc2_4/>
@@ -641,8 +643,9 @@
   </group>
 
   <group name="Float binary, 6 bytes" length="6">
-    <template>09 05 3c 01 00 00</template>
     <exact bit="0:3 16">opcode</exact>
+    <exact bit="17:18">10</exact>
+    <zero bit="32:34 37:38"/>
     <dst6/>
     <fsrc1_6/>
     <fsrc2_6/>
@@ -656,8 +659,9 @@
   <!-- FP32 arithmetic writing an FP16 half: the conversions, as an add of
        -0.0. Also FP16 add and multiply. -->
   <group name="Float binary, 6 bytes, FP16 result" length="6">
-    <template>01 01 1c 81 00 02</template>
     <exact bit="0:3 16">opcode</exact>
+    <exact bit="17:18">10</exact>
+    <zero bit="32:33 37:38"/>
     <hdst6/>
     <fsrc1_6/>
     <fsrc2_6/>
@@ -671,8 +675,11 @@
   </group>
 
   <group name="Float binary, 8 bytes" length="8" form="float2_modifier_extended float2_immediate_extended">
-    <template>09 05 3c 01 01 00 00 00</template>
+    <exact bit="0:3">1001</exact>
     <exact bit="16">opcode</exact>
+    <exact bit="17:18">10</exact>
+    <exact bit="32:34">001</exact>
+    <zero bit="37:38 48 50:56 58:60"/>
     <dst6/>
     <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 =0"/>
     <fsrc2_6/>
@@ -686,7 +693,11 @@
 
   <!-- Multiply into an export word, completing on the producer slot -->
   <ins name="fmul_export" display="fmul" length="8" form="float2_export texture_coords">
-    <template>09 05 3d 01 41 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">101</exact>
+    <exact bit="32:34">001</exact>
+    <zero bit="37 48:57"/>
+    <exact bit="38">1</exact>
     <edst6/>
     <fsrc1_6/>
     <fsrc2_6/>
@@ -696,7 +707,10 @@
   </ins>
 
   <ins name="fadd_abs" display="fadd" length="10" form="float2_abs_extended">
-    <template>09 05 3c 01 02 00 00 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">100</exact>
+    <exact bit="32:34">010</exact>
+    <zero bit="37:38 48 50:56 58:60 66:79"/>
     <dst6/>
     <fsrc1_abs/>
     <fsrc2_abs/>
@@ -706,7 +720,10 @@
   </ins>
 
   <ins name="fmul_abs" display="fmul" length="12" form="float2_mul_abs_extended">
-    <template>09 05 3d 01 02 00 00 00 00 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">101</exact>
+    <exact bit="32:34">010</exact>
+    <zero bit="37:38 48 50:56 58:60 66:95"/>
     <dst6/>
     <fsrc1_abs/>
     <fsrc2_abs/>
@@ -717,7 +734,9 @@
 
   <!-- Multiply by a coefficient-file slot, named in byte 5 -->
   <ins name="fmul_cf" display="fmul" length="8" form="float2_project">
-    <template>09 05 3f 01 00 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">111</exact>
+    <zero bit="32:39 48:63"/>
     <dst4/>
     <fsrc1_4/>
     <fsrc2_4/>
@@ -730,7 +749,9 @@
     where the longer forms have operand C's. Bit 59 negates the product.
   -->
   <ins name="ffma_compact" display="ffma" length="6" form="float3_compact">
-    <template>09 01 3e 05 80 08</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">110</exact>
+    <zero bit="32:34"/>
     <dst4/>
     <src kind="fsrc3" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
     <src kind="fsrc3" bit="25:30 =0 24 31 20 37 =0 =0 =0"/>
@@ -739,7 +760,10 @@
   </ins>
 
   <ins name="ffma" length="8" form="float3_extended">
-    <template>09 01 3e 05 81 08 02 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">110</exact>
+    <exact bit="32:34">001</exact>
+    <zero bit="48 50:54"/>
     <dst8/>
     <fmasrc1/>
     <fmasrc2/>
@@ -749,7 +773,9 @@
   </ins>
 
   <ins name="hfma" length="8" form="half3">
-    <template>00 00 1e 00 81 00 00 00</template>
+    <exact bit="16:18">110</exact>
+    <exact bit="32:34">001</exact>
+    <zero bit="0:3 48 50:54"/>
     <hdst8/>
     <fmasrc1/>
     <fmasrc2/>
@@ -759,7 +785,10 @@
   </ins>
 
   <ins name="ffma_sat" display="ffma" length="10" form="float3_saturate_extended">
-    <template>09 01 3e 05 82 08 02 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">110</exact>
+    <exact bit="32:34">010</exact>
+    <zero bit="48 50:54 64:72 74:76"/>
     <dst8/>
     <fmasrc1/>
     <fmasrc2/>
@@ -770,7 +799,10 @@
   </ins>
 
   <ins name="ffma_mod" display="ffma" length="12" form="float3_modifier_extended">
-    <template>09 01 3e 05 83 08 02 00 00 00 00 00</template>
+    <exact bit="0:3">1001</exact>
+    <exact bit="16:18">110</exact>
+    <exact bit="32:34">011</exact>
+    <zero bit="48 50:54 64:72 74:76 82:95"/>
     <dst8/>
     <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 80"/>
     <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 81"/>
