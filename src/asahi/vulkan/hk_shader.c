@@ -361,13 +361,16 @@ enum hk_feature_key {
    HK_FEAT_CUSTOM_BORDER = BITFIELD_BIT(0),
    /* Apple9 lowers the image view min LOD clamp only when it is enabled. */
    HK_FEAT_MIN_LOD = BITFIELD_BIT(1),
+   HK_FEAT_PRIMS_GENERATED = BITFIELD_BIT(2),
 };
 
 static enum hk_feature_key
 hk_make_feature_key(const struct vk_features *feats)
 {
    return ((!feats || feats->customBorderColors) ? HK_FEAT_CUSTOM_BORDER : 0) |
-          ((!feats || feats->minLod) ? HK_FEAT_MIN_LOD : 0);
+          ((!feats || feats->minLod) ? HK_FEAT_MIN_LOD : 0) |
+          ((!feats || feats->primitivesGeneratedQuery) ? HK_FEAT_PRIMS_GENERATED
+                                                       : 0);
 }
 
 /* Pipeline sample shading shades each sample, so interpolate every non-flat
@@ -2643,7 +2646,7 @@ hk_compile_shader(struct hk_device *dev, struct vk_shader_compile_info *info,
 
       /* Launched API shaders may need it for these features at draw time */
       if (launch_programs && vk_features &&
-          dev->vk.enabled_features.primitivesGeneratedQuery) {
+          vk_features->primitivesGeneratedQuery) {
          next_stage |= VK_SHADER_STAGE_GEOMETRY_BIT;
       }
 
