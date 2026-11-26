@@ -83,6 +83,7 @@ static const struct agx_isa_target agx_apple9_target = {
    .shader_sized_frame = true,
    .occupancy_table = false,
    .pack = agx3_pack_binary,
+   .disassemble = agx3_disassemble,
 };
 
 const struct agx_isa_target *

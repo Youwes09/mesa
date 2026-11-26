@@ -24,9 +24,16 @@
 struct libagxdecode_config lib_config;
 
 static void
-agx_disassemble(void *_code, size_t maxlen, FILE *fp)
+agx_disassemble(void *_code, size_t maxlen, FILE *fp, unsigned gpu_generation)
 {
-   bool errors = agx2_disassemble(_code, maxlen, fp);
+   bool errors;
+
+   /* AGX3 instructions are read 20 bytes at a time */
+   if (gpu_generation >= 16)
+      errors = agx3_disassemble(_code, maxlen > 20 ? maxlen - 20 : 0, fp);
+   else
+      errors = agx2_disassemble(_code, maxlen, fp);
+
    assert(!errors);
 }
 
@@ -323,7 +330,7 @@ agxdecode_usc(struct agxdecode_ctx *ctx, const uint8_t *map,
       size_t size =
          agxdecode_grab_mapped(ctx, decode_usc(ctx, ctrl.code), &buf);
 
-      agx_disassemble(buf, size, agxdecode_dump_stream);
+      agx_disassemble(buf, size, agxdecode_dump_stream, params->gpu_generation);
       return STATE_DONE;
    }
 
@@ -336,7 +343,7 @@ agxdecode_usc(struct agxdecode_ctx *ctx, const uint8_t *map,
       size_t size =
          agxdecode_grab_mapped(ctx, decode_usc(ctx, ctrl.code), &buf);
 
-      agx_disassemble(buf, size, agxdecode_dump_stream);
+      agx_disassemble(buf, size, agxdecode_dump_stream, params->gpu_generation);
       agxdecode_log("\n");
 
       return AGX_USC_SHADER_LENGTH;
@@ -794,14 +801,15 @@ agxdecode_sampler_heap(struct agxdecode_ctx *ctx, uint64_t heap, unsigned count)
 }
 
 static void
-agxdecode_helper(struct agxdecode_ctx *ctx, const char *prefix, uint64_t helper)
+agxdecode_helper(struct agxdecode_ctx *ctx, const char *prefix, uint64_t helper,
+                 decoder_params *params)
 {
    if (helper & 1) {
       fprintf(agxdecode_dump_stream, "%s helper program:\n", prefix);
       uint8_t buf[1024];
       agx_disassemble(
          buf, agxdecode_fetch_gpu_array(ctx, decode_usc(ctx, helper & ~1), buf),
-         agxdecode_dump_stream);
+         agxdecode_dump_stream, params->gpu_generation);
    }
 }
 
@@ -859,8 +867,8 @@ agxdecode_drm_cmd_render(struct agxdecode_ctx *ctx,
 
    agxdecode_sampler_heap(ctx, c->sampler_heap, c->sampler_count);
 
-   agxdecode_helper(ctx, "Vertex", c->vertex_helper.binary);
-   agxdecode_helper(ctx, "Fragment", c->fragment_helper.binary);
+   agxdecode_helper(ctx, "Vertex", c->vertex_helper.binary, params);
+   agxdecode_helper(ctx, "Fragment", c->fragment_helper.binary, params);
 }
 
 static void
@@ -874,7 +882,7 @@ agxdecode_drm_cmd_compute(struct agxdecode_ctx *ctx,
                       verbose, params, NULL);
 
    agxdecode_sampler_heap(ctx, c->sampler_heap, c->sampler_count);
-   agxdecode_helper(ctx, "Compute", c->helper.binary);
+   agxdecode_helper(ctx, "Compute", c->helper.binary, params);
 }
 
 static void
