@@ -952,9 +952,9 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
        */
       bool skip = false;
       if (submit->waits[i].sync->flags & VK_SYNC_IS_TIMELINE) {
-         uint32_t v1 = submit->waits[i].wait_value;
+         uint64_t v1 = submit->waits[i].wait_value;
          for (unsigned j = 0; j < submit->wait_count; ++j) {
-            uint32_t v2 = submit->waits[j].wait_value;
+            uint64_t v2 = submit->waits[j].wait_value;
             if (i != j && submit->waits[i].sync == submit->waits[j].sync &&
                 (v1 < v2 || (v1 == v2 && i < j))) {
                skip = true;
