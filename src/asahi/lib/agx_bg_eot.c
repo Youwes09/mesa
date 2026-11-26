@@ -162,7 +162,8 @@ static nir_shader *
 agx_build_raw_end_of_tile_shader(const struct agx_bg_eot_key *key)
 {
    nir_builder b = nir_builder_init_simple_shader(
-      MESA_SHADER_FRAGMENT, &agx_nir_options_apple9, "agx_eot");
+      MESA_SHADER_FRAGMENT, agx_nir_options_for_isa(AGX_SHADER_ISA_APPLE9),
+      "agx_eot");
 
    enum glsl_sampler_dim dim =
       (key->tib.nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;

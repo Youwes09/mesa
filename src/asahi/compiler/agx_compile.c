@@ -17,6 +17,7 @@
 #include "util/glheader.h"
 #include "util/list.h"
 #include "util/macros.h"
+#include "util/u_call_once.h"
 #include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "agx_builder.h"
@@ -58,70 +59,45 @@ DEBUG_GET_ONCE_FLAGS_OPTION(agx_compiler_debug, "AGX_MESA_DEBUG",
 
 int agx_compiler_debug = 0;
 
+static nir_shader_compiler_options agx_nir_options_apple9;
+static util_once_flag agx_nir_options_apple9_once = UTIL_ONCE_FLAG_INIT;
+
 /* No 16-bit ALU, saturating or 64-bit add, or variable-width extracts */
-const nir_shader_compiler_options agx_nir_options_apple9 = {
-   .lower_fdiv = true,
-   .float_mul_add16 =
-      nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
-   .float_mul_add32 =
-      nir_float_muladd_support_has_ffma | nir_float_muladd_support_fuse,
-   .lower_flrp16 = true,
-   .lower_flrp32 = true,
-   .lower_flrp64 = true,
-   .lower_fpow = true,
-   .lower_fmod = true,
-   .lower_bitfield_extract8 = true,
-   .lower_bitfield_extract16 = true,
-   .lower_bitfield_extract = true,
-   .lower_bitfield_insert = true,
-   .lower_ifind_msb = true,
-   .lower_find_lsb = true,
-   .lower_uadd_carry = true,
-   .lower_usub_borrow = true,
-   .lower_fisnormal = true,
-   .lower_scmp = true,
-   .lower_isign = true,
-   .lower_fsign = true,
-   .lower_iabs = true,
-   .lower_fminmax_signed_zero = true,
-   .lower_fdph = true,
-   .lower_ffract = true,
-   .lower_pack_snorm_2x16 = true,
-   .lower_pack_snorm_4x8 = true,
-   .lower_pack_64_2x32 = true,
-   .lower_unpack_half_2x16 = true,
-   .lower_extract_byte = true,
-   .lower_extract_word = true,
-   .lower_insert_byte = true,
-   .lower_insert_word = true,
-   .has_cs_global_id = true,
-   .lower_device_index_to_zero = true,
-   .lower_hadd = true,
-   .lower_uadd_sat = true,
-   .lower_usub_sat = true,
-   .lower_iadd_sat = true,
-   .has_amul = true,
-   .has_isub = true,
-   .txl_lod_from_zero_gradients_is_neg_inf = true,
-   .ssbo_readonly_as_constant_offset = true,
-   .has_load_global_bounded = true,
-   .max_unroll_iterations = 8,
-   .max_unroll_iterations_aggressive = 32,
-   .lower_uniforms_to_ubo = true,
-   .late_lower_int64 = true,
-   .lower_int64_options = (nir_lower_int64_options)~nir_lower_imul_2x32_64,
-   .lower_doubles_options = (nir_lower_doubles_options)(~0),
-   .support_indirect_inputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
-                              BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
-                              BITFIELD_BIT(MESA_SHADER_FRAGMENT),
-   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
-   .max_samples = 4,
-   .lower_fquantize2f16 = true,
-   .compact_arrays = true,
-   .discard_is_demote = true,
-   .scalarize_ddx = true,
-   .io_options = nir_io_always_interpolate_convergent_fs_inputs,
-};
+static void
+agx_init_nir_options_apple9(void)
+{
+   nir_shader_compiler_options *o = &agx_nir_options_apple9;
+
+   *o = agx_nir_options;
+   o->support_16bit_alu = false;
+   o->lower_bitfield_extract = true;
+   o->lower_extract_word = true;
+   o->lower_uadd_sat = true;
+   o->lower_usub_sat = true;
+   o->lower_iadd_sat = true;
+   o->lower_int64_options = (nir_lower_int64_options)~nir_lower_imul_2x32_64;
+   o->max_unroll_iterations = 8;
+   o->max_unroll_iterations_aggressive = 32;
+
+   /* Packed conversions are instructions */
+   o->lower_pack_half_2x16 = false;
+   o->lower_pack_unorm_2x16 = false;
+   o->lower_pack_unorm_4x8 = false;
+   o->lower_unpack_unorm_2x16 = false;
+   o->lower_unpack_snorm_2x16 = false;
+   o->lower_unpack_unorm_4x8 = false;
+   o->lower_unpack_snorm_4x8 = false;
+}
+
+const nir_shader_compiler_options *
+agx_nir_options_for_isa(enum agx_shader_isa isa)
+{
+   if (isa != AGX_SHADER_ISA_APPLE9)
+      return &agx_nir_options;
+
+   util_call_once(&agx_nir_options_apple9_once, agx_init_nir_options_apple9);
+   return &agx_nir_options_apple9;
+}
 
 /*
  * Pad binary to a given alignment and return aligned offset into the binary.

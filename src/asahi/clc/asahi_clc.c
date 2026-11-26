@@ -439,8 +439,9 @@ main(int argc, char **argv)
 
          /* Apple9 kernels load their inputs from memory, at the same offsets */
          if (!g13_only(libfunc)) {
-            nir_shader *s9 =
-               build_variant(libfunc, v, &agx_nir_options_apple9, nir, &opt);
+            nir_shader *s9 = build_variant(
+               libfunc, v, agx_nir_options_for_isa(AGX_SHADER_ISA_APPLE9), nir,
+               &opt);
             agx_preprocess_nir(s9);
             lower_variant_io(s9);
 

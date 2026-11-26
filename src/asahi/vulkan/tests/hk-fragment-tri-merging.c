@@ -60,7 +60,8 @@ static nir_shader *
 fragment_source(bool centroid)
 {
    nir_builder b = nir_builder_init_simple_shader(
-      MESA_SHADER_FRAGMENT, &agx_nir_options_apple9, "tri merging fragment");
+      MESA_SHADER_FRAGMENT, agx_nir_options_for_isa(AGX_SHADER_ISA_APPLE9),
+      "tri merging fragment");
    /* An application shader: hk does not gate internal ones. */
    b.shader->info.internal = false;
    b.shader->info.io_lowered = true;
