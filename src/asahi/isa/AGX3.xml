@@ -576,6 +576,10 @@
 
   <define modifier="dstate" bit="21"/>
   <define modifier="saturate" bit="57" display="sat"/>
+  <define modifier="alu" bit="32"/>
+  <define modifier="invert" bit="4" display="not"/>
+  <define immediate="pred" bit="5:7" prefix="p"/>
+
   <define modifier="mask_12_17" bit="12:17" kind="waitmask"/>
   <define modifier="mask_45_47_61_63" bit="45:47 61:63" kind="waitmask"/>
   <define modifier="mask_61_63_77_79" bit="61:63 77:79" kind="waitmask"/>
@@ -583,13 +587,38 @@
   <define modifier="index_45_47" bit="45:47" kind="wait"/>
   <define modifier="index_61_63" bit="61:63" kind="wait"/>
 
-  <!-- Destination of the compact ALU forms -->
+  <!-- Operands of the compact ALU forms, named by the length of the
+       shortest forms using them. The extended (ext) and fused multiply-add
+       (fma) forms move register bit 6 and the file bit of operands A and B
+       to bits 55-58. -->
   <define dest="dst4" kind="dst" bit="4:7 22:23 =0 =0 =0"/>
   <define dest="dst6" kind="dst" bit="4:7 22:23 44 =0 =0"/>
   <define dest="hdst6" kind="dst" bit="4:7 22:23 44 =1 34"/>
+  <define dest="edst6" kind="export" bit="4:7 22:23 44"/>
   <define dest="dst8" kind="dst" bit="4:7 22:23 60 =0 =0"/>
   <define dest="hdst8" kind="dst" bit="4:7 22:23 60 =1 =0"/>
-  <define dest="dst7" kind="reg" bit="25:31"/>
+
+  <define src="fsrc1_4" kind="fsrc" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
+  <define src="fsrc2_4" kind="fsrc" bit="25:30 =0 24 31 20 =0 =0 =0 =0"/>
+  <define src="fsrc1_6" kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+  <define src="fsrc2_6" kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+  <define src="isrc1_6" kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+  <define src="isrc2_6" kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+  <define src="fsrc1_abs" kind="fsrc" bit="9:14 40 8 15 19 39 35 49 64"/>
+  <define src="fsrc2_abs" kind="fsrc" bit="25:30 42 24 31 20 41 36 43 65"/>
+  <define src="fsrc1_ext" kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+  <define src="isrc1_ext" kind="isrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+  <define src="fmasrc1" kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
+  <define src="fmasrc2" kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
+  <define src="fmasrc3" kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+  <define src="cmpsel3" kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
+  <define src="cmpsel4" kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+
+  <!-- Register or export word in bits 25-31 of the other forms: their
+       destination, or the data they store -->
+  <define dest="rdst" kind="reg" bit="25:31"/>
+  <define src="rsrc" kind="reg" bit="25:31"/>
+  <define src="esrc" kind="export" bit="25:31"/>
 
   <!--
     Floating-point ALU. Byte 0 bit 0 selects FP32 arithmetic and bit 3 an
@@ -604,8 +633,8 @@
     <template>09 05 38 01</template>
     <exact bit="16">op</exact>
     <dst4/>
-    <src kind="fsrc" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
-    <src kind="fsrc" bit="25:30 =0 24 31 20 =0 =0 =0 =0"/>
+    <fsrc1_4/>
+    <fsrc2_4/>
 
     <ins name="fadd_base" display="fadd" op="0"/>
     <ins name="fmul_base" display="fmul" op="1"/>
@@ -615,8 +644,8 @@
     <template>09 05 3c 01 00 00</template>
     <exact bit="0:3 16">op</exact>
     <dst6/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <fsrc1_6/>
+    <fsrc2_6/>
     <dstate/>
     <index_45_47/>
 
@@ -630,8 +659,8 @@
     <template>01 01 1c 81 00 02</template>
     <exact bit="0:3 16">op</exact>
     <hdst6/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <fsrc1_6/>
+    <fsrc2_6/>
     <dstate/>
     <index_45_47/>
 
@@ -646,7 +675,7 @@
     <exact bit="16">op</exact>
     <dst6/>
     <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 =0"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <fsrc2_6/>
     <saturate/>
     <dstate/>
     <mask_45_47_61_63/>
@@ -658,9 +687,9 @@
   <!-- Multiply into an export word, completing on the producer slot -->
   <ins name="fmul_export" display="fmul" length="8" form="float2_export texture_coords">
     <template>09 05 3d 01 41 00 00 00</template>
-    <dest kind="export" bit="4:7 22:23 44"/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <edst6/>
+    <fsrc1_6/>
+    <fsrc2_6/>
     <modifier name="slot" kind="slot" bit="58:60"/>
     <dstate/>
     <mask_45_47_61_63/>
@@ -669,8 +698,8 @@
   <ins name="fadd_abs" display="fadd" length="10" form="float2_abs_extended">
     <template>09 05 3c 01 02 00 00 00 00 00</template>
     <dst6/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 64"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 65"/>
+    <fsrc1_abs/>
+    <fsrc2_abs/>
     <saturate/>
     <dstate/>
     <mask_45_47_61_63/>
@@ -679,8 +708,8 @@
   <ins name="fmul_abs" display="fmul" length="12" form="float2_mul_abs_extended">
     <template>09 05 3d 01 02 00 00 00 00 00 00 00</template>
     <dst6/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 49 64"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 65"/>
+    <fsrc1_abs/>
+    <fsrc2_abs/>
     <saturate/>
     <dstate/>
     <mask_45_47_61_63/>
@@ -690,8 +719,8 @@
   <ins name="fmul_cf" display="fmul" length="8" form="float2_project">
     <template>09 05 3f 01 00 00 00 00</template>
     <dst4/>
-    <src kind="fsrc" bit="9:14 =0 8 15 19 =0 =0 =0 =0"/>
-    <src kind="fsrc" bit="25:30 =0 24 31 20 =0 =0 =0 =0"/>
+    <fsrc1_4/>
+    <fsrc2_4/>
     <immediate name="cf" bit="40:47" prefix="cf"/>
     <dstate/>
   </ins>
@@ -712,9 +741,9 @@
   <ins name="ffma" length="8" form="float3_extended">
     <template>09 01 3e 05 81 08 02 00</template>
     <dst8/>
-    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
-    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
-    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <fmasrc1/>
+    <fmasrc2/>
+    <fmasrc3/>
     <dstate/>
     <index_61_63/>
   </ins>
@@ -722,9 +751,9 @@
   <ins name="hfma" length="8" form="half3">
     <template>00 00 1e 00 81 00 00 00</template>
     <hdst8/>
-    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
-    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
-    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <fmasrc1/>
+    <fmasrc2/>
+    <fmasrc3/>
     <dstate/>
     <index_61_63/>
   </ins>
@@ -732,9 +761,9 @@
   <ins name="ffma_sat" display="ffma" length="10" form="float3_saturate_extended">
     <template>09 01 3e 05 82 08 02 00 00 00</template>
     <dst8/>
-    <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 =0"/>
-    <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 =0"/>
-    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <fmasrc1/>
+    <fmasrc2/>
+    <fmasrc3/>
     <modifier name="saturate" bit="73" display="sat"/>
     <dstate/>
     <mask_61_63_77_79/>
@@ -745,7 +774,7 @@
     <dst8/>
     <src kind="fsrc3" bit="9:14 56 8 15 19 55 =0 59 80"/>
     <src kind="fsrc3" bit="25:30 58 24 31 20 57 =0 =0 81"/>
-    <src kind="fsrc3" bit="41:46 38 49 47 39 37 40 36 35"/>
+    <fmasrc3/>
     <modifier name="saturate" bit="73" display="sat"/>
     <dstate/>
     <mask_61_63_77_79/>
@@ -761,8 +790,8 @@
     <template>02 01 3e 05 00 00</template>
     <exact bit="17 32:34">op</exact>
     <dst6/>
-    <src kind="fsrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="fsrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
+    <fsrc1_6/>
+    <fsrc2_6/>
     <modifier name="bit18" bit="18"/>
     <index_45_47/>
 
@@ -776,7 +805,7 @@
     <template>02 01 3e 05 00 00</template>
     <exact bit="17 32:34">op</exact>
     <dst6/>
-    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
+    <isrc1_6/>
     <src kind="isrc" bit="25:30 42 24 31 20 41 36 43 =0"/>
     <modifier name="bit18" bit="18"/>
     <index_45_47/>
@@ -796,10 +825,10 @@
   <ins name="fcmpsel" length="10" form="select_gpr_wide half_compare_select">
     <template>02 01 1f 01 82 00 00 00 80 00</template>
     <dst8/>
-    <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <fsrc1_ext/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
-    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
-    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <cmpsel3/>
+    <cmpsel4/>
     <modifier name="cond" kind="fcond" bit="48:49 34"/>
     <modifier name="bit18" bit="18"/>
     <index_61_63/>
@@ -808,10 +837,10 @@
   <ins name="icmpsel" length="10" form="select_gpr_wide">
     <template>02 01 1f 01 82 00 04 00 80 00</template>
     <dst8/>
-    <src kind="isrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <isrc1_ext/>
     <src kind="isrc" bit="25:30 58 24 31 20 57 52 59 =0"/>
-    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
-    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <cmpsel3/>
+    <cmpsel4/>
     <modifier name="cond" kind="icond" bit="48:49 34"/>
     <modifier name="bit18" bit="18"/>
     <index_61_63/>
@@ -822,8 +851,8 @@
     <dst8/>
     <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 96"/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 59 97"/>
-    <src kind="isrc" bit="41:46 38 =1 47 39 37 40 36 35"/>
-    <src kind="isrc" bit="73:78 70 =1 79 71 69 72 68 67"/>
+    <cmpsel3/>
+    <cmpsel4/>
     <modifier name="cond" kind="fcond" bit="48:49 34"/>
     <modifier name="bit18" bit="18"/>
     <mask_61_63_93_95/>
@@ -836,9 +865,6 @@
     bits 19 and 20 only. FP16 operands clear the width bits. Bit 34 (36 in the
     extended form) is set for the integer conditions.
   -->
-  <define immediate="pred" bit="5:7" prefix="p"/>
-  <define modifier="invert" bit="4" display="not"/>
-
   <ins name="fcmp_pred" length="6" form="predicate_compare_short half_predicate_short">
     <template>0a 01 22 01 00 00</template>
     <src kind="fsrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
@@ -852,7 +878,7 @@
   <ins name="icmp_pred" length="6" form="predicate_compare_short">
     <template>0a 01 22 01 04 00</template>
     <src kind="isrc" bit="9:14 40 8 15 19 39 =0 =0 =0"/>
-    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <isrc2_6/>
     <pred/>
     <modifier name="cond" kind="ipred" bit="32:33"/>
     <invert/>
@@ -861,7 +887,7 @@
 
   <ins name="fcmp_pred_ext" display="fcmp_pred" length="10" form="predicate_compare_extended half_predicate_extended predicate_compare_loop">
     <template>0a 01 23 01 06 00 00 00 00 00</template>
-    <src kind="fsrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <fsrc1_ext/>
     <src kind="fsrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
     <pred/>
     <modifier name="cond" kind="fpred_ext" bit="48:49"/>
@@ -871,7 +897,7 @@
 
   <ins name="icmp_pred_ext" display="icmp_pred" length="10" form="predicate_compare_extended predicate_compare_loop">
     <template>0a 01 23 01 06 00 04 00 00 00</template>
-    <src kind="isrc" bit="9:14 56 8 15 19 55 =0 =0 =0"/>
+    <isrc1_ext/>
     <src kind="isrc" bit="25:30 58 24 31 20 57 52 =0 =0"/>
     <pred/>
     <modifier name="cond" kind="ipred_ext" bit="48:49"/>
@@ -887,8 +913,8 @@
   <ins name="bitop" length="10" form="logic_extended logic_uniform">
     <template>0b 05 1f 01 00 00 00 00 00 00</template>
     <dst6/>
-    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <isrc1_6/>
+    <isrc2_6/>
     <modifier name="op" kind="bitop" bit="16 33 43"/>
     <dstate/>
     <mask_45_47_61_63/>
@@ -896,9 +922,9 @@
 
   <ins name="bitop_export" display="bitop" length="10" form="logic_export publication_pair publication_split block_store_params block_store_extended_params image_write_params texture_lod_params texture_volume_params texture_grad_params texture_grad_array_params texture_grad_volume_params">
     <template>0b 05 1f 01 40 00 00 00 00 00</template>
-    <dest kind="export" bit="4:7 22:23 44"/>
-    <src kind="isrc" bit="9:14 40 8 15 19 39 35 =0 =0"/>
-    <src kind="isrc" bit="25:30 42 24 31 20 41 36 =0 =0"/>
+    <edst6/>
+    <isrc1_6/>
+    <isrc2_6/>
     <modifier name="op" kind="bitop" bit="16 33 43"/>
     <modifier name="slot" kind="slot" bit="58:60"/>
     <modifier name="per_lane" bit="68"/>
@@ -983,7 +1009,7 @@
   -->
   <ins name="asr" length="10" form="shift_extended">
     <template>a7 01 54 00 02 00 00 78 62 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
     <immediate name="amount" bit="50:54"/>
     <mask_12_17/>
@@ -991,7 +1017,7 @@
 
   <ins name="asr_reg" display="asr" length="10" form="shift_arith_register">
     <template>a7 01 54 00 02 00 00 d8 e2 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 62 69 =0 =0"/>
     <src kind="usrc" bit="51:57 58 63 71 =0 =0"/>
     <mask_12_17/>
@@ -1000,7 +1026,7 @@
   <group name="Logical shift by a constant" length="12" form="shift_logical_immediate">
     <template>a7 00 54 00 02 00 00 00 f0 11 01 00</template>
     <exact bit="7">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <immediate name="amount" bit="50:54"/>
     <immediate name="width" bit="84:89" prefix="width="/>
@@ -1013,7 +1039,7 @@
   <group name="Logical shift by a register" length="12" form="shift_logical_register">
     <template>a7 00 54 00 02 00 00 00 f0 13 05 00</template>
     <exact bit="7">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 72 80 =0 =0"/>
     <src kind="usrc" bit="51:57 58 73 82 =0 =0"/>
     <mask_12_17/>
@@ -1026,7 +1052,7 @@
   <group name="Integer to float" length="8">
     <template>a7 07 54 00 03 00 8c 20</template>
     <exact bit="62">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 53 61 =0 =0"/>
     <mask_12_17/>
 
@@ -1038,7 +1064,7 @@
   <group name="Float to integer" length="10">
     <template>27 07 54 00 03 00 96 08 02 00</template>
     <exact bit="62 64">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 53 59 =0 =0"/>
     <mask_12_17/>
 
@@ -1049,7 +1075,7 @@
   <group name="Bit operations" length="8" form="bit_unary">
     <template>a7 05 54 00 02 00 4e 04</template>
     <exact bit="7 8">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
     <mask_12_17/>
 
@@ -1061,7 +1087,7 @@
   <!-- Population count of a uniform uses another destination format -->
   <ins name="popcount_uniform" display="popcount" length="8" form="bit_unary">
     <template>27 05 54 00 03 00 cc 04</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 52 58 =0 =0"/>
     <mask_12_17/>
   </ins>
@@ -1075,9 +1101,9 @@
   <group name="Special function" length="10" form="float_special float_special_uniform">
     <template>2f 00 54 00 02 00 90 40 00 00</template>
     <exact bit="7 8:9 65:66">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 53 62 64 63"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
 
@@ -1094,9 +1120,9 @@
 
   <ins name="rcp" length="10" form="float_special">
     <template>af 00 54 00 02 00 00 48 20 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 52 62 71 70"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="65" display="sat"/>
     <mask_12_17/>
   </ins>
@@ -1104,9 +1130,9 @@
   <!-- A uniform source of the reciprocal sets bit 53 instead of 52 -->
   <ins name="rcp_uniform" display="rcp" length="10" form="float_special_uniform">
     <template>af 00 54 00 02 00 20 48 20 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 49 =1 62 71 70"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="65" display="sat"/>
     <mask_12_17/>
   </ins>
@@ -1119,9 +1145,9 @@
   <group name="FP16 special function" length="10" form="half_special">
     <template>2f 00 54 00 02 00 8c 60 00 00</template>
     <exact bit="7 8:9 65:66">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
 
@@ -1136,27 +1162,27 @@
 
   <ins name="srsqrt_f16_f32" display="srsqrt" length="10" form="half_special">
     <template>2f 01 54 00 02 00 8a 40 00 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 =0 53 62 64 63"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
   </ins>
 
   <ins name="rcp_f16" display="rcp" length="10" form="half_special">
     <template>af 00 54 00 02 00 00 46 30 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="65" display="sat"/>
     <mask_12_17/>
   </ins>
 
   <ins name="rcp_f16_f32" display="rcp" length="10" form="half_special">
     <template>af 00 54 00 02 00 00 44 20 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="usrc" bit="42:48 =0 52 62 71 70"/>
-    <modifier name="alu" bit="32"/>
+    <alu/>
     <modifier name="saturate" bit="65" display="sat"/>
     <mask_12_17/>
   </ins>
@@ -1164,7 +1190,7 @@
   <group name="Derivative" length="10" form="derivative">
     <template>37 05 54 00 03 00 90 40 00 00</template>
     <exact bit="9">op</exact>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48 49 =0"/>
     <modifier name="saturate" bit="58" display="sat"/>
     <mask_12_17/>
@@ -1285,7 +1311,7 @@
   -->
   <ins name="device_load" length="14" form="device_load device_load_indirect device_load_pointer">
     <template>67 00 44 00 00 00 20 00 11 00 00 40 46 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="membase" bit="32:39 101 74" role="src1"/>
     <src kind="memindex" bit="40:46 47 53 102" role="index"/>
     <immediate name="offset" bit="77:92" kind="signed" prefix="offset="/>
@@ -1344,14 +1370,14 @@
   -->
   <ins name="local_load" length="14" form="shared_load">
     <template>67 02 54 00 00 00 00 00 44 0d 00 c0 08 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="half" bit="41:47 =0 =0 55"/>
     <immediate name="root" bit="32:39" prefix="root="/>
   </ins>
 
   <ins name="local_store" length="14" form="shared_store">
     <template>e7 02 54 00 00 00 00 00 44 02 00 30 02 00</template>
-    <src kind="reg" bit="25:31"/>
+    <rsrc/>
     <src kind="half" bit="41:47 =0 =0 55"/>
     <immediate name="root" bit="32:39" prefix="root="/>
   </ins>
@@ -1372,14 +1398,14 @@
   -->
   <ins name="stack_load_indexed" display="stack_load" length="12" form="private_load">
     <template>6f 00 54 00 00 02 49 01 00 00 03 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="33:39"/>
     <immediate name="offset" bit="64:79" prefix="offset="/>
   </ins>
 
   <ins name="stack_store_indexed" display="stack_store" length="10" form="private_store">
     <template>ef 00 54 00 00 02 09 03 00 60</template>
-    <src kind="reg" bit="25:31"/>
+    <rsrc/>
     <src kind="reg" bit="33:39"/>
     <immediate name="offset" bit="62:63 64:71 72:74" prefix="offset="/>
   </ins>
@@ -1403,7 +1429,7 @@
   <!-- Subgroup operations -->
   <ins name="simd_prefix_iadd" length="8" form="subgroup_scan_iadd">
     <template>bf 01 54 00 03 00 16 09</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:47 =0"/>
   </ins>
 
@@ -1424,14 +1450,14 @@
        source -->
   <ins name="shuffle" length="10" form="subgroup_broadcast">
     <template>47 04 54 00 03 00 00 2c 10 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:47 =0"/>
     <src kind="reg" bit="50:55 =0"/>
   </ins>
 
   <ins name="ballot" length="10" form="subgroup_ballot">
     <template>17 07 54 00 03 00 00 58 22 12</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:47 =0"/>
   </ins>
 
@@ -1441,7 +1467,7 @@
   -->
   <ins name="pack_rgb10a2" display="pack_format" length="14" form="pack_format">
     <template>a7 06 54 00 02 00 00 00 00 a0 2a 88 24 11</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48 49 86"/>
     <src kind="reg" bit="51:57 58 87"/>
     <src kind="reg" bit="60:66 67 88"/>
@@ -1451,7 +1477,7 @@
 
   <ins name="pack_rg11b10f" display="pack_format" length="14" form="pack_format_rgb">
     <template>a7 06 54 00 02 00 00 00 10 a0 0a 88 24 08</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48 49 86"/>
     <src kind="reg" bit="51:57 58 87"/>
     <src kind="reg" bit="60:66 67 88"/>
@@ -1474,14 +1500,14 @@
        destination half in bit 24 -->
   <ins name="pack_unorm_2x16" length="10" form="pack_unorm_2x16">
     <template>97 04 56 00 02 00 00 50 44 82</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48"/>
     <src kind="reg" bit="51:57"/>
   </ins>
 
   <ins name="pack_unorm_4x8" length="10" form="pack_unorm_4x8">
     <template>97 04 54 00 02 00 00 50 44 c2</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48"/>
     <src kind="reg" bit="51:57"/>
     <modifier name="hi" bit="24"/>
@@ -1567,14 +1593,14 @@
   -->
   <ins name="image_write" length="16" form="image_write">
     <template>d7 10 54 00 00 40 00 00 20 04 00 00 88 1a 89 00</template>
-    <src kind="export" bit="25:31"/>
+    <esrc/>
     <src kind="reg64" bit="57:63 =0 64"/>
     <modifier name="floating" display="float" bit="109"/>
   </ins>
 
   <ins name="block_image_store" length="12" form="block_image_store block_image_store_extended">
     <template>57 10 54 00 00 00 00 80 00 00 01 00</template>
-    <src kind="export" bit="25:31"/>
+    <esrc/>
     <immediate name="image" bit="44:47" prefix="ts"/>
     <immediate name="mode" bit="64:75" prefix="mode="/>
     <immediate name="format" bit="76:79" prefix="format="/>
@@ -1587,13 +1613,13 @@
   <!-- Fragment outputs -->
   <ins name="write_coverage" length="6" form="coverage">
     <template>57 04 54 00 00 01</template>
-    <src kind="export" bit="25:31"/>
+    <esrc/>
     <mask_12_17/>
   </ins>
 
   <ins name="zs_store" length="6" form="depth_store">
     <template>d7 14 54 00 00 00</template>
-    <src kind="export" bit="25:31"/>
+    <esrc/>
     <modifier name="mode" kind="depth" bit="40:47"/>
   </ins>
 
@@ -1604,14 +1630,14 @@
   -->
   <ins name="ld_tile" length="12" form="tile_load">
     <template>67 0e 54 00 00 00 01 4e 00 00 00 00</template>
-    <dst7/>
+    <rdst/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
     <modifier name="slot" kind="slot" bit="63:65"/>
   </ins>
 
   <ins name="ld_tile_mask" display="ld_tile" length="12" form="tile_load_mask">
     <template>67 06 54 00 00 00 00 4e 00 00 00 20</template>
-    <dst7/>
+    <rdst/>
     <src kind="half" bit="48:55 =0 69"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
     <modifier name="slot" kind="slot" bit="63:65"/>
@@ -1619,7 +1645,7 @@
 
   <ins name="ld_tile_coords" display="ld_tile" length="12" form="tile_load_coords">
     <template>67 16 54 00 00 00 00 4e 00 00 00 10</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="32:38"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
     <immediate name="mask" bit="48:55" prefix="mask="/>
@@ -1628,13 +1654,13 @@
 
   <ins name="st_tile" length="12" form="tile_store">
     <template>e7 06 54 00 00 00 01 4e 00 00 00 00</template>
-    <src kind="reg" bit="25:31"/>
+    <rsrc/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
   </ins>
 
   <ins name="st_tile_mask" display="st_tile" length="12" form="tile_store_mask">
     <template>e7 06 54 00 00 00 00 4e 00 00 00 08</template>
-    <src kind="reg" bit="25:31"/>
+    <rsrc/>
     <src kind="half" bit="48:55 =0 67"/>
     <immediate name="offset" bit="41:45" prefix="offset="/>
     <mask_12_17/>
@@ -1648,20 +1674,20 @@
   -->
   <ins name="st_vary" length="8" form="vary_store">
     <template>57 06 54 00 00 40 00 00</template>
-    <src kind="export" bit="25:31"/>
+    <esrc/>
     <immediate name="slot" bit="37:39 40:44" prefix="slot="/>
     <mask_12_17/>
   </ins>
 
   <ins name="iter" length="10" form="iter">
     <template>2f 05 54 00 03 00 00 02 10 00</template>
-    <dst7/>
+    <rdst/>
     <immediate name="cf" bit="41:47" prefix="cf"/>
   </ins>
 
   <ins name="iter_coord" display="iter" length="10" form="iter_coord">
     <template>2f 05 54 00 03 00 00 02 00 00</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="48:54 67 69"/>
     <immediate name="cf" bit="41:47" prefix="cf"/>
   </ins>
@@ -1675,7 +1701,7 @@
 
   <ins name="interpolation_position" length="8" form="interpolation_position">
     <template>af 04 54 00 03 00 0a 01</template>
-    <dst7/>
+    <rdst/>
     <src kind="reg" bit="42:48"/>
     <modifier name="sample" bit="57"/>
     <mask_12_17/>
