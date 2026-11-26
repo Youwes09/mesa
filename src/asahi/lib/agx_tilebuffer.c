@@ -172,7 +172,8 @@ agx_tilebuffer_set_samples(struct agx_tilebuffer_layout *tib,
 }
 
 enum pipe_format
-agx_tilebuffer_physical_format(struct agx_tilebuffer_layout *tib, unsigned rt)
+agx_tilebuffer_physical_format(const struct agx_tilebuffer_layout *tib,
+                               unsigned rt)
 {
    return ail_pixel_format[tib->logical_format[rt]].renderable;
 }

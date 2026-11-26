@@ -77,7 +77,7 @@ agx_tilebuffer_set_drm_cmd(struct drm_asahi_cmd_render *c,
  * asserts that render targets are not spilled rather than returning garbage.
  */
 static inline uint8_t
-agx_tilebuffer_offset_B(struct agx_tilebuffer_layout *layout, unsigned rt)
+agx_tilebuffer_offset_B(const struct agx_tilebuffer_layout *layout, unsigned rt)
 {
    assert(rt < AGX_MAX_RENDER_TARGETS);
    assert(!layout->spilled[rt] && "precondition");
@@ -125,7 +125,8 @@ bool agx_nir_lower_sample_intrinsics(struct nir_shader *shader,
 uint32_t agx_tilebuffer_total_size(struct agx_tilebuffer_layout *tib);
 
 enum pipe_format
-agx_tilebuffer_physical_format(struct agx_tilebuffer_layout *tib, unsigned rt);
+agx_tilebuffer_physical_format(const struct agx_tilebuffer_layout *tib,
+                               unsigned rt);
 
 bool agx_tilebuffer_supports_mask(struct agx_tilebuffer_layout *tib,
                                   unsigned rt);
