@@ -1973,12 +1973,6 @@ hk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_pdev_alloc;
    }
 
-   /* A private install prefix or a DRIRC_CONFIGDIR override loses the
-    * application options silently otherwise. */
-   if (agx_is_apple9(&pdev->dev) && !instance->drirc.misc.defaults_loaded)
-      mesa_logw("hk: 00-hk-defaults.conf was not loaded; application "
-                "workarounds such as the D3D options are off");
-
    struct vk_physical_device_dispatch_table dispatch_table;
    vk_physical_device_dispatch_table_from_entrypoints(
       &dispatch_table, &hk_physical_device_entrypoints, true);

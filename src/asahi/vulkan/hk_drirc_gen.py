@@ -42,9 +42,6 @@ def declare_options():
         B("hk_d3d_mip_rounding", False,
           "Apple9: round explicit-LOD nearest mip selection half up, as D3D does",
           c_name="d3d_mip_rounding"),
-        B("hk_defaults_loaded", False,
-          "Set by 00-hk-defaults.conf, so the driver can report it missing",
-          c_name="defaults_loaded"),
     ]
 
     debug_options = []
