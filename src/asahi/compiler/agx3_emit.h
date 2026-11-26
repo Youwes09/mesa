@@ -108,26 +108,6 @@ agx3_emit_argument_word(uint8_t out[4], unsigned dst, unsigned src, bool wait)
                     });
 }
 
-/* Commit export register `word` to varying slot `slot`, without waiting */
-static inline bool
-agx3_emit_vary_store(uint8_t out[8], unsigned word, unsigned slot)
-{
-   if (slot >= 138)
-      return false;
-
-   struct agx3_operand value = {
-      .kind = AGX3_KIND_EXPORT,
-      .value = word * 2,
-      .size32 = true,
-   };
-
-   return agx3_emit(out, agx3_pack_st_vary,
-                    (struct agx3_fields){
-                       .src = {agx3_encode_export(value)},
-                       .slot = slot,
-                    });
-}
-
 /* Change the varying slot of an encoded st_vary, keeping its wait. The slot
  * is at bits 37-44.
  */
