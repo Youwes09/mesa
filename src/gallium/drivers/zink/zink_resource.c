@@ -1182,6 +1182,11 @@ allocate_bo(struct zink_screen *screen, const struct pipe_resource *templ,
           heap = ZINK_HEAP_DEVICE_LOCAL;
    };
 
+#if defined(ZINK_USE_DMABUF) && !defined(_WIN32)
+   if (!obj->bo && alloc_info->whandle)
+      close(imfi.fd);
+#endif
+
    return obj->bo ? roc_success : roc_fail_and_cleanup_object;
 }
 
