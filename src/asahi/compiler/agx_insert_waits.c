@@ -31,90 +31,31 @@ struct producer {
 };
 
 static struct producer
-classified_producer(const agx_instr *I)
-{
-   struct producer p = {
-      .async = true,
-      .fixed_slot = -1,
-      .completion = AGX3_COMPLETION_OTHER,
-   };
-
-   switch (I->op) {
-   case AGX_OPCODE_DEVICE_LOAD:
-      p.completion = AGX3_COMPLETION_MEMORY;
-      return p;
-
-   case AGX_OPCODE_ATOMIC:
-      /* Only a returning atomic has a result to wait for */
-      p.async = !agx_is_null(I->dest[0]);
-      p.completion = AGX3_COMPLETION_MEMORY;
-      return p;
-
-   case AGX_OPCODE_LOCAL_LOAD:
-      p.fixed_slot = 5;
-      p.completion = AGX3_COMPLETION_MEMORY;
-      return p;
-
-   case AGX_OPCODE_LOCAL_ATOMIC:
-      p.fixed_slot = 0;
-      p.completion = AGX3_COMPLETION_MEMORY;
-      return p;
-
-   case AGX_OPCODE_STACK_STORE:
-      /* Indexed stores destroy their data register instead */
-      p.async = I->src[1].type == AGX_INDEX_IMMEDIATE;
-      p.reads_sources = true;
-      return p;
-
-   case AGX_OPCODE_STACK_LOAD:
-      /* Indexed loads complete on slot 6 */
-      if (I->src[0].type != AGX_INDEX_IMMEDIATE)
-         p.fixed_slot = 5;
-      return p;
-
-   case AGX_OPCODE_TEXTURE_SAMPLE:
-   case AGX_OPCODE_TEXTURE_LOAD:
-      /* Parameters are read until the result completes */
-      p.reads_sources = true;
-      return p;
-
-   case AGX_OPCODE_LD_TILE:
-   case AGX_OPCODE_LDCF:
-   case AGX_OPCODE_IMAGE_LOAD:
-      return p;
-
-   case AGX_OPCODE_GET_SR:
-   case AGX_OPCODE_GET_SR_COVERAGE:
-   case AGX_OPCODE_GET_SR_BARRIER:
-      /* Coverage, vertex and instance IDs are read asynchronously */
-      p.async = I->sr == AGX_SR_COVERAGE_MASK || I->sr == AGX_SR_VERTEX_ID ||
-                I->sr == AGX_SR_INSTANCE_ID;
-      p.fixed_slot = 0;
-      return p;
-
-   case AGX_OPCODE_MOV:
-   case AGX_OPCODE_BITOP:
-   case AGX_OPCODE_FMUL:
-   case AGX_OPCODE_PUBLICATION_PAIR:
-      /* Export register writes complete on export group 0 */
-      p.async = I->dest[0].reg_class == RA_EXPORT;
-      p.fixed_slot = 0;
-      p.completion = AGX3_COMPLETION_PUBLICATION;
-      return p;
-
-   default:
-      p.async = false;
-      return p;
-   }
-}
-
-static struct producer
 producer(agx_context *ctx, agx_instr *I)
 {
-   if (ctx->target.dependency_waits)
-      return classified_producer(I);
+   if (!ctx->target.dependency_waits)
+      return (struct producer){.async = instr_is_async(I), .fixed_slot = -1};
 
-   return (struct producer){.async = instr_is_async(I), .fixed_slot = -1};
+   /* Export register writes complete on export group 0 */
+   if (I->nr_dests && I->dest[0].reg_class == RA_EXPORT) {
+      return (struct producer){
+         .async = true,
+         .fixed_slot = 0,
+         .completion = AGX3_COMPLETION_PUBLICATION,
+      };
+   }
+
+   enum agx3_encoding form = agx3_encoding_for(I);
+   if (form == AGX3_ENC_PSEUDO)
+      return (struct producer){.fixed_slot = -1};
+
+   const struct agx3_encoding_info *info = agx3_encoding_info(form);
+   return (struct producer){
+      .async = info->completion != 0,
+      .fixed_slot = (int)info->fixed_producer_slot - 1,
+      .completion = info->completion,
+      .reads_sources = info->reads_sources,
+   };
 }
 
 struct slot {
@@ -261,13 +202,11 @@ fold_wait(agx_block *block, agx_instr *I, unsigned slot, struct slot *s)
    return ok;
 }
 
-/* Texture operations and image stores wait for export group 0 themselves */
 static bool
 waits_for_exports(const agx_instr *I)
 {
-   return I->op == AGX_OPCODE_TEXTURE_SAMPLE ||
-          I->op == AGX_OPCODE_TEXTURE_LOAD || I->op == AGX_OPCODE_IMAGE_WRITE ||
-          I->op == AGX_OPCODE_BLOCK_IMAGE_STORE;
+   enum agx3_encoding form = agx3_encoding_for(I);
+   return form != AGX3_ENC_PSEUDO && agx3_encoding_info(form)->waits_exports;
 }
 
 /*

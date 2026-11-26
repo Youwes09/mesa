@@ -174,6 +174,15 @@ struct agx3_encoding_info {
     * cannot share a register with a source. */
    bool split_result;
 
+   /* Completion class of an asynchronous result, or zero if synchronous */
+   uint8_t completion;
+
+   /* The sources are read until the result completes */
+   bool reads_sources;
+
+   /* The instruction waits for export group 0 itself */
+   bool waits_exports;
+
    struct agx3_operand_constraint operands[AGX3_MAX_ENCODING_OPERANDS];
 };
 

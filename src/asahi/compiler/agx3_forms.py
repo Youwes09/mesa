@@ -49,7 +49,7 @@ class Operand(object):
 class Form(object):
    def __init__(self, name, length, encoding, allocator_safe, evidence,
                 dependency, retains, fixed_slot, alternates, prior, exempt,
-                split, packed):
+                split, packed, completion, reads_sources, waits_exports):
       self.name = name
       self.length = length
       self.encoding = encoding
@@ -63,14 +63,18 @@ class Form(object):
       self.exempt = exempt
       self.split = split
       self.packed = packed
+      self.completion = completion
+      self.reads_sources = reads_sources
+      self.waits_exports = waits_exports
       self.operands = []
 
 def form(name, length, encoding, allocator_safe = True, evidence = "hardware",
          dependency = "none", retains = False, fixed_slot = 0, alternates = [],
-         prior = False, exempt = [], split = False, packed = True):
+         prior = False, exempt = [], split = False, packed = True,
+         completion = None, reads_sources = False, waits_exports = False):
    forms.append(Form(name, length, encoding, allocator_safe, evidence,
                      dependency, retains, fixed_slot, alternates, prior, exempt,
-                     split, packed))
+                     split, packed, completion, reads_sources, waits_exports))
 
 # Adds an operand to the last form
 def operand(role, max, files = ["gpr"], widths = [32], min = 0,
@@ -472,10 +476,10 @@ form("jmp_exec_none", 10, "jmp_exec_none")
 
 form("break_mask_unwind", 6, "break_pred")
 
-form("get_draw_id", 4, "get_sr", fixed_slot = 1)
+form("get_draw_id", 4, "get_sr", fixed_slot = 1, completion = "other")
 operand("dest", 63, flags = ["allocatable", "hard_low"])
 
-form("get_coverage", 4, "get_sr", fixed_slot = 1)
+form("get_coverage", 4, "get_sr", fixed_slot = 1, completion = "other")
 operand("dest", 63, flags = ["allocatable", "hard_low"])
 
 form("float2_export", 8, "fmul_export", dependency = "mask_45_47_61_63",
@@ -508,7 +512,7 @@ operand("src5", 95)
 operand("src6", 95)
 operand("src7", 95)
 
-form("image_write", 22, "image_write join_export")
+form("image_write", 22, "image_write join_export", waits_exports = True)
 operand("src0", 24, align = 16)
 operand("src1", 25)
 operand("src2", 26)
@@ -520,12 +524,14 @@ operand("src7", 31)
 operand("src8", 94, align = 4)
 operand("src9", 95)
 
-form("block_image_store", 18, "block_image_store join_export")
+form("block_image_store", 18, "block_image_store join_export",
+     waits_exports = True)
 operand("src0", 15, align = 8)
 operand("src1", 15)
 operand("src2", 15)
 
-form("block_image_store_extended", 18, "block_image_store join_export")
+form("block_image_store_extended", 18, "block_image_store join_export",
+     waits_exports = True)
 operand("src0", 15, align = 8)
 operand("src1", 15)
 operand("src2", 15)
@@ -550,7 +556,8 @@ operand("src1", 95)
 operand("src2", 95)
 operand("src3", 95)
 
-form("texture_lod", 14, "texture")
+form("texture_lod", 14, "texture", completion = "other",
+     reads_sources = True, waits_exports = True)
 operand("dest", 63)
 operand("src0", 31, align = 8)
 operand("src1", 31)
@@ -591,28 +598,33 @@ operand("src6", 95, evidence = "byte_diff")
 operand("src7", 95, evidence = "byte_diff")
 operand("src8", 95, evidence = "byte_diff")
 
-form("texture_grad", 14, "texture")
+form("texture_grad", 14, "texture", completion = "other",
+     reads_sources = True, waits_exports = True)
 operand("dest", 63)
 operand("src0", 31, align = 8)
 
-form("texture_sample", 14, "texture")
+form("texture_sample", 14, "texture", completion = "other",
+     reads_sources = True, waits_exports = True)
 operand("dest", 63)
 operand("src0", 31, align = 4)
 operand("src1", 31)
 
-form("texture_sample_indexed", 20, "texture_reg|texture_reg2")
+form("texture_sample_indexed", 20, "texture_reg|texture_reg2",
+     completion = "other", reads_sources = True, waits_exports = True)
 operand("dest", 95)
 operand("src0", 31, align = 4)
 operand("src1", 31)
 
-form("texture_lod_indexed", 20, "texture_reg|texture_reg2")
+form("texture_lod_indexed", 20, "texture_reg|texture_reg2",
+     completion = "other", reads_sources = True, waits_exports = True)
 operand("dest", 95)
 operand("src0", 31, align = 8)
 operand("src1", 31)
 operand("src2", 31)
 operand("src3", 31)
 
-form("texture_grad_indexed", 20, "texture_reg|texture_reg2")
+form("texture_grad_indexed", 20, "texture_reg|texture_reg2",
+     completion = "other", reads_sources = True, waits_exports = True)
 operand("dest", 95)
 operand("src0", 31, align = 8)
 
@@ -628,7 +640,7 @@ operand("src0", 95, align = 1, evidence = "byte_diff")
 form("iter", 10, "iter")
 operand("dest", 95)
 
-form("iter_flat", 6, "ldcf")
+form("iter_flat", 6, "ldcf", completion = "other")
 operand("dest", 93)
 
 form("vary_store", 8, "st_vary", dependency = "mask_12_17")
@@ -656,13 +668,14 @@ operand("src0", 95)
 # coverage instruction waits for it
 form("tile_access", 6, "begin_tile", prior = True, exempt = ["publication"])
 
-form("tile_load", 12, "ld_tile")
+form("tile_load", 12, "ld_tile", completion = "other")
 operand("dest", 95)
 
 form("tile_store", 12, "st_tile")
 operand("src0", 95)
 
-form("tile_load_mask", 12, "ld_tile_mask", evidence = "byte_diff")
+form("tile_load_mask", 12, "ld_tile_mask", evidence = "byte_diff",
+     completion = "other")
 operand("dest", 95, evidence = "byte_diff")
 operand("src0", 95, evidence = "byte_diff")
 
@@ -675,19 +688,19 @@ operand("src1", 95, evidence = "byte_diff")
 form("tile_fence", 6, "end_tile", prior = True)
 
 form("device_load", 14, "device_load", dependency = "mask_12_17",
-     retains = True)
+     retains = True, completion = "memory")
 operand("dest", 95, widths = [16, 32, 64], align = 1)
 operand("index", 95)
 
 form("device_load_indirect", 14, "device_load", dependency = "mask_12_17",
-     retains = True)
+     retains = True, completion = "memory")
 operand("dest", 95, widths = [16, 32, 64], align = 1)
 operand("index", 95)
 operand("src1", 94, evidence = "byte_diff")
 operand("src2", 95, evidence = "byte_diff")
 
 form("device_load_pointer", 14, "device_load", evidence = "byte_diff",
-     dependency = "mask_12_17", retains = True)
+     dependency = "mask_12_17", retains = True, completion = "memory")
 operand("dest", 95, widths = [16, 32, 64], align = 1)
 operand("src1", 94, evidence = "byte_diff")
 operand("src2", 95, evidence = "byte_diff")
@@ -715,13 +728,13 @@ operand("src1", 94, flags = ["allocatable", "clobber"])
 operand("src2", 95, flags = ["allocatable", "clobber"])
 
 form("device_atomic_return", 22, "atomic atomic_result",
-     dependency = "mask_12_17")
+     dependency = "mask_12_17", completion = "memory")
 operand("dest", 95)
 operand("index", 95, flags = ["allocatable", "scattered", "clobber"])
 operand("atomic_data", 95, flags = ["allocatable", "scattered", "clobber"])
 
 form("device_atomic_indirect_return", 22, "atomic_indirect atomic_result",
-     dependency = "mask_12_17")
+     dependency = "mask_12_17", completion = "memory")
 operand("dest", 95)
 operand("index", 95, flags = ["allocatable", "scattered", "clobber"])
 operand("atomic_data", 95, flags = ["allocatable", "scattered", "clobber"])
@@ -756,11 +769,11 @@ form("device_fence", 6, "memory_barrier|raster_order_fence",
 
 form("halt", 4, "stop", prior = True)
 
-form("shared_load", 14, "local_load", fixed_slot = 6)
+form("shared_load", 14, "local_load", fixed_slot = 6, completion = "memory")
 operand("dest", 63)
 operand("src0", 63)
 
-form("shared_atomic", 12, "local_atomic", fixed_slot = 1)
+form("shared_atomic", 12, "local_atomic", fixed_slot = 1, completion = "memory")
 operand("dest", 63)
 operand("atomic_data", 63, flags = ["allocatable", "clobber"])
 operand("index", 63, flags = ["allocatable", "clobber"])
@@ -769,7 +782,8 @@ form("shared_store", 14, "local_store")
 operand("src0", 63, flags = ["allocatable", "clobber"])
 operand("src1", 63)
 
-form("private_load", 12, "stack_load_indexed", fixed_slot = 6)
+form("private_load", 12, "stack_load_indexed", fixed_slot = 6,
+     completion = "other")
 operand("dest", 63)
 operand("src0", 63)
 
@@ -780,10 +794,12 @@ operand("src1", 63)
 form("device_atomic_result", 8, "atomic_result", packed = False)
 operand("src0", 95)
 
-form("spill_store", 10, "stack_store", dependency = "mask_45_47_61_63")
+form("spill_store", 10, "stack_store", dependency = "mask_45_47_61_63",
+     completion = "other", reads_sources = True)
 operand("src0", 95, flags = ["allocatable", "scattered"])
 
-form("spill_load", 8, "stack_load", dependency = "mask_45_47_61_63")
+form("spill_load", 8, "stack_load", dependency = "mask_45_47_61_63",
+     completion = "other")
 operand("dest", 95, flags = ["allocatable", "scattered"])
 
 form("device_store_indirect", 14, "device_store", dependency = "mask_12_17")
@@ -792,7 +808,7 @@ operand("store_data", 95, widths = [16, 32, 64], align = 1)
 operand("src1", 94)
 operand("src2", 95)
 
-form("tile_load_coords", 12, "ld_tile_coords")
+form("tile_load_coords", 12, "ld_tile_coords", completion = "other")
 operand("dest", 95)
 operand("src0", 95)
 

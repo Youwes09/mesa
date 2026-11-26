@@ -34,6 +34,9 @@ static const struct agx3_encoding_info encodings[] = {
       .requires_prior_completion = ${boolean(f.prior)},
       .prior_completion_exempt = ${flag_set('AGX3_COMPLETION_', f.exempt)},
       .split_result = ${boolean(f.split)},
+      .completion = ${flag_set('AGX3_COMPLETION_', [f.completion] if f.completion else [])},
+      .reads_sources = ${boolean(f.reads_sources)},
+      .waits_exports = ${boolean(f.waits_exports)},
 % if f.operands:
       .operands = {
 % for o in f.operands:
