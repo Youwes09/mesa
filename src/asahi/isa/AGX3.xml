@@ -1614,20 +1614,29 @@
 
   <!-- Subgroup operations -->
   <ins name="simd_prefix_iadd" length="8" form="subgroup_scan_iadd">
-    <template>bf 01 54 00 03 00 16 09</template>
+    <exact bit="0:11">000110111111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 34:41 48 51 53:55 57:58 60:63"/>
+    <exact bit="32:33 49:50 52 56 59">1111111</exact>
     <rdst/>
     <src kind="reg" bit="42:47 =0"/>
   </ins>
 
   <!-- Operands name 16-bit halves; bit 50 makes them 32-bit -->
   <ins name="simd_reduce_umax" length="8" form="subgroup_reduce_umax">
-    <template>bf 03 54 00 02 00 10 01</template>
+    <exact bit="0:11">001110111111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 34:40 50:51 53:55 58:63"/>
+    <exact bit="33 52 56">111</exact>
     <dest kind="half" bit="24:31 32 =0"/>
     <src kind="half" bit="41:48 49 57"/>
   </ins>
 
   <ins name="simd_reduce_umax32" display="simd_reduce_umax" length="8" form="subgroup_reduce_umax">
-    <template>bf 03 54 00 02 00 14 01</template>
+    <exact bit="0:11">001110111111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 34:40 51 53:55 58:63"/>
+    <exact bit="33 50 52 56">1111</exact>
     <dest kind="reg_half" bit="24:31 32 =0"/>
     <src kind="reg_half" bit="41:48 49 57"/>
   </ins>
@@ -1635,14 +1644,20 @@
   <!-- Each lane reads the data from the lane in the low half of the second
        source -->
   <ins name="shuffle" length="10" form="subgroup_broadcast">
-    <template>47 04 54 00 03 00 00 2c 10 00</template>
+    <exact bit="0:11">010001000111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 34:41 48:49 56:57 60 62:67 69:79"/>
+    <exact bit="32:33 58:59 61 68">111111</exact>
     <rdst/>
     <src kind="reg" bit="42:47 =0"/>
     <src kind="reg" bit="50:55 =0"/>
   </ins>
 
   <ins name="ballot" length="10" form="subgroup_ballot">
-    <template>17 07 54 00 03 00 00 58 22 12</template>
+    <exact bit="0:11">011100010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:17 34:41 48:58 61 63:64 66:68 70:72 74:75 77:79"/>
+    <exact bit="32:33 59:60 62 65 69 73 76">111111111</exact>
     <rdst/>
     <src kind="reg" bit="42:47 =0"/>
   </ins>
@@ -1652,7 +1667,10 @@
     into RG11B10F or RGB10A2; bits 86-89 release dying channels.
   -->
   <ins name="pack_rgb10a2" display="pack_format" length="14" form="pack_format">
-    <template>a7 06 54 00 02 00 00 00 00 a0 2a 88 24 11</template>
+    <exact bit="0:11">011010100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 50 59 68 78 80 82 84 90 92:94 96:97 99:100 102:103 105:107 109:111"/>
+    <exact bit="33 77 79 81 83 85 91 95 98 101 104 108">111111111111</exact>
     <rdst/>
     <src kind="reg" bit="42:48 49 86"/>
     <src kind="reg" bit="51:57 58 87"/>
@@ -1662,7 +1680,10 @@
   </ins>
 
   <ins name="pack_rg11b10f" display="pack_format" length="14" form="pack_format_rgb">
-    <template>a7 06 54 00 02 00 00 00 10 a0 0a 88 24 08</template>
+    <exact bit="0:11">011010100111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32 34:41 50 59 69:76 78 80 82 84:85 89:90 92:94 96:97 99:100 102:106 108:111"/>
+    <exact bit="33 68 77 79 81 83 91 95 98 101 107">11111111111</exact>
     <rdst/>
     <src kind="reg" bit="42:48 49 86"/>
     <src kind="reg" bit="51:57 58 87"/>
@@ -1673,7 +1694,10 @@
   <!-- Normalized unpacking of two values into a register pair; 8-bit values
        may come from the high half (bit 41) -->
   <ins name="unpack_norm" length="8" form="unpack_norm">
-    <template>17 04 54 00 00 00 04 8a</template>
+    <exact bit="0:11">010000010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="32:40 53:56 58"/>
+    <exact bit="50 57 59 63">1111</exact>
     <dest kind="reg64" bit="25:31"/>
     <src kind="reg" bit="42:48 49 52"/>
     <modifier name="mode" kind="unpack" bit="60:62"/>
@@ -1685,14 +1709,20 @@
   <!-- unorm packing of a pair of FP32 sources; the 8-bit form writes the
        destination half in bit 24 -->
   <ins name="pack_unorm_2x16" length="10" form="pack_unorm_2x16">
-    <template>97 04 56 00 02 00 00 50 44 82</template>
+    <exact bit="0:11">010010010111</exact>
+    <exact bit="18:24">0010101</exact>
+    <zero bit="12:16 32 34:41 49:50 58:59 61 63:65 67:69 71:72 74:78"/>
+    <exact bit="17 33 60 62 66 70 73 79">11111111</exact>
     <rdst/>
     <src kind="reg" bit="42:48"/>
     <src kind="reg" bit="51:57"/>
   </ins>
 
   <ins name="pack_unorm_4x8" length="10" form="pack_unorm_4x8">
-    <template>97 04 54 00 02 00 00 50 44 c2</template>
+    <exact bit="0:11">010010010111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 32 34:41 49:50 58:59 61 63:65 67:69 71:72 74:77"/>
+    <exact bit="33 60 62 66 70 73 78:79">11111111</exact>
     <rdst/>
     <src kind="reg" bit="42:48"/>
     <src kind="reg" bit="51:57"/>
@@ -1701,7 +1731,10 @@
 
   <!-- Cube map face selection -->
   <ins name="cube" length="12" form="cube">
-    <template>17 01 54 00 03 00 00 00 50 2f 92 00</template>
+    <exact bit="0:11">000100010111</exact>
+    <exact bit="18:23">010101</exact>
+    <zero bit="12:17 31 34:40 49 58 67 69 71 76 78:80 82:83 85:86 88:89 92:95"/>
+    <exact bit="32:33 68 70 72 77 81 84 87">111111111</exact>
     <dest kind="reg" bit="24:30"/>
     <src kind="reg" bit="41:47 48 73"/>
     <src kind="reg" bit="50:56 57 74"/>
